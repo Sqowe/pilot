@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="resources/logo.png" alt="Open Cowork Logo" width="180" />
+  <img src="resources/logo.png" alt="Open Cowork Logo" width="280" />
 </p>
 
 <h1 align="center">🚀 Open Cowork: Your Personal AI Agent Desktop App</h1>
@@ -50,12 +50,17 @@ See Open Cowork in action:
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=MyuiO70R0h8">
-    <img src="https://img.youtube.com/vi/MyuiO70R0h8/maxresdefault.jpg" alt="Open Cowork Demo 1" width="400" />
-  </a>
-  <a href="https://www.youtube.com/watch?v=piEEor1ohHo">
-    <img src="https://img.youtube.com/vi/piEEor1ohHo/maxresdefault.jpg" alt="Open Cowork Demo 2" width="400" />
+    <img src="https://img.youtube.com/vi/MyuiO70R0h8/maxresdefault.jpg" alt="Open Cowork Demo 1" width="420" />
   </a>
 </p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=piEEor1ohHo">
+    <img src="https://img.youtube.com/vi/piEEor1ohHo/maxresdefault.jpg" alt="Open Cowork Demo 2" width="420" />
+  </a>
+</p>
+
+> 💡 **Tip**: Click on the thumbnails above to watch the demo videos on YouTube.
 
 ---
 
@@ -110,13 +115,60 @@ You need an API key to power the agent. We recommend:
 ```
 open-cowork/
 ├── src/
-│   ├── main/                 # Electron Main Process (Node.js)
-│   │   ├── claude/           # Agent SDK & Runner
-│   │   ├── sandbox/          # Security & Path Resolution
-│   │   └── skills/           # Skill Loader & Manager
-│   └── renderer/             # Frontend UI (React + Tailwind)
-├── .claude/skills/           # Default Skill Definitions
-└── resources/                # Static Assets
+│   ├── main/                    # Electron Main Process (Node.js)
+│   │   ├── index.ts             # Main entry point
+│   │   ├── claude/              # Agent SDK & Runner
+│   │   │   └── agent-runner.ts  # AI agent execution logic
+│   │   ├── config/              # Configuration management
+│   │   │   └── config-store.ts  # Persistent settings storage
+│   │   ├── db/                  # Database layer
+│   │   │   └── database.ts      # SQLite/data persistence
+│   │   ├── ipc/                 # IPC handlers
+│   │   ├── memory/              # Memory management
+│   │   │   └── memory-manager.ts
+│   │   ├── sandbox/             # Security & Path Resolution
+│   │   │   └── path-resolver.ts # Sandboxed file access
+│   │   ├── session/             # Session management
+│   │   │   └── session-manager.ts
+│   │   ├── skills/              # Skill Loader & Manager
+│   │   │   └── skills-manager.ts
+│   │   └── tools/               # Tool execution
+│   │       └── tool-executor.ts # Tool call handling
+│   ├── preload/                 # Electron preload scripts
+│   │   └── index.ts             # Context bridge setup
+│   └── renderer/                # Frontend UI (React + Tailwind)
+│       ├── App.tsx              # Root component
+│       ├── main.tsx             # React entry point
+│       ├── components/          # UI Components
+│       │   ├── ChatView.tsx     # Main chat interface
+│       │   ├── ConfigModal.tsx  # Settings dialog
+│       │   ├── ContextPanel.tsx # File context display
+│       │   ├── MessageCard.tsx  # Chat message component
+│       │   ├── PermissionDialog.tsx
+│       │   ├── Sidebar.tsx      # Navigation sidebar
+│       │   ├── Titlebar.tsx     # Custom window titlebar
+│       │   ├── TracePanel.tsx   # AI reasoning trace
+│       │   └── WelcomeView.tsx  # Onboarding screen
+│       ├── hooks/               # Custom React hooks
+│       │   └── useIPC.ts        # IPC communication hook
+│       ├── store/               # State management
+│       │   └── index.ts
+│       ├── styles/              # CSS styles
+│       │   └── globals.css
+│       ├── types/               # TypeScript types
+│       │   └── index.ts
+│       └── utils/               # Utility functions
+├── .claude/
+│   └── skills/                  # Default Skill Definitions
+│       ├── pptx/                # PowerPoint generation
+│       ├── docx/                # Word document processing
+│       ├── pdf/                 # PDF handling & forms
+│       ├── xlsx/                # Excel spreadsheet support
+│       └── skill-creator/       # Skill development toolkit
+├── resources/                   # Static Assets (icons, images)
+├── electron-builder.yml         # Build configuration
+├── vite.config.ts               # Vite bundler config
+└── package.json                 # Dependencies & scripts
 ```
 
 ---
