@@ -36,7 +36,7 @@
 ## ✨ 核心特性
 
 - **零门槛上手**：提供 Windows 和 macOS 预构建安装包，下载即用。
-- **多模型支持**：支持 **Claude**，以及国产模型 **GLM**、**Kimi**。（**Minimax** 即将支持）。
+- **多模型支持**：支持 **Claude**，以及国产模型 **GLM**、**Kimi**。（更多模型如 **Minimax** 即将支持）。
 - **自带 API Key**：使用你的 OpenRouter 或 Anthropic API Key，按需付费。
 - **文件管理**：AI 可以在工作区内读取、写入和整理文件。
 - **Skills 系统**：内置 PPTX、DOCX、PDF、XLSX 生成和处理工作流。
@@ -47,9 +47,8 @@
 
 ## 🎬 演示
 
-观看 Open Cowork 实战演示（视频链接即将更新）：
+观看 Open Cowork 实战演示 ：
 
-<<<<<<< HEAD
 ### 1. 文件夹收纳整理 📂
 https://github.com/user-attachments/assets/dbeb0337-2d19-4b5d-a438-5220f2a87ca7
 
@@ -189,7 +188,7 @@ open-cowork/
 
 ---
 
-## � 加入社群
+## 💬 加入社群
 
 欢迎扫码加入微信群交流：
 
@@ -199,7 +198,7 @@ open-cowork/
 
 ---
 
-## �📄 许可证
+## 📄 许可证
 
 MIT © Open Cowork Team
 

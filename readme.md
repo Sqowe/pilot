@@ -36,7 +36,7 @@ It provides a sandboxed workspace where AI can manage files, read documents, and
 ## ✨ Key Features
 
 - **Zero Coding Required**: Pre-built installers for Windows and macOS, just download and run.
-- **Multi-Model Support**: Supports **Claude**, and popular Chinese models like **GLM** and **Kimi**. (**Minimax** support coming soon).
+- **Multi-Model Support**: Supports **Claude**, and popular Chinese models like **GLM** and **Kimi**. (More models like **Minimax** coming soon).
 - **Bring Your Own Key**: Use your OpenRouter or Anthropic API key, pay only for what you use.
 - **File Management**: AI can read, write, and organize files within your workspace.
 - **Skills System**: Built-in workflows for PPTX, DOCX, PDF, XLSX generation and processing.
@@ -47,7 +47,7 @@ It provides a sandboxed workspace where AI can manage files, read documents, and
 
 ## 🎬 Demo
 
-See Open Cowork in action (Video links coming soon):
+See Open Cowork in action :
 
 ### 1. Folder Organization & Cleanup 📂
 https://github.com/user-attachments/assets/dbeb0337-2d19-4b5d-a438-5220f2a87ca7
@@ -188,7 +188,7 @@ We welcome contributions! Whether it's a new Skill, a UI fix, or a security impr
 
 ---
 
-## � Community
+## 💬 Community
 
 Join our WeChat group for support and discussion:
 
@@ -198,7 +198,7 @@ Join our WeChat group for support and discussion:
 
 ---
 
-## �📄 License
+## 📄 License
 
 MIT © Open Cowork Team
 
