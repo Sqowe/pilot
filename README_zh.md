@@ -68,7 +68,7 @@
 
 ### 方式一：下载安装包（推荐）
 
-请访问我们的 [Release 页面](https://github.com/your-username/open-cowork/releases) 下载最新版本。
+请访问我们的 [Release 页面](https://github.com/OpenCoworkAI/open-cowork/releases) 下载最新版本。
 
 | 平台 | 文件类型 |
 |------|----------|
@@ -80,7 +80,7 @@
 适合想要贡献代码或进行二次开发的开发者：
 
 ```bash
-git clone https://github.com/your-username/open-cowork.git
+git clone https://github.com/OpenCoworkAI/open-cowork.git
 cd open-cowork
 npm install
 npm run dev

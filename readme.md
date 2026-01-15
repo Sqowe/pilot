@@ -68,7 +68,7 @@ See Open Cowork in action:
 
 ### Option 1: Download Installer (Recommended)
 
-Get the latest version from our [Releases Page](https://github.com/your-username/open-cowork/releases).
+Get the latest version from our [Releases Page](https://github.com/OpenCoworkAI/open-cowork/releases).
 
 | Platform | File Type |
 |----------|-----------|
@@ -80,7 +80,7 @@ Get the latest version from our [Releases Page](https://github.com/your-username
 For developers who want to contribute or modify the codebase:
 
 ```bash
-git clone https://github.com/your-username/open-cowork.git
+git clone https://github.com/OpenCoworkAI/open-cowork.git
 cd open-cowork
 npm install
 npm run dev
