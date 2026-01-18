@@ -1,7 +1,0 @@
-{
-  "interfaceContractsClear": true,
-  "techChoiceUnderstood": true,
-  "risksIdentified": true,
-  "verificationKnown": true,
-  "notes": "模型列表来源：OpenRouter 公共模型列表 + Claude 系统提示中的最新模型字符串。"
-}
