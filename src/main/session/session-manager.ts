@@ -5,6 +5,8 @@ import { PathResolver } from '../sandbox/path-resolver';
 import { ClaudeAgentRunner } from '../claude/agent-runner';
 import { OpenAIResponsesRunner } from '../openai/responses-runner';
 import { configStore } from '../config/config-store';
+import { MCPManager } from '../mcp/mcp-manager';
+import { mcpConfigStore } from '../mcp/mcp-config-store';
 
 interface AgentRunner {
   run(session: Session, prompt: string, existingMessages: Message[]): Promise<void>;
@@ -17,6 +19,7 @@ export class SessionManager {
   private sendToRenderer: (event: ServerEvent) => void;
   private pathResolver: PathResolver;
   private agentRunner: AgentRunner;
+  private mcpManager: MCPManager;
   private activeSessions: Map<string, AbortController> = new Map();
   private promptQueues: Map<string, string[]> = new Map();
   private pendingPermissions: Map<string, (result: PermissionResult) => void> = new Map();
@@ -25,7 +28,11 @@ export class SessionManager {
     this.db = db;
     this.sendToRenderer = sendToRenderer;
     this.pathResolver = new PathResolver();
-    
+
+    // Initialize MCP Manager
+    this.mcpManager = new MCPManager();
+    this.initializeMCP();
+
     const provider = configStore.get('provider');
     const customProtocol = configStore.get('customProtocol');
     const useOpenAI = provider === 'openai' || (provider === 'custom' && customProtocol === 'openai');
@@ -45,12 +52,33 @@ export class SessionManager {
           sendToRenderer: this.sendToRenderer,
           saveMessage: (message: Message) => this.saveMessage(message),
         },
-        this.pathResolver
+        this.pathResolver,
+        this.mcpManager
       );
       console.log('[SessionManager] Using Claude Agent runner');
     }
     
-    console.log('[SessionManager] Initialized with persistent database');
+    console.log('[SessionManager] Initialized with persistent database and MCP support');
+  }
+
+  /**
+   * Initialize MCP servers from configuration
+   */
+  private async initializeMCP(): Promise<void> {
+    try {
+      const servers = mcpConfigStore.getEnabledServers();
+      await this.mcpManager.initializeServers(servers);
+      console.log(`[SessionManager] Initialized ${servers.length} MCP servers`);
+    } catch (error) {
+      console.error('[SessionManager] Failed to initialize MCP servers:', error);
+    }
+  }
+
+  /**
+   * Get MCP manager instance
+   */
+  getMCPManager(): MCPManager {
+    return this.mcpManager;
   }
 
   // Create and start a new session

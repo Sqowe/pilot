@@ -235,3 +235,19 @@ export interface ProviderPresets {
   custom: ProviderPreset;
   openai: ProviderPreset;
 }
+
+// MCP types
+export interface MCPServerInfo {
+  id: string;
+  name: string;
+  connected: boolean;
+  toolCount: number;
+  tools?: MCPToolInfo[];
+}
+
+export interface MCPToolInfo {
+  name: string;
+  description: string;
+  serverId: string;
+  serverName: string;
+}
