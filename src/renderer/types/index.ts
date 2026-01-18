@@ -212,6 +212,7 @@ export interface AppConfig {
   provider: 'openrouter' | 'anthropic' | 'custom' | 'openai';
   apiKey: string;
   baseUrl?: string;
+  customProtocol?: 'anthropic' | 'openai';
   model: string;
   openaiMode?: 'responses' | 'chat';
   claudeCodePath?: string;

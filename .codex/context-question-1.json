@@ -1,22 +1,18 @@
 {
-  "question": "WebSearch 的数据源与实现策略是什么？是否存在现成集成？",
-  "why": "WebSearch 是 Claude 工具集合的一部分，OpenAI 侧缺失实现且缺少配置线索，需决定实现路径避免盲目假设。",
+  "question": "OpenAI 常用模型列表从哪里获取并确认其名称？",
+  "why": "需要在预设中补充 OpenAI 模型列表，避免使用未经验证的模型名称。",
   "evidence": [
     {
-      "source": "readme.md",
-      "detail": "仅提到 WebSearch 需要网络连通（TUN），未说明具体供应商或 API Key。"
+      "source": "https://openrouter.ai/api/v1/models",
+      "detail": "公开 JSON 列表包含 openai/* 模型条目，可作为常用模型参考来源。"
     },
     {
-      "source": "src/main/tools/tool-executor.ts",
-      "detail": "未发现 WebFetch/WebSearch 的实现或依赖。"
-    },
-    {
-      "source": "package.json",
-      "detail": "无第三方 WebSearch 依赖，提示需要选用无 Key 或新增依赖。"
+      "source": "src/main/claude/agent-runner.ts",
+      "detail": "系统提示文本列出 Claude Opus/Sonnet/Haiku 4.5 的最新模型字符串，可用于 Anthropic 预设扩展。"
     }
   ],
-  "decision": "采用无需 API Key 的 DuckDuckGo Instant Answer 作为默认 WebSearch 数据源（仅返回摘要/相关条目），避免新增依赖与配置负担。",
+  "decision": "OpenAI 模型以 openrouter 公共列表中的 openai/* 作为候选，选取常用型号；Anthropic 模型补充系统提示中的最新 4.5 系列字符串。",
   "openRisks": [
-    "Instant Answer 结果有限，可能无法满足复杂检索需求。"
+    "OpenRouter 列表为第三方视角，可能包含尚未在官方直连中公开的名称。"
   ]
 }

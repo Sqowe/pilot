@@ -26,7 +26,9 @@ export class SessionManager {
     this.pathResolver = new PathResolver();
     
     const provider = configStore.get('provider');
-    if (provider === 'openai') {
+    const customProtocol = configStore.get('customProtocol');
+    const useOpenAI = provider === 'openai' || (provider === 'custom' && customProtocol === 'openai');
+    if (useOpenAI) {
       this.agentRunner = new OpenAIResponsesRunner({
         sendToRenderer: this.sendToRenderer,
         saveMessage: (message: Message) => this.saveMessage(message),

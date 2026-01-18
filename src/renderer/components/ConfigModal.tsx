@@ -17,6 +17,7 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
   const [provider, setProvider] = useState<'openrouter' | 'anthropic' | 'custom' | 'openai'>('openrouter');
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
+  const [customProtocol, setCustomProtocol] = useState<'anthropic' | 'openai'>('anthropic');
   const [model, setModel] = useState('');
   const [openaiMode, setOpenaiMode] = useState<'responses' | 'chat'>('responses');
   const [customModel, setCustomModel] = useState('');
@@ -27,6 +28,7 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
   const [success, setSuccess] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const skipPresetApplyRef = useRef(false);
+  const previousProviderRef = useRef(provider);
 
   // Load presets and initial config
   useEffect(() => {
@@ -43,7 +45,8 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
       setProvider(initialConfig.provider);
       setApiKey(initialConfig.apiKey || '');
       setBaseUrl(initialConfig.baseUrl || '');
-      setOpenaiMode(initialConfig.openaiMode || 'responses');
+      setCustomProtocol(initialConfig.customProtocol || 'anthropic');
+      setOpenaiMode('responses');
 
       // Check if model is in preset list or custom
       const preset = presets?.[initialConfig.provider];
@@ -72,13 +75,26 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
       }
       const preset = presets[provider];
       if (preset) {
-        setBaseUrl(preset.baseUrl);
+        if (provider === 'custom') {
+          if (previousProviderRef.current !== 'custom') {
+            setBaseUrl(preset.baseUrl);
+          }
+        } else {
+          setBaseUrl(preset.baseUrl);
+        }
         // Reset to preset model when switching providers
         setUseCustomModel(false);
         setModel(preset.models[0]?.id || '');
       }
     }
+    previousProviderRef.current = provider;
   }, [provider, presets, isInitialLoad]);
+
+  useEffect(() => {
+    if (provider === 'openai' || (provider === 'custom' && customProtocol === 'openai')) {
+      setOpenaiMode('responses');
+    }
+  }, [provider, customProtocol]);
 
   async function loadPresets() {
     try {
@@ -107,12 +123,23 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
     setIsSaving(true);
 
     try {
+      const presetBaseUrl = presets?.[provider]?.baseUrl;
+      const resolvedBaseUrl = provider === 'custom'
+        ? baseUrl.trim()
+        : (presetBaseUrl || baseUrl).trim();
+
+      const resolvedOpenaiMode =
+        provider === 'openai' || (provider === 'custom' && customProtocol === 'openai')
+          ? 'responses'
+          : openaiMode;
+
       await onSave({
         provider,
         apiKey: apiKey.trim(),
-        baseUrl: baseUrl.trim() || undefined,
+        baseUrl: resolvedBaseUrl || undefined,
+        customProtocol,
         model: finalModel,
-        openaiMode,
+        openaiMode: resolvedOpenaiMode,
       });
       setSuccess(true);
       setTimeout(() => {
@@ -199,8 +226,37 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
             )}
           </div>
 
-          {/* Base URL - Editable for custom and openai providers */}
-          {(provider === 'custom' || provider === 'openai') && (
+          {/* Custom Protocol */}
+          {provider === 'custom' && (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
+                <Server className="w-4 h-4" />
+                协议
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  { id: 'anthropic', label: 'Anthropic' },
+                  { id: 'openai', label: 'OpenAI' },
+                ] as const).map((mode) => (
+                  <button
+                    key={mode.id}
+                    onClick={() => setCustomProtocol(mode.id)}
+                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                      customProtocol === mode.id
+                        ? 'bg-accent text-white'
+                        : 'bg-surface-hover text-text-secondary hover:bg-surface-active'
+                    }`}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-text-muted">根据协议选择对应的兼容服务</p>
+            </div>
+          )}
+
+          {/* Base URL - Editable for custom provider */}
+          {provider === 'custom' && (
             <div className="space-y-2">
               <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
                 <Server className="w-4 h-4" />
@@ -211,45 +267,17 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
                 placeholder={
-                  provider === 'openai'
+                  customProtocol === 'openai'
                     ? 'https://api.openai.com/v1'
-                    : 'https://open.bigmodel.cn/api/anthropic'
+                    : (currentPreset?.baseUrl || 'https://api.anthropic.com')
                 }
                 className="w-full px-4 py-3 rounded-xl bg-background border border-border text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all"
               />
               <p className="text-xs text-text-muted">
-                {provider === 'openai'
+                {customProtocol === 'openai'
                   ? '输入兼容 OpenAI API 的服务地址'
                   : '输入兼容 Anthropic API 的服务地址'}
               </p>
-            </div>
-          )}
-
-          {provider === 'openai' && (
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
-                <Server className="w-4 h-4" />
-                API 模式
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                {([
-                  { id: 'responses', label: 'Responses' },
-                  { id: 'chat', label: 'Chat Completions' },
-                ] as const).map((mode) => (
-                  <button
-                    key={mode.id}
-                    onClick={() => setOpenaiMode(mode.id)}
-                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                      openaiMode === mode.id
-                        ? 'bg-accent text-white'
-                        : 'bg-surface-hover text-text-secondary hover:bg-surface-active'
-                    }`}
-                  >
-                    {mode.label}
-                  </button>
-                ))}
-              </div>
-              <p className="text-xs text-text-muted">第三方接口通常只支持 Chat Completions</p>
             </div>
           )}
 
@@ -281,7 +309,7 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
                 placeholder={
                   provider === 'openrouter'
                     ? 'openai/gpt-4o 或其他模型ID'
-                    : provider === 'openai'
+                    : provider === 'openai' || (provider === 'custom' && customProtocol === 'openai')
                       ? 'gpt-4o'
                       : 'claude-sonnet-4'
                 }

@@ -3,5 +3,5 @@
   "techChoiceUnderstood": true,
   "risksIdentified": true,
   "verificationKnown": true,
-  "notes": "已确定 WebSearch 默认采用 DuckDuckGo Instant Answer；Task/Skill 将在下一步单独规划。"
+  "notes": "模型列表来源：OpenRouter 公共模型列表 + Claude 系统提示中的最新模型字符串。"
 }

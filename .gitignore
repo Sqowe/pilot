@@ -41,6 +41,9 @@ coverage/
 *.pem
 *.p12
 
-# Claude
+# Claude 
 .claude/*
 !.claude/skills/
+
+# codex
+.codex/*

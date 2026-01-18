@@ -1,15 +1,14 @@
 {
   "known": [
-    "OpenAI 工具 schema 需要严格 required 列表，否则 provider 抛出 400。",
-    "OpenAI 侧缺少 WebFetch/WebSearch/Task/Skill 工具实现。",
-    "ToolExecutor 目前只支持文件/命令/搜索类工具。"
+    "Provider presets 位于 src/main/config/config-store.ts。",
+    "Claude 系统提示文本包含最新 Anthropic 模型字符串。"
   ],
   "unknown": [
-    "Task/Skill 工具是否允许先做最小可用实现（返回说明/占位），还是必须具备完整功能？",
-    "WebFetch/WebSearch 是否需要新增权限描述或风险提示？"
+    "OpenAI 常用模型的公开列表来源与可用性。",
+    "新增模型是否需要同步到其他 UI 文案或默认值。"
   ],
   "priority": [
-    "high: Task/Skill 是否允许最小实现或需完整能力。"
+    "high: OpenAI 模型列表来源确认。"
   ],
   "notes": "sequential-thinking tool unavailable; used shrimp-task-manager process_thought as fallback."
 }

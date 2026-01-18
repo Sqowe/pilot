@@ -217,3 +217,35 @@ Step1（OpenAI provider 配置与 UI）未执行自动化测试；需手动验�
 
 命令: `npm test -- --run`
 结果: 未发现测试文件，Vitest 退出码 1（No test files found）。
+
+---
+
+- 日期: 2026-01-18T06:40:03Z
+- 执行者: Codex
+
+命令: `npm test -- --run`
+结果: 未发现测试文件，Vitest 退出码 1（No test files found）；提示 Vite CJS Node API deprecation 警告。
+
+---
+
+- 日期: 2026-01-18T07:18:30Z
+- 执行者: Codex
+
+命令: `npm test -- --run`
+结果: 未发现测试文件，Vitest 退出码 1（No test files found）；提示 Vite CJS Node API deprecation 警告。
+
+---
+
+- 日期: 2026-01-18T07:20:13Z
+- 执行者: Codex
+
+命令: `npm test -- --run`
+结果: 未发现测试文件，Vitest 退出码 1（No test files found）；提示 Vite CJS Node API deprecation 警告。
+
+---
+
+- 日期: 2026-01-18T07:21:59Z
+- 执行者: Codex
+
+命令: `npm test -- --run`
+结果: 未发现测试文件，Vitest 退出码 1（No test files found）；提示 Vite CJS Node API deprecation 警告。

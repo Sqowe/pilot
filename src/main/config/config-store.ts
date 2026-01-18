@@ -10,6 +10,7 @@ export interface AppConfig {
   // API credentials
   apiKey: string;
   baseUrl?: string;
+  customProtocol?: 'anthropic' | 'openai';
   
   // Model selection
   model: string;
@@ -31,6 +32,7 @@ const defaultConfig: AppConfig = {
   provider: 'openrouter',
   apiKey: '',
   baseUrl: 'https://openrouter.ai/api',
+  customProtocol: 'anthropic',
   model: 'anthropic/claude-sonnet-4.5',
   openaiMode: 'responses',
   claudeCodePath: '',
@@ -56,8 +58,9 @@ export const PROVIDER_PRESETS = {
     name: 'Anthropic',
     baseUrl: 'https://api.anthropic.com',
     models: [
-      { id: 'claude-sonnet-4-5-20250514', name: 'Claude Sonnet 4.5' },
-      { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
+      { id: 'claude-sonnet-4-5', name: 'claude-sonnet-4-5' },
+      { id: 'claude-opus-4-5', name: 'claude-opus-4-5' },
+      { id: 'claude-haiku-4-5', name: 'claude-haiku-4-5' },
     ],
     keyPlaceholder: 'sk-ant-...',
     keyHint: '从 console.anthropic.com 获取',
@@ -66,8 +69,9 @@ export const PROVIDER_PRESETS = {
     name: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
     models: [
-      { id: 'gpt-4.1', name: 'GPT-4.1' },
-      { id: 'gpt-4o', name: 'GPT-4o' },
+      { id: 'gpt-5.2', name: 'gpt-5.2' },
+      { id: 'gpt-5.2-codex', name: 'gpt-5.2-codex' },
+      { id: 'gpt-5.2-mini', name: 'gpt-5.2-mini' },
     ],
     keyPlaceholder: 'sk-...',
     keyHint: '从 platform.openai.com 获取',
@@ -105,6 +109,7 @@ class ConfigStore {
       provider: this.store.get('provider'),
       apiKey: this.store.get('apiKey'),
       baseUrl: this.store.get('baseUrl'),
+      customProtocol: this.store.get('customProtocol'),
       model: this.store.get('model'),
       openaiMode: this.store.get('openaiMode'),
       claudeCodePath: this.store.get('claudeCodePath'),
@@ -168,7 +173,11 @@ class ConfigStore {
     delete process.env.OPENAI_MODEL;
     delete process.env.OPENAI_API_MODE;
     
-    if (config.provider === 'openai') {
+    const useOpenAI =
+      config.provider === 'openai' ||
+      (config.provider === 'custom' && config.customProtocol === 'openai');
+
+    if (useOpenAI) {
       if (config.apiKey) {
         process.env.OPENAI_API_KEY = config.apiKey;
       }
@@ -178,9 +187,7 @@ class ConfigStore {
       if (config.model) {
         process.env.OPENAI_MODEL = config.model;
       }
-      if (config.openaiMode) {
-        process.env.OPENAI_API_MODE = config.openaiMode;
-      }
+      process.env.OPENAI_API_MODE = 'responses';
     } else {
       if (config.provider === 'anthropic') {
         // Anthropic direct API: use ANTHROPIC_API_KEY (standard SDK behavior)
