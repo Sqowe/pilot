@@ -13,6 +13,61 @@ interface ConfigModalProps {
 // Check if running in Electron
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
+const FALLBACK_PRESETS: ProviderPresets = {
+  openrouter: {
+    name: 'OpenRouter',
+    baseUrl: 'https://openrouter.ai/api',
+    models: [
+      { id: 'anthropic/claude-sonnet-4.5', name: 'Claude Sonnet 4.5' },
+      { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4' },
+      { id: 'moonshotai/kimi-k2-0905', name: 'Kimi K2' },
+      { id: 'z-ai/glm-4.7', name: 'GLM-4.7' },
+    ],
+    keyPlaceholder: 'sk-or-v1-...',
+    keyHint: '从 openrouter.ai/keys 获取',
+  },
+  anthropic: {
+    name: 'Anthropic',
+    baseUrl: 'https://api.anthropic.com',
+    models: [
+      { id: 'claude-sonnet-4-5', name: 'claude-sonnet-4-5' },
+      { id: 'claude-opus-4-5', name: 'claude-opus-4-5' },
+      { id: 'claude-haiku-4-5', name: 'claude-haiku-4-5' },
+    ],
+    keyPlaceholder: 'sk-ant-...',
+    keyHint: '从 console.anthropic.com 获取',
+  },
+  openai: {
+    name: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    models: [
+      { id: 'gpt-5.2', name: 'gpt-5.2' },
+      { id: 'gpt-5.2-codex', name: 'gpt-5.2-codex' },
+      { id: 'gpt-5.2-mini', name: 'gpt-5.2-mini' },
+    ],
+    keyPlaceholder: 'sk-...',
+    keyHint: '从 platform.openai.com 获取',
+  },
+  custom: {
+    name: '更多模型',
+    baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+    models: [
+      { id: 'glm-4.7', name: 'GLM-4.7' },
+      { id: 'glm-4-plus', name: 'GLM-4-Plus' },
+      { id: 'glm-4-air', name: 'GLM-4-Air' },
+    ],
+    keyPlaceholder: 'sk-xxx',
+    keyHint: '输入你的 API Key',
+  },
+};
+
+const PROVIDER_LABELS: Record<'openrouter' | 'anthropic' | 'openai' | 'custom', string> = {
+  openrouter: 'OpenRouter',
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  custom: 'Custom',
+};
+
 export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun }: ConfigModalProps) {
   const [provider, setProvider] = useState<'openrouter' | 'anthropic' | 'custom' | 'openai'>('openrouter');
   const [apiKey, setApiKey] = useState('');
@@ -22,7 +77,9 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
   const [openaiMode, setOpenaiMode] = useState<'responses' | 'chat'>('responses');
   const [customModel, setCustomModel] = useState('');
   const [useCustomModel, setUseCustomModel] = useState(false);
-  const [presets, setPresets] = useState<ProviderPresets | null>(null);
+  const [presets, setPresets] = useState<ProviderPresets | null>(
+    isElectron ? null : FALLBACK_PRESETS
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
@@ -32,9 +89,12 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
 
   // Load presets and initial config
   useEffect(() => {
-    if (isOpen && isElectron) {
-      setIsInitialLoad(true);
+    if (!isOpen) return;
+    setIsInitialLoad(true);
+    if (isElectron) {
       loadPresets();
+    } else {
+      setPresets(FALLBACK_PRESETS);
     }
   }, [isOpen]);
 
@@ -65,6 +125,17 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
       setIsInitialLoad(false);
     }
   }, [initialConfig, presets]);
+
+  useEffect(() => {
+    if (!presets || !isInitialLoad || initialConfig) return;
+    const preset = presets[provider];
+    if (preset) {
+      setBaseUrl(preset.baseUrl);
+      setUseCustomModel(false);
+      setModel(preset.models[0]?.id || '');
+    }
+    setIsInitialLoad(false);
+  }, [presets, isInitialLoad, initialConfig, provider]);
 
   // Update baseUrl and model when provider changes (but not on initial load)
   useEffect(() => {
@@ -102,6 +173,7 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
       setPresets(loadedPresets);
     } catch (err) {
       console.error('Failed to load presets:', err);
+      setPresets(FALLBACK_PRESETS);
     }
   }
 
@@ -202,7 +274,7 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
                       : 'bg-surface-hover text-text-secondary hover:bg-surface-active'
                   }`}
                 >
-                  {presets?.[p]?.name || p}
+                  {presets?.[p]?.name || PROVIDER_LABELS[p] || p}
                 </button>
               ))}
             </div>
@@ -321,11 +393,17 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
                 onChange={(e) => setModel(e.target.value)}
                 className="w-full px-4 py-3 rounded-xl bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all appearance-none cursor-pointer"
               >
-                {currentPreset?.models.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
+                {currentPreset?.models.length ? (
+                  currentPreset.models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))
+                ) : (
+                  <option value="" disabled>
+                    暂无可用模型
                   </option>
-                ))}
+                )}
               </select>
             )}
             {useCustomModel && (
