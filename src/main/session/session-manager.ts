@@ -3,6 +3,7 @@ import type { Session, Message, ServerEvent, PermissionResult, ContentBlock, Tex
 import type { DatabaseInstance, TraceStepRow } from '../db/database';
 import { PathResolver } from '../sandbox/path-resolver';
 import { SandboxAdapter, getSandboxAdapter, initializeSandbox } from '../sandbox/sandbox-adapter';
+import { SandboxSync } from '../sandbox/sandbox-sync';
 import { ClaudeAgentRunner } from '../claude/agent-runner';
 import { OpenAIResponsesRunner } from '../openai/responses-runner';
 import { configStore } from '../config/config-store';
@@ -356,9 +357,21 @@ export class SessionManager {
   }
 
   // Delete a session
-  deleteSession(sessionId: string): void {
+  async deleteSession(sessionId: string): Promise<void> {
     // Stop if running
     this.stopSession(sessionId);
+
+    // Sync and cleanup sandbox if it exists for this session
+    if (SandboxSync.hasSession(sessionId)) {
+      log('[SessionManager] Cleaning up sandbox for session:', sessionId);
+      try {
+        await SandboxSync.syncAndCleanup(sessionId);
+        log('[SessionManager] Sandbox cleanup complete for session:', sessionId);
+      } catch (error) {
+        logError('[SessionManager] Failed to cleanup sandbox:', error);
+        // Continue with session deletion even if sandbox cleanup fails
+      }
+    }
 
     // Delete from database (messages will be deleted automatically via CASCADE)
     this.db.sessions.delete(sessionId);

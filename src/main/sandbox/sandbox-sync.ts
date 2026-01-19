@@ -2,9 +2,16 @@
  * SandboxSync - Manages file synchronization between Windows and WSL sandbox
  *
  * This module provides complete isolation by:
- * 1. Copying files from Windows to an isolated WSL directory (/sandbox/workspace/)
+ * 1. Copying files from Windows to an isolated WSL directory (~/.claude/sandbox/{sessionId})
  * 2. Running all operations within the isolated directory
- * 3. Syncing changes back to Windows when the session ends
+ * 3. Syncing changes back to Windows when requested
+ * 
+ * Lifecycle:
+ * - Sandbox is created when a conversation starts (first message)
+ * - Sandbox persists across multiple messages in the same conversation
+ * - Sandbox is deleted when:
+ *   - User deletes the conversation
+ *   - App is closed/shutdown
  */
 
 import { exec } from 'child_process';
@@ -22,6 +29,7 @@ export interface SyncSession {
   initialized: boolean;
   fileCount?: number;
   totalSize?: number;
+  lastSyncTime?: number;       // Last sync timestamp
 }
 
 export interface SyncResult {
@@ -61,14 +69,50 @@ export class SandboxSync {
   private static readonly SANDBOX_BASE = '$HOME/.claude/sandbox';
 
   /**
-   * Initialize a new sync session
-   * Copies files from Windows to WSL sandbox
+   * Check if a sandbox session already exists for the given session ID
+   */
+  static hasSession(sessionId: string): boolean {
+    return sessions.has(sessionId);
+  }
+
+  /**
+   * Get all active session IDs
+   */
+  static getAllSessionIds(): string[] {
+    return Array.from(sessions.keys());
+  }
+
+  /**
+   * Initialize a new sync session or return existing one
+   * Copies files from Windows to WSL sandbox (only on first init)
    */
   static async initSync(
     windowsPath: string,
     sessionId: string,
     distro: string
   ): Promise<SyncResult> {
+    // Check if session already exists (sandbox persists across messages)
+    const existingSession = sessions.get(sessionId);
+    if (existingSession && existingSession.initialized) {
+      log(`[SandboxSync] Reusing existing sandbox for session ${sessionId}`);
+      log(`[SandboxSync]   Sandbox path: ${existingSession.sandboxPath}`);
+      
+      // Verify sandbox still exists in WSL
+      try {
+        await this.wslExec(distro, `test -d "${existingSession.sandboxPath}"`);
+        return {
+          success: true,
+          sandboxPath: existingSession.sandboxPath,
+          fileCount: existingSession.fileCount || 0,
+          totalSize: existingSession.totalSize || 0,
+        };
+      } catch {
+        // Sandbox was deleted externally, reinitialize
+        log(`[SandboxSync] Sandbox directory no longer exists, reinitializing...`);
+        sessions.delete(sessionId);
+      }
+    }
+
     log(`[SandboxSync] Initializing sync for session ${sessionId}`);
     log(`[SandboxSync]   Windows path: ${windowsPath}`);
     log(`[SandboxSync]   Distro: ${distro}`);
@@ -112,6 +156,7 @@ export class SandboxSync {
         initialized: true,
         fileCount,
         totalSize,
+        lastSyncTime: Date.now(),
       };
       sessions.set(sessionId, session);
 
@@ -136,10 +181,10 @@ export class SandboxSync {
   }
 
   /**
-   * Sync changes from sandbox back to Windows
-   * Called when session ends
+   * Sync changes from sandbox back to Windows (without cleanup)
+   * Called after each message to persist changes while keeping sandbox alive
    */
-  static async finalSync(sessionId: string): Promise<SyncResult> {
+  static async syncToWindows(sessionId: string): Promise<SyncResult> {
     const session = sessions.get(sessionId);
     if (!session) {
       logError(`[SandboxSync] Session not found: ${sessionId}`);
@@ -152,7 +197,7 @@ export class SandboxSync {
       };
     }
 
-    log(`[SandboxSync] Final sync for session ${sessionId}`);
+    log(`[SandboxSync] Syncing to Windows for session ${sessionId}`);
     log(`[SandboxSync]   Sandbox: ${session.sandboxPath}`);
     log(`[SandboxSync]   Windows: ${session.windowsPath}`);
 
@@ -168,7 +213,10 @@ export class SandboxSync {
 
       await this.wslExec(session.distro, rsyncCmd, 300000); // 5 min timeout
 
-      log(`[SandboxSync] Final sync complete for session ${sessionId}`);
+      // Update last sync time
+      session.lastSyncTime = Date.now();
+
+      log(`[SandboxSync] Sync to Windows complete for session ${sessionId}`);
 
       return {
         success: true,
@@ -177,7 +225,7 @@ export class SandboxSync {
         totalSize: session.totalSize || 0,
       };
     } catch (error) {
-      logError('[SandboxSync] Final sync failed:', error);
+      logError('[SandboxSync] Sync to Windows failed:', error);
       return {
         success: false,
         sandboxPath: session.sandboxPath,
@@ -189,7 +237,15 @@ export class SandboxSync {
   }
 
   /**
-   * Clean up sandbox directory
+   * Sync changes from sandbox back to Windows (legacy alias for syncToWindows)
+   * @deprecated Use syncToWindows instead
+   */
+  static async finalSync(sessionId: string): Promise<SyncResult> {
+    return this.syncToWindows(sessionId);
+  }
+
+  /**
+   * Clean up sandbox directory for a specific session
    */
   static async cleanup(sessionId: string): Promise<void> {
     const session = sessions.get(sessionId);
@@ -206,6 +262,58 @@ export class SandboxSync {
     } catch (error) {
       logError('[SandboxSync] Cleanup failed:', error);
     }
+  }
+
+  /**
+   * Sync to Windows and then cleanup the sandbox
+   * Called when a session/conversation is deleted
+   */
+  static async syncAndCleanup(sessionId: string): Promise<SyncResult> {
+    log(`[SandboxSync] Sync and cleanup for session ${sessionId}`);
+    
+    // First sync changes back to Windows
+    const syncResult = await this.syncToWindows(sessionId);
+    
+    // Then cleanup the sandbox
+    await this.cleanup(sessionId);
+    
+    return syncResult;
+  }
+
+  /**
+   * Cleanup all active sandbox sessions
+   * Called on app shutdown
+   */
+  static async cleanupAllSessions(): Promise<void> {
+    const sessionIds = Array.from(sessions.keys());
+    
+    if (sessionIds.length === 0) {
+      log('[SandboxSync] No active sessions to cleanup');
+      return;
+    }
+
+    log(`[SandboxSync] Cleaning up ${sessionIds.length} active session(s)...`);
+
+    // Sync and cleanup all sessions in parallel
+    const results = await Promise.allSettled(
+      sessionIds.map(async (sessionId) => {
+        try {
+          // First sync to preserve changes
+          await this.syncToWindows(sessionId);
+          // Then cleanup
+          await this.cleanup(sessionId);
+          return { sessionId, success: true };
+        } catch (error) {
+          logError(`[SandboxSync] Failed to cleanup session ${sessionId}:`, error);
+          return { sessionId, success: false, error };
+        }
+      })
+    );
+
+    const succeeded = results.filter(r => r.status === 'fulfilled' && r.value.success).length;
+    const failed = results.length - succeeded;
+
+    log(`[SandboxSync] Cleanup complete: ${succeeded} succeeded, ${failed} failed`);
   }
 
   /**

@@ -1528,18 +1528,20 @@ Cowork mode includes **WebFetch** and **WebSearch** tools for retrieving web con
       this.activeControllers.delete(session.id);
       this.pathResolver.unregisterSession(session.id);
       
-      // Final sync: copy changes from sandbox back to Windows
+      // Sync changes from sandbox back to Windows (but don't cleanup - sandbox persists)
+      // Cleanup happens on session delete or app shutdown
       if (useSandboxIsolation && sandboxPath) {
-        log('[ClaudeAgentRunner] Running final sync from sandbox to Windows...');
-        const syncResult = await SandboxSync.finalSync(session.id);
+        log('[ClaudeAgentRunner] Syncing sandbox changes to Windows (sandbox persists for this conversation)...');
+        const syncResult = await SandboxSync.syncToWindows(session.id);
         if (syncResult.success) {
-          log('[ClaudeAgentRunner] Final sync completed successfully');
+          log('[ClaudeAgentRunner] Sync completed successfully');
         } else {
-          logError('[ClaudeAgentRunner] Final sync failed:', syncResult.error);
+          logError('[ClaudeAgentRunner] Sync failed:', syncResult.error);
         }
-        
-        // Cleanup sandbox directory
-        await SandboxSync.cleanup(session.id);
+        // Note: Sandbox is NOT cleaned up here - it persists across messages in the same conversation
+        // Cleanup occurs when:
+        // 1. User deletes the conversation (SessionManager.deleteSession)
+        // 2. App is closed (SandboxSync.cleanupAllSessions)
       }
     }
   }

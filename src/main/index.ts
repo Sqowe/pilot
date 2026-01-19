@@ -7,6 +7,7 @@ import { configStore, PROVIDER_PRESETS, type AppConfig } from './config/config-s
 import { mcpConfigStore } from './mcp/mcp-config-store';
 import { credentialsStore, type UserCredential } from './credentials/credentials-store';
 import { getSandboxAdapter, shutdownSandbox } from './sandbox/sandbox-adapter';
+import { SandboxSync } from './sandbox/sandbox-sync';
 import { WSLBridge } from './sandbox/wsl-bridge';
 import type { MCPServerConfig } from './mcp/mcp-manager';
 import type { ClientEvent, ServerEvent } from '../renderer/types';
@@ -141,17 +142,52 @@ app.whenReady().then(async () => {
   });
 });
 
-// Handle app quit
-app.on('window-all-closed', async () => {
-  // Shutdown sandbox before quitting
+// Flag to prevent double cleanup
+let isCleaningUp = false;
+
+/**
+ * Cleanup all sandbox resources
+ * Called on app quit (both Windows and macOS)
+ */
+async function cleanupSandboxResources(): Promise<void> {
+  if (isCleaningUp) {
+    log('[App] Cleanup already in progress, skipping...');
+    return;
+  }
+  isCleaningUp = true;
+
+  // Cleanup all sandbox sessions (sync changes back to Windows first)
+  try {
+    log('[App] Cleaning up all sandbox sessions...');
+    await SandboxSync.cleanupAllSessions();
+    log('[App] Sandbox sessions cleanup complete');
+  } catch (error) {
+    logError('[App] Error cleaning up sandbox sessions:', error);
+  }
+
+  // Shutdown sandbox adapter
   try {
     await shutdownSandbox();
     log('[App] Sandbox shutdown complete');
   } catch (error) {
     logError('[App] Error shutting down sandbox:', error);
   }
+}
+
+// Handle app quit - window-all-closed (primary for Windows/Linux)
+app.on('window-all-closed', async () => {
+  await cleanupSandboxResources();
 
   if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
+// Handle app quit - before-quit (for macOS Cmd+Q and other quit methods)
+app.on('before-quit', async (event) => {
+  if (!isCleaningUp) {
+    event.preventDefault();
+    await cleanupSandboxResources();
     app.quit();
   }
 });
