@@ -34,6 +34,8 @@ export type MessageRole = 'user' | 'assistant' | 'system';
 
 export type ContentBlock =
   | TextContent
+  | ImageContent
+  | FileAttachmentContent
   | ToolUseContent
   | ToolResultContent
   | ThinkingContent;
@@ -41,6 +43,23 @@ export type ContentBlock =
 export interface TextContent {
   type: 'text';
   text: string;
+}
+
+export interface ImageContent {
+  type: 'image';
+  source: {
+    type: 'base64';
+    media_type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+    data: string;
+  };
+}
+
+export interface FileAttachmentContent {
+  type: 'file_attachment';
+  filename: string;
+  relativePath: string; // Path relative to session's .tmp folder
+  size: number;
+  mimeType?: string;
 }
 
 export interface ToolUseContent {
@@ -156,8 +175,8 @@ export interface PermissionRule {
 
 // IPC Event types
 export type ClientEvent =
-  | { type: 'session.start'; payload: { title: string; prompt: string; cwd?: string; allowedTools?: string[] } }
-  | { type: 'session.continue'; payload: { sessionId: string; prompt: string } }
+  | { type: 'session.start'; payload: { title: string; prompt: string; cwd?: string; allowedTools?: string[]; content?: ContentBlock[] } }
+  | { type: 'session.continue'; payload: { sessionId: string; prompt: string; content?: ContentBlock[] } }
   | { type: 'session.stop'; payload: { sessionId: string } }
   | { type: 'session.delete'; payload: { sessionId: string } }
   | { type: 'session.list'; payload: Record<string, never> }

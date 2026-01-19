@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeKatex from 'rehype-katex';
 import { useIPC } from '../hooks/useIPC';
 import { useAppStore } from '../store';
-import type { Message, ContentBlock, ToolUseContent, ToolResultContent, QuestionItem } from '../types';
+import type { Message, ContentBlock, ToolUseContent, ToolResultContent, QuestionItem, FileAttachmentContent } from '../types';
 import {
   ChevronDown,
   ChevronRight,
@@ -23,6 +23,7 @@ import {
   CheckSquare,
   Clock,
   Plug,
+  FileText,
 } from 'lucide-react';
 
 interface MessageCardProps {
@@ -105,11 +106,11 @@ function ContentBlockView({ block, isUser, isStreaming, allBlocks, message }: Co
     case 'text': {
       const textBlock = block as { type: 'text'; text: string };
       const text = textBlock.text || '';
-      
+
       if (!text) {
         return <span className="text-text-muted italic">(empty text)</span>;
       }
-      
+
       // Simple text display for user messages, Markdown for assistant
       if (isUser) {
         return (
@@ -119,7 +120,7 @@ function ContentBlockView({ block, isUser, isStreaming, allBlocks, message }: Co
           </p>
         );
       }
-      
+
       return (
         <div className="prose-chat max-w-none text-text-primary">
           <ReactMarkdown
@@ -222,6 +223,36 @@ function ContentBlockView({ block, isUser, isStreaming, allBlocks, message }: Co
           {isStreaming && (
             <span className="inline-block w-2 h-4 bg-accent ml-1 animate-pulse" />
           )}
+        </div>
+      );
+    }
+
+    case 'image': {
+      const imageBlock = block as { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+      const { source } = imageBlock;
+      const imageSrc = `data:${source.media_type};base64,${source.data}`;
+
+      return (
+        <div className={`${isUser ? 'inline-block' : ''}`}>
+          <img
+            src={imageSrc}
+            alt="Pasted content"
+            className="w-full max-w-full rounded-lg border border-border"
+            style={{ maxHeight: '600px', objectFit: 'contain' }}
+          />
+        </div>
+      );
+    }
+
+    case 'file_attachment': {
+      const fileBlock = block as FileAttachmentContent;
+
+      return (
+        <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-muted border border-border">
+          <FileText className="w-4 h-4 text-accent flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm text-text-primary truncate">{fileBlock.filename}</p>
+          </div>
         </div>
       );
     }

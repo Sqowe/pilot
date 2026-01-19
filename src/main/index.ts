@@ -175,6 +175,19 @@ ipcMain.handle('shell.openExternal', async (_event, url: string) => {
   return shell.openExternal(url);
 });
 
+ipcMain.handle('dialog.selectFiles', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile', 'multiSelections'],
+    title: 'Select Files',
+  });
+
+  if (result.canceled) {
+    return [];
+  }
+
+  return result.filePaths;
+});
+
 // Config IPC handlers
 ipcMain.handle('config.get', () => {
   return configStore.getAll();
@@ -399,13 +412,15 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
         event.payload.title,
         event.payload.prompt,
         event.payload.cwd,
-        event.payload.allowedTools
+        event.payload.allowedTools,
+        event.payload.content
       );
 
     case 'session.continue':
       return sessionManager.continueSession(
         event.payload.sessionId,
-        event.payload.prompt
+        event.payload.prompt,
+        event.payload.content
       );
 
     case 'session.stop':
