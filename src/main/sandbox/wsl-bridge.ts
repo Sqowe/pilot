@@ -232,8 +232,9 @@ export class WSLBridge implements SandboxExecutor {
         }
       }
 
-      // Check if Python is available
+      // Check if Python and pip are available
       let pythonAvailable = false;
+      let pipAvailable = false;
       let pythonVersion = '';
       try {
         const pythonResult = await execAsync(
@@ -245,6 +246,19 @@ export class WSLBridge implements SandboxExecutor {
           pythonAvailable = true;
           pythonVersion = output;
           log('[WSL] Python found:', pythonVersion);
+          
+          // Also check if pip is available
+          try {
+            await execAsync(
+              `wsl -d ${selectedDistro} -e python3 -m pip --version`,
+              { timeout: 10000, encoding: 'utf-8' }
+            );
+            pipAvailable = true;
+            log('[WSL] pip is available');
+          } catch {
+            log('[WSL] pip is NOT available (python3-pip not installed)');
+            pipAvailable = false;
+          }
         }
       } catch (error) {
         log('[WSL] Python not found');
@@ -256,6 +270,7 @@ export class WSLBridge implements SandboxExecutor {
         distro: selectedDistro,
         nodeAvailable,
         pythonAvailable,
+        pipAvailable,
         claudeCodeAvailable,
         version: nodeVersion,
         pythonVersion,
@@ -435,6 +450,50 @@ export class WSLBridge implements SandboxExecutor {
   }
 
   /**
+   * Install pip in WSL (when Python exists but pip doesn't)
+   */
+  static async installPipInWSL(distro: string): Promise<boolean> {
+    log('[WSL] Installing pip in WSL...');
+    
+    try {
+      // Method 1: Try apt-get (requires sudo)
+      try {
+        await execAsync(`wsl -d ${distro} -e sudo -n true`, { timeout: 5000 });
+        log('[WSL] Passwordless sudo available, installing python3-pip via apt...');
+        await execAsync(
+          `wsl -d ${distro} -e bash -c "sudo DEBIAN_FRONTEND=noninteractive apt-get update -y && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip"`,
+          { timeout: 180000, encoding: 'utf-8' }
+        );
+      } catch {
+        log('[WSL] Passwordless sudo not available, trying get-pip.py...');
+        // Method 2: Use get-pip.py (no sudo required for user install)
+        await execAsync(
+          `wsl -d ${distro} -e bash -c "curl -sSL https://bootstrap.pypa.io/get-pip.py | python3 - --user"`,
+          { timeout: 120000, encoding: 'utf-8' }
+        );
+      }
+
+      // Verify installation
+      const verifyResult = await execAsync(
+        `wsl -d ${distro} -e python3 -m pip --version`,
+        { timeout: 10000, encoding: 'utf-8' }
+      );
+      
+      const version = verifyResult.stdout.trim();
+      if (version.includes('pip')) {
+        log('[WSL] pip installed:', version);
+        return true;
+      } else {
+        log('[WSL] pip installation verification failed:', version);
+        return false;
+      }
+    } catch (error) {
+      logError('[WSL] Failed to install pip:', error);
+      return false;
+    }
+  }
+
+  /**
    * Install claude-code in WSL
    */
   static async installClaudeCodeInWSL(distro: string): Promise<boolean> {
@@ -531,6 +590,13 @@ export class WSLBridge implements SandboxExecutor {
       if (!installed) {
         log('[WSL] Failed to install Python in WSL (non-critical, continuing...)');
         // Python is optional - some skills may not work but core functionality is OK
+      }
+    } else if (!status.pipAvailable) {
+      // Python is available but pip is not - install pip separately
+      log('[WSL] pip not found, installing...');
+      const pipInstalled = await WSLBridge.installPipInWSL(this.distro);
+      if (!pipInstalled) {
+        log('[WSL] Failed to install pip in WSL (non-critical, continuing...)');
       }
     }
 

@@ -46,7 +46,7 @@ const DANGEROUS_COMMAND_PATTERNS = [
   /\bcurl\s+.*\|\s*(ba)?sh/,                     // curl | bash
   /\bwget\s+.*\|\s*(ba)?sh/,                     // wget | bash
   />\s*\/etc\//,                                 // redirect to /etc
-  />\s*\/dev\//,                                 // redirect to devices
+  />\s*\/dev\/(?!null)/,                         // redirect to devices (except /dev/null which is safe)
 ];
 
 export class PathGuard {

@@ -51,6 +51,7 @@ export interface WSLStatus {
   distro?: string;
   nodeAvailable?: boolean;
   pythonAvailable?: boolean;
+  pipAvailable?: boolean;
   claudeCodeAvailable?: boolean;
   version?: string;
   pythonVersion?: string;

@@ -608,6 +608,9 @@ Then follow the workflow described in that file.
     // Sandbox isolation state (defined outside try for finally access)
     let sandboxPath: string | null = null;
     let useSandboxIsolation = false;
+    
+    // Track last executed tool for completion message generation
+    let lastExecutedToolName: string | null = null;
 
     try {
       this.pathResolver.registerSession(session.id, session.mountedPaths);
@@ -646,6 +649,43 @@ Then follow the workflow described in that file.
           useSandboxIsolation = true;
           log(`[ClaudeAgentRunner] Sandbox initialized: ${sandboxPath}`);
           log(`[ClaudeAgentRunner]   Files: ${syncResult.fileCount}, Size: ${syncResult.totalSize} bytes`);
+          
+          // Copy built-in skills to sandbox ~/.claude/skills/
+          const builtinSkillsPath = this.getBuiltinSkillsPath();
+          if (builtinSkillsPath && fs.existsSync(builtinSkillsPath)) {
+            try {
+              const distro = sandbox.wslStatus!.distro!;
+              const sandboxSkillsPath = `${sandboxPath}/.claude/skills`;
+              
+              // Create .claude/skills directory in sandbox
+              const { execSync } = require('child_process');
+              execSync(`wsl -d ${distro} -e mkdir -p "${sandboxSkillsPath}"`, { 
+                encoding: 'utf-8', 
+                timeout: 10000 
+              });
+              
+              // Use rsync to recursively copy all skills (much faster and handles subdirectories)
+              const wslSourcePath = pathConverter.toWSL(builtinSkillsPath);
+              const rsyncCmd = `rsync -av "${wslSourcePath}/" "${sandboxSkillsPath}/"`;
+              log(`[ClaudeAgentRunner] Copying skills with rsync: ${rsyncCmd}`);
+              
+              execSync(`wsl -d ${distro} -e bash -c "${rsyncCmd}"`, {
+                encoding: 'utf-8',
+                timeout: 120000  // 2 min timeout for large skill directories
+              });
+              
+              // List copied skills for verification
+              const copiedSkills = execSync(`wsl -d ${distro} -e ls "${sandboxSkillsPath}"`, {
+                encoding: 'utf-8',
+                timeout: 10000
+              }).trim().split('\n').filter(Boolean);
+              
+              log(`[ClaudeAgentRunner] Built-in skills copied to sandbox: ${sandboxSkillsPath}`);
+              log(`[ClaudeAgentRunner]   Skills: ${copiedSkills.join(', ')}`);
+            } catch (error) {
+              logError('[ClaudeAgentRunner] Failed to copy skills to sandbox:', error);
+            }
+          }
         } else {
           logError('[ClaudeAgentRunner] Sandbox sync failed:', syncResult.error);
           log('[ClaudeAgentRunner] Falling back to /mnt/ access (less secure)');
@@ -931,7 +971,7 @@ Then follow the workflow described in that file.
         // Bash is also here - we use PreToolUse hook to intercept and wrap for WSL
         allowedTools: ['Skill', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'LS', 'WebFetch', 'WebSearch', 'TodoRead', 'TodoWrite', 'AskUserQuestion', 'Task', 'Bash'],
         
-        // WSL Sandbox: Use PreToolUse hook to intercept Bash commands and wrap for WSL execution
+        // WSL Sandbox: Use PreToolUse hook to intercept tools for sandbox path translation
         hooks: {
           PreToolUse: [{
             // Match all tools - we filter by tool_name inside the hook
@@ -939,14 +979,231 @@ Then follow the workflow described in that file.
               const toolName = hookInput.tool_name;
               const toolInput = hookInput.tool_input as Record<string, unknown>;
               
-              // Only intercept Bash tool
+              // Get sandbox adapter status (used for both file ops and Bash)
+              const sandboxAdapter = getSandboxAdapter();
+              const isWSLMode = sandboxAdapter.isWSL && sandboxAdapter.wslStatus?.distro;
+              
+              // Handle file operations when sandbox isolation is active
+              // Files are written to WSL sandbox, then synced back to Windows via SandboxSync
+              
+              if (useSandboxIsolation && sandboxPath && isWSLMode) {
+                const distro = sandboxAdapter.wslStatus!.distro!;
+                const sandboxPathNonNull = sandboxPath;
+                
+                // Helper to convert WSL sandbox path to Windows UNC path
+                // e.g., /home/user/.claude/sandbox/xxx -> \\wsl$\Ubuntu\home\user\.claude\sandbox\xxx
+                const sandboxToWindowsUNC = (wslPath: string): string => {
+                  // Remove leading slash and convert to UNC format
+                  const pathWithoutLeadingSlash = wslPath.startsWith('/') ? wslPath.substring(1) : wslPath;
+                  return `\\\\wsl$\\${distro}\\${pathWithoutLeadingSlash.replace(/\//g, '\\')}`;
+                };
+                
+                // Get built-in skills path for detection
+                const builtinSkillsPath = this.getBuiltinSkillsPath();
+                const normalizedBuiltinSkills = builtinSkillsPath ? builtinSkillsPath.replace(/\\/g, '/').toLowerCase() : '';
+                
+                // Helper to ensure path is within sandbox and convert to Windows UNC
+                const ensureSandboxPathUNC = (inputPath: string): string => {
+                  let sandboxWslPath: string;
+                  
+                  if (!inputPath) {
+                    sandboxWslPath = sandboxPathNonNull;
+                  } else if (inputPath.startsWith(sandboxPathNonNull)) {
+                    // Already in sandbox WSL path
+                    sandboxWslPath = inputPath;
+                  } else if (/^[A-Za-z]:[\\/]/.test(inputPath)) {
+                    // Windows absolute path (e.g., D:\DeskTop\project\file.txt)
+                    const normalizedInput = inputPath.replace(/\\/g, '/').toLowerCase();
+                    const normalizedWorkDir = (workingDir || '').replace(/\\/g, '/').toLowerCase();
+                    
+                    // Check if this is a built-in skills path
+                    if (normalizedBuiltinSkills && normalizedInput.startsWith(normalizedBuiltinSkills)) {
+                      // Built-in skills path - map to sandbox/.claude/skills/
+                      const relativePath = inputPath.substring(builtinSkillsPath.length).replace(/\\/g, '/').replace(/^\//, '');
+                      sandboxWslPath = `${sandboxPathNonNull}/.claude/skills/${relativePath}`;
+                      log(`[Sandbox] Built-in skills path mapped: ${inputPath} -> ${sandboxWslPath}`);
+                    } else if (normalizedWorkDir && normalizedInput.startsWith(normalizedWorkDir)) {
+                      // Path is within workspace - extract relative path
+                      const relativePath = inputPath.substring(workingDir!.length).replace(/\\/g, '/').replace(/^\//, '');
+                      sandboxWslPath = `${sandboxPathNonNull}/${relativePath}`;
+                      log(`[Sandbox] Windows path converted: ${inputPath} -> ${sandboxWslPath}`);
+                    } else {
+                      // Check if path contains .claude/skills pattern (for other skill paths)
+                      const skillsMatch = inputPath.match(/[\\\/]\.claude[\\\/]skills[\\\/](.*)/i);
+                      if (skillsMatch) {
+                        sandboxWslPath = `${sandboxPathNonNull}/.claude/skills/${skillsMatch[1].replace(/\\/g, '/')}`;
+                        log(`[Sandbox] Skills path pattern matched: ${inputPath} -> ${sandboxWslPath}`);
+                      } else {
+                        // Path outside workspace - try to use as-is (may fail)
+                        log(`[Sandbox] Warning: Windows path outside workspace: ${inputPath}`);
+                        sandboxWslPath = `${sandboxPathNonNull}/${inputPath.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')}`;
+                      }
+                    }
+                  } else if (!inputPath.startsWith('/')) {
+                    // Relative path - prepend sandbox path
+                    sandboxWslPath = `${sandboxPathNonNull}/${inputPath}`;
+                  } else {
+                    // Unix absolute path - treat as relative to sandbox
+                    sandboxWslPath = `${sandboxPathNonNull}${inputPath}`;
+                  }
+                  
+                  return sandboxToWindowsUNC(sandboxWslPath);
+                };
+                
+                // Handle Write tool - redirect to WSL sandbox via UNC path
+                // Use updatedInput to let SDK's native Write tool handle it
+                if (toolName === 'Write') {
+                  const filePath = String(toolInput.file_path || toolInput.filePath || toolInput.path || '');
+                  const uncPath = ensureSandboxPathUNC(filePath);
+                  
+                  log(`[Sandbox/Write] Redirecting to WSL sandbox via UNC: ${uncPath}`);
+                  
+                  // Ensure parent directory exists via WSL
+                  const sandboxWslPath = !filePath.startsWith('/') 
+                    ? `${sandboxPathNonNull}/${filePath}`
+                    : filePath.startsWith(sandboxPathNonNull) ? filePath : `${sandboxPathNonNull}${filePath}`;
+                  const parentDir = sandboxWslPath.substring(0, sandboxWslPath.lastIndexOf('/'));
+                  
+                  try {
+                    const { execSync } = require('child_process');
+                    execSync(`wsl -d ${distro} -e mkdir -p "${parentDir}"`, { encoding: 'utf-8', timeout: 10000 });
+                  } catch (error: any) {
+                    log(`[Sandbox/Write] Warning: mkdir failed (may already exist): ${error.message}`);
+                  }
+                  
+                  // Return continue: true with updated file path to UNC
+                  return {
+                    continue: true,
+                    hookSpecificOutput: {
+                      hookEventName: 'PreToolUse',
+                      permissionDecision: 'allow',
+                      updatedInput: {
+                        ...toolInput,
+                        file_path: uncPath,
+                        filePath: uncPath,
+                        path: uncPath,
+                      },
+                    },
+                  };
+                }
+                
+                // Handle Edit tool - redirect to WSL sandbox via UNC path
+                if (toolName === 'Edit') {
+                  const filePath = String(toolInput.file_path || toolInput.filePath || toolInput.path || '');
+                  const uncPath = ensureSandboxPathUNC(filePath);
+                  
+                  log(`[Sandbox/Edit] Redirecting to WSL sandbox via UNC: ${uncPath}`);
+                  
+                  return {
+                    continue: true,
+                    hookSpecificOutput: {
+                      hookEventName: 'PreToolUse',
+                      permissionDecision: 'allow',
+                      updatedInput: {
+                        ...toolInput,
+                        file_path: uncPath,
+                        filePath: uncPath,
+                        path: uncPath,
+                      },
+                    },
+                  };
+                }
+                
+                // Handle Read tool - redirect to WSL sandbox via UNC path
+                if (toolName === 'Read') {
+                  const filePath = String(toolInput.file_path || toolInput.filePath || toolInput.path || '');
+                  const uncPath = ensureSandboxPathUNC(filePath);
+                  
+                  log(`[Sandbox/Read] Redirecting to WSL sandbox via UNC: ${uncPath}`);
+                  
+                  return {
+                    continue: true,
+                    hookSpecificOutput: {
+                      hookEventName: 'PreToolUse',
+                      permissionDecision: 'allow',
+                      updatedInput: {
+                        ...toolInput,
+                        file_path: uncPath,
+                        filePath: uncPath,
+                        path: uncPath,
+                      },
+                    },
+                  };
+                }
+                
+                // Handle LS tool - redirect to WSL sandbox via UNC path
+                if (toolName === 'LS') {
+                  const directory = String(toolInput.directory || toolInput.path || toolInput.file_path || '');
+                  const uncPath = ensureSandboxPathUNC(directory);
+                  
+                  log(`[Sandbox/LS] Redirecting to WSL sandbox via UNC: ${uncPath}`);
+                  
+                  return {
+                    continue: true,
+                    hookSpecificOutput: {
+                      hookEventName: 'PreToolUse',
+                      permissionDecision: 'allow',
+                      updatedInput: {
+                        ...toolInput,
+                        directory: uncPath,
+                        path: uncPath,
+                        file_path: uncPath,
+                      },
+                    },
+                  };
+                }
+                
+                // Handle Glob tool - redirect to WSL sandbox via UNC path
+                if (toolName === 'Glob') {
+                  const directory = String(toolInput.directory || toolInput.path || toolInput.file_path || '');
+                  const uncPath = ensureSandboxPathUNC(directory);
+                  
+                  log(`[Sandbox/Glob] Redirecting to WSL sandbox via UNC: ${uncPath}`);
+                  
+                  return {
+                    continue: true,
+                    hookSpecificOutput: {
+                      hookEventName: 'PreToolUse',
+                      permissionDecision: 'allow',
+                      updatedInput: {
+                        ...toolInput,
+                        directory: uncPath,
+                        path: uncPath,
+                        file_path: uncPath,
+                      },
+                    },
+                  };
+                }
+                
+                // Handle Grep tool - redirect to WSL sandbox via UNC path
+                if (toolName === 'Grep') {
+                  const directory = String(toolInput.directory || toolInput.path || toolInput.file_path || '');
+                  const uncPath = ensureSandboxPathUNC(directory);
+                  
+                  log(`[Sandbox/Grep] Redirecting to WSL sandbox via UNC: ${uncPath}`);
+                  
+                  return {
+                    continue: true,
+                    hookSpecificOutput: {
+                      hookEventName: 'PreToolUse',
+                      permissionDecision: 'allow',
+                      updatedInput: {
+                        ...toolInput,
+                        directory: uncPath,
+                        path: uncPath,
+                        file_path: uncPath,
+                      },
+                    },
+                  };
+                }
+              }
+              
+              // Only intercept Bash tool for WSL wrapping
               if (toolName !== 'Bash') {
                 return { continue: true };
               }
               
-              const sandboxAdapter = getSandboxAdapter();
-              const isWSLMode = sandboxAdapter.isWSL && sandboxAdapter.wslStatus?.distro;
-              
+              // sandboxAdapter and isWSLMode already defined above
               if (!isWSLMode) {
                 log('[Sandbox/WSL] WSL not active, Bash runs natively');
                 return { continue: true };
@@ -1402,7 +1659,9 @@ Cowork mode includes **WebFetch** and **WebSearch** tools for retrieving web con
                   textContent += block.text;
                   contentBlocks.push({ type: 'text', text: block.text });
                 } else if (block.type === 'tool_use') {
-                  // Tool call
+                  // Tool call - track the tool name for completion message
+                  lastExecutedToolName = block.name as string;
+                  
                   contentBlocks.push({
                     type: 'tool_use',
                     id: block.id,
@@ -1491,6 +1750,39 @@ Cowork mode includes **WebFetch** and **WebSearch** tools for retrieving web con
         } else if (message.type === 'result') {
           // Final result
           log('[ClaudeAgentRunner] Result received');
+          
+          // If the result text is empty but tools were executed, add a completion message
+          // This happens when Claude calls tools but doesn't generate follow-up text
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const resultText = (message as any).result as string || '';
+          if (!resultText.trim() && lastExecutedToolName) {
+            log(`[ClaudeAgentRunner] Empty result after tool execution (${lastExecutedToolName}), adding completion message`);
+            
+            // Generate appropriate completion message based on the tool
+            let completionText = '';
+            if (lastExecutedToolName === 'Write') {
+              completionText = `✓ File has been created successfully.`;
+            } else if (lastExecutedToolName === 'Edit') {
+              completionText = `✓ File has been edited successfully.`;
+            } else if (lastExecutedToolName === 'Read') {
+              // Read tool typically shows content, no need for extra message
+            } else if (['Bash', 'Glob', 'Grep', 'LS'].includes(lastExecutedToolName)) {
+              // These tools show their output directly, no need for extra message
+            } else {
+              completionText = `✓ Task completed.`;
+            }
+            
+            if (completionText) {
+              const completionMsg: Message = {
+                id: uuidv4(),
+                sessionId: session.id,
+                role: 'assistant',
+                content: [{ type: 'text', text: completionText }],
+                timestamp: Date.now(),
+              };
+              this.sendMessage(session.id, completionMsg);
+            }
+          }
         }
       }
 
