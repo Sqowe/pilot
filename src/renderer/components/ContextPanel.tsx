@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
 import {
@@ -24,6 +25,7 @@ import {
 import type { TraceStep, TraceStepStatus, MCPServerInfo } from '../types';
 
 export function ContextPanel() {
+  const { t } = useTranslation();
   const {
     activeSessionId,
     sessions,
@@ -57,6 +59,8 @@ export function ContextPanel() {
   const activeTurn = activeSessionId ? activeTurnsBySession[activeSessionId] : null;
   const pendingCount = activeSessionId ? pendingTurnsBySession[activeSessionId]?.length ?? 0 : 0;
   const isRunning = Boolean(activeTurn || pendingCount > 0);
+  const activeSession = activeSessionId ? sessions.find(s => s.id === activeSessionId) : null;
+  const currentWorkingDir = activeSession?.cwd || workingDir;
 
   // Load MCP servers on mount
   useEffect(() => {
@@ -80,7 +84,7 @@ export function ContextPanel() {
         <button
           onClick={toggleContextPanel}
           className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-surface-hover text-text-muted hover:text-text-primary transition-colors"
-          title="Expand panel"
+          title={t('context.expandPanel')}
         >
           <ChevronLeft className="w-4 h-4" />
         </button>
@@ -94,7 +98,7 @@ export function ContextPanel() {
         <button
           onClick={toggleContextPanel}
           className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-surface-hover text-text-muted hover:text-text-primary transition-colors"
-          title="Collapse panel"
+          title={t('context.collapsePanel')}
         >
           <ChevronRight className="w-4 h-4" />
         </button>
@@ -105,7 +109,7 @@ export function ContextPanel() {
           onClick={() => setProgressOpen(!progressOpen)}
           className="w-full px-4 py-3 flex items-center justify-between hover:bg-surface-hover transition-colors"
         >
-          <span className="text-sm font-medium text-text-primary">Progress</span>
+          <span className="text-sm font-medium text-text-primary">{t('context.progress')}</span>
           <div className="flex items-center gap-2">
             {steps.filter(s => s.status === 'running').length > 0 && (
               <Loader2 className="w-4 h-4 text-accent animate-spin" />
@@ -125,7 +129,7 @@ export function ContextPanel() {
           <div className="px-4 pb-4 max-h-80 overflow-y-auto">
             {steps.length === 0 ? (
               <p className="text-xs text-text-muted">
-                {pendingCount > 0 ? `Queued messages: ${pendingCount}` : 'Steps will show as the task unfolds.'}
+                {pendingCount > 0 ? t('context.queuedMessages', { count: pendingCount }) : t('context.stepsWillShow')}
               </p>
             ) : (
               <div className="space-y-2">
@@ -144,7 +148,7 @@ export function ContextPanel() {
           onClick={() => setArtifactsOpen(!artifactsOpen)}
           className="w-full px-4 py-3 flex items-center justify-between hover:bg-surface-hover transition-colors"
         >
-          <span className="text-sm font-medium text-text-primary">Artifacts</span>
+          <span className="text-sm font-medium text-text-primary">{t('context.artifacts')}</span>
           {artifactsOpen ? (
             <ChevronUp className="w-4 h-4 text-text-muted" />
           ) : (
@@ -156,7 +160,7 @@ export function ContextPanel() {
           <div className="px-4 pb-4 space-y-1">
             {/* Extract artifacts from trace steps */}
             {steps.filter(s => s.type === 'tool_result' && s.toolName === 'write_file').length === 0 ? (
-              <p className="text-xs text-text-muted">No artifacts yet</p>
+              <p className="text-xs text-text-muted">{t('context.noArtifactsYet')}</p>
             ) : (
               steps
                 .filter(s => s.type === 'tool_result' && s.toolName === 'write_file')
@@ -167,7 +171,7 @@ export function ContextPanel() {
                   >
                     <FileText className="w-4 h-4 text-text-muted" />
                     <span className="text-sm text-text-primary truncate">
-                      {step.toolOutput?.split(' ').pop() || 'File created'}
+                      {step.toolOutput?.split(' ').pop() || t('context.fileCreated')}
                     </span>
                   </div>
                 ))
@@ -182,7 +186,7 @@ export function ContextPanel() {
           onClick={() => setContextOpen(!contextOpen)}
           className="w-full px-4 py-3 flex items-center justify-between hover:bg-surface-hover transition-colors"
         >
-          <span className="text-sm font-medium text-text-primary">Context</span>
+          <span className="text-sm font-medium text-text-primary">{t('context.context')}</span>
           {contextOpen ? (
             <ChevronUp className="w-4 h-4 text-text-muted" />
           ) : (
@@ -195,7 +199,7 @@ export function ContextPanel() {
             {/* Working Directory */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <p className="text-xs text-text-muted">Working Directory</p>
+                <p className="text-xs text-text-muted">{t('context.workingDirectory')}</p>
                 <button
                   onClick={async () => {
                     setIsChangingDir(true);
@@ -207,24 +211,24 @@ export function ContextPanel() {
                   }}
                   disabled={isChangingDir}
                   className="text-xs text-accent hover:text-accent-hover disabled:opacity-50 flex items-center gap-1 transition-colors"
-                  title="Change working directory"
+                  title={t('context.workingDirectory')}
                 >
                   {isChangingDir ? (
                     <Loader2 className="w-3 h-3 animate-spin" />
                   ) : (
                     <FolderSync className="w-3 h-3" />
                   )}
-                  <span>Change</span>
+                  <span>{t('common.edit')}</span>
                 </button>
               </div>
               <div className="space-y-1">
-                {workingDir ? (
+                {currentWorkingDir ? (
                   <div 
                     className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors ${
                       copiedPath ? 'bg-success/10' : 'bg-surface-muted hover:bg-surface-active'
                     }`}
-                    title={copiedPath ? 'Copied!' : `${workingDir}\nClick to copy`}
-                    onClick={() => handleCopyPath(workingDir)}
+                    title={copiedPath ? t('context.copied') : `${currentWorkingDir}\nClick to copy`}
+                    onClick={() => handleCopyPath(currentWorkingDir)}
                   >
                     {copiedPath ? (
                       <Check className="w-4 h-4 text-success flex-shrink-0" />
@@ -232,18 +236,18 @@ export function ContextPanel() {
                       <FolderOpen className="w-4 h-4 text-accent flex-shrink-0" />
                     )}
                     <span className={`text-sm break-all leading-relaxed ${copiedPath ? 'text-success' : 'text-text-primary'}`}>
-                      {copiedPath ? 'Copied!' : formatPath(workingDir)}
+                      {copiedPath ? t('context.copied') : formatPath(currentWorkingDir)}
                     </span>
                   </div>
                 ) : (
-                  <p className="text-xs text-text-muted px-2">No folder selected</p>
+                  <p className="text-xs text-text-muted px-2">{t('context.noFolderSelected')}</p>
                 )}
               </div>
             </div>
 
             {/* Tools Used - Only show non-MCP tools */}
             <div>
-              <p className="text-xs text-text-muted mb-2">Tools Used</p>
+              <p className="text-xs text-text-muted mb-2">{t('context.toolsUsed')}</p>
               <div className="space-y-1">
                 {getUniqueNonMCPTools(steps).map((tool, index) => (
                   <div
@@ -258,17 +262,17 @@ export function ContextPanel() {
                   </div>
                 ))}
                 {getUniqueNonMCPTools(steps).length === 0 && (
-                  <p className="text-xs text-text-muted px-2">No tools used yet</p>
+                  <p className="text-xs text-text-muted px-2">{t('context.noToolsUsedYet')}</p>
                 )}
               </div>
             </div>
 
             {/* Connectors - Inside Context */}
             <div>
-              <p className="text-xs text-text-muted mb-2">Connectors</p>
+              <p className="text-xs text-text-muted mb-2">{t('context.mcpConnectors')}</p>
               <div className="space-y-1">
                 {mcpServers.length === 0 ? (
-                  <p className="text-xs text-text-muted px-2">No connectors configured</p>
+                  <p className="text-xs text-text-muted px-2">{t('mcp.noConnectors')}</p>
                 ) : (
                   mcpServers.map((server) => (
                     <ConnectorItem
@@ -300,6 +304,7 @@ function ConnectorItem({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
   // Get MCP tools used from this server
   // Tool names are in format: mcp__ServerName__toolname (with double underscores)
   // Server name preserves original case and spaces are replaced with underscores
@@ -345,7 +350,7 @@ function ConnectorItem({
               {server.name}
             </span>
             {!server.connected && (
-              <span className="text-xs text-text-muted">(disconnected)</span>
+              <span className="text-xs text-text-muted">({t('mcp.notConnected')})</span>
             )}
           </div>
           {server.connected && (
@@ -368,7 +373,7 @@ function ConnectorItem({
         <div className="px-3 pb-2 space-y-1 bg-surface">
           {mcpToolsUsed.length > 0 ? (
             <>
-              <p className="text-xs text-text-muted px-2 py-1">Tools used:</p>
+              <p className="text-xs text-text-muted px-2 py-1">{t('context.toolsUsedLabel')}</p>
               {mcpToolsUsed.map((toolName, index) => {
                 const count = steps.filter(s => s.toolName === toolName).length;
                 // Extract readable tool name - remove mcp__ServerName__ prefix
@@ -388,7 +393,7 @@ function ConnectorItem({
               })}
             </>
           ) : (
-            <p className="text-xs text-text-muted px-2 py-1">No tools used yet</p>
+            <p className="text-xs text-text-muted px-2 py-1">{t('context.noToolsUsedYet')}</p>
           )}
         </div>
       )}
@@ -451,6 +456,7 @@ function getGroupedSteps(steps: TraceStep[]): StepGroup[] {
 }
 
 function TraceStepGroupItem({ group }: { group: StepGroup }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const count = group.steps.length;
 
@@ -501,11 +507,11 @@ function TraceStepGroupItem({ group }: { group: StepGroup }) {
           {group.steps.map((step, index) => (
             <div key={step.id} className="space-y-2">
               {count > 1 && (
-                <p className="text-xs font-medium text-text-muted">Call #{index + 1}</p>
+                <p className="text-xs font-medium text-text-muted">{t('context.callNumber', { number: index + 1 })}</p>
               )}
               {step.toolInput && (
                 <div>
-                  <p className="text-xs font-medium text-text-muted mb-1">Input:</p>
+                  <p className="text-xs font-medium text-text-muted mb-1">{t('context.input')}</p>
                   <pre className="text-xs bg-surface p-2 rounded overflow-x-auto max-h-32 overflow-y-auto">
                     {JSON.stringify(step.toolInput, null, 2)}
                   </pre>
@@ -513,7 +519,7 @@ function TraceStepGroupItem({ group }: { group: StepGroup }) {
               )}
               {step.toolOutput && (
                 <div>
-                  <p className="text-xs font-medium text-text-muted mb-1">Output:</p>
+                  <p className="text-xs font-medium text-text-muted mb-1">{t('context.output')}</p>
                   <pre className="text-xs bg-surface p-2 rounded overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">
                     {step.toolOutput}
                   </pre>
