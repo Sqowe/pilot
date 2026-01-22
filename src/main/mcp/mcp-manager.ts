@@ -54,13 +54,16 @@ export class MCPManager {
     const { promisify } = await import('util');
     const execAsync = promisify(exec);
     const os = await import('os');
+    const path = await import('path');
     
     const platform = os.platform();
+    const homeDir = os.homedir();
     
     // Use appropriate command based on platform
     // Windows: where, Linux/macOS: which
     const checkCommand = platform === 'win32' ? 'where npx' : 'which npx';
     
+    // Try 1: Direct which/where npx
     try {
       const { stdout } = await execAsync(checkCommand, { timeout: 5000 });
       const npxPath = stdout.trim().split('\n')[0]; // Take first line on Windows (where can return multiple paths)
@@ -71,18 +74,87 @@ export class MCPManager {
         return;
       }
     } catch (error) {
-      // npx not found in PATH
-      const errorMessage = 
-        'npx is not found in PATH. Please add Node.js/npm to your PATH environment variable.\n' +
-        'npx 未在 PATH 中找到。请将 Node.js/npm 添加到您的 PATH 环境变量中。\n\n' +
-        'Common solutions / 常见解决方案:\n' +
-        '1. Install Node.js from https://nodejs.org / 从 https://nodejs.org 安装 Node.js\n' +
-        '2. Add Node.js bin directory to PATH / 将 Node.js bin 目录添加到 PATH\n' +
-        '3. Restart your terminal/application after installation / 安装后重启终端/应用程序';
-      
-      logError('[MCPManager] npx not found in PATH');
-      throw new Error(errorMessage);
+      log(`[MCPManager] Direct ${checkCommand} failed, trying from shell...`);
     }
+    
+    // Try 2: Call which/where from user's shell
+    if (platform === 'darwin' || platform === 'linux') {
+      // macOS/Linux: use SHELL environment variable
+      try {
+        const shell = process.env.SHELL || '/bin/zsh';
+        const shellName = path.basename(shell);
+        
+        log(`[MCPManager] Trying to find npx from ${shellName}...`);
+        
+        // Use login shell to run which command with full PATH
+        const { stdout } = await execAsync(`${shell} -l -c 'which npx'`, { 
+          timeout: 5000,
+          env: { HOME: homeDir }
+        });
+        
+        const npxPath = stdout.trim();
+        if (npxPath && npxPath.length > 0) {
+          log(`[MCPManager] Found npx via ${shellName}: ${npxPath}`);
+          this.npxPath = npxPath;
+          return;
+        }
+      } catch (error) {
+        log(`[MCPManager] Could not find npx from shell`);
+      }
+    } else if (platform === 'win32') {
+      // Windows: use COMSPEC or try PowerShell
+      try {
+        // First try cmd.exe (COMSPEC)
+        const comspec = process.env.COMSPEC || 'cmd.exe';
+        const shellName = path.basename(comspec);
+        
+        log(`[MCPManager] Trying to find npx from ${shellName}...`);
+        
+        const { stdout } = await execAsync(`${comspec} /c where npx`, { 
+          timeout: 5000
+        });
+        
+        const npxPath = stdout.trim().split('\n')[0];
+        if (npxPath && npxPath.length > 0) {
+          log(`[MCPManager] Found npx via ${shellName}: ${npxPath}`);
+          this.npxPath = npxPath;
+          return;
+        }
+      } catch (error) {
+        log(`[MCPManager] Could not find npx from cmd.exe, trying PowerShell...`);
+      }
+      
+      // Try PowerShell as fallback
+      try {
+        log(`[MCPManager] Trying to find npx from PowerShell...`);
+        
+        const { stdout } = await execAsync('powershell -Command "Get-Command npx | Select-Object -ExpandProperty Source"', { 
+          timeout: 5000
+        });
+        
+        const npxPath = stdout.trim();
+        if (npxPath && npxPath.length > 0) {
+          log(`[MCPManager] Found npx via PowerShell: ${npxPath}`);
+          this.npxPath = npxPath;
+          return;
+        }
+      } catch (error) {
+        log(`[MCPManager] Could not find npx from PowerShell`);
+      }
+    }
+    
+    // All attempts failed - throw error
+    const errorMessage = 
+      'npx is not found in PATH. Please add Node.js/npm to your PATH environment variable.\n' +
+      'npx 未在 PATH 中找到。请将 Node.js/npm 添加到您的 PATH 环境变量中。\n\n' +
+      'Common solutions / 常见解决方案:\n' +
+      '1. Install Node.js from https://nodejs.org / 从 https://nodejs.org 安装 Node.js\n' +
+      '2. Add Node.js bin directory to PATH / 将 Node.js bin 目录添加到 PATH\n' +
+      '3. Restart your terminal/application after installation / 安装后重启终端/应用程序\n' +
+      '4. For macOS: Make sure Node.js is installed system-wide, not just in terminal / macOS：确保 Node.js 是系统级安装，而不仅在终端中可用';
+    
+    logError('[MCPManager] npx not found in PATH after all attempts');
+    throw new Error(errorMessage);
   }
 
   /**
