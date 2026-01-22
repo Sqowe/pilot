@@ -62,6 +62,17 @@ interface GUIAppInstance {
 
 let currentGUIApp: GUIAppInstance | null = null;
 
+// Appium Session Management
+interface AppiumSession {
+  sessionId: string;
+  driver: any;
+  capabilities: any;
+  platform: 'iOS' | 'Android' | 'Windows' | 'Mac';
+  startTime: Date;
+}
+
+let currentAppiumSession: AppiumSession | null = null;
+
 // Helper: Start GUI application
 async function startGUIApplication(appFilePath: string, appType: string, startCommand?: string, waitTime: number = 3): Promise<GUIAppInstance> {
   const fullPath = path.isAbsolute(appFilePath) ? appFilePath : path.join(WORKSPACE_DIR, appFilePath);
@@ -136,6 +147,333 @@ async function stopGUIApplication(instance: GUIAppInstance, force: boolean = fal
     await new Promise(resolve => setTimeout(resolve, 1000));
   } catch (error: any) {
     console.error(`[GUI] Error stopping application: ${error.message}`);
+  }
+}
+
+// Appium Helper Functions
+
+/**
+ * Start an Appium session with specified capabilities
+ */
+async function startAppiumSession(capabilities: any, appiumUrl: string = 'http://localhost:4723'): Promise<AppiumSession> {
+  console.error('[Appium] Starting Appium session...');
+  
+  try {
+    // Check if webdriverio is installed
+    let wdio: any;
+    try {
+      wdio = require('webdriverio');
+    } catch {
+      throw new Error('webdriverio is not installed. Install it with: npm install webdriverio');
+    }
+    
+    // Create Appium client
+    const driver = await wdio.remote({
+      protocol: 'http',
+      hostname: new URL(appiumUrl).hostname,
+      port: parseInt(new URL(appiumUrl).port || '4723'),
+      path: '/wd/hub',
+      capabilities,
+    });
+    
+    const sessionId = driver.sessionId;
+    const platform = capabilities.platformName as 'iOS' | 'Android' | 'Windows' | 'Mac';
+    
+    const session: AppiumSession = {
+      sessionId,
+      driver,
+      capabilities,
+      platform,
+      startTime: new Date(),
+    };
+    
+    console.error(`[Appium] Session started: ${sessionId} (Platform: ${platform})`);
+    
+    return session;
+  } catch (error: any) {
+    console.error(`[Appium] Failed to start session: ${error.message}`);
+    throw new Error(`Failed to start Appium session: ${error.message}`);
+  }
+}
+
+/**
+ * Stop the current Appium session
+ */
+async function stopAppiumSession(session: AppiumSession): Promise<void> {
+  if (!session || !session.driver) {
+    return;
+  }
+  
+  console.error(`[Appium] Stopping session: ${session.sessionId}`);
+  
+  try {
+    await session.driver.deleteSession();
+    console.error('[Appium] Session stopped successfully');
+  } catch (error: any) {
+    console.error(`[Appium] Error stopping session: ${error.message}`);
+  }
+}
+
+/**
+ * Execute Appium interaction
+ */
+async function executeAppiumInteraction(
+  action: string,
+  locatorStrategy: string,
+  locator: string,
+  value?: string,
+  timeout: number = 10000
+): Promise<any> {
+  if (!currentAppiumSession) {
+    throw new Error('No Appium session is active. Use appium_start_session first.');
+  }
+  
+  const driver = currentAppiumSession.driver;
+  
+  console.error(`[Appium] Executing action: ${action} on ${locatorStrategy}=${locator}`);
+  
+  try {
+    // Find element
+    let element: any;
+    
+    switch (locatorStrategy) {
+      case 'id':
+        element = await driver.$(`~${locator}`);
+        break;
+      case 'xpath':
+        element = await driver.$(`//${locator}`);
+        break;
+      case 'accessibility_id':
+        element = await driver.$(`~${locator}`);
+        break;
+      case 'class_name':
+        element = await driver.$(`.${locator}`);
+        break;
+      case 'android_uiautomator':
+        element = await driver.$(`android=${locator}`);
+        break;
+      case 'ios_predicate':
+        element = await driver.$(`-ios predicate string:${locator}`);
+        break;
+      case 'ios_class_chain':
+        element = await driver.$(`-ios class chain:${locator}`);
+        break;
+      default:
+        throw new Error(`Unsupported locator strategy: ${locatorStrategy}`);
+    }
+    
+    // Wait for element to exist
+    await element.waitForExist({ timeout });
+    
+    // Perform action
+    let result: any;
+    
+    switch (action) {
+      case 'click':
+      case 'tap':
+        await element.click();
+        result = { success: true, action: 'click' };
+        break;
+        
+      case 'type':
+      case 'send_keys':
+        if (!value) {
+          throw new Error('Value is required for type action');
+        }
+        await element.setValue(value);
+        result = { success: true, action: 'type', value };
+        break;
+        
+      case 'clear':
+        await element.clearValue();
+        result = { success: true, action: 'clear' };
+        break;
+        
+      case 'get_text':
+        const text = await element.getText();
+        result = { success: true, action: 'get_text', text };
+        break;
+        
+      case 'get_attribute':
+        if (!value) {
+          throw new Error('Attribute name is required for get_attribute action');
+        }
+        const attr = await element.getAttribute(value);
+        result = { success: true, action: 'get_attribute', attribute: value, value: attr };
+        break;
+        
+      case 'is_displayed':
+        const displayed = await element.isDisplayed();
+        result = { success: true, action: 'is_displayed', displayed };
+        break;
+        
+      case 'is_enabled':
+        const enabled = await element.isEnabled();
+        result = { success: true, action: 'is_enabled', enabled };
+        break;
+        
+      case 'swipe':
+        // For swipe, value should be direction: up, down, left, right
+        const direction = value || 'up';
+        await element.touchAction([
+          { action: 'press', x: 0, y: 0 },
+          { action: 'wait', ms: 100 },
+          { action: 'moveTo', x: direction === 'left' ? -100 : direction === 'right' ? 100 : 0, y: direction === 'up' ? -100 : direction === 'down' ? 100 : 0 },
+          { action: 'release' }
+        ]);
+        result = { success: true, action: 'swipe', direction };
+        break;
+        
+      case 'long_press':
+        await element.touchAction([
+          { action: 'press', x: 0, y: 0 },
+          { action: 'wait', ms: 2000 },
+          { action: 'release' }
+        ]);
+        result = { success: true, action: 'long_press' };
+        break;
+        
+      default:
+        throw new Error(`Unsupported action: ${action}`);
+    }
+    
+    console.error(`[Appium] Action completed: ${action}`);
+    return result;
+    
+  } catch (error: any) {
+    console.error(`[Appium] Action failed: ${error.message}`);
+    throw new Error(`Appium interaction failed: ${error.message}`);
+  }
+}
+
+/**
+ * Execute Appium assertion
+ */
+async function executeAppiumAssertion(
+  assertionType: string,
+  locatorStrategy: string,
+  locator: string,
+  expectedValue?: string,
+  timeout: number = 10000
+): Promise<boolean> {
+  if (!currentAppiumSession) {
+    throw new Error('No Appium session is active. Use appium_start_session first.');
+  }
+  
+  const driver = currentAppiumSession.driver;
+  
+  console.error(`[Appium] Executing assertion: ${assertionType} on ${locatorStrategy}=${locator}`);
+  
+  try {
+    // Find element
+    let element: any;
+    
+    switch (locatorStrategy) {
+      case 'id':
+        element = await driver.$(`~${locator}`);
+        break;
+      case 'xpath':
+        element = await driver.$(`//${locator}`);
+        break;
+      case 'accessibility_id':
+        element = await driver.$(`~${locator}`);
+        break;
+      case 'class_name':
+        element = await driver.$(`.${locator}`);
+        break;
+      case 'android_uiautomator':
+        element = await driver.$(`android=${locator}`);
+        break;
+      case 'ios_predicate':
+        element = await driver.$(`-ios predicate string:${locator}`);
+        break;
+      case 'ios_class_chain':
+        element = await driver.$(`-ios class chain:${locator}`);
+        break;
+      default:
+        throw new Error(`Unsupported locator strategy: ${locatorStrategy}`);
+    }
+    
+    // Perform assertion
+    let passed = false;
+    
+    switch (assertionType) {
+      case 'element_exists':
+        await element.waitForExist({ timeout });
+        passed = await element.isExisting();
+        break;
+        
+      case 'element_displayed':
+        await element.waitForDisplayed({ timeout });
+        passed = await element.isDisplayed();
+        break;
+        
+      case 'element_enabled':
+        await element.waitForExist({ timeout });
+        passed = await element.isEnabled();
+        break;
+        
+      case 'text_equals':
+        if (!expectedValue) {
+          throw new Error('Expected value is required for text_equals assertion');
+        }
+        await element.waitForExist({ timeout });
+        const text = await element.getText();
+        passed = text === expectedValue;
+        break;
+        
+      case 'text_contains':
+        if (!expectedValue) {
+          throw new Error('Expected value is required for text_contains assertion');
+        }
+        await element.waitForExist({ timeout });
+        const content = await element.getText();
+        passed = content.includes(expectedValue);
+        break;
+        
+      case 'attribute_equals':
+        if (!expectedValue) {
+          throw new Error('Expected value is required for attribute_equals assertion (format: "attributeName=expectedValue")');
+        }
+        const [attrName, attrValue] = expectedValue.split('=');
+        await element.waitForExist({ timeout });
+        const attr = await element.getAttribute(attrName);
+        passed = attr === attrValue;
+        break;
+        
+      default:
+        throw new Error(`Unsupported assertion type: ${assertionType}`);
+    }
+    
+    console.error(`[Appium] Assertion ${passed ? 'passed' : 'failed'}: ${assertionType}`);
+    return passed;
+    
+  } catch (error: any) {
+    console.error(`[Appium] Assertion error: ${error.message}`);
+    return false;
+  }
+}
+
+/**
+ * Take screenshot with Appium
+ */
+async function takeAppiumScreenshot(filename?: string): Promise<string> {
+  if (!currentAppiumSession) {
+    throw new Error('No Appium session is active. Use appium_start_session first.');
+  }
+  
+  const driver = currentAppiumSession.driver;
+  const screenshotPath = filename || path.join(WORKSPACE_DIR, `appium_screenshot_${Date.now()}.png`);
+  
+  console.error(`[Appium] Taking screenshot: ${screenshotPath}`);
+  
+  try {
+    await driver.saveScreenshot(screenshotPath);
+    console.error(`[Appium] Screenshot saved: ${screenshotPath}`);
+    return screenshotPath;
+  } catch (error: any) {
+    console.error(`[Appium] Screenshot failed: ${error.message}`);
+    throw new Error(`Failed to take screenshot: ${error.message}`);
   }
 }
 
@@ -1064,6 +1402,131 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['app_file_path', 'requirement', 'test_framework'],
         },
       },
+      {
+        name: 'appium_start_session',
+        description: 'Start an Appium session for mobile/desktop app testing. Supports iOS, Android, Windows, and Mac applications.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            platform: {
+              type: 'string',
+              enum: ['iOS', 'Android', 'Windows', 'Mac'],
+              description: 'Target platform for testing',
+            },
+            app_path: {
+              type: 'string',
+              description: 'Path to the application file (.app, .apk, .ipa, etc.)',
+            },
+            device_name: {
+              type: 'string',
+              description: 'Device name or ID (e.g., "iPhone 14", "Pixel 6", "emulator-5554")',
+            },
+            platform_version: {
+              type: 'string',
+              description: 'Platform version (e.g., "16.0", "13.0")',
+            },
+            automation_name: {
+              type: 'string',
+              enum: ['XCUITest', 'UiAutomator2', 'Espresso', 'Windows', 'Mac2'],
+              description: 'Automation engine to use',
+            },
+            appium_url: {
+              type: 'string',
+              description: 'Appium server URL (default: http://localhost:4723)',
+            },
+            additional_capabilities: {
+              type: 'object',
+              description: 'Additional capabilities as key-value pairs',
+            },
+          },
+          required: ['platform', 'device_name'],
+        },
+      },
+      {
+        name: 'appium_interact',
+        description: 'Interact with mobile/desktop app elements using Appium. Supports various locator strategies and actions.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            action: {
+              type: 'string',
+              enum: ['click', 'tap', 'type', 'send_keys', 'clear', 'swipe', 'long_press', 'get_text', 'get_attribute', 'is_displayed', 'is_enabled'],
+              description: 'Action to perform on the element',
+            },
+            locator_strategy: {
+              type: 'string',
+              enum: ['id', 'xpath', 'accessibility_id', 'class_name', 'android_uiautomator', 'ios_predicate', 'ios_class_chain'],
+              description: 'Strategy to locate the element',
+            },
+            locator: {
+              type: 'string',
+              description: 'Locator value (e.g., "com.example:id/button", "//XCUIElementTypeButton[@name=\'Login\']")',
+            },
+            value: {
+              type: 'string',
+              description: 'Value for the action (text to type, attribute name, swipe direction: up/down/left/right)',
+            },
+            timeout: {
+              type: 'number',
+              description: 'Timeout in milliseconds (default: 10000)',
+            },
+          },
+          required: ['action', 'locator_strategy', 'locator'],
+        },
+      },
+      {
+        name: 'appium_assert',
+        description: 'Perform assertions on mobile/desktop app elements using Appium.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            assertion_type: {
+              type: 'string',
+              enum: ['element_exists', 'element_displayed', 'element_enabled', 'text_equals', 'text_contains', 'attribute_equals'],
+              description: 'Type of assertion to perform',
+            },
+            locator_strategy: {
+              type: 'string',
+              enum: ['id', 'xpath', 'accessibility_id', 'class_name', 'android_uiautomator', 'ios_predicate', 'ios_class_chain'],
+              description: 'Strategy to locate the element',
+            },
+            locator: {
+              type: 'string',
+              description: 'Locator value',
+            },
+            expected_value: {
+              type: 'string',
+              description: 'Expected value for the assertion (for text_equals, text_contains, attribute_equals use "attributeName=value" format)',
+            },
+            timeout: {
+              type: 'number',
+              description: 'Timeout in milliseconds (default: 10000)',
+            },
+          },
+          required: ['assertion_type', 'locator_strategy', 'locator'],
+        },
+      },
+      {
+        name: 'appium_screenshot',
+        description: 'Take a screenshot of the current app state using Appium.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            filename: {
+              type: 'string',
+              description: 'Optional filename for the screenshot (default: appium_screenshot_<timestamp>.png)',
+            },
+          },
+        },
+      },
+      {
+        name: 'appium_stop_session',
+        description: 'Stop the current Appium session and cleanup resources.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
     ],
   };
 });
@@ -1141,6 +1604,283 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             },
           ],
         };
+      }
+
+      case 'appium_start_session': {
+        const { 
+          platform, 
+          app_path, 
+          device_name, 
+          platform_version, 
+          automation_name, 
+          appium_url,
+          additional_capabilities 
+        } = args as any;
+        
+        // Stop existing session if running
+        if (currentAppiumSession) {
+          await stopAppiumSession(currentAppiumSession);
+          currentAppiumSession = null;
+        }
+        
+        // Build capabilities
+        const capabilities: any = {
+          platformName: platform,
+          'appium:deviceName': device_name,
+        };
+        
+        if (app_path) {
+          const fullAppPath = path.isAbsolute(app_path) ? app_path : path.join(WORKSPACE_DIR, app_path);
+          capabilities['appium:app'] = fullAppPath;
+        }
+        
+        if (platform_version) {
+          capabilities['appium:platformVersion'] = platform_version;
+        }
+        
+        if (automation_name) {
+          capabilities['appium:automationName'] = automation_name;
+        } else {
+          // Set default automation name based on platform
+          switch (platform) {
+            case 'iOS':
+              capabilities['appium:automationName'] = 'XCUITest';
+              break;
+            case 'Android':
+              capabilities['appium:automationName'] = 'UiAutomator2';
+              break;
+            case 'Windows':
+              capabilities['appium:automationName'] = 'Windows';
+              break;
+            case 'Mac':
+              capabilities['appium:automationName'] = 'Mac2';
+              break;
+          }
+        }
+        
+        // Add additional capabilities
+        if (additional_capabilities) {
+          Object.assign(capabilities, additional_capabilities);
+        }
+        
+        try {
+          const session = await startAppiumSession(capabilities, appium_url);
+          currentAppiumSession = session;
+          
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Appium session started',
+                  session_id: session.sessionId,
+                  platform: session.platform,
+                  capabilities: session.capabilities,
+                  start_time: session.startTime,
+                }, null, 2),
+              },
+            ],
+          };
+        } catch (error: any) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: false,
+                  tool: 'appium_start_session',
+                  error: error.message,
+                  suggestion: 'Make sure Appium server is running (appium) and webdriverio is installed (npm install webdriverio)',
+                }, null, 2),
+              },
+            ],
+          };
+        }
+      }
+
+      case 'appium_interact': {
+        const { action, locator_strategy, locator, value, timeout } = args as any;
+        
+        if (!currentAppiumSession) {
+          throw new Error('No Appium session is active. Use appium_start_session first.');
+        }
+        
+        console.error(`[Appium] Performing ${action} on ${locator_strategy}=${locator}`);
+        
+        try {
+          const result = await executeAppiumInteraction(
+            action,
+            locator_strategy,
+            locator,
+            value,
+            timeout || 10000
+          );
+          
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  action,
+                  locator_strategy,
+                  locator,
+                  value,
+                  result,
+                }, null, 2),
+              },
+            ],
+          };
+        } catch (error: any) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: false,
+                  tool: 'appium_interact',
+                  error: error.message,
+                }, null, 2),
+              },
+            ],
+          };
+        }
+      }
+
+      case 'appium_assert': {
+        const { assertion_type, locator_strategy, locator, expected_value, timeout } = args as any;
+        
+        if (!currentAppiumSession) {
+          throw new Error('No Appium session is active. Use appium_start_session first.');
+        }
+        
+        console.error(`[Appium] Asserting ${assertion_type} on ${locator_strategy}=${locator}`);
+        
+        try {
+          const passed = await executeAppiumAssertion(
+            assertion_type,
+            locator_strategy,
+            locator,
+            expected_value,
+            timeout || 10000
+          );
+          
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  assertion_type,
+                  locator_strategy,
+                  locator,
+                  expected_value,
+                  passed,
+                  message: passed ? 'Assertion passed' : 'Assertion failed',
+                }, null, 2),
+              },
+            ],
+          };
+        } catch (error: any) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: false,
+                  tool: 'appium_assert',
+                  error: error.message,
+                  passed: false,
+                }, null, 2),
+              },
+            ],
+          };
+        }
+      }
+
+      case 'appium_screenshot': {
+        const { filename } = args as any;
+        
+        if (!currentAppiumSession) {
+          throw new Error('No Appium session is active. Use appium_start_session first.');
+        }
+        
+        try {
+          const screenshotPath = await takeAppiumScreenshot(filename);
+          
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  screenshot_path: screenshotPath,
+                  message: 'Screenshot captured successfully',
+                }, null, 2),
+              },
+            ],
+          };
+        } catch (error: any) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: false,
+                  tool: 'appium_screenshot',
+                  error: error.message,
+                }, null, 2),
+              },
+            ],
+          };
+        }
+      }
+
+      case 'appium_stop_session': {
+        if (!currentAppiumSession) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'No Appium session is active',
+                }, null, 2),
+              },
+            ],
+          };
+        }
+        
+        try {
+          await stopAppiumSession(currentAppiumSession);
+          currentAppiumSession = null;
+          
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  message: 'Appium session stopped',
+                }, null, 2),
+              },
+            ],
+          };
+        } catch (error: any) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: false,
+                  tool: 'appium_stop_session',
+                  error: error.message,
+                }, null, 2),
+              },
+            ],
+          };
+        }
       }
 
       case 'generate_test_cases': {
@@ -1893,9 +2633,17 @@ async function main() {
   console.error('  GUI Testing:');
   console.error('    - start_gui_application: Launch GUI app for testing');
   console.error('    - gui_interact: Interact with GUI elements (click, type, etc.)');
+  console.error('    - gui_interact_vision: AI vision-based GUI interaction');
+  console.error('    - gui_verify_vision: AI vision-based GUI verification');
   console.error('    - gui_assert: Assert GUI state for testing');
   console.error('    - stop_gui_application: Stop running GUI app');
   console.error('    - generate_gui_test_script: Generate GUI test scripts');
+  console.error('  Appium Testing (Mobile/Desktop):');
+  console.error('    - appium_start_session: Start Appium session (iOS/Android/Windows/Mac)');
+  console.error('    - appium_interact: Interact with app elements');
+  console.error('    - appium_assert: Assert app state');
+  console.error('    - appium_screenshot: Capture app screenshot');
+  console.error('    - appium_stop_session: Stop Appium session');
   console.error('  Requirements:');
   console.error('    - create_requirement: Track new requirements');
   console.error('    - update_requirement: Update requirement status');
