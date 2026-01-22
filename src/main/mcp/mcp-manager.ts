@@ -204,11 +204,35 @@ export class MCPManager {
         }
         
         // Merge shell environment with process environment
-        // Process env takes precedence for system variables
-        env = { ...shellEnv, ...env };
+        // For most variables, use shell env (it's more complete)
+        env = { ...env, ...shellEnv };
+        
+        // Special handling for PATH: merge both shell PATH and process PATH
+        // This ensures we have both user tools (from shell) and system paths (from process)
+        if (shellEnv.PATH && process.env.PATH) {
+          // For Unix systems (darwin/linux), path delimiter is ':'
+          const pathDelimiter = ':';
+          
+          const shellPaths = shellEnv.PATH.split(pathDelimiter).filter(p => p.trim());
+          const processPaths = process.env.PATH.split(pathDelimiter).filter(p => p.trim());
+          
+          // Combine and deduplicate paths (shell paths first for priority)
+          const allPaths = [...shellPaths];
+          for (const p of processPaths) {
+            if (!allPaths.includes(p)) {
+              allPaths.push(p);
+            }
+          }
+          
+          env.PATH = allPaths.join(pathDelimiter);
+          log(`[MCPManager] Merged PATH: ${shellPaths.length} paths from shell + ${processPaths.length - (allPaths.length - shellPaths.length)} unique paths from process = ${allPaths.length} total`);
+        } else if (shellEnv.PATH) {
+          env.PATH = shellEnv.PATH;
+          log(`[MCPManager] Using shell PATH only`);
+        }
         
         log(`[MCPManager] Enhanced environment with ${Object.keys(shellEnv).length} variables from shell`);
-        log(`[MCPManager] PATH from shell: ${shellEnv.PATH?.substring(0, 100)}...`);
+        log(`[MCPManager] Final PATH: ${env.PATH?.substring(0, 150)}...`);
       } catch (error: any) {
         logWarn(`[MCPManager] Could not get environment from shell: ${error.message}`);
         logWarn(`[MCPManager] Using limited process.env, MCP servers may fail`);
