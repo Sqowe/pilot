@@ -42,6 +42,138 @@ export class MCPManager {
   private processes: Map<string, any> = new Map();
   private tools: Map<string, MCPTool> = new Map(); // toolName -> MCPTool
   private serverConfigs: Map<string, MCPServerConfig> = new Map();
+  private npxPath: string | null = null; // Cached npx path
+
+  /**
+   * Resolve npx path for packaged app
+   * In development, npx is in PATH. In production .app, we need to find it.
+   */
+  private async resolveNpxPath(): Promise<string | null> {
+    // Return cached path if available
+    if (this.npxPath) {
+      return this.npxPath;
+    }
+
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+    const os = await import('os');
+    const path = await import('path');
+
+    // Try 'which npx' first (works in dev and if PATH is set correctly)
+    try {
+      const { stdout } = await execAsync('which npx', { timeout: 5000 });
+      const npxPath = stdout.trim();
+      if (npxPath && npxPath.length > 0) {
+        log(`[MCPManager] Found npx via 'which': ${npxPath}`);
+        this.npxPath = npxPath;
+        return npxPath;
+      }
+    } catch (error) {
+      log(`[MCPManager] 'which npx' failed, trying common paths...`);
+    }
+
+    // Common npx locations to check
+    const homeDir = os.homedir();
+    const commonPaths = [
+      // NVM paths
+      path.join(homeDir, '.nvm/versions/node/v24.13.0/bin/npx'),
+      path.join(homeDir, '.nvm/versions/node/v24.11.1/bin/npx'),
+      path.join(homeDir, '.nvm/versions/node/v22.0.0/bin/npx'),
+      path.join(homeDir, '.nvm/versions/node/v20.0.0/bin/npx'),
+      // Homebrew paths
+      '/opt/homebrew/bin/npx',
+      '/usr/local/bin/npx',
+      // System paths
+      '/usr/bin/npx',
+      // Windows paths
+      path.join(process.env.APPDATA || '', 'npm/npx.cmd'),
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs/npx.cmd'),
+    ];
+
+    // Check NVM current version dynamically
+    try {
+      const nvmCurrentPath = path.join(homeDir, '.nvm/versions/node');
+      const fs = await import('fs');
+      if (fs.existsSync(nvmCurrentPath)) {
+        const versions = fs.readdirSync(nvmCurrentPath);
+        for (const version of versions) {
+          commonPaths.unshift(path.join(nvmCurrentPath, version, 'bin/npx'));
+        }
+      }
+    } catch (error) {
+      // Ignore errors reading NVM directory
+    }
+
+    // Try each path
+    const fs = await import('fs');
+    for (const testPath of commonPaths) {
+      try {
+        if (fs.existsSync(testPath)) {
+          log(`[MCPManager] Found npx at: ${testPath}`);
+          this.npxPath = testPath;
+          return testPath;
+        }
+      } catch (error) {
+        // Continue to next path
+      }
+    }
+
+    logWarn(`[MCPManager] Could not resolve npx path, will use 'npx' and hope it's in PATH`);
+    return null;
+  }
+
+  /**
+   * Get enhanced environment with proper PATH for packaged app
+   */
+  private async getEnhancedEnv(configEnv: Record<string, string>): Promise<Record<string, string>> {
+    const os = await import('os');
+    const path = await import('path');
+    const homeDir = os.homedir();
+
+    // Start with current process env
+    const env = { ...process.env } as Record<string, string>;
+
+    // Add common Node.js paths to PATH
+    const additionalPaths = [
+      // NVM paths
+      path.join(homeDir, '.nvm/versions/node/v24.13.0/bin'),
+      path.join(homeDir, '.nvm/versions/node/v24.11.1/bin'),
+      path.join(homeDir, '.nvm/versions/node/v22.0.0/bin'),
+      path.join(homeDir, '.nvm/versions/node/v20.0.0/bin'),
+      // Homebrew paths
+      '/opt/homebrew/bin',
+      '/usr/local/bin',
+      // System paths
+      '/usr/bin',
+      '/bin',
+    ];
+
+    // Check NVM current version dynamically
+    try {
+      const nvmCurrentPath = path.join(homeDir, '.nvm/versions/node');
+      const fs = await import('fs');
+      if (fs.existsSync(nvmCurrentPath)) {
+        const versions = fs.readdirSync(nvmCurrentPath);
+        for (const version of versions) {
+          additionalPaths.unshift(path.join(nvmCurrentPath, version, 'bin'));
+        }
+      }
+    } catch (error) {
+      // Ignore errors
+    }
+
+    // Prepend additional paths to PATH
+    const currentPath = env.PATH || '';
+    const newPaths = additionalPaths.filter(p => !currentPath.includes(p));
+    if (newPaths.length > 0) {
+      env.PATH = [...newPaths, currentPath].join(path.delimiter);
+      log(`[MCPManager] Enhanced PATH with ${newPaths.length} additional directories`);
+    }
+
+    // Merge with config env (config env takes precedence)
+    return { ...env, ...configEnv };
+  }
 
   /**
    * Initialize MCP servers from configuration
@@ -136,9 +268,22 @@ export class MCPManager {
         throw new Error(`STDIO server ${config.name} requires a command`);
       }
 
-      const command = config.command;
+      let command = config.command;
       const args = config.args || [];
-      const env = { ...process.env, ...(config.env || {}) } as Record<string, string>;
+      
+      // Fix PATH for packaged app: resolve npx/node paths
+      const env = await this.getEnhancedEnv(config.env || {});
+      
+      // If command is 'npx', try to resolve its full path
+      if (command === 'npx' || command.endsWith('/npx')) {
+        const resolvedNpx = await this.resolveNpxPath();
+        if (resolvedNpx) {
+          command = resolvedNpx;
+          log(`[MCPManager] Resolved npx path: ${command}`);
+        } else {
+          logWarn(`[MCPManager] Could not resolve npx path, using: ${command}`);
+        }
+      }
 
       log(`[MCPManager] Creating STDIO transport: ${command} ${args.join(' ')}`);
 

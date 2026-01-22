@@ -42,10 +42,10 @@ interface MCPServerStatus {
 interface SettingsPanelProps {
   isOpen: boolean;
   onClose: () => void;
-  initialTab?: 'api' | 'credentials' | 'connectors' | 'skills' | 'language';
+  initialTab?: 'api' | 'credentials' | 'connectors' | 'skills' | 'logs' | 'language';
 }
 
-type TabId = 'api' | 'credentials' | 'connectors' | 'skills' | 'language';
+type TabId = 'api' | 'credentials' | 'connectors' | 'skills' | 'logs' | 'language';
 
 const SERVICE_OPTIONS = [
   { value: 'gmail', label: 'Gmail' },
@@ -91,6 +91,7 @@ export function SettingsPanel({ isOpen, onClose, initialTab = 'api' }: SettingsP
     { id: 'credentials' as TabId, label: t('settings.credentials'), icon: Key, description: t('settings.credentialsDesc') },
     { id: 'connectors' as TabId, label: t('settings.connectors'), icon: Plug, description: t('settings.connectorsDesc') },
     { id: 'skills' as TabId, label: t('settings.skills'), icon: Package, description: t('settings.skillsDesc') },
+    { id: 'logs' as TabId, label: t('settings.logs'), icon: AlertCircle, description: t('settings.logsDesc') },
     { id: 'language' as TabId, label: t('settings.language'), icon: Languages, description: t('settings.languageDesc') },
   ];
 
@@ -158,6 +159,9 @@ export function SettingsPanel({ isOpen, onClose, initialTab = 'api' }: SettingsP
             </div>
             <div className={activeTab === 'skills' ? '' : 'hidden'}>
               {viewedTabs.has('skills') && <SkillsTab />}
+            </div>
+            <div className={activeTab === 'logs' ? '' : 'hidden'}>
+              {viewedTabs.has('logs') && <LogsTab />}
             </div>
             <div className={activeTab === 'language' ? '' : 'hidden'}>
               {viewedTabs.has('language') && <LanguageTab />}
@@ -1831,6 +1835,214 @@ function LanguageTab() {
             </div>
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ==================== Logs Tab ====================
+
+function LogsTab() {
+  const { t } = useTranslation();
+  const [logFiles, setLogFiles] = useState<Array<{ name: string; path: string; size: number; mtime: Date }>>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [logsDirectory, setLogsDirectory] = useState('');
+
+  useEffect(() => {
+    if (isElectron) {
+      loadLogs();
+    }
+  }, []);
+
+  async function loadLogs() {
+    try {
+      const [files, dir] = await Promise.all([
+        window.electronAPI.logs.getAll(),
+        window.electronAPI.logs.getDirectory(),
+      ]);
+      setLogFiles(files || []);
+      setLogsDirectory(dir || '');
+      setError('');
+    } catch (err) {
+      console.error('Failed to load logs:', err);
+      setError(t('logs.exportFailed'));
+    }
+  }
+
+  async function handleExport() {
+    setIsLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      const result = await window.electronAPI.logs.export();
+      if (result.success) {
+        setSuccess(t('logs.exportSuccess', { path: result.path }));
+        setTimeout(() => setSuccess(''), 5000);
+      } else {
+        setError(result.error || t('logs.exportFailed'));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('logs.exportFailed'));
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleOpen() {
+    setIsLoading(true);
+    try {
+      await window.electronAPI.logs.open();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('logs.exportFailed'));
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleClear() {
+    if (!confirm(t('logs.clearConfirm'))) {
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      const result = await window.electronAPI.logs.clear();
+      if (result.success) {
+        setSuccess(t('logs.clearSuccess', { count: result.deletedCount }));
+        await loadLogs();
+        setTimeout(() => setSuccess(''), 3000);
+      } else {
+        setError(result.error || t('logs.clearFailed'));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('logs.clearFailed'));
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function formatDate(date: Date): string {
+    return new Date(date).toLocaleString();
+  }
+
+  const totalSize = logFiles.reduce((sum, file) => sum + file.size, 0);
+
+  return (
+    <div className="space-y-4">
+      {/* Info Banner */}
+      <div className="px-4 py-3 rounded-xl bg-blue-500/10 text-blue-600 text-sm">
+        <p className="font-medium mb-1">📋 {t('logs.title')}</p>
+        <p className="text-xs opacity-80">
+          {t('logs.description')}
+        </p>
+      </div>
+
+      {/* Error/Success Messages */}
+      {error && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-error/10 text-error text-sm">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          {error}
+        </div>
+      )}
+      {success && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-success/10 text-success text-sm">
+          <CheckCircle className="w-4 h-4 flex-shrink-0" />
+          {success}
+        </div>
+      )}
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="p-4 rounded-xl bg-surface border border-border">
+          <div className="text-2xl font-bold text-text-primary">{logFiles.length}</div>
+          <div className="text-sm text-text-muted">{t('logs.logFiles')}</div>
+        </div>
+        <div className="p-4 rounded-xl bg-surface border border-border">
+          <div className="text-2xl font-bold text-text-primary">{formatFileSize(totalSize)}</div>
+          <div className="text-sm text-text-muted">{t('logs.totalSize')}</div>
+        </div>
+      </div>
+
+      {/* Log Files List */}
+      <div className="space-y-2">
+        <h3 className="text-sm font-medium text-text-primary px-2">{t('logs.logFiles')}</h3>
+        {logFiles.length === 0 ? (
+          <div className="text-center py-8 text-text-muted">
+            <AlertCircle className="w-10 h-10 mx-auto mb-3 opacity-50" />
+            <p>{t('logs.noLogFiles')}</p>
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {logFiles.map((file) => (
+              <div key={file.path} className="p-3 rounded-lg bg-surface border border-border">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-mono text-sm text-text-primary truncate">{file.name}</div>
+                    <div className="text-xs text-text-muted mt-1">
+                      {formatFileSize(file.size)} • {formatDate(file.mtime)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Directory Path */}
+      {logsDirectory && (
+        <div className="p-3 rounded-lg bg-surface-muted border border-border">
+          <div className="text-xs text-text-muted mb-1">{t('logs.logsDirectory')}</div>
+          <div className="font-mono text-xs text-text-secondary break-all">{logsDirectory}</div>
+        </div>
+      )}
+
+      {/* Action Buttons */}
+      <div className="grid grid-cols-3 gap-2">
+        <button
+          onClick={handleExport}
+          disabled={isLoading || logFiles.length === 0}
+          className="py-3 px-4 rounded-xl bg-accent text-white font-medium hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
+        >
+          {isLoading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Save className="w-4 h-4" />
+          )}
+          <span className="text-sm">{t('logs.exportZip')}</span>
+        </button>
+        <button
+          onClick={handleOpen}
+          disabled={isLoading}
+          className="py-3 px-4 rounded-xl bg-surface border border-border text-text-primary font-medium hover:bg-surface-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
+        >
+          <Globe className="w-4 h-4" />
+          <span className="text-sm">{t('logs.openFolder')}</span>
+        </button>
+        <button
+          onClick={handleClear}
+          disabled={isLoading || logFiles.length === 0}
+          className="py-3 px-4 rounded-xl bg-error/10 text-error font-medium hover:bg-error/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
+        >
+          <Trash2 className="w-4 h-4" />
+          <span className="text-sm">{t('logs.clearAll')}</span>
+        </button>
+      </div>
+
+      {/* Help Text */}
+      <div className="text-xs text-text-muted text-center space-y-1">
+        <p>{t('logs.helpText1')}</p>
+        <p>{t('logs.helpText2')}</p>
       </div>
     </div>
   );

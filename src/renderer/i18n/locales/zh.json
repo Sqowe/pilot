@@ -40,6 +40,8 @@
     "connectorsDesc": "浏览器和工具集成",
     "skills": "技能",
     "skillsDesc": "管理自定义技能",
+    "logs": "日志",
+    "logsDesc": "查看和导出应用日志",
     "language": "语言",
     "languageDesc": "选择您喜欢的语言"
   },
@@ -130,6 +132,24 @@
     "failedToInstall": "安装技能失败",
     "failedToDelete": "删除技能失败",
     "failedToToggle": "切换技能失败"
+  },
+  "logs": {
+    "title": "应用日志",
+    "description": "查看和导出应用日志以进行调试。日志超过 10MB 时会自动轮转。",
+    "logFiles": "日志文件",
+    "totalSize": "总大小",
+    "noLogFiles": "未找到日志文件",
+    "logsDirectory": "日志目录：",
+    "exportZip": "导出 ZIP",
+    "openFolder": "打开文件夹",
+    "clearAll": "清除所有",
+    "clearConfirm": "确定要清除所有日志文件吗？此操作无法撤销。",
+    "exportSuccess": "日志已成功导出到 {{path}}",
+    "clearSuccess": "已清除 {{count}} 个日志文件",
+    "exportFailed": "导出日志失败",
+    "clearFailed": "清除日志失败",
+    "helpText1": "💡 日志对于调试 MCP 连接和其他问题很有用。",
+    "helpText2": "将日志导出为 ZIP 文件以与技术支持共享或自行分析。"
   },
   "sidebar": {
     "recents": "最近",

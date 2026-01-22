@@ -15,7 +15,7 @@ import { LimaBridge } from './sandbox/lima-bridge';
 import { getSandboxBootstrap } from './sandbox/sandbox-bootstrap';
 import type { MCPServerConfig } from './mcp/mcp-manager';
 import type { ClientEvent, ServerEvent } from '../renderer/types';
-import { log, logWarn, logError } from './utils/logger';
+import { log, logWarn, logError, getLogFilePath, getLogsDirectory, getAllLogFiles, closeLogFile } from './utils/logger';
 
 // Current working directory (persisted between sessions)
 let currentWorkingDir: string | null = null;
@@ -314,6 +314,7 @@ app.on('before-quit', async (event) => {
   if (!isCleaningUp) {
     event.preventDefault();
     await cleanupSandboxResources();
+    closeLogFile(); // Close log file before quitting
     app.quit();
   }
 });
@@ -765,6 +766,145 @@ ipcMain.handle('sandbox.installClaudeCodeInLima', async () => {
   } catch (error) {
     logError('[Sandbox] Error installing claude-code in Lima:', error);
     return false;
+  }
+});
+
+// Logs IPC handlers
+ipcMain.handle('logs.getPath', () => {
+  try {
+    return getLogFilePath();
+  } catch (error) {
+    logError('[Logs] Error getting log path:', error);
+    return null;
+  }
+});
+
+ipcMain.handle('logs.getDirectory', () => {
+  try {
+    return getLogsDirectory();
+  } catch (error) {
+    logError('[Logs] Error getting logs directory:', error);
+    return null;
+  }
+});
+
+ipcMain.handle('logs.getAll', () => {
+  try {
+    return getAllLogFiles();
+  } catch (error) {
+    logError('[Logs] Error getting all log files:', error);
+    return [];
+  }
+});
+
+ipcMain.handle('logs.export', async () => {
+  try {
+    const logFiles = getAllLogFiles();
+    
+    if (logFiles.length === 0) {
+      return { success: false, error: 'No log files found' };
+    }
+
+    // Show save dialog
+    const result = await dialog.showSaveDialog(mainWindow!, {
+      title: 'Export Logs',
+      defaultPath: `opencowork-logs-${new Date().toISOString().split('T')[0]}.zip`,
+      filters: [
+        { name: 'ZIP Archive', extensions: ['zip'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+
+    if (result.canceled || !result.filePath) {
+      return { success: false, error: 'User cancelled' };
+    }
+
+    // Dynamic import archiver
+    const archiver = await import('archiver');
+    const output = fs.createWriteStream(result.filePath);
+    const archive = archiver.default('zip', { zlib: { level: 9 } });
+
+    return new Promise((resolve) => {
+      output.on('close', () => {
+        log('[Logs] Exported logs to:', result.filePath);
+        resolve({ 
+          success: true, 
+          path: result.filePath,
+          size: archive.pointer()
+        });
+      });
+
+      archive.on('error', (err: Error) => {
+        logError('[Logs] Error creating archive:', err);
+        resolve({ success: false, error: err.message });
+      });
+
+      archive.pipe(output);
+
+      // Add all log files
+      for (const logFile of logFiles) {
+        archive.file(logFile.path, { name: logFile.name });
+      }
+
+      // Add system info
+      const systemInfo = {
+        platform: process.platform,
+        arch: process.arch,
+        nodeVersion: process.version,
+        electronVersion: process.versions.electron,
+        appVersion: app.getVersion(),
+        exportDate: new Date().toISOString(),
+        logFiles: logFiles.map(f => ({
+          name: f.name,
+          size: f.size,
+          modified: f.mtime
+        }))
+      };
+      archive.append(JSON.stringify(systemInfo, null, 2), { name: 'system-info.json' });
+
+      archive.finalize();
+    });
+  } catch (error) {
+    logError('[Logs] Error exporting logs:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+});
+
+ipcMain.handle('logs.open', async () => {
+  try {
+    const logsDir = getLogsDirectory();
+    await shell.openPath(logsDir);
+    return { success: true };
+  } catch (error) {
+    logError('[Logs] Error opening logs directory:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+});
+
+ipcMain.handle('logs.clear', async () => {
+  try {
+    const logFiles = getAllLogFiles();
+    
+    // Close current log file
+    closeLogFile();
+    
+    // Delete all log files
+    for (const logFile of logFiles) {
+      try {
+        fs.unlinkSync(logFile.path);
+        log('[Logs] Deleted log file:', logFile.name);
+      } catch (err) {
+        logError('[Logs] Failed to delete log file:', logFile.name, err);
+      }
+    }
+    
+    // Log will automatically reinitialize on next log call
+    log('[Logs] Log files cleared and reinitialized');
+    
+    return { success: true, deletedCount: logFiles.length };
+  } catch (error) {
+    logError('[Logs] Error clearing logs:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 });
 

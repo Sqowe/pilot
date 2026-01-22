@@ -19,6 +19,7 @@
     "@anthropic-ai/claude-code": "^2.1.7",
     "@anthropic-ai/sdk": "^0.39.0",
     "@modelcontextprotocol/sdk": "^1.25.2",
+    "archiver": "^7.0.1",
     "better-sqlite3": "^12.6.2",
     "chokidar": "^4.0.1",
     "dotenv": "^17.2.3",
@@ -40,6 +41,7 @@
     "zustand": "^5.0.2"
   },
   "devDependencies": {
+    "@types/archiver": "^6.0.2",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^20.10.0",
     "@types/react": "^18.3.12",

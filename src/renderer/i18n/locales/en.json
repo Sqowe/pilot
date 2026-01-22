@@ -40,6 +40,8 @@
     "connectorsDesc": "Browser & tool integrations",
     "skills": "Skills",
     "skillsDesc": "Manage custom skills",
+    "logs": "Logs",
+    "logsDesc": "View and export application logs",
     "language": "Language",
     "languageDesc": "Choose your preferred language"
   },
@@ -130,6 +132,24 @@
     "failedToInstall": "Failed to install skill",
     "failedToDelete": "Failed to delete skill",
     "failedToToggle": "Failed to toggle skill"
+  },
+  "logs": {
+    "title": "Application Logs",
+    "description": "View and export application logs for debugging. Logs are automatically rotated when they exceed 10MB.",
+    "logFiles": "Log Files",
+    "totalSize": "Total Size",
+    "noLogFiles": "No log files found",
+    "logsDirectory": "Logs Directory:",
+    "exportZip": "Export ZIP",
+    "openFolder": "Open Folder",
+    "clearAll": "Clear All",
+    "clearConfirm": "Are you sure you want to clear all log files? This action cannot be undone.",
+    "exportSuccess": "Logs exported successfully to {{path}}",
+    "clearSuccess": "Cleared {{count}} log file(s)",
+    "exportFailed": "Failed to export logs",
+    "clearFailed": "Failed to clear logs",
+    "helpText1": "💡 Logs are useful for debugging issues with MCP connections and other problems.",
+    "helpText2": "Export logs as a ZIP file to share with support or for your own analysis."
   },
   "sidebar": {
     "recents": "Recents",

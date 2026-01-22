@@ -135,6 +135,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     installClaudeCodeInWSL: (distro: string): Promise<boolean> => 
       ipcRenderer.invoke('sandbox.installClaudeCodeInWSL', distro),
   },
+
+  // Logs methods
+  logs: {
+    getPath: (): Promise<string | null> => ipcRenderer.invoke('logs.getPath'),
+    getDirectory: (): Promise<string> => ipcRenderer.invoke('logs.getDirectory'),
+    getAll: (): Promise<Array<{ name: string; path: string; size: number; mtime: Date }>> => 
+      ipcRenderer.invoke('logs.getAll'),
+    export: (): Promise<{ success: boolean; path?: string; size?: number; error?: string }> => 
+      ipcRenderer.invoke('logs.export'),
+    open: (): Promise<{ success: boolean; error?: string }> => 
+      ipcRenderer.invoke('logs.open'),
+    clear: (): Promise<{ success: boolean; deletedCount?: number; error?: string }> => 
+      ipcRenderer.invoke('logs.clear'),
+  },
 });
 
 // Type declaration for the renderer process
@@ -200,6 +214,14 @@ declare global {
         }>;
         installNodeInWSL: (distro: string) => Promise<boolean>;
         installClaudeCodeInWSL: (distro: string) => Promise<boolean>;
+      };
+      logs: {
+        getPath: () => Promise<string | null>;
+        getDirectory: () => Promise<string>;
+        getAll: () => Promise<Array<{ name: string; path: string; size: number; mtime: Date }>>;
+        export: () => Promise<{ success: boolean; path?: string; size?: number; error?: string }>;
+        open: () => Promise<{ success: boolean; error?: string }>;
+        clear: () => Promise<{ success: boolean; deletedCount?: number; error?: string }>;
       };
     };
   }
