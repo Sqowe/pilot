@@ -152,7 +152,7 @@ You need an API key to power the agent. We support **OpenRouter**, **Anthropic**
 sudo xattr -rd com.apple.quarantine "/Applications/Open Cowork.app"
 ```
 2.  **Network Access**: For tools like `WebSearch`, you may need to enable "Virtual Network Interface" (TUN Mode) in your proxy settings to ensure connectivity.
-
+3. **Notion Connector**: Besides setting the integration token, you also need to add connections in a root page. See https://www.notion.com/help/add-and-manage-connections-with-the-api for more details.
 ---
 
 <a id="skills"></a>
