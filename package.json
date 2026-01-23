@@ -42,7 +42,7 @@
     "zustand": "^5.0.2"
   },
   "devDependencies": {
-    "@types/archiver": "^6.0.2",
+    "@types/archiver": "^6.0.4",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^20.10.0",
     "@types/react": "^18.3.12",
