@@ -534,19 +534,46 @@ function ServerCard({
               {showTools && serverTools.length > 0 && (
                 <div className="mt-3 ml-6 p-3 rounded-lg bg-surface-muted border border-border">
                   <div className="text-xs font-medium text-text-primary mb-2">Available Tools:</div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {serverTools.map((tool, idx) => (
-                      <div
-                        key={idx}
-                        className="px-2 py-1 rounded bg-background border border-border text-xs text-text-secondary"
-                        title={tool.description || tool.name}
-                      >
-                        <div className="font-mono text-accent">{tool.name.replace(/^mcp_[^_]+_/, '')}</div>
-                        {tool.description && (
-                          <div className="text-text-muted mt-0.5 truncate">{tool.description}</div>
-                        )}
-                      </div>
-                    ))}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {serverTools.map((tool, idx) => {
+                      // DEBUG: Log the original tool name
+                      if (isElectron) {
+                        window.electronAPI.logs.write('info', '='.repeat(80));
+                        window.electronAPI.logs.write('info', '🔍 [MCPConnectorsModal DEBUG] Tool #' + (idx + 1));
+                        window.electronAPI.logs.write('info', '🔍 [MCPConnectorsModal DEBUG] Original tool.name:', tool.name);
+                        window.electronAPI.logs.write('info', '🔍 [MCPConnectorsModal DEBUG] Type of tool.name:', typeof tool.name);
+                      }
+                      
+                      // Get the part after the last double underscore
+                      // e.g., "mcp__Software_Development__create_or_modify_code" -> "create_or_modify_code"
+                      const parts = tool.name.split('__');
+                      if (isElectron) {
+                        window.electronAPI.logs.write('info', '🔍 [MCPConnectorsModal DEBUG] Split parts:', JSON.stringify(parts));
+                        window.electronAPI.logs.write('info', '🔍 [MCPConnectorsModal DEBUG] Parts length:', parts.length);
+                      }
+                      
+                      const displayName = parts.length > 1 ? parts[parts.length - 1] : tool.name;
+                      if (isElectron) {
+                        window.electronAPI.logs.write('info', '🔍 [MCPConnectorsModal DEBUG] Final displayName:', displayName);
+                        window.electronAPI.logs.write('info', '🔍 [MCPConnectorsModal DEBUG] Type of displayName:', typeof displayName);
+                        window.electronAPI.logs.write('info', '='.repeat(80));
+                      }
+                      
+                      return (
+                        <div
+                          key={idx}
+                          className="px-2 py-1.5 rounded bg-background border border-border text-xs text-text-secondary min-w-0"
+                          title={`${displayName}\n\n${tool.description || ''}`}
+                        >
+                          <div className="font-mono text-accent leading-relaxed break-words">
+                            {displayName}
+                          </div>
+                          {tool.description && (
+                            <div className="text-text-muted mt-0.5 line-clamp-2 break-words">{tool.description}</div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

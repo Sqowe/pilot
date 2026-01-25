@@ -983,6 +983,22 @@ ipcMain.handle('logs.isEnabled', () => {
   }
 });
 
+ipcMain.handle('logs.write', (_event, level: 'info' | 'warn' | 'error', args: any[]) => {
+  try {
+    if (level === 'warn') {
+      logWarn(...args);
+    } else if (level === 'error') {
+      logError(...args);
+    } else {
+      log(...args);
+    }
+    return { success: true };
+  } catch (error) {
+    console.error('[Logs] Error writing log:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+});
+
 ipcMain.handle('sandbox.retryLimaSetup', async () => {
   if (process.platform !== 'darwin') {
     return { success: false, error: 'Lima is only available on macOS' };

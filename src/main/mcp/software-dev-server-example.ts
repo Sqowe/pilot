@@ -58,9 +58,29 @@ interface GUIAppInstance {
   appType: string;
   startTime: Date;
   url?: string;
+  isDocker?: boolean;
+  containerId?: string;
+  vncPort?: number;
 }
 
 let currentGUIApp: GUIAppInstance | null = null;
+
+// Docker GUI Test Management
+interface DockerGUITestConfig {
+  appFiles: string[];
+  testFiles: string[];
+  enableVnc: boolean;
+  vncPort: number;
+  displayNumber: number;
+}
+
+// const DEFAULT_DOCKER_CONFIG: DockerGUITestConfig = {
+//   appFiles: [],
+//   testFiles: [],
+//   enableVnc: true,
+//   vncPort: 5901,
+//   displayNumber: 99,
+// };
 
 // Appium Session Management
 interface AppiumSession {
@@ -73,8 +93,216 @@ interface AppiumSession {
 
 let currentAppiumSession: AppiumSession | null = null;
 
-// Helper: Start GUI application
-async function startGUIApplication(appFilePath: string, appType: string, startCommand?: string, waitTime: number = 3): Promise<GUIAppInstance> {
+// Helper: Build Docker image for GUI testing
+async function buildDockerGUITestImage(config: DockerGUITestConfig): Promise<string> {
+  const imageName = 'mcp-gui-test';
+  const dockerfilePath = path.join(WORKSPACE_DIR, '.mcp-gui-test', 'Dockerfile');
+  
+  console.error('[Docker] Building GUI test image...');
+  
+  // Create Dockerfile
+  const dockerfile = `FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \\
+    python3 \\
+    python3-pip \\
+    python3-tk \\
+    xvfb \\
+    xdotool \\
+    scrot \\
+    imagemagick \\
+    x11vnc \\
+    wget \\
+    curl \\
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy application and test files (will be mounted)
+# Files will be mounted at runtime
+
+# Create entrypoint script
+RUN echo '#!/bin/bash\\n\\
+# Start virtual display\\n\\
+echo "Starting Xvfb on :${config.displayNumber}..."\\n\\
+Xvfb :${config.displayNumber} -screen 0 1024x768x24 -ac +extension GLX +render -noreset &\\n\\
+export DISPLAY=:${config.displayNumber}\\n\\
+\\n\\
+# Wait for X server to start\\n\\
+sleep 2\\n\\
+\\n\\
+# Start VNC server if enabled\\n\\
+if [ "$ENABLE_VNC" = "true" ]; then\\n\\
+    echo "Starting VNC server on port ${config.vncPort}..."\\n\\
+    x11vnc -display :${config.displayNumber} -rfbport ${config.vncPort} -forever -nopw -shared -quiet &\\n\\
+    echo "VNC server started. Connect to localhost:${config.vncPort} to view."\\n\\
+    echo ""\\n\\
+    echo "=========================================="\\n\\
+    echo "VNC Connection Instructions"\\n\\
+    echo "=========================================="\\n\\
+    echo "Install VNC Viewer:"\\n\\
+    echo "  brew install --cask vnc-viewer"\\n\\
+    echo ""\\n\\
+    echo "Then connect to: localhost:${config.vncPort}"\\n\\
+    echo "=========================================="\\n\\
+    echo ""\\n\\
+fi\\n\\
+\\n\\
+# Run tests\\n\\
+echo ""\\n\\
+echo "=========================================="\\n\\
+echo "Running GUI Tests in Isolated Environment"\\n\\
+echo "=========================================="\\n\\
+echo ""\\n\\
+\\n\\
+# Execute test command (passed as argument)\\n\\
+if [ -n "$TEST_COMMAND" ]; then\\n\\
+    echo "Executing: $TEST_COMMAND"\\n\\
+    DISPLAY=:${config.displayNumber} bash -c "$TEST_COMMAND"\\n\\
+else\\n\\
+    echo "No test command specified. Keeping container alive..."\\n\\
+    tail -f /dev/null\\n\\
+fi\\n\\
+' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+# Expose VNC port
+EXPOSE ${config.vncPort}
+
+# Set environment variables
+ENV DISPLAY=:${config.displayNumber}
+ENV ENABLE_VNC=false
+
+ENTRYPOINT ["/entrypoint.sh"]
+`;
+  
+  // Ensure directory exists
+  await fs.mkdir(path.dirname(dockerfilePath), { recursive: true });
+  await fs.writeFile(dockerfilePath, dockerfile);
+  
+  // Build image
+  try {
+    const { stdout, stderr } = await executeCommand(
+      `docker build -t ${imageName} -f "${dockerfilePath}" "${path.dirname(dockerfilePath)}"`,
+      WORKSPACE_DIR
+    );
+    console.error('[Docker] Image built successfully');
+    console.error(stdout);
+    if (stderr) console.error(stderr);
+    return imageName;
+  } catch (error: any) {
+    console.error('[Docker] Failed to build image:', error.message);
+    throw new Error(`Failed to build Docker image: ${error.message}`);
+  }
+}
+
+// Helper: Start GUI application in Docker
+async function startGUIApplicationInDocker(
+  appFilePath: string,
+  appType: string,
+  testCommand: string,
+  enableVnc: boolean = true,
+  vncPort: number = 5901
+): Promise<GUIAppInstance> {
+  console.error('[Docker] Starting GUI application in isolated Docker environment...');
+  
+  const config: DockerGUITestConfig = {
+    appFiles: [appFilePath],
+    testFiles: [],
+    enableVnc,
+    vncPort,
+    displayNumber: 99,
+  };
+  
+  // Build Docker image
+  const imageName = await buildDockerGUITestImage(config);
+  
+  // Prepare volume mounts
+  const appDir = path.dirname(path.isAbsolute(appFilePath) ? appFilePath : path.join(WORKSPACE_DIR, appFilePath));
+  
+  // Start container
+  const containerName = `mcp-gui-test-${Date.now()}`;
+  const dockerCommand = [
+    'docker run',
+    '--rm',
+    '-d',
+    `--name ${containerName}`,
+    `-v "${appDir}:/app"`,
+    `-e ENABLE_VNC=${enableVnc}`,
+    `-e TEST_COMMAND="${testCommand}"`,
+    enableVnc ? `-p ${vncPort}:${vncPort}` : '',
+    imageName,
+  ].filter(Boolean).join(' ');
+  
+  console.error(`[Docker] Starting container: ${containerName}`);
+  console.error(`[Docker] Command: ${dockerCommand}`);
+  
+  try {
+    const { stdout } = await executeCommand(dockerCommand, WORKSPACE_DIR);
+    const containerId = stdout.trim();
+    
+    console.error(`[Docker] Container started: ${containerId.substring(0, 12)}`);
+    
+    // Wait for services to start
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    if (enableVnc) {
+      console.error('');
+      console.error('========================================');
+      console.error('VNC Viewer Connection');
+      console.error('========================================');
+      console.error(`VNC Port: ${vncPort}`);
+      console.error(`Connection: localhost:${vncPort}`);
+      console.error('');
+      console.error('Install VNC Viewer:');
+      console.error('  brew install --cask vnc-viewer');
+      console.error('');
+      console.error('Then open VNC Viewer and connect to:');
+      console.error(`  localhost:${vncPort}`);
+      console.error('========================================');
+      console.error('');
+    }
+    
+    const instance: GUIAppInstance = {
+      process: null,
+      pid: 0,
+      appType,
+      startTime: new Date(),
+      isDocker: true,
+      containerId,
+      vncPort: enableVnc ? vncPort : undefined,
+    };
+    
+    return instance;
+  } catch (error: any) {
+    console.error('[Docker] Failed to start container:', error.message);
+    throw new Error(`Failed to start Docker container: ${error.message}`);
+  }
+}
+
+// Helper: Start GUI application (local or Docker)
+async function startGUIApplication(
+  appFilePath: string, 
+  appType: string, 
+  startCommand?: string, 
+  waitTime: number = 3,
+  useDocker: boolean = false,
+  testCommand?: string,
+  enableVnc: boolean = true,
+  vncPort: number = 5901
+): Promise<GUIAppInstance> {
+  // If Docker mode is enabled, use Docker
+  if (useDocker) {
+    if (!testCommand) {
+      throw new Error('testCommand is required when using Docker mode');
+    }
+    return await startGUIApplicationInDocker(appFilePath, appType, testCommand, enableVnc, vncPort);
+  }
+  
+  // Otherwise, start locally
   const fullPath = path.isAbsolute(appFilePath) ? appFilePath : path.join(WORKSPACE_DIR, appFilePath);
   
   let command: string;
@@ -118,6 +346,7 @@ async function startGUIApplication(appFilePath: string, appType: string, startCo
     appType,
     startTime: new Date(),
     url,
+    isDocker: false,
   };
   
   // Wait for app to be ready
@@ -128,9 +357,31 @@ async function startGUIApplication(appFilePath: string, appType: string, startCo
   return instance;
 }
 
-// Helper: Stop GUI application
+// Helper: Stop GUI application (local or Docker)
 async function stopGUIApplication(instance: GUIAppInstance, force: boolean = false): Promise<void> {
-  if (!instance || !instance.process) {
+  if (!instance) {
+    return;
+  }
+  
+  // If Docker container, stop it
+  if (instance.isDocker && instance.containerId) {
+    console.error(`[Docker] Stopping container: ${instance.containerId.substring(0, 12)}`);
+    
+    try {
+      if (force) {
+        await executeCommand(`docker kill ${instance.containerId}`);
+      } else {
+        await executeCommand(`docker stop ${instance.containerId}`);
+      }
+      console.error('[Docker] Container stopped successfully');
+    } catch (error: any) {
+      console.error(`[Docker] Error stopping container: ${error.message}`);
+    }
+    return;
+  }
+  
+  // Otherwise, stop local process
+  if (!instance.process) {
     return;
   }
   
@@ -149,6 +400,26 @@ async function stopGUIApplication(instance: GUIAppInstance, force: boolean = fal
     console.error(`[GUI] Error stopping application: ${error.message}`);
   }
 }
+
+// Helper: Get Docker container logs
+// async function getDockerContainerLogs(containerId: string, tail: number = 100): Promise<string> {
+//   try {
+//     const { stdout } = await executeCommand(`docker logs --tail ${tail} ${containerId}`);
+//     return stdout;
+//   } catch (error: any) {
+//     console.error(`[Docker] Error getting logs: ${error.message}`);
+//     return `Error getting logs: ${error.message}`;
+//   }
+// }
+
+// Helper: Execute command in Docker container
+// async function executeCommandInDocker(containerId: string, command: string): Promise<{ stdout: string; stderr: string }> {
+//   try {
+//     return await executeCommand(`docker exec ${containerId} bash -c "${command.replace(/"/g, '\\"')}"`);
+//   } catch (error: any) {
+//     throw new Error(`Failed to execute command in container: ${error.message}`);
+//   }
+// }
 
 // Appium Helper Functions
 
@@ -1075,79 +1346,79 @@ async function executeGUIInteraction(action: string, x?: number, y?: number, val
 }
 
 // Helper: Execute GUI assertion
-async function executeGUIAssertion(assertionType: string, selector?: string, expectedValue?: string, timeout: number = 5000): Promise<boolean> {
-  // For non-web apps, assertions are not supported
-  if (!currentGUIApp || currentGUIApp.appType !== 'web') {
-    console.error('[GUI] Assertions are only supported for web apps');
-    return false;
-  }
-  
-  if (!currentGUIApp.url) {
-    return false;
-  }
-  
-  // Check if Playwright is available
-  try {
-    await executeCommand('npm list playwright --depth=0');
-  } catch {
-    console.error('[GUI] Playwright not installed, cannot perform assertions');
-    return false;
-  }
-  
-  const script = `
-const { chromium } = require('playwright');
-
-(async () => {
-  const browser = await chromium.launch({ headless: false });
-  const page = await browser.newPage();
-  
-  await page.goto('${currentGUIApp.url}');
-  
-  let result = false;
-  
-  try {
-    switch ('${assertionType}') {
-      case 'element_exists':
-        const element = await page.$('${selector}');
-        result = element !== null;
-        break;
-      case 'element_visible':
-        result = await page.isVisible('${selector}', { timeout: ${timeout} });
-        break;
-      case 'text_equals':
-        const text = await page.textContent('${selector}', { timeout: ${timeout} });
-        result = text === '${expectedValue}';
-        break;
-      case 'text_contains':
-        const content = await page.textContent('${selector}', { timeout: ${timeout} });
-        result = content?.includes('${expectedValue}') || false;
-        break;
-      case 'attribute_equals':
-        const attr = await page.getAttribute('${selector}', '${expectedValue?.split('=')[0]}', { timeout: ${timeout} });
-        result = attr === '${expectedValue?.split('=')[1]}';
-        break;
-      case 'element_count':
-        const elements = await page.$$('${selector}');
-        result = elements.length === parseInt('${expectedValue}');
-        break;
-    }
-  } catch (error) {
-    result = false;
-  }
-  
-  console.log(JSON.stringify({ passed: result }));
-  await browser.close();
-})();
-`;
-  
-  try {
-    const { stdout } = await executeCommand(`node -e "${script.replace(/"/g, '\\"')}"`);
-    const { passed } = JSON.parse(stdout);
-    return passed;
-  } catch (error: any) {
-    return false;
-  }
-}
+// async function executeGUIAssertion(assertionType: string, selector?: string, expectedValue?: string, timeout: number = 5000): Promise<boolean> {
+//   // For non-web apps, assertions are not supported
+//   if (!currentGUIApp || currentGUIApp.appType !== 'web') {
+//     console.error('[GUI] Assertions are only supported for web apps');
+//     return false;
+//   }
+//   
+//   if (!currentGUIApp.url) {
+//     return false;
+//   }
+//   
+//   // Check if Playwright is available
+//   try {
+//     await executeCommand('npm list playwright --depth=0');
+//   } catch {
+//     console.error('[GUI] Playwright not installed, cannot perform assertions');
+//     return false;
+//   }
+//   
+//   const script = `
+// const { chromium } = require('playwright');
+// 
+// (async () => {
+//   const browser = await chromium.launch({ headless: false });
+//   const page = await browser.newPage();
+//   
+//   await page.goto('${currentGUIApp.url}');
+//   
+//   let result = false;
+//   
+//   try {
+//     switch ('${assertionType}') {
+//       case 'element_exists':
+//         const element = await page.$('${selector}');
+//         result = element !== null;
+//         break;
+//       case 'element_visible':
+//         result = await page.isVisible('${selector}', { timeout: ${timeout} });
+//         break;
+//       case 'text_equals':
+//         const text = await page.textContent('${selector}', { timeout: ${timeout} });
+//         result = text === '${expectedValue}';
+//         break;
+//       case 'text_contains':
+//         const content = await page.textContent('${selector}', { timeout: ${timeout} });
+//         result = content?.includes('${expectedValue}') || false;
+//         break;
+//       case 'attribute_equals':
+//         const attr = await page.getAttribute('${selector}', '${expectedValue?.split('=')[0]}', { timeout: ${timeout} });
+//         result = attr === '${expectedValue?.split('=')[1]}';
+//         break;
+//       case 'element_count':
+//         const elements = await page.$$('${selector}');
+//         result = elements.length === parseInt('${expectedValue}');
+//         break;
+//     }
+//   } catch (error) {
+//     result = false;
+//   }
+//   
+//   console.log(JSON.stringify({ passed: result }));
+//   await browser.close();
+// })();
+// `;
+//   
+//   try {
+//     const { stdout } = await executeCommand(`node -e "${script.replace(/"/g, '\\"')}"`);
+//     const { passed } = JSON.parse(stdout);
+//     return passed;
+//   } catch (error: any) {
+//     return false;
+//   }
+// }
 
 // Helper: Execute Claude Code command
 async function executeClaudeCode(prompt: string, workingDir: string = WORKSPACE_DIR): Promise<string> {
@@ -1428,7 +1699,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'start_gui_application',
-        description: 'Start a GUI application for testing. Supports Python (tkinter, PyQt, etc.), Electron, web apps, and more.',
+        description: 'Start a GUI application for testing. Supports Python (tkinter, PyQt, etc.), Electron, web apps, and more. Can run in Docker for isolation.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1448,6 +1719,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             wait_for_ready: {
               type: 'number',
               description: 'Seconds to wait for app to be ready (default: 3)',
+            },
+            use_docker: {
+              type: 'boolean',
+              description: 'Run in isolated Docker environment (default: false). Prevents interference with user work.',
+            },
+            test_command: {
+              type: 'string',
+              description: 'Test command to run in Docker (required if use_docker is true, e.g., "python test_app.py")',
+            },
+            enable_vnc: {
+              type: 'boolean',
+              description: 'Enable VNC server for viewing tests (default: true, only for Docker mode)',
+            },
+            vnc_port: {
+              type: 'number',
+              description: 'VNC port to expose (default: 5901, only for Docker mode)',
             },
           },
           required: ['app_file_path', 'app_type'],
@@ -2441,7 +2728,6 @@ describe('${path.basename(code_file_path)}', () => {
         
         try {
           // Use vision to verify the GUI state
-          const platform = require('os').platform();
           const screenshotPath = path.join(WORKSPACE_DIR, 'gui_screenshot.png');
           
           // Bring window to front and take screenshot
