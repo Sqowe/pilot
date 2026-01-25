@@ -477,6 +477,42 @@ async function takeAppiumScreenshot(filename?: string): Promise<string> {
   }
 }
 
+// Helper: Execute cliclick command (macOS)
+async function executeCliclick(command: string): Promise<{ stdout: string; stderr: string }> {
+  const platform = require('os').platform();
+  
+  if (platform !== 'darwin') {
+    throw new Error('cliclick is only available on macOS. Use xdotool on Linux or other tools on Windows.');
+  }
+  
+  // Check if cliclick is installed
+  try {
+    await executeCommand('which cliclick');
+  } catch {
+    throw new Error('cliclick is not installed. Install it with: brew install cliclick');
+  }
+  
+  return await executeCommand(`cliclick ${command}`);
+}
+
+// Helper: Take screenshot (cross-platform)
+async function takeScreenshot(outputPath: string): Promise<string> {
+  const platform = require('os').platform();
+  
+  let command: string;
+  if (platform === 'darwin') {
+    command = `screencapture -x "${outputPath}"`;
+  } else if (platform === 'win32') {
+    command = `powershell -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Drawing.Bitmap]::FromScreen([System.Windows.Forms.Screen]::PrimaryScreen.Bounds).Save('${outputPath}')"`;
+  } else {
+    // Linux
+    command = `import -window root "${outputPath}"`;
+  }
+  
+  await executeCommand(command);
+  return outputPath;
+}
+
 // Helper: Use vision model to analyze screenshot and find element coordinates
 async function analyzeScreenshotWithVision(screenshotPath: string, elementDescription: string): Promise<{ x: number; y: number; confidence: number }> {
   // This function uses Claude's vision capabilities to locate UI elements
@@ -619,20 +655,20 @@ async function focusApplicationWindow(appName?: string): Promise<void> {
       const { stdout, stderr } = await executeCommand(`powershell -Command "${script}"`);
       console.error(`[GUI] PowerShell result - stdout: ${stdout}, stderr: ${stderr}`);
     } else {
-      // Linux: Use wmctrl or xdotool
-      console.error('[GUI] Using Linux wmctrl/xdotool to focus window...');
+      // Linux: Use xdotool
+      console.error('[GUI] Using Linux xdotool to focus window...');
       
       try {
         if (appName) {
-          const { stdout, stderr } = await executeCommand(`wmctrl -a "${appName}"`);
-          console.error(`[GUI] wmctrl result - stdout: ${stdout}, stderr: ${stderr}`);
+          const { stdout, stderr } = await executeCommand(`xdotool search --name "${appName}" windowactivate`);
+          console.error(`[GUI] xdotool result - stdout: ${stdout}, stderr: ${stderr}`);
         } else {
           const { stdout, stderr } = await executeCommand(`xdotool search --class python windowactivate`);
           console.error(`[GUI] xdotool result - stdout: ${stdout}, stderr: ${stderr}`);
         }
       } catch (err: any) {
-        console.error(`[GUI] wmctrl/xdotool not available or failed: ${err.message}`);
-        console.error('[GUI] Please install wmctrl or xdotool: sudo apt-get install wmctrl xdotool');
+        console.error(`[GUI] xdotool not available or failed: ${err.message}`);
+        console.error('[GUI] Please install xdotool: sudo apt-get install xdotool');
       }
     }
     
@@ -643,7 +679,7 @@ async function focusApplicationWindow(appName?: string): Promise<void> {
   }
 }
 
-// Helper: Execute GUI interaction with vision-based element location
+// Helper: Execute GUI interaction with vision-based element location (using cliclick)
 async function executeGUIInteractionWithVision(action: string, elementDescription: string, value?: string, _timeout: number = 5000): Promise<any> {
   if (!currentGUIApp) {
     throw new Error('No GUI application is running');
@@ -657,20 +693,11 @@ async function executeGUIInteractionWithVision(action: string, elementDescriptio
     console.error('[Vision] Step 0: Bringing window to front...');
     await focusApplicationWindow();
     console.error('[Vision] Waiting 1 second for window to come to front...');
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for window to come to front (increased to 1s)
+    await new Promise(resolve => setTimeout(resolve, 1000));
     
     // Step 1: Take screenshot
     console.error('[Vision] Step 1: Taking screenshot...');
-    let screenshotCmd: string;
-    if (platform === 'darwin') {
-      screenshotCmd = `screencapture -x ${screenshotPath}`;
-    } else if (platform === 'win32') {
-      screenshotCmd = `powershell -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Drawing.Bitmap]::FromScreen([System.Windows.Forms.Screen]::PrimaryScreen.Bounds).Save('${screenshotPath}')"`;
-    } else {
-      screenshotCmd = `import -window root ${screenshotPath}`;
-    }
-    
-    await executeCommand(screenshotCmd);
+    await takeScreenshot(screenshotPath);
     console.error(`[Vision] Screenshot saved to ${screenshotPath}`);
     
     // Step 2: Analyze with vision model to find element
@@ -684,206 +711,366 @@ async function executeGUIInteractionWithVision(action: string, elementDescriptio
       };
     }
     
-    // Step 3: Perform action using PyAutoGUI or system commands
-    switch (action) {
-      case 'click':
-        // Install PyAutoGUI if not available
-        try {
-          await executeCommand('python3 -c "import pyautogui"');
-        } catch {
-          console.error('[Vision] Installing PyAutoGUI...');
-          await executeCommand('pip3 install pyautogui');
-        }
-        
-        // Click at the coordinates
-        const clickScript = `
-import pyautogui
-pyautogui.click(${coords.x}, ${coords.y})
-print("Clicked at (${coords.x}, ${coords.y})")
-`;
-        await executeCommand(`python3 -c "${clickScript.replace(/"/g, '\\"')}"`);
-        
-        return {
-          success: true,
-          action: 'click',
-          element: elementDescription,
-          coordinates: { x: coords.x, y: coords.y },
-          confidence: coords.confidence,
-        };
-        
-      case 'type':
-        if (!value) {
-          throw new Error('Value is required for type action');
-        }
-        
-        // Click first, then type
-        const typeScript = `
-import pyautogui
-pyautogui.click(${coords.x}, ${coords.y})
-pyautogui.sleep(0.2)
-pyautogui.typewrite("${value}", interval=0.05)
-print("Typed '${value}' at (${coords.x}, ${coords.y})")
-`;
-        await executeCommand(`python3 -c "${typeScript.replace(/"/g, '\\"')}"`);
-        
-        return {
-          success: true,
-          action: 'type',
-          element: elementDescription,
-          value,
-          coordinates: { x: coords.x, y: coords.y },
-          confidence: coords.confidence,
-        };
-        
-      case 'hover':
-        const hoverScript = `
-import pyautogui
-pyautogui.moveTo(${coords.x}, ${coords.y})
-print("Hovered at (${coords.x}, ${coords.y})")
-`;
-        await executeCommand(`python3 -c "${hoverScript.replace(/"/g, '\\"')}"`);
-        
-        return {
-          success: true,
-          action: 'hover',
-          element: elementDescription,
-          coordinates: { x: coords.x, y: coords.y },
-          confidence: coords.confidence,
-        };
-        
-      default:
-        return {
-          success: false,
-          message: `Action '${action}' is not supported with vision-based interaction`,
-        };
+    // Step 3: Perform action using cliclick (macOS) or xdotool (Linux)
+    if (platform === 'darwin') {
+      // macOS: Use cliclick
+      switch (action) {
+        case 'click':
+          await executeCliclick(`c:${coords.x},${coords.y}`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          return {
+            success: true,
+            action: 'click',
+            element: elementDescription,
+            coordinates: { x: coords.x, y: coords.y },
+            confidence: coords.confidence,
+          };
+          
+        case 'double_click':
+          await executeCliclick(`dc:${coords.x},${coords.y}`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          return {
+            success: true,
+            action: 'double_click',
+            element: elementDescription,
+            coordinates: { x: coords.x, y: coords.y },
+            confidence: coords.confidence,
+          };
+          
+        case 'right_click':
+          await executeCliclick(`rc:${coords.x},${coords.y}`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          return {
+            success: true,
+            action: 'right_click',
+            element: elementDescription,
+            coordinates: { x: coords.x, y: coords.y },
+            confidence: coords.confidence,
+          };
+          
+        case 'type':
+          if (!value) {
+            throw new Error('Value is required for type action');
+          }
+          
+          // Click first, then type
+          await executeCliclick(`c:${coords.x},${coords.y}`);
+          await new Promise(resolve => setTimeout(resolve, 200));
+          
+          // Escape special characters for cliclick
+          const escapedValue = value.replace(/"/g, '\\"');
+          await executeCliclick(`t:"${escapedValue}"`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          return {
+            success: true,
+            action: 'type',
+            element: elementDescription,
+            value,
+            coordinates: { x: coords.x, y: coords.y },
+            confidence: coords.confidence,
+          };
+          
+        case 'hover':
+          await executeCliclick(`m:${coords.x},${coords.y}`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          return {
+            success: true,
+            action: 'hover',
+            element: elementDescription,
+            coordinates: { x: coords.x, y: coords.y },
+            confidence: coords.confidence,
+          };
+          
+        default:
+          return {
+            success: false,
+            message: `Action '${action}' is not supported with vision-based interaction`,
+          };
+      }
+    } else if (platform === 'linux') {
+      // Linux: Use xdotool
+      switch (action) {
+        case 'click':
+          await executeCommand(`xdotool mousemove ${coords.x} ${coords.y} click 1`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          return {
+            success: true,
+            action: 'click',
+            element: elementDescription,
+            coordinates: { x: coords.x, y: coords.y },
+            confidence: coords.confidence,
+          };
+          
+        case 'double_click':
+          await executeCommand(`xdotool mousemove ${coords.x} ${coords.y} click --repeat 2 1`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          return {
+            success: true,
+            action: 'double_click',
+            element: elementDescription,
+            coordinates: { x: coords.x, y: coords.y },
+            confidence: coords.confidence,
+          };
+          
+        case 'right_click':
+          await executeCommand(`xdotool mousemove ${coords.x} ${coords.y} click 3`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          return {
+            success: true,
+            action: 'right_click',
+            element: elementDescription,
+            coordinates: { x: coords.x, y: coords.y },
+            confidence: coords.confidence,
+          };
+          
+        case 'type':
+          if (!value) {
+            throw new Error('Value is required for type action');
+          }
+          
+          // Click first, then type
+          await executeCommand(`xdotool mousemove ${coords.x} ${coords.y} click 1`);
+          await new Promise(resolve => setTimeout(resolve, 200));
+          await executeCommand(`xdotool type "${value.replace(/"/g, '\\"')}"`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          return {
+            success: true,
+            action: 'type',
+            element: elementDescription,
+            value,
+            coordinates: { x: coords.x, y: coords.y },
+            confidence: coords.confidence,
+          };
+          
+        case 'hover':
+          await executeCommand(`xdotool mousemove ${coords.x} ${coords.y}`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          return {
+            success: true,
+            action: 'hover',
+            element: elementDescription,
+            coordinates: { x: coords.x, y: coords.y },
+            confidence: coords.confidence,
+          };
+          
+        default:
+          return {
+            success: false,
+            message: `Action '${action}' is not supported with vision-based interaction`,
+          };
+      }
+    } else {
+      // Windows: Not supported yet
+      return {
+        success: false,
+        message: 'Vision-based interaction is not yet supported on Windows',
+        suggestion: 'Use macOS (cliclick) or Linux (xdotool) for vision-based GUI automation',
+      };
     }
   } catch (error: any) {
     return {
       success: false,
       message: `Vision-based interaction failed: ${error.message}`,
-      suggestion: 'Check if PyAutoGUI is installed and the element description is accurate',
+      suggestion: platform === 'darwin' 
+        ? 'Check if cliclick is installed (brew install cliclick) and the element description is accurate'
+        : 'Check if xdotool is installed (sudo apt-get install xdotool) and the element description is accurate',
     };
   }
 }
 
-// Helper: Execute GUI interaction (using Playwright-like approach)
-async function executeGUIInteraction(action: string, selector?: string, value?: string, timeout: number = 5000): Promise<any> {
-  // For Python GUI apps, use simpler screenshot/observation approach
-  // For Web apps, use Playwright if available
-  
+// Helper: Execute GUI interaction (using cliclick/xdotool for direct coordinate-based actions)
+async function executeGUIInteraction(action: string, x?: number, y?: number, value?: string, timeout: number = 5000): Promise<any> {
   if (!currentGUIApp) {
     throw new Error('No GUI application is running');
   }
   
-  // For non-web apps, use simple commands
-  if (currentGUIApp.appType !== 'web') {
-    switch (action) {
-      case 'screenshot':
-        // Use system screenshot command
-        const platform = require('os').platform();
-        let screenshotCmd: string;
-        
-        if (platform === 'darwin') {
-          // macOS
-          screenshotCmd = 'screencapture -x screenshot.png';
-        } else if (platform === 'win32') {
-          // Windows - use PowerShell
-          screenshotCmd = 'powershell -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait(\'{PRTSC}\');"';
-        } else {
-          // Linux
-          screenshotCmd = 'import -window root screenshot.png';
-        }
-        
-        try {
-          await executeCommand(screenshotCmd);
-          return { success: true, message: 'Screenshot saved to screenshot.png' };
-        } catch (error: any) {
-          return { success: false, message: `Screenshot failed: ${error.message}` };
-        }
-        
-      case 'wait':
-        // Simple wait
-        await new Promise(resolve => setTimeout(resolve, timeout));
-        return { success: true, message: `Waited ${timeout}ms` };
-        
-      default:
-        // For other actions on non-web apps, return a helpful message
-        return {
-          success: false,
-          message: `GUI interaction '${action}' is not supported for ${currentGUIApp.appType} apps. Use screenshot to capture the current state, or test manually.`,
-          suggestion: 'For Python GUI apps, consider using PyAutoGUI or manual testing. For full automation, convert to a web app.'
-        };
-    }
-  }
+  const platform = require('os').platform();
   
-  // For web apps, try to use Playwright if available
-  if (!currentGUIApp.url) {
-    throw new Error('Web app URL not available');
-  }
-  
-  // Check if Playwright is available
   try {
-    await executeCommand('npm list playwright --depth=0');
-    // Playwright is available, use it
-  } catch {
-    // Playwright not available, return error with installation instructions
+    // Bring window to front first
+    await focusApplicationWindow();
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    if (platform === 'darwin') {
+      // macOS: Use cliclick
+      switch (action) {
+        case 'click':
+          if (x !== undefined && y !== undefined) {
+            await executeCliclick(`c:${x},${y}`);
+          } else {
+            await executeCliclick('c:.');
+          }
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return { success: true, action: 'click', coordinates: { x, y } };
+          
+        case 'double_click':
+          if (x !== undefined && y !== undefined) {
+            await executeCliclick(`dc:${x},${y}`);
+          } else {
+            await executeCliclick('dc:.');
+          }
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return { success: true, action: 'double_click', coordinates: { x, y } };
+          
+        case 'right_click':
+          if (x !== undefined && y !== undefined) {
+            await executeCliclick(`rc:${x},${y}`);
+          } else {
+            await executeCliclick('rc:.');
+          }
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return { success: true, action: 'right_click', coordinates: { x, y } };
+          
+        case 'move':
+          if (x !== undefined && y !== undefined) {
+            await executeCliclick(`m:${x},${y}`);
+            await new Promise(resolve => setTimeout(resolve, 200));
+            return { success: true, action: 'move', coordinates: { x, y } };
+          } else {
+            return { success: false, message: 'Coordinates required for move action' };
+          }
+          
+        case 'type':
+          if (!value) {
+            return { success: false, message: 'Value required for type action' };
+          }
+          const escapedValue = value.replace(/"/g, '\\"');
+          await executeCliclick(`t:"${escapedValue}"`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return { success: true, action: 'type', value };
+          
+        case 'key':
+          if (!value) {
+            return { success: false, message: 'Key required for key action' };
+          }
+          await executeCliclick(`kp:${value}`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return { success: true, action: 'key', key: value };
+          
+        case 'drag':
+          // value should be "x1,y1,x2,y2"
+          if (!value) {
+            return { success: false, message: 'Coordinates required for drag action (format: "x1,y1,x2,y2")' };
+          }
+          const [x1, y1, x2, y2] = value.split(',').map(Number);
+          await executeCliclick(`dd:${x1},${y1} m:${x2},${y2} du:${x2},${y2}`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return { success: true, action: 'drag', from: { x: x1, y: y1 }, to: { x: x2, y: y2 } };
+          
+        case 'screenshot':
+          const screenshotPath = path.join(WORKSPACE_DIR, 'screenshot.png');
+          await takeScreenshot(screenshotPath);
+          return { success: true, action: 'screenshot', path: screenshotPath };
+          
+        case 'wait':
+          await new Promise(resolve => setTimeout(resolve, timeout));
+          return { success: true, action: 'wait', duration: timeout };
+          
+        default:
+          return { success: false, message: `Action '${action}' is not supported` };
+      }
+    } else if (platform === 'linux') {
+      // Linux: Use xdotool
+      switch (action) {
+        case 'click':
+          if (x !== undefined && y !== undefined) {
+            await executeCommand(`xdotool mousemove ${x} ${y} click 1`);
+          } else {
+            await executeCommand('xdotool click 1');
+          }
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return { success: true, action: 'click', coordinates: { x, y } };
+          
+        case 'double_click':
+          if (x !== undefined && y !== undefined) {
+            await executeCommand(`xdotool mousemove ${x} ${y} click --repeat 2 1`);
+          } else {
+            await executeCommand('xdotool click --repeat 2 1');
+          }
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return { success: true, action: 'double_click', coordinates: { x, y } };
+          
+        case 'right_click':
+          if (x !== undefined && y !== undefined) {
+            await executeCommand(`xdotool mousemove ${x} ${y} click 3`);
+          } else {
+            await executeCommand('xdotool click 3');
+          }
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return { success: true, action: 'right_click', coordinates: { x, y } };
+          
+        case 'move':
+          if (x !== undefined && y !== undefined) {
+            await executeCommand(`xdotool mousemove ${x} ${y}`);
+            await new Promise(resolve => setTimeout(resolve, 200));
+            return { success: true, action: 'move', coordinates: { x, y } };
+          } else {
+            return { success: false, message: 'Coordinates required for move action' };
+          }
+          
+        case 'type':
+          if (!value) {
+            return { success: false, message: 'Value required for type action' };
+          }
+          await executeCommand(`xdotool type "${value.replace(/"/g, '\\"')}"`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return { success: true, action: 'type', value };
+          
+        case 'key':
+          if (!value) {
+            return { success: false, message: 'Key required for key action' };
+          }
+          await executeCommand(`xdotool key ${value}`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return { success: true, action: 'key', key: value };
+          
+        case 'drag':
+          if (!value) {
+            return { success: false, message: 'Coordinates required for drag action (format: "x1,y1,x2,y2")' };
+          }
+          const [x1, y1, x2, y2] = value.split(',').map(Number);
+          await executeCommand(`xdotool mousemove ${x1} ${y1} mousedown 1 mousemove ${x2} ${y2} mouseup 1`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return { success: true, action: 'drag', from: { x: x1, y: y1 }, to: { x: x2, y: y2 } };
+          
+        case 'screenshot':
+          const screenshotPath = path.join(WORKSPACE_DIR, 'screenshot.png');
+          await takeScreenshot(screenshotPath);
+          return { success: true, action: 'screenshot', path: screenshotPath };
+          
+        case 'wait':
+          await new Promise(resolve => setTimeout(resolve, timeout));
+          return { success: true, action: 'wait', duration: timeout };
+          
+        default:
+          return { success: false, message: `Action '${action}' is not supported` };
+      }
+    } else {
+      // Windows: Not fully supported yet
+      return {
+        success: false,
+        message: 'Direct GUI interaction is not yet fully supported on Windows',
+        suggestion: 'Use macOS (cliclick) or Linux (xdotool) for GUI automation, or use vision-based interaction',
+      };
+    }
+  } catch (error: any) {
     return {
       success: false,
-      message: 'Playwright is not installed. Install it with: npm install -D playwright',
-      suggestion: 'For basic testing, use the screenshot action or test manually.'
+      message: `GUI interaction failed: ${error.message}`,
+      suggestion: platform === 'darwin' 
+        ? 'Check if cliclick is installed (brew install cliclick)'
+        : 'Check if xdotool is installed (sudo apt-get install xdotool)',
     };
-  }
-  
-  // Use Playwright for web apps
-  const script = `
-const { chromium } = require('playwright');
-
-(async () => {
-  const browser = await chromium.launch({ headless: false });
-  const page = await browser.newPage();
-  
-  await page.goto('${currentGUIApp.url}');
-  
-  // Perform action
-  switch ('${action}') {
-    case 'click':
-      await page.click('${selector}', { timeout: ${timeout} });
-      break;
-    case 'type':
-      await page.fill('${selector}', '${value}', { timeout: ${timeout} });
-      break;
-    case 'select':
-      await page.selectOption('${selector}', '${value}', { timeout: ${timeout} });
-      break;
-    case 'hover':
-      await page.hover('${selector}', { timeout: ${timeout} });
-      break;
-    case 'screenshot':
-      await page.screenshot({ path: 'screenshot.png' });
-      break;
-    case 'get_text':
-      const text = await page.textContent('${selector}', { timeout: ${timeout} });
-      console.log(JSON.stringify({ text }));
-      break;
-    case 'get_attribute':
-      const attr = await page.getAttribute('${selector}', '${value}', { timeout: ${timeout} });
-      console.log(JSON.stringify({ attribute: attr }));
-      break;
-    case 'wait':
-      await page.waitForSelector('${selector}', { timeout: ${timeout} });
-      break;
-  }
-  
-  await browser.close();
-})();
-`;
-  
-  // Execute the script
-  try {
-    const { stdout } = await executeCommand(`node -e "${script.replace(/"/g, '\\"')}"`);
-    return stdout ? JSON.parse(stdout) : { success: true };
-  } catch (error: any) {
-    throw new Error(`GUI interaction failed: ${error.message}`);
   }
 }
 
@@ -1268,22 +1455,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'gui_interact',
-        description: 'Interact with GUI elements. For Python/desktop apps: only "screenshot" and "wait" actions are supported. For web apps: full interaction available (requires Playwright installation).',
+        description: 'Interact with GUI using direct coordinates (cliclick on macOS, xdotool on Linux). For element-based interaction, use gui_interact_vision instead.',
         inputSchema: {
           type: 'object',
           properties: {
             action: {
               type: 'string',
-              enum: ['click', 'type', 'select', 'hover', 'scroll', 'wait', 'screenshot', 'get_text', 'get_attribute'],
-              description: 'Action to perform. Note: For Python/desktop apps, only "screenshot" and "wait" work.',
+              enum: ['click', 'double_click', 'right_click', 'move', 'type', 'key', 'drag', 'screenshot', 'wait'],
+              description: 'Action to perform. Use coordinates (x, y) for click/move actions.',
             },
-            selector: {
-              type: 'string',
-              description: 'CSS selector, XPath, or element identifier (e.g., "#button1", "//button[@id=\'submit\']")',
+            x: {
+              type: 'number',
+              description: 'X coordinate for click/move actions',
+            },
+            y: {
+              type: 'number',
+              description: 'Y coordinate for click/move actions',
             },
             value: {
               type: 'string',
-              description: 'Value for the action (text to type, option to select, etc.)',
+              description: 'Value for the action (text to type, key name, or drag coordinates "x1,y1,x2,y2")',
             },
             timeout: {
               type: 'number',
@@ -1295,29 +1486,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'gui_assert',
-        description: 'Assert GUI state for testing. Only supported for web apps (requires Playwright). For Python/desktop apps, use manual testing instead.',
+        description: 'Assert GUI state using vision-based verification. Ask questions about what should be visible on screen.',
         inputSchema: {
           type: 'object',
           properties: {
-            assertion_type: {
+            question: {
               type: 'string',
-              enum: ['element_exists', 'element_visible', 'text_equals', 'text_contains', 'attribute_equals', 'element_count'],
-              description: 'Type of assertion to perform',
+              description: 'Question about expected GUI state (e.g., "Is the OK button visible?", "Does the text say Hello World?")',
             },
-            selector: {
+            expected_answer: {
               type: 'string',
-              description: 'CSS selector or XPath to locate the element',
-            },
-            expected_value: {
-              type: 'string',
-              description: 'Expected value for the assertion',
-            },
-            timeout: {
-              type: 'number',
-              description: 'Timeout in milliseconds (default: 5000)',
+              description: 'Expected answer (e.g., "yes", "true", "Hello World")',
             },
           },
-          required: ['assertion_type'],
+          required: ['question'],
         },
       },
       {
@@ -1335,13 +1517,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'gui_interact_vision',
-        description: 'Interact with GUI elements using AI vision to locate elements. Works with ANY GUI app (Python, Electron, etc.). Uses Claude Vision + PyAutoGUI for intelligent automation.',
+        description: 'Interact with GUI elements using AI vision to locate elements (cliclick on macOS, xdotool on Linux). Works with ANY GUI app. Describe the element in natural language.',
         inputSchema: {
           type: 'object',
           properties: {
             action: {
               type: 'string',
-              enum: ['click', 'type', 'hover'],
+              enum: ['click', 'double_click', 'right_click', 'type', 'hover'],
               description: 'Action to perform on the GUI element',
             },
             element_description: {
@@ -2213,47 +2395,22 @@ describe('${path.basename(code_file_path)}', () => {
       }
 
       case 'gui_interact': {
-        const { action, selector, value, timeout } = args as any;
+        const { action, x, y, value, timeout } = args as any;
         
         if (!currentGUIApp) {
           throw new Error('No GUI application is running. Use start_gui_application first.');
         }
         
-        console.error(`[GUI] Performing action: ${action} on ${selector || 'app'}`);
+        console.error(`[GUI] Performing action: ${action} at (${x}, ${y})`);
         
         try {
-          const result = await executeGUIInteraction(action, selector, value, timeout || 5000);
-          
-          // Check if result indicates failure (for non-web apps)
-          if (result && typeof result === 'object' && result.success === false) {
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    success: false,
-                    tool: 'gui_interact',
-                    action,
-                    app_type: currentGUIApp.appType,
-                    message: result.message,
-                    suggestion: result.suggestion,
-                  }, null, 2),
-                },
-              ],
-            };
-          }
+          const result = await executeGUIInteraction(action, x, y, value, timeout || 5000);
           
           return {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify({
-                  success: true,
-                  action,
-                  selector,
-                  value,
-                  result,
-                }, null, 2),
+                text: JSON.stringify(result, null, 2),
               },
             ],
           };
@@ -2274,34 +2431,75 @@ describe('${path.basename(code_file_path)}', () => {
       }
 
       case 'gui_assert': {
-        const { assertion_type, selector, expected_value, timeout } = args as any;
+        const { question, expected_answer } = args as any;
         
         if (!currentGUIApp) {
           throw new Error('No GUI application is running. Use start_gui_application first.');
         }
         
-        // Check if assertions are supported for this app type
-        if (currentGUIApp.appType !== 'web') {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({
-                  success: false,
-                  tool: 'gui_assert',
-                  app_type: currentGUIApp.appType,
-                  message: `GUI assertions are only supported for web apps. Current app type: ${currentGUIApp.appType}`,
-                  suggestion: 'For Python/desktop apps, use manual testing or convert to a web app for automated assertions.',
-                }, null, 2),
-              },
-            ],
-          };
-        }
-        
-        console.error(`[GUI] Asserting: ${assertion_type} on ${selector || 'app'}`);
+        console.error(`[GUI] Asserting: ${question}`);
         
         try {
-          const passed = await executeGUIAssertion(assertion_type, selector, expected_value, timeout || 5000);
+          // Use vision to verify the GUI state
+          const platform = require('os').platform();
+          const screenshotPath = path.join(WORKSPACE_DIR, 'gui_screenshot.png');
+          
+          // Bring window to front and take screenshot
+          await focusApplicationWindow();
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          await takeScreenshot(screenshotPath);
+          
+          // Analyze with vision model
+          const imageBuffer = await fs.readFile(screenshotPath);
+          const base64Image = imageBuffer.toString('base64');
+          
+          const apiKey = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN;
+          if (!apiKey) {
+            throw new Error('Anthropic API key not configured. Please configure it in Settings.');
+          }
+          
+          const baseUrl = process.env.ANTHROPIC_BASE_URL;
+          const visionModel = process.env.CLAUDE_MODEL || process.env.ANTHROPIC_DEFAULT_SONNET_MODEL || 'claude-3-5-sonnet-20241022';
+          
+          const Anthropic = require('@anthropic-ai/sdk');
+          const anthropic = new Anthropic({
+            apiKey: apiKey,
+            baseURL: baseUrl,
+          });
+          
+          const message = await anthropic.messages.create({
+            model: visionModel,
+            max_tokens: 1024,
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'image',
+                    source: {
+                      type: 'base64',
+                      media_type: 'image/png',
+                      data: base64Image,
+                    },
+                  },
+                  {
+                    type: 'text',
+                    text: `Analyze this GUI screenshot and answer the following question:\n\n${question}\n\nProvide a clear yes/no answer or the specific information requested.`,
+                  },
+                ],
+              },
+            ],
+          });
+          
+          const answer = message.content[0].type === 'text' ? message.content[0].text : '';
+          
+          // Check if answer matches expected (if provided)
+          let passed = true;
+          if (expected_answer) {
+            const normalizedAnswer = answer.toLowerCase().trim();
+            const normalizedExpected = expected_answer.toLowerCase().trim();
+            passed = normalizedAnswer.includes(normalizedExpected) || normalizedAnswer === normalizedExpected;
+          }
           
           return {
             content: [
@@ -2309,11 +2507,11 @@ describe('${path.basename(code_file_path)}', () => {
                 type: 'text',
                 text: JSON.stringify({
                   success: true,
-                  assertion_type,
-                  selector,
-                  expected_value,
+                  question,
+                  answer,
+                  expected_answer,
                   passed,
-                  message: passed ? 'Assertion passed' : 'Assertion failed',
+                  screenshot_path: screenshotPath,
                 }, null, 2),
               },
             ],
@@ -2632,10 +2830,10 @@ async function main() {
   console.error('    - run_tests: Execute tests and get results');
   console.error('  GUI Testing:');
   console.error('    - start_gui_application: Launch GUI app for testing');
-  console.error('    - gui_interact: Interact with GUI elements (click, type, etc.)');
+  console.error('    - gui_interact: Direct coordinate-based interaction (cliclick/xdotool)');
   console.error('    - gui_interact_vision: AI vision-based GUI interaction');
   console.error('    - gui_verify_vision: AI vision-based GUI verification');
-  console.error('    - gui_assert: Assert GUI state for testing');
+  console.error('    - gui_assert: Vision-based GUI state assertions');
   console.error('    - stop_gui_application: Stop running GUI app');
   console.error('    - generate_gui_test_script: Generate GUI test scripts');
   console.error('  Appium Testing (Mobile/Desktop):');
