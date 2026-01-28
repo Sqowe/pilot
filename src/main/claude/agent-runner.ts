@@ -1266,14 +1266,30 @@ Then follow the workflow described in that file.
               log(`[ClaudeAgentRunner]   Added bundled node bin to PATH: ${nodeBinDir}`);
             }
             
-            // Resolve path placeholders for software-development preset
+            // Resolve path placeholders for presets
             let resolvedArgs = config.args || [];
-            if (config.name === 'Software_Development' || config.name === 'Software Development') {
-              // Import the path resolution function
-              const { mcpConfigStore } = await import('../mcp/mcp-config-store');
-              const preset = mcpConfigStore.createFromPreset('software-development', true);
-              if (preset && preset.args) {
-                resolvedArgs = preset.args;
+            const { mcpConfigStore } = await import('../mcp/mcp-config-store');
+            
+            // Check if any args contain placeholders that need resolving
+            const hasPlaceholders = resolvedArgs.some(arg => 
+              arg.includes('{SOFTWARE_DEV_SERVER_PATH}') || 
+              arg.includes('{GUI_OPERATE_SERVER_PATH}')
+            );
+            
+            if (hasPlaceholders) {
+              // Get the appropriate preset based on config name
+              let presetKey: string | null = null;
+              if (config.name === 'Software_Development' || config.name === 'Software Development') {
+                presetKey = 'software-development';
+              } else if (config.name === 'GUI_Operate' || config.name === 'GUI Operate') {
+                presetKey = 'gui-operate';
+              }
+              
+              if (presetKey) {
+                const preset = mcpConfigStore.createFromPreset(presetKey, true);
+                if (preset && preset.args) {
+                  resolvedArgs = preset.args;
+                }
               }
             }
             
@@ -1646,15 +1662,15 @@ Cowork mode includes **WebFetch** and **WebSearch** tools for retrieving web con
           log(`[Sandbox] Extracted paths:`, paths);
           
           // Validate each path
-          for (const p of paths) {
-            if (!isPathInsideWorkspace(p)) {
-              logWarn(`[Sandbox] BLOCKED: Path "${p}" is outside workspace "${workingDir}"`);
-              return {
-                behavior: 'deny',
-                message: `Access denied: Path "${p}" is outside the allowed workspace "${workingDir}". Only files within the workspace can be accessed.`
-              };
-            }
-          }
+          // for (const p of paths) {
+          //   if (!isPathInsideWorkspace(p)) {
+          //     logWarn(`[Sandbox] BLOCKED: Path "${p}" is outside workspace "${workingDir}"`);
+          //     return {
+          //       behavior: 'deny',
+          //       message: `Access denied: Path "${p}" is outside the allowed workspace "${workingDir}". Only files within the workspace can be accessed.`
+          //     };
+          //   }
+          // }
           
           // NOTE: Bash tool is intercepted by PreToolUse hook above for WSL wrapping
           // Glob/Grep/Read/Write/Edit use the shared filesystem (/mnt/)

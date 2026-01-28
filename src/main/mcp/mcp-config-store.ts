@@ -42,6 +42,17 @@ export const MCP_SERVER_PRESETS: Record<string, Omit<MCPServerConfig, 'id' | 'en
       TEST_ENV: 'Test environment: development, staging, or production (optional)',
     },
   },
+  'gui-operate': {
+    name: 'GUI_Operate',
+    type: 'stdio',
+    command: 'npx',
+    args: ['-y', 'tsx', '{GUI_OPERATE_SERVER_PATH}'], // Path will be resolved at runtime
+    env: {},
+    requiresEnv: [],
+    envDescription: {
+      // No environment variables required
+    },
+  },
 };
 
 /**
@@ -121,17 +132,17 @@ class MCPConfigStore {
   }
 
   /**
-   * Get the path to the Software Development MCP server file
+   * Get the path to a MCP server file in the mcp directory
    */
-  private getSoftwareDevServerPath(): string {
+  private getMcpServerPath(filename: string): string {
     const fs = require('fs');
     
     // In development: __dirname points to dist-electron/main
     // In production: appPath points to the app.asar or unpacked app
     if (app.isPackaged) {
       // Production: look for the file in app.asar.unpacked or resources
-      const unpackedPath = path.join(process.resourcesPath || '', 'app.asar.unpacked', 'src', 'main', 'mcp', 'software-dev-server-example.ts');
-      const resourcesPath = path.join(process.resourcesPath || '', 'src', 'main', 'mcp', 'software-dev-server-example.ts');
+      const unpackedPath = path.join(process.resourcesPath || '', 'app.asar.unpacked', 'src', 'main', 'mcp', filename);
+      const resourcesPath = path.join(process.resourcesPath || '', 'src', 'main', 'mcp', filename);
       
       // Check if file exists in unpacked location
       try {
@@ -148,17 +159,17 @@ class MCPConfigStore {
     
     // Development: __dirname is dist-electron/main
     // Need to go up 2 levels to get to project root (dist-electron/main -> dist-electron -> project root)
-    // Then navigate to src/main/mcp/software-dev-server-example.ts
+    // Then navigate to src/main/mcp/[filename]
     const projectRoot = path.join(__dirname, '..', '..');
-    const sourcePath = path.join(projectRoot, 'src', 'main', 'mcp', 'software-dev-server-example.ts');
+    const sourcePath = path.join(projectRoot, 'src', 'main', 'mcp', filename);
     
     // Verify file exists and log for debugging
     try {
       if (fs.existsSync(sourcePath)) {
-        console.log('[MCPConfigStore] Software Dev Server path resolved:', sourcePath);
+        console.log(`[MCPConfigStore] MCP Server path resolved (${filename}):`, sourcePath);
         return sourcePath;
       } else {
-        console.error('[MCPConfigStore] File not found at:', sourcePath);
+        console.error(`[MCPConfigStore] File not found at:`, sourcePath);
         console.error('[MCPConfigStore] __dirname:', __dirname);
         console.error('[MCPConfigStore] projectRoot:', projectRoot);
       }
@@ -170,6 +181,20 @@ class MCPConfigStore {
   }
 
   /**
+   * Get the path to the Software Development MCP server file
+   */
+  private getSoftwareDevServerPath(): string {
+    return this.getMcpServerPath('software-dev-server-example.ts');
+  }
+
+  /**
+   * Get the path to the GUI Operate MCP server file
+   */
+  private getGuiOperateServerPath(): string {
+    return this.getMcpServerPath('gui-operate-server.ts');
+  }
+
+  /**
    * Create a server config from a preset
    */
   createFromPreset(presetKey: string, enabled: boolean = false): MCPServerConfig | null {
@@ -178,15 +203,23 @@ class MCPConfigStore {
       return null;
     }
 
-    // Resolve path placeholders for software-development preset
+    // Resolve path placeholders for presets
     let resolvedPreset = { ...preset };
-    if (presetKey === 'software-development' && preset.args) {
-      const serverPath = this.getSoftwareDevServerPath();
+    
+    if (preset.args) {
       resolvedPreset = {
         ...preset,
-        args: preset.args.map(arg => 
-          arg === '{SOFTWARE_DEV_SERVER_PATH}' ? serverPath : arg
-        ),
+        args: preset.args.map(arg => {
+          // Software Development server path
+          if (arg === '{SOFTWARE_DEV_SERVER_PATH}') {
+            return this.getSoftwareDevServerPath();
+          }
+          // GUI Operate server path
+          if (arg === '{GUI_OPERATE_SERVER_PATH}') {
+            return this.getGuiOperateServerPath();
+          }
+          return arg;
+        }),
       };
     }
 

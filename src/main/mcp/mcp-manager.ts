@@ -305,17 +305,17 @@ export class MCPManager {
   }
 
   /**
-   * Get the path to the Software Development MCP server file
+   * Get the path to a MCP server file in the mcp directory
    */
-  private getSoftwareDevServerPath(): string {
+  private getMcpServerPath(filename: string): string {
     const fs = require('fs');
     
     // In development: __dirname points to dist-electron/main
     // In production: appPath points to the app.asar or unpacked app
     if (app.isPackaged) {
       // Production: look for the file in app.asar.unpacked or resources
-      const unpackedPath = path.join(process.resourcesPath || '', 'app.asar.unpacked', 'src', 'main', 'mcp', 'software-dev-server-example.ts');
-      const resourcesPath = path.join(process.resourcesPath || '', 'src', 'main', 'mcp', 'software-dev-server-example.ts');
+      const unpackedPath = path.join(process.resourcesPath || '', 'app.asar.unpacked', 'src', 'main', 'mcp', filename);
+      const resourcesPath = path.join(process.resourcesPath || '', 'src', 'main', 'mcp', filename);
       
       // Check if file exists in unpacked location
       try {
@@ -332,17 +332,17 @@ export class MCPManager {
     
     // Development: __dirname is dist-electron/main
     // Need to go up 2 levels to get to project root (dist-electron/main -> dist-electron -> project root)
-    // Then navigate to src/main/mcp/software-dev-server-example.ts
+    // Then navigate to src/main/mcp/[filename]
     const projectRoot = path.join(__dirname, '..', '..');
-    const sourcePath = path.join(projectRoot, 'src', 'main', 'mcp', 'software-dev-server-example.ts');
+    const sourcePath = path.join(projectRoot, 'src', 'main', 'mcp', filename);
     
     // Verify file exists and log for debugging
     try {
       if (fs.existsSync(sourcePath)) {
-        log('[MCPManager] Software Dev Server path resolved:', sourcePath);
+        log(`[MCPManager] MCP Server path resolved (${filename}):`, sourcePath);
         return sourcePath;
       } else {
-        logError('[MCPManager] File not found at:', sourcePath);
+        logError(`[MCPManager] File not found at:`, sourcePath);
         logError('[MCPManager] __dirname:', __dirname);
         logError('[MCPManager] projectRoot:', projectRoot);
       }
@@ -351,6 +351,20 @@ export class MCPManager {
     }
     
     return sourcePath;
+  }
+
+  /**
+   * Get the path to the Software Development MCP server file
+   */
+  private getSoftwareDevServerPath(): string {
+    return this.getMcpServerPath('software-dev-server-example.ts');
+  }
+
+  /**
+   * Get the path to the GUI Operate MCP server file
+   */
+  private getGuiOperateServerPath(): string {
+    return this.getMcpServerPath('gui-operate-server.ts');
   }
 
   /**
@@ -369,13 +383,19 @@ export class MCPManager {
       }
 
       let command = config.command;
-      // Resolve path placeholders for software-development preset
+      // Resolve path placeholders for presets
       let args = config.args || [];
-      if (config.name === 'Software_Development' || config.name === 'Software Development') {
-        args = args.map(arg => 
-          arg === '{SOFTWARE_DEV_SERVER_PATH}' ? this.getSoftwareDevServerPath() : arg
-        );
-      }
+      args = args.map(arg => {
+        // Software Development server path
+        if (arg === '{SOFTWARE_DEV_SERVER_PATH}') {
+          return this.getSoftwareDevServerPath();
+        }
+        // GUI Operate server path
+        if (arg === '{GUI_OPERATE_SERVER_PATH}') {
+          return this.getGuiOperateServerPath();
+        }
+        return arg;
+      });
       
       // If command is 'npx', check if it's in PATH
       if (command === 'npx' || command.endsWith('/npx')) {
