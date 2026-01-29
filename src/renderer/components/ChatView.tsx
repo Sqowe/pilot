@@ -114,12 +114,14 @@ export function ChatView() {
 
   // Additional scroll trigger for content height changes (e.g., TodoWrite expand/collapse)
   useEffect(() => {
-    if (!isUserAtBottomRef.current) return;
-    
     const container = scrollContainerRef.current;
     if (!container) return;
 
     // Use ResizeObserver to detect height changes in the messages container
+    // We need to observe the inner content div, not the scroll container itself
+    const messagesContainer = container.querySelector('.max-w-3xl');
+    if (!messagesContainer) return;
+
     const resizeObserver = new ResizeObserver(() => {
       if (isUserAtBottomRef.current) {
         // Scroll to bottom when content height changes
@@ -127,12 +129,12 @@ export function ChatView() {
       }
     });
 
-    resizeObserver.observe(container);
+    resizeObserver.observe(messagesContainer);
 
     return () => {
       resizeObserver.disconnect();
     };
-  }, [displayedMessages.length]);
+  }, [displayedMessages.length]); // Re-create observer when messages change to ensure we're observing the right element
 
   useEffect(() => {
     textareaRef.current?.focus();

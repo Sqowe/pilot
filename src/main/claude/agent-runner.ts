@@ -1805,6 +1805,27 @@ Cowork mode includes **WebFetch** and **WebSearch** tools for retrieving web con
               }
             }
 
+            // Check if the text content is an API error
+            if (textContent && textContent.toLowerCase().includes('api error')) {
+              logError('[ClaudeAgentRunner] Detected API error in assistant message:', textContent);
+              
+              // Check if this is a retryable error
+              const errorTextLower = textContent.toLowerCase();
+              const isRetryable = errorTextLower.includes('provider returned error') ||
+                                  errorTextLower.includes('unable to submit request') ||
+                                  errorTextLower.includes('thought signature') ||
+                                  errorTextLower.includes('invalid_argument') ||
+                                  errorTextLower.includes('error: 400') ||
+                                  errorTextLower.includes('error: 500') ||
+                                  errorTextLower.includes('error: 502') ||
+                                  errorTextLower.includes('error: 503');
+              
+              if (isRetryable) {
+                // Throw an error to trigger retry logic
+                throw new Error(`API Error detected: ${textContent}`);
+              }
+            }
+            
             // Stream text to UI
             if (textContent) {
               const chunks = textContent.match(/.{1,30}/g) || [textContent];
@@ -1920,6 +1941,12 @@ Cowork mode includes **WebFetch** and **WebSearch** tools for retrieving web con
       // Handle errors with retry logic
       const err = error as Error;
       
+      // Log the full error for debugging
+      logError(`[ClaudeAgentRunner] Caught error:`, err);
+      logError(`[ClaudeAgentRunner] Error name: ${err.name}`);
+      logError(`[ClaudeAgentRunner] Error message: ${err.message}`);
+      logError(`[ClaudeAgentRunner] Error stack: ${err.stack}`);
+      
       // Check if this is an abort error - don't retry
       if (err.name === 'AbortError') {
         log('[ClaudeAgentRunner] Query aborted by user');
@@ -1928,14 +1955,22 @@ Cowork mode includes **WebFetch** and **WebSearch** tools for retrieving web con
       
       // Check if this is a retryable error
       const errorMessage = err.message || String(error);
-      const isRetryable = errorMessage.includes('Provider returned error') ||
-                          errorMessage.includes('Unable to submit request') ||
-                          errorMessage.includes('API Error: 400') ||
-                          errorMessage.includes('API Error: 500') ||
-                          errorMessage.includes('API Error: 502') ||
-                          errorMessage.includes('API Error: 503') ||
-                          errorMessage.includes('timeout') ||
-                          errorMessage.includes('ECONNREFUSED');
+      const errorString = String(error);
+      const fullErrorText = `${errorMessage} ${errorString}`.toLowerCase();
+      
+      const isRetryable = fullErrorText.includes('provider returned error') ||
+                          fullErrorText.includes('unable to submit request') ||
+                          fullErrorText.includes('api error') ||
+                          fullErrorText.includes('error: 400') ||
+                          fullErrorText.includes('error: 500') ||
+                          fullErrorText.includes('error: 502') ||
+                          fullErrorText.includes('error: 503') ||
+                          fullErrorText.includes('timeout') ||
+                          fullErrorText.includes('econnrefused') ||
+                          fullErrorText.includes('thought signature') ||
+                          fullErrorText.includes('invalid_argument');
+      
+      logError(`[ClaudeAgentRunner] Is retryable: ${isRetryable}, retryCount: ${retryCount}/${MAX_RETRIES}`);
       
       if (isRetryable && retryCount < MAX_RETRIES) {
         retryCount++;
