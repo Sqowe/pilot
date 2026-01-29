@@ -393,7 +393,7 @@ export class MCPManager {
         // GUI Operate server path
         if (arg === '{GUI_OPERATE_SERVER_PATH}') {
           return this.getGuiOperateServerPath();
-        }
+      }
         return arg;
       });
       

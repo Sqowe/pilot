@@ -29,6 +29,7 @@ import { promisify } from 'util';
 import { start } from 'repl';
 import { log, logError, logWarn } from '../utils/logger';
 import { configStore } from '../config/config-store';
+import { writeMCPLog } from './mcp-logger';
 
 
 const execAsync = promisify(exec);
@@ -105,7 +106,7 @@ async function buildDockerGUITestImage(config: DockerGUITestConfig): Promise<str
   const imageName = 'mcp-gui-test';
   const dockerfilePath = path.join(WORKSPACE_DIR, '.mcp-gui-test', 'Dockerfile');
   
-  writeVisionLog('[Docker] Building GUI test image...');
+  writeMCPLog('[Docker] Building GUI test image...');
   
   // Create Dockerfile
   const dockerfile = `FROM ubuntu:22.04
@@ -203,12 +204,12 @@ ENTRYPOINT ["/entrypoint.sh"]
       `docker build -t ${imageName} -f "${dockerfilePath}" "${path.dirname(dockerfilePath)}"`,
       WORKSPACE_DIR
     );
-    writeVisionLog('[Docker] Image built successfully');
-    writeVisionLog(stdout);
-    if (stderr) writeVisionLog(stderr);
+    writeMCPLog('[Docker] Image built successfully');
+    writeMCPLog(stdout);
+    if (stderr) writeMCPLog(stderr);
     return imageName;
   } catch (error: any) {
-    writeVisionLog('[Docker] Failed to build image:', error.message);
+    writeMCPLog('[Docker] Failed to build image:', error.message);
     throw new Error(`Failed to build Docker image: ${error.message}`);
   }
 }
@@ -221,7 +222,7 @@ async function startGUIApplicationInDocker(
   enableVnc: boolean = true,
   vncPort: number = 5901
 ): Promise<GUIAppInstance> {
-  writeVisionLog('[Docker] Starting GUI application in isolated Docker environment...');
+  writeMCPLog('[Docker] Starting GUI application in isolated Docker environment...');
   
   const config: DockerGUITestConfig = {
     appFiles: [appFilePath],
@@ -252,30 +253,30 @@ async function startGUIApplicationInDocker(
     imageName,
   ].filter(Boolean).join(' ');
   
-  writeVisionLog(`[Docker] Starting container: ${containerName}`);
-  writeVisionLog(`[Docker] Command: ${dockerCommand}`);
+  writeMCPLog(`[Docker] Starting container: ${containerName}`);
+  writeMCPLog(`[Docker] Command: ${dockerCommand}`);
   
   try {
     const { stdout } = await executeCommand(dockerCommand, WORKSPACE_DIR);
     const containerId = stdout.trim();
     
-    writeVisionLog(`[Docker] Container started: ${containerId.substring(0, 12)}`);
+    writeMCPLog(`[Docker] Container started: ${containerId.substring(0, 12)}`);
     
     // Wait for Xvfb and VNC to start
-    writeVisionLog('[Docker] Waiting for Xvfb and VNC services to start...');
+    writeMCPLog('[Docker] Waiting for Xvfb and VNC services to start...');
     await new Promise(resolve => setTimeout(resolve, 5000));
     
     // Wait a bit more for GUI application to start
-    writeVisionLog('[Docker] Waiting for GUI application to initialize...');
+    writeMCPLog('[Docker] Waiting for GUI application to initialize...');
     await new Promise(resolve => setTimeout(resolve, 3000));
     
     // Save diagnostics to .docker-logs directory
-    writeVisionLog('[Docker] Collecting and saving diagnostics...');
+    writeMCPLog('[Docker] Collecting and saving diagnostics...');
     try {
       const logFile = await saveDockerDiagnostics(containerId, WORKSPACE_DIR);
-      writeVisionLog(`[Docker] Full diagnostics saved to: ${logFile}`);
+      writeMCPLog(`[Docker] Full diagnostics saved to: ${logFile}`);
     } catch (error: any) {
-      writeVisionLog(`[Docker] Warning: Failed to save diagnostics: ${error.message}`);
+      writeMCPLog(`[Docker] Warning: Failed to save diagnostics: ${error.message}`);
     }
     
     if (enableVnc) {
@@ -289,18 +290,18 @@ async function startGUIApplicationInDocker(
           );
           if (checkOutput.trim()) {
             vncRunning = true;
-            writeVisionLog('[Docker] VNC server is running');
+            writeMCPLog('[Docker] VNC server is running');
             break;
           }
         } catch (e) {
           // VNC not ready yet
         }
-        writeVisionLog(`[Docker] Waiting for VNC server... (${i + 1}/10)`);
+        writeMCPLog(`[Docker] Waiting for VNC server... (${i + 1}/10)`);
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
       
       if (!vncRunning) {
-        writeVisionLog('[Docker] Warning: VNC server may not be running. Check container logs.');
+        writeMCPLog('[Docker] Warning: VNC server may not be running. Check container logs.');
       }
       
       // Check port mapping
@@ -309,28 +310,28 @@ async function startGUIApplicationInDocker(
           `docker port ${containerId} ${vncPort}/tcp`,
           WORKSPACE_DIR
         );
-        writeVisionLog(`[Docker] Port mapping: ${portCheck.trim()}`);
+        writeMCPLog(`[Docker] Port mapping: ${portCheck.trim()}`);
       } catch (e) {
-        writeVisionLog(`[Docker] Warning: Could not verify port mapping: ${e}`);
+        writeMCPLog(`[Docker] Warning: Could not verify port mapping: ${e}`);
       }
       
-      writeVisionLog('');
-      writeVisionLog('========================================');
-      writeVisionLog('VNC Viewer Connection');
-      writeVisionLog('========================================');
-      writeVisionLog(`VNC Port: ${vncPort}`);
-      writeVisionLog(`Connection: localhost:${vncPort}`);
-      writeVisionLog('');
-      writeVisionLog('Install VNC Viewer:');
-      writeVisionLog('  brew install --cask vnc-viewer');
-      writeVisionLog('');
-      writeVisionLog('Then open VNC Viewer and connect to:');
-      writeVisionLog(`  localhost:${vncPort}`);
-      writeVisionLog('');
-      writeVisionLog('If connection refused, check container logs:');
-      writeVisionLog(`  docker logs ${containerId}`);
-      writeVisionLog('========================================');
-      writeVisionLog('');
+      writeMCPLog('');
+      writeMCPLog('========================================');
+      writeMCPLog('VNC Viewer Connection');
+      writeMCPLog('========================================');
+      writeMCPLog(`VNC Port: ${vncPort}`);
+      writeMCPLog(`Connection: localhost:${vncPort}`);
+      writeMCPLog('');
+      writeMCPLog('Install VNC Viewer:');
+      writeMCPLog('  brew install --cask vnc-viewer');
+      writeMCPLog('');
+      writeMCPLog('Then open VNC Viewer and connect to:');
+      writeMCPLog(`  localhost:${vncPort}`);
+      writeMCPLog('');
+      writeMCPLog('If connection refused, check container logs:');
+      writeMCPLog(`  docker logs ${containerId}`);
+      writeMCPLog('========================================');
+      writeMCPLog('');
     }
     
     const instance: GUIAppInstance = {
@@ -345,7 +346,7 @@ async function startGUIApplicationInDocker(
     
     return instance;
   } catch (error: any) {
-    writeVisionLog('[Docker] Failed to start container:', error.message);
+    writeMCPLog('[Docker] Failed to start container:', error.message);
     throw new Error(`Failed to start Docker container: ${error.message}`);
   }
 }
@@ -399,7 +400,7 @@ async function startGUIApplication(
     }
   }
   
-  writeVisionLog(`[GUI] Starting ${appType} application: ${command}`);
+  writeMCPLog(`[GUI] Starting ${appType} application: ${command}`);
   
   // Start the process
   const childProcess = exec(command, {
@@ -418,7 +419,7 @@ async function startGUIApplication(
   // Wait for app to be ready
   await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
   
-  writeVisionLog(`[GUI] Application started (PID: ${instance.pid})`);
+  writeMCPLog(`[GUI] Application started (PID: ${instance.pid})`);
   
   return instance;
 }
@@ -431,7 +432,7 @@ async function stopGUIApplication(instance: GUIAppInstance, force: boolean = fal
   
   // If Docker container, stop it
   if (instance.isDocker && instance.containerId) {
-    writeVisionLog(`[Docker] Stopping container: ${instance.containerId.substring(0, 12)}`);
+    writeMCPLog(`[Docker] Stopping container: ${instance.containerId.substring(0, 12)}`);
     
     try {
       if (force) {
@@ -439,9 +440,9 @@ async function stopGUIApplication(instance: GUIAppInstance, force: boolean = fal
       } else {
         await executeCommand(`docker stop ${instance.containerId}`);
       }
-      writeVisionLog('[Docker] Container stopped successfully');
+      writeMCPLog('[Docker] Container stopped successfully');
     } catch (error: any) {
-      writeVisionLog(`[Docker] Error stopping container: ${error.message}`);
+      writeMCPLog(`[Docker] Error stopping container: ${error.message}`);
     }
     return;
   }
@@ -451,7 +452,7 @@ async function stopGUIApplication(instance: GUIAppInstance, force: boolean = fal
     return;
   }
   
-  writeVisionLog(`[GUI] Stopping application (PID: ${instance.pid})`);
+  writeMCPLog(`[GUI] Stopping application (PID: ${instance.pid})`);
   
   try {
     if (force) {
@@ -463,7 +464,7 @@ async function stopGUIApplication(instance: GUIAppInstance, force: boolean = fal
     // Wait a bit for cleanup
     await new Promise(resolve => setTimeout(resolve, 1000));
   } catch (error: any) {
-    writeVisionLog(`[GUI] Error stopping application: ${error.message}`);
+    writeMCPLog(`[GUI] Error stopping application: ${error.message}`);
   }
 }
 
@@ -474,7 +475,7 @@ async function getDockerContainerLogs(containerId: string, tail: number = 0): Pr
     const { stdout } = await executeCommand(`docker logs ${tailFlag} ${containerId}`);
     return stdout;
   } catch (error: any) {
-    writeVisionLog(`[Docker] Error getting logs: ${error.message}`);
+    writeMCPLog(`[Docker] Error getting logs: ${error.message}`);
     return `Error getting logs: ${error.message}`;
   }
 }
@@ -622,7 +623,7 @@ async function saveDockerDiagnostics(containerId: string, outputDir: string = WO
   
   // Save to file
   await fs.writeFile(logFile, diagnostics, 'utf-8');
-  writeVisionLog(`[Docker] Diagnostics saved to: ${logFile}`);
+  writeMCPLog(`[Docker] Diagnostics saved to: ${logFile}`);
   
   return logFile;
 }
@@ -658,7 +659,7 @@ async function executeCliclick(command: string): Promise<{ stdout: string; stder
 async function takeScreenshot(outputPath: string): Promise<string> {
   // If Docker mode, take screenshot inside container from Xvfb display
   if (currentGUIApp && currentGUIApp.isDocker && currentGUIApp.containerId) {
-    writeVisionLog('[Screenshot] Taking screenshot from Docker container Xvfb display...');
+    writeMCPLog('[Screenshot] Taking screenshot from Docker container Xvfb display...');
     // Use scrot inside container to capture Xvfb display
     const containerScreenshotPath = `/tmp/screenshot_${Date.now()}.png`;
     try {
@@ -678,7 +679,7 @@ async function takeScreenshot(outputPath: string): Promise<string> {
       );
       
       // Wait for screenshot file to exist in container
-      writeVisionLog('[Screenshot] Waiting for screenshot file to be ready...');
+      writeMCPLog('[Screenshot] Waiting for screenshot file to be ready...');
       await new Promise(resolve => setTimeout(resolve, 100));
       let fileExists = false;
       for (let i = 0; i < 20; i++) { // Max 2 seconds (20 * 100ms)
@@ -687,7 +688,7 @@ async function takeScreenshot(outputPath: string): Promise<string> {
             `docker exec ${currentGUIApp.containerId} bash -c "test -f ${containerScreenshotPath}"`,
             WORKSPACE_DIR
           );
-          writeVisionLog(`[Screenshot] Screenshot file ready`);
+          writeMCPLog(`[Screenshot] Screenshot file ready`);
           fileExists = true;
           break;
         } catch (e) {
@@ -697,7 +698,7 @@ async function takeScreenshot(outputPath: string): Promise<string> {
       }
       
       if (!fileExists) {
-        writeVisionLog('[Screenshot] Warning: Screenshot file verification timed out, proceeding anyway...');
+        writeMCPLog('[Screenshot] Warning: Screenshot file verification timed out, proceeding anyway...');
       }
       
       // Copy screenshot from container to host
@@ -706,11 +707,11 @@ async function takeScreenshot(outputPath: string): Promise<string> {
         WORKSPACE_DIR
       );
       
-      writeVisionLog(`[Screenshot] Screenshot copied from container to ${outputPath}`);
+      writeMCPLog(`[Screenshot] Screenshot copied from container to ${outputPath}`);
       
       return outputPath;
     } catch (error: any) {
-      writeVisionLog(`[Screenshot] Failed to take screenshot from container: ${error.message}`);
+      writeMCPLog(`[Screenshot] Failed to take screenshot from container: ${error.message}`);
       throw new Error(`Failed to take screenshot from Docker container: ${error.message}`);
     }
   }
@@ -733,36 +734,6 @@ async function takeScreenshot(outputPath: string): Promise<string> {
 }
 
 // Helper: Call vision API (supports Anthropic, OpenAI-compatible, and OpenRouter)
-// Helper: Write to vision API log file
-// Use a session-level timestamp for the log filename
-let visionLogFilename: string | null = null;
-
-function writeVisionLog(content: string, label?: string): void {
-  // Print to stderr
-  console.error('='.repeat(80));
-  if (label) {
-    console.error(`[Vision API] ${label}:`);
-    console.error('='.repeat(80));
-  }
-  console.error(content);
-  console.error('='.repeat(80));
-  
-  // Generate log filename with timestamp on first use
-  if (!visionLogFilename) {
-    const now = new Date();
-    const timestamp = now.toISOString().replace(/[:.]/g, '-').replace('T', '_').split('Z')[0];
-    visionLogFilename = `vision_api_${timestamp}.log`;
-  }
-  
-  // Also write to a dedicated vision log file (async, don't wait)
-  const visionLogPath = path.join(WORKSPACE_DIR, visionLogFilename);
-  const timestamp = new Date().toISOString();
-  const labelText = label ? `${label}:\n${'='.repeat(80)}\n` : '';
-  const logEntry = `\n${'='.repeat(80)}\n[${timestamp}] ${labelText}${content}\n${'='.repeat(80)}\n`;
-  fs.appendFile(visionLogPath, logEntry).catch(() => {
-    // Ignore file write errors
-  });
-}
 
 async function callVisionAPI(
   base64Image: string,
@@ -775,8 +746,8 @@ async function callVisionAPI(
   const model = process.env.CLAUDE_MODEL || process.env.ANTHROPIC_DEFAULT_SONNET_MODEL || 'claude-3-5-sonnet-20241022';
   // Get enableThinking from configStore
   // const enableThinking = configStore.get('enableThinking') ?? false;
-  // writeVisionLog(`[Vision] configStore: ${JSON.stringify(configStore.getAll())}`);
-  // writeVisionLog(`[Vision] enableThinking: ${enableThinking}`);
+  // writeMCPLog(`[Vision] configStore: ${JSON.stringify(configStore.getAll())}`);
+  // writeMCPLog(`[Vision] enableThinking: ${enableThinking}`);
   
   if (!apiKey) {
     throw new Error('API key not configured. Please configure it in Settings.');
@@ -785,7 +756,7 @@ async function callVisionAPI(
   // console.error(`[Vision] Using model: ${model} (baseURL: ${baseUrl || 'default'}), enableThinking: ${enableThinking}`);
   
   // Log the prompt
-  writeVisionLog(prompt, 'PROMPT');
+  writeMCPLog(prompt, 'PROMPT');
   
   // Check if using OpenRouter (has AUTH_TOKEN and baseUrl is openrouter.ai)
   const isOpenRouter = !!process.env.ANTHROPIC_AUTH_TOKEN && 
@@ -879,7 +850,7 @@ async function callVisionAPI(
               const responseContent = jsonData.choices[0]?.message?.content || '';
               
               // Log the response
-              writeVisionLog(JSON.stringify(jsonData), 'RESPONSE');
+              writeMCPLog(JSON.stringify(jsonData), 'RESPONSE');
               
               resolve(responseContent);
             } catch (e: any) {
@@ -933,7 +904,7 @@ async function callVisionAPI(
     const responseContent = message.content[0].type === 'text' ? message.content[0].text : '';
     
     // Log the response
-    writeVisionLog(responseContent, 'RESPONSE');
+    writeMCPLog(responseContent, 'RESPONSE');
     
     return responseContent;
   }
@@ -947,7 +918,7 @@ async function getScreenDimensions(): Promise<{ width: number; height: number }>
     // For Docker mode, use the configured Xvfb resolution
     if (currentGUIApp?.isDocker) {
       // Default Xvfb resolution is 1024x768
-      writeVisionLog('[Vision] Using Docker Xvfb resolution: 1024x768');
+      writeMCPLog('[Vision] Using Docker Xvfb resolution: 1024x768');
       return { width: 1024, height: 768 };
     }
     
@@ -960,7 +931,7 @@ async function getScreenDimensions(): Promise<{ width: number; height: number }>
           return { width: parseInt(match[1]), height: parseInt(match[2]) };
         }
       } catch (e) {
-        writeVisionLog('[Vision] Failed to get macOS screen resolution, using default');
+        writeMCPLog('[Vision] Failed to get macOS screen resolution, using default');
       }
     } else if (platform === 'linux') {
       // Linux: Use xdpyinfo or xrandr
@@ -978,16 +949,16 @@ async function getScreenDimensions(): Promise<{ width: number; height: number }>
             return { width: parseInt(match[1]), height: parseInt(match[2]) };
           }
         } catch (e2) {
-          writeVisionLog('[Vision] Failed to get Linux screen resolution, using default');
+          writeMCPLog('[Vision] Failed to get Linux screen resolution, using default');
         }
       }
     }
     
     // Fallback: common default
-    writeVisionLog('[Vision] Using default screen resolution: 1920x1080');
+    writeMCPLog('[Vision] Using default screen resolution: 1920x1080');
     return { width: 1920, height: 1080 };
   } catch (error: any) {
-    writeVisionLog(`[Vision] Error getting screen dimensions: ${error.message}`);
+    writeMCPLog(`[Vision] Error getting screen dimensions: ${error.message}`);
     return { width: 1920, height: 1080 };
   }
 }
@@ -1033,7 +1004,7 @@ async function getImageDimensions(imagePath: string): Promise<{ width: number; h
     
     throw new Error('Could not determine image dimensions');
   } catch (error: any) {
-    writeVisionLog(`[Vision] Error getting image dimensions: ${error.message}`);
+    writeMCPLog(`[Vision] Error getting image dimensions: ${error.message}`);
     // Return screen dimensions as fallback
     return await getScreenDimensions();
   }
@@ -1046,7 +1017,7 @@ async function analyzeAndBuildScreenContext(screenshotPath: string, forceUpdate:
     if (!forceUpdate && currentScreenContext && currentScreenContext.lastScreenshot === screenshotPath) {
       const timeSinceUpdate = Date.now() - currentScreenContext.lastUpdated.getTime();
       if (timeSinceUpdate < 5000) { // Reuse if less than 5 seconds old
-        writeVisionLog('[Vision] Reusing existing screen context (recent)');
+        writeMCPLog('[Vision] Reusing existing screen context (recent)');
         return currentScreenContext;
       }
     }
@@ -1055,7 +1026,7 @@ async function analyzeAndBuildScreenContext(screenshotPath: string, forceUpdate:
     const screenDims = await getScreenDimensions();
     const imageDims = await getImageDimensions(screenshotPath);
     
-    writeVisionLog(`[Vision] Screen: ${screenDims.width}x${screenDims.height}, Image: ${imageDims.width}x${imageDims.height}`);
+    writeMCPLog(`[Vision] Screen: ${screenDims.width}x${screenDims.height}, Image: ${imageDims.width}x${imageDims.height}`);
     
     // Read screenshot
     const imageBuffer = await fs.readFile(screenshotPath);
@@ -1141,12 +1112,12 @@ Be PRECISE with coordinates. Measure carefully from the top-left corner.`;
     
     currentScreenContext = context;
     
-    writeVisionLog(`[Vision] Screen context built: ${context.elements.length} elements identified`);
-    writeVisionLog(`[Vision] Layout: ${analysis.layout_structure}`);
+    writeMCPLog(`[Vision] Screen context built: ${context.elements.length} elements identified`);
+    writeMCPLog(`[Vision] Layout: ${analysis.layout_structure}`);
     
     return context;
   } catch (error: any) {
-    writeVisionLog(`[Vision] Error building screen context: ${error.message}`);
+    writeMCPLog(`[Vision] Error building screen context: ${error.message}`);
     throw error;
   }
 }
@@ -1211,7 +1182,7 @@ Find the element "${elementDescription}" and provide its EXACT CENTER coordinate
 
 If you cannot find the element, set confidence to 0.`;
 
-    writeVisionLog(`[analyzeScreenshotWithVision] Prompt: ${prompt}`);
+    writeMCPLog(`[analyzeScreenshotWithVision] Prompt: ${prompt}`);
     
     const responseText = await callVisionAPI(base64Image, prompt, 2048);
     
@@ -1223,7 +1194,7 @@ If you cannot find the element, set confidence to 0.`;
     }
     
     if (!jsonMatch) {
-      writeVisionLog(`[Vision] Failed to parse response: ${responseText}`);
+      writeMCPLog(`[Vision] Failed to parse response: ${responseText}`);
       throw new Error('Failed to parse vision model response');
     }
     
@@ -1233,10 +1204,10 @@ If you cannot find the element, set confidence to 0.`;
     result.x = Math.max(0, Math.min(context.screenWidth, result.x));
     result.y = Math.max(0, Math.min(context.screenHeight, result.y));
     
-    writeVisionLog(`[Vision] Found element "${elementDescription}" at (${result.x}, ${result.y}) with ${result.confidence}% confidence`);
-    writeVisionLog(`[Vision] Reasoning: ${result.reasoning}`);
+    writeMCPLog(`[Vision] Found element "${elementDescription}" at (${result.x}, ${result.y}) with ${result.confidence}% confidence`);
+    writeMCPLog(`[Vision] Reasoning: ${result.reasoning}`);
     if (result.element_bounds) {
-      writeVisionLog(`[Vision] Bounds: [${result.element_bounds.left}, ${result.element_bounds.top}] to [${result.element_bounds.right}, ${result.element_bounds.bottom}]`);
+      writeMCPLog(`[Vision] Bounds: [${result.element_bounds.left}, ${result.element_bounds.top}] to [${result.element_bounds.right}, ${result.element_bounds.bottom}]`);
     }
     
     return {
@@ -1245,7 +1216,7 @@ If you cannot find the element, set confidence to 0.`;
       confidence: result.confidence,
     };
   } catch (error: any) {
-    writeVisionLog(`[Vision] Error analyzing screenshot: ${error.message}`);
+    writeMCPLog(`[Vision] Error analyzing screenshot: ${error.message}`);
     throw new Error(`Vision analysis failed: ${error.message}`);
   }
 }
@@ -1254,39 +1225,39 @@ If you cannot find the element, set confidence to 0.`;
 async function focusApplicationWindow(appName?: string): Promise<void> {
   const platform = require('os').platform();
   
-  writeVisionLog(`[GUI] Attempting to bring window to front (platform: ${platform}, appName: ${appName || 'auto-detect'})`);
+  writeMCPLog(`[GUI] Attempting to bring window to front (platform: ${platform}, appName: ${appName || 'auto-detect'})`);
   
   try {
     if (platform === 'darwin') {
       // macOS: Use AppleScript to bring window to front
-      writeVisionLog('[GUI] Using macOS AppleScript to focus window...');
+      writeMCPLog('[GUI] Using macOS AppleScript to focus window...');
       
       if (appName) {
         const { stdout, stderr } = await executeCommand(`osascript -e 'tell application "${appName}" to activate'`);
-        writeVisionLog(`[GUI] AppleScript result - stdout: ${stdout}, stderr: ${stderr}`);
+        writeMCPLog(`[GUI] AppleScript result - stdout: ${stdout}, stderr: ${stderr}`);
       } else {
         // Try multiple approaches to find and focus Python windows
         try {
           // Approach 1: Find process by name containing "Python"
           const { stdout, stderr } = await executeCommand(`osascript -e 'tell application "System Events" to set frontmost of first process whose name contains "Python" to true'`);
-          writeVisionLog(`[GUI] AppleScript (Python) result - stdout: ${stdout}, stderr: ${stderr}`);
+          writeMCPLog(`[GUI] AppleScript (Python) result - stdout: ${stdout}, stderr: ${stderr}`);
         } catch (err1: any) {
-          writeVisionLog(`[GUI] Failed to focus Python process: ${err1.message}`);
+          writeMCPLog(`[GUI] Failed to focus Python process: ${err1.message}`);
           
           // Approach 2: Try to find any Python-related window
           try {
             await executeCommand(`osascript -e 'tell application "System Events" to set frontmost of first process whose unix id is greater than 0 and name contains "python" to true'`);
-            writeVisionLog('[GUI] Successfully focused python process (lowercase)');
+            writeMCPLog('[GUI] Successfully focused python process (lowercase)');
           } catch (err2: any) {
-            writeVisionLog(`[GUI] Failed to focus python process: ${err2.message}`);
+            writeMCPLog(`[GUI] Failed to focus python process: ${err2.message}`);
             
             // Approach 3: Get the PID and focus by PID
             if (currentGUIApp && currentGUIApp.pid) {
               try {
                 await executeCommand(`osascript -e 'tell application "System Events" to set frontmost of first process whose unix id is ${currentGUIApp.pid} to true'`);
-                writeVisionLog(`[GUI] Successfully focused process by PID: ${currentGUIApp.pid}`);
+                writeMCPLog(`[GUI] Successfully focused process by PID: ${currentGUIApp.pid}`);
               } catch (err3: any) {
-                writeVisionLog(`[GUI] Failed to focus by PID: ${err3.message}`);
+                writeMCPLog(`[GUI] Failed to focus by PID: ${err3.message}`);
               }
             }
           }
@@ -1294,36 +1265,36 @@ async function focusApplicationWindow(appName?: string): Promise<void> {
       }
     } else if (platform === 'win32') {
       // Windows: Use PowerShell to bring window to front
-      writeVisionLog('[GUI] Using Windows PowerShell to focus window...');
+      writeMCPLog('[GUI] Using Windows PowerShell to focus window...');
       
       const script = appName 
         ? `Add-Type @"\nusing System;\nusing System.Runtime.InteropServices;\npublic class Win32 {\n  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);\n  [DllImport("user32.dll")] public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);\n}\n"@; $hwnd = [Win32]::FindWindow($null, "${appName}"); [Win32]::SetForegroundWindow($hwnd)`
         : `Add-Type @"\nusing System;\nusing System.Runtime.InteropServices;\npublic class Win32 {\n  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();\n  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);\n}\n"@; $hwnd = [Win32]::GetForegroundWindow(); [Win32]::SetForegroundWindow($hwnd)`;
       
       const { stdout, stderr } = await executeCommand(`powershell -Command "${script}"`);
-      writeVisionLog(`[GUI] PowerShell result - stdout: ${stdout}, stderr: ${stderr}`);
+      writeMCPLog(`[GUI] PowerShell result - stdout: ${stdout}, stderr: ${stderr}`);
     } else {
       // Linux: Use xdotool
-      writeVisionLog('[GUI] Using Linux xdotool to focus window...');
+      writeMCPLog('[GUI] Using Linux xdotool to focus window...');
       
       try {
         if (appName) {
           const { stdout, stderr } = await executeCommand(`xdotool search --name "${appName}" windowactivate`);
-          writeVisionLog(`[GUI] xdotool result - stdout: ${stdout}, stderr: ${stderr}`);
+          writeMCPLog(`[GUI] xdotool result - stdout: ${stdout}, stderr: ${stderr}`);
         } else {
           const { stdout, stderr } = await executeCommand(`xdotool search --class python windowactivate`);
-          writeVisionLog(`[GUI] xdotool result - stdout: ${stdout}, stderr: ${stderr}`);
+          writeMCPLog(`[GUI] xdotool result - stdout: ${stdout}, stderr: ${stderr}`);
         }
       } catch (err: any) {
-        writeVisionLog(`[GUI] xdotool not available or failed: ${err.message}`);
-        writeVisionLog('[GUI] Please install xdotool: sudo apt-get install xdotool');
+        writeMCPLog(`[GUI] xdotool not available or failed: ${err.message}`);
+        writeMCPLog('[GUI] Please install xdotool: sudo apt-get install xdotool');
       }
     }
     
-    writeVisionLog('[GUI] ✓ Window focus command executed successfully');
+    writeMCPLog('[GUI] ✓ Window focus command executed successfully');
   } catch (error: any) {
-    writeVisionLog(`[GUI] ✗ Failed to focus window: ${error.message}`);
-    writeVisionLog('[GUI] Window may still be in background - screenshots might capture wrong content');
+    writeMCPLog(`[GUI] ✗ Failed to focus window: ${error.message}`);
+    writeMCPLog('[GUI] Window may still be in background - screenshots might capture wrong content');
   }
 }
 
@@ -1339,16 +1310,16 @@ async function executeGUIInteractionWithVision(action: string, elementDescriptio
   try {
     // Step 0: Bring window to front before taking screenshot (skip for Docker)
     if (!currentGUIApp.isDocker) {
-      writeVisionLog('[Vision] Step 0: Bringing window to front...');
+      writeMCPLog('[Vision] Step 0: Bringing window to front...');
       await focusApplicationWindow();
-      writeVisionLog('[Vision] Waiting 1 second for window to come to front...');
+      writeMCPLog('[Vision] Waiting 1 second for window to come to front...');
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
     // Step 1: Take screenshot
-    writeVisionLog('[Vision] Step 1: Taking screenshot...');
+    writeMCPLog('[Vision] Step 1: Taking screenshot...');
     await takeScreenshot(screenshotPath);
-    writeVisionLog(`[Vision] Screenshot saved to ${screenshotPath}`);
+    writeMCPLog(`[Vision] Screenshot saved to ${screenshotPath}`);
     
     // Step 2: Analyze with vision model to find element
     const coords = await analyzeScreenshotWithVision(screenshotPath, elementDescription);
@@ -1364,7 +1335,7 @@ async function executeGUIInteractionWithVision(action: string, elementDescriptio
     // Step 3: Perform action - use Docker xdotool if in Docker mode, otherwise use local tools
     if (currentGUIApp.isDocker && currentGUIApp.containerId) {
       // Docker mode: use xdotool inside container
-      writeVisionLog('[Vision] Using xdotool inside Docker container...');
+      writeMCPLog('[Vision] Using xdotool inside Docker container...');
       switch (action) {
         case 'click':
           await executeCommand(
@@ -1638,7 +1609,7 @@ async function executeGUIInteraction(action: string, x?: number, y?: number, val
   try {
     // If Docker mode, execute actions inside container using xdotool
     if (currentGUIApp.isDocker && currentGUIApp.containerId) {
-      writeVisionLog('[GUI] Executing action in Docker container...');
+      writeMCPLog('[GUI] Executing action in Docker container...');
       switch (action) {
         case 'click':
           if (x !== undefined && y !== undefined) {
@@ -1927,7 +1898,7 @@ async function executeGUIInteraction(action: string, x?: number, y?: number, val
 // async function executeGUIAssertion(assertionType: string, selector?: string, expectedValue?: string, timeout: number = 5000): Promise<boolean> {
 //   // For non-web apps, assertions are not supported
 //   if (!currentGUIApp || currentGUIApp.appType !== 'web') {
-//     writeVisionLog('[GUI] Assertions are only supported for web apps');
+//     writeMCPLog('[GUI] Assertions are only supported for web apps');
 //     return false;
 //   }
 //   
@@ -1939,7 +1910,7 @@ async function executeGUIInteraction(action: string, x?: number, y?: number, val
 //   try {
 //     await executeCommand('npm list playwright --depth=0');
 //   } catch {
-//     writeVisionLog('[GUI] Playwright not installed, cannot perform assertions');
+//     writeMCPLog('[GUI] Playwright not installed, cannot perform assertions');
 //     return false;
 //   }
 //   
@@ -2015,12 +1986,12 @@ async function executeClaudeCode(prompt: string, workingDir: string = WORKSPACE_
     );
     
     if (stderr && !stderr.includes('Warning')) {
-      writeVisionLog('[ClaudeCode] stderr:', stderr);
+      writeMCPLog('[ClaudeCode] stderr:', stderr);
     }
     
     return stdout || stderr || 'Command executed successfully';
   } catch (error: any) {
-    writeVisionLog('[ClaudeCode] Error:', error.message);
+    writeMCPLog('[ClaudeCode] Error:', error.message);
     throw new Error(`Claude Code execution failed: ${error.message}`);
   }
 }
@@ -2559,7 +2530,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error('No GUI application is running. Use start_gui_application first.');
         }
         
-        writeVisionLog(`[GUI] Performing action: ${action} at (${x}, ${y})`);
+        writeMCPLog(`[GUI] Performing action: ${action} at (${x}, ${y})`);
         
         try {
           const result = await executeGUIInteraction(action, x, y, value, timeout || 5000);
@@ -2595,7 +2566,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error('No GUI application is running. Use start_gui_application first.');
         }
         
-        writeVisionLog(`[GUI] Asserting: ${question}`);
+        writeMCPLog(`[GUI] Asserting: ${question}`);
         
         try {
           // Use vision to verify the GUI state
@@ -2752,7 +2723,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error('No GUI application is running. Use start_gui_application first.');
         }
         
-        writeVisionLog(`[Vision] Performing ${action} on "${element_description}"`);
+        writeMCPLog(`[Vision] Performing ${action} on "${element_description}"`);
         
         try {
           const result = await executeGUIInteractionWithVision(action, element_description, value, timeout || 5000);
@@ -2788,19 +2759,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error('No GUI application is running. Use start_gui_application first.');
         }
         
-        writeVisionLog(`[Vision] Verifying: ${question}`);
+        writeMCPLog(`[Vision] Verifying: ${question}`);
         
         try {
           // Bring window to front before taking screenshot (skip for Docker)
           if (!currentGUIApp.isDocker) {
-            writeVisionLog('[Vision] Bringing window to front for verification...');
+            writeMCPLog('[Vision] Bringing window to front for verification...');
             await focusApplicationWindow();
-            writeVisionLog('[Vision] Waiting 1 second for window to come to front...');
+            writeMCPLog('[Vision] Waiting 1 second for window to come to front...');
             await new Promise(resolve => setTimeout(resolve, 1000));
           }
           
           // Take screenshot (automatically handles Docker mode)
-          writeVisionLog('[Vision] Taking screenshot for verification...');
+          writeMCPLog('[Vision] Taking screenshot for verification...');
           const screenshotPath = path.join(WORKSPACE_DIR, 'gui_screenshot.png');
           await takeScreenshot(screenshotPath);
           
@@ -2844,7 +2815,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error) {
-    writeVisionLog(`[SoftwareDev] Error in ${name}:`, error);
+    writeMCPLog(`[SoftwareDev] Error in ${name}: ${error instanceof Error ? error.message : String(error)}`, 'Error');
     return {
       content: [
         {
@@ -2866,33 +2837,33 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   
-  writeVisionLog('='.repeat(60));
-  writeVisionLog('Software Development MCP Server v1.0.0');
-  writeVisionLog('='.repeat(60));
-  writeVisionLog(`Workspace: ${WORKSPACE_DIR}`);
-  writeVisionLog(`Claude Code: ${process.env.CLAUDE_CODE_PATH || 'claude-code (from PATH)'}`);
-  writeVisionLog('');
-  writeVisionLog('Available Tools:');
-  writeVisionLog('  Code Development:');
-  writeVisionLog('    - read_code_file: Read file contents');
-  writeVisionLog('  GUI Testing:');
-  writeVisionLog('    - start_gui_application: Launch GUI app for testing');
-  writeVisionLog('    - gui_interact: Direct coordinate-based interaction (cliclick/xdotool)');
-  writeVisionLog('    - gui_interact_vision: AI vision-based GUI interaction');
-  writeVisionLog('    - gui_verify_vision: AI vision-based GUI verification');
-  writeVisionLog('    - gui_assert: Vision-based GUI state assertions');
-  writeVisionLog('    - stop_gui_application: Stop running GUI app');
-  writeVisionLog('  Requirements:');
-  writeVisionLog('    - create_requirement: Track new requirements');
-  writeVisionLog('    - update_requirement: Update requirement status');
-  writeVisionLog('    - validate_requirement: Validate requirement completion');
-  writeVisionLog('    - list_requirements: List all tracked requirements');
-  writeVisionLog('='.repeat(60));
-  writeVisionLog('Server ready and listening on stdio');
-  writeVisionLog('='.repeat(60));
+  writeMCPLog('='.repeat(60));
+  writeMCPLog('Software Development MCP Server v1.0.0');
+  writeMCPLog('='.repeat(60));
+  writeMCPLog(`Workspace: ${WORKSPACE_DIR}`);
+  writeMCPLog(`Claude Code: ${process.env.CLAUDE_CODE_PATH || 'claude-code (from PATH)'}`);
+  writeMCPLog('');
+  writeMCPLog('Available Tools:');
+  writeMCPLog('  Code Development:');
+  writeMCPLog('    - read_code_file: Read file contents');
+  writeMCPLog('  GUI Testing:');
+  writeMCPLog('    - start_gui_application: Launch GUI app for testing');
+  writeMCPLog('    - gui_interact: Direct coordinate-based interaction (cliclick/xdotool)');
+  writeMCPLog('    - gui_interact_vision: AI vision-based GUI interaction');
+  writeMCPLog('    - gui_verify_vision: AI vision-based GUI verification');
+  writeMCPLog('    - gui_assert: Vision-based GUI state assertions');
+  writeMCPLog('    - stop_gui_application: Stop running GUI app');
+  writeMCPLog('  Requirements:');
+  writeMCPLog('    - create_requirement: Track new requirements');
+  writeMCPLog('    - update_requirement: Update requirement status');
+  writeMCPLog('    - validate_requirement: Validate requirement completion');
+  writeMCPLog('    - list_requirements: List all tracked requirements');
+  writeMCPLog('='.repeat(60));
+  writeMCPLog('Server ready and listening on stdio');
+  writeMCPLog('='.repeat(60));
 }
 
 main().catch((error) => {
-  writeVisionLog('Failed to start Software Development MCP server:', error);
+  writeMCPLog('Failed to start Software Development MCP server:', error);
   process.exit(1);
 });

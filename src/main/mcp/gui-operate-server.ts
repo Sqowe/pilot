@@ -27,8 +27,12 @@ import { promisify } from 'util';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import { writeMCPLog } from './mcp-logger';
 
 const execAsync = promisify(exec);
+
+// Get workspace directory from environment or use current directory
+const WORKSPACE_DIR = process.env.WORKSPACE_DIR || process.cwd();
 
 // ============================================================================
 // Display Information Types
@@ -207,28 +211,87 @@ async function getDisplayConfiguration(): Promise<DisplayConfiguration> {
     // Sort displays by index
     displays.sort((a, b) => a.index - b.index);
     
-    // Calculate total dimensions
-    let totalWidth = 0;
-    let totalHeight = 0;
-    let mainDisplayIndex = 0;
+    // Find main display for coordinate conversion
+    const mainDisplay = displays.find(d => d.isMain) || displays[0];
+    const mainDisplayIndex = mainDisplay.index;
+    const mainDisplayHeight = mainDisplay.height;
     
-    for (const display of displays) {
+    // Convert Cocoa coordinates (bottom-left origin) to cliclick coordinates (top-left origin)
+    // In Cocoa coordinate system:
+    // - Main display: origin = (0, 0) at bottom-left, Y increases upward
+    // - originY is the Y coordinate of the BOTTOM edge of the display
+    // - Main display's bottom edge is at Y=0
+    // - Secondary display above main: originY > 0 (bottom edge above main's bottom)
+    // - Secondary display below main: originY < 0 (bottom edge below main's bottom)
+    // - Secondary display at same level: originY = 0
+    //
+    // In cliclick coordinate system:
+    // - Main display: origin = (0, 0) at top-left, Y increases downward
+    // - originY is the Y coordinate of the TOP edge of the display
+    // - Main display's top edge is at Y=0
+    //
+    // Conversion formula:
+    // - Top edge of display in Cocoa = originY + height
+    // - Top edge of display in cliclick = mainHeight - (originY + height)
+    // - But if originY is negative and we want to align tops, we need different logic
+    
+    const convertedDisplays: DisplayInfo[] = displays.map(display => {
+      let cliclickOriginY: number;
+      
+      if (display.isMain) {
+        // Main display: originY in Cocoa is 0 (bottom), in cliclick should be 0 (top)
+        cliclickOriginY = 0;
+        writeMCPLog(`[Display Config] Display ${display.index} (Main): Cocoa originY=${display.originY}, cliclick originY=${cliclickOriginY}`, 'Coordinate Conversion');
+      } else {
+        // For secondary displays, convert from Cocoa (bottom-left) to cliclick (top-left)
+        // Cocoa: originY is the Y coordinate of the bottom edge
+        // Cocoa: top edge Y = originY + height
+        // cliclick: top edge Y = mainHeight - (cocoa_top_edge_Y)
+        // cliclick: top edge Y = mainHeight - (originY + height)
+        
+        const cocoaTopEdge = display.originY + display.height;
+        cliclickOriginY = mainDisplayHeight - cocoaTopEdge;
+        
+        writeMCPLog(`[Display Config] Display ${display.index}: Cocoa originY=${display.originY}, height=${display.height}, cocoaTopEdge=${cocoaTopEdge}, mainHeight=${mainDisplayHeight}, cliclick originY=${cliclickOriginY}`, 'Coordinate Conversion');
+      }
+      
+      return {
+        ...display,
+        originY: cliclickOriginY,
+      };
+    });
+    
+    // Calculate total dimensions in cliclick coordinate system
+    let totalWidth = 0;
+    let maxHeight = 0;
+    let maxDisplayHeight = 0;
+    
+    for (const display of convertedDisplays) {
       const right = display.originX + display.width;
-      const bottom = Math.abs(display.originY) + display.height;
+      const bottom = display.originY + display.height;
       
       if (right > totalWidth) {
         totalWidth = right;
       }
-      if (bottom > totalHeight) {
-        totalHeight = bottom;
+      if (bottom > maxHeight) {
+        maxHeight = bottom;
       }
-      if (display.isMain) {
-        mainDisplayIndex = display.index;
+      // Track the tallest individual display
+      if (display.height > maxDisplayHeight) {
+        maxDisplayHeight = display.height;
       }
+      
+      writeMCPLog(`[Display Config] Display ${display.index}: originX=${display.originX}, originY=${display.originY}, width=${display.width}, height=${display.height}, right=${right}, bottom=${bottom}`, 'Dimension Calculation');
     }
     
+    // totalHeight should be the maximum height among all displays
+    // This is the tallest display's height, not the sum of all heights
+    const totalHeight = maxDisplayHeight;
+    
+    writeMCPLog(`[Display Config] Total dimensions: width=${totalWidth}, height=${totalHeight}, maxBottom=${maxHeight}`, 'Dimension Calculation');
+    
     const config: DisplayConfiguration = {
-      displays,
+      displays: convertedDisplays,
       totalWidth,
       totalHeight,
       mainDisplayIndex,
@@ -241,7 +304,7 @@ async function getDisplayConfiguration(): Promise<DisplayConfiguration> {
     return config;
   } catch (error: any) {
     // Fallback: Use system_profiler for basic info
-    console.error('AppleScript display detection failed, using fallback:', error.message);
+    writeMCPLog(`AppleScript display detection failed, using fallback: ${error.message}`, 'Display Detection');
     
     try {
       const result = await executeCommand('system_profiler SPDisplaysDataType -json');
@@ -328,39 +391,14 @@ async function convertToGlobalCoordinates(
     console.warn(`Warning: Coordinates (${x}, ${y}) may be outside display ${displayIndex} bounds (${display.width}x${display.height})`);
   }
   
-  // In macOS:
-  // - cliclick uses screen coordinates with origin at top-left of the main display
-  // - For multi-monitor setups, secondary displays extend the coordinate space
-  // - originX and originY from NSScreen are in Cocoa coordinates (bottom-left origin)
-  
-  // For cliclick, we need top-left origin coordinates
-  // macOS coordinate system: originY is 0 for main display at bottom-left
-  // cliclick expects: (0,0) at top-left of main display
+  // Now originX and originY are already in cliclick coordinate system (top-left origin)
+  // originX: distance from left edge of main display to left edge of this display
+  // originY: distance from top edge of main display to top edge of this display
+  // x, y: coordinates relative to the top-left of this display
   
   // Calculate global coordinates for cliclick
-  // originX is already correct (left edge position)
-  // For Y: we need to flip the coordinate system
-  
   const globalX = display.originX + x;
-  
-  // Find the bottom-most point in the coordinate system
-  // In Cocoa, displays above main have positive originY, displays below have negative
-  // For cliclick, Y increases downward from top of main display
-  
-  // If the display has originY >= 0 (above or at main display level)
-  // The global Y for cliclick = (main display height - (display.originY + display.height)) + y
-  // But this is complex with multiple displays...
-  
-  // Simplified approach: since cliclick coordinates are relative to the entire screen space
-  // and macOS reports originY in Cocoa coordinates, we can use:
-  // Note: mainDisplay info is available via config.displays.find(d => d.isMain)
-  
-  // For displays arranged horizontally (same Y level as main)
-  // globalY = y (relative to top of that display)
-  // For displays above/below main, we need to adjust
-  
-  // In practice, for horizontal arrangements (most common):
-  const globalY = y - display.originY;  // Adjust for display's Y offset
+  const globalY = display.originY + y;
   
   return { globalX, globalY };
 }
@@ -488,7 +526,8 @@ async function performKeyPress(
     'f12': 'f12',
   };
   
-  const cliclickKey = keyMap[key.toLowerCase()] || key;
+  const keyLower = key.toLowerCase();
+  const cliclickKey = keyMap[keyLower];
   
   // Handle modifiers
   const modifierMap: Record<string, string> = {
@@ -507,13 +546,47 @@ async function performKeyPress(
   
   let command = '';
   
-  if (cliclickModifiers.length > 0) {
-    command = `kd:${cliclickModifiers.join(',')} kp:${cliclickKey} ku:${cliclickModifiers.join(',')}`;
+  // If key is in keyMap, use kp: command for special keys
+  if (cliclickKey) {
+    if (cliclickModifiers.length > 0) {
+      command = `kd:${cliclickModifiers.join(',')} kp:${cliclickKey} ku:${cliclickModifiers.join(',')}`;
+    } else {
+      command = `kp:${cliclickKey}`;
+    }
+    await executeCliclick(command);
   } else {
-    command = `kp:${cliclickKey}`;
+    // For single characters, cliclick's kp: doesn't work, use t: command instead
+    if (key.length === 1) {
+      const escapedKey = key.replace(/"/g, '\\"');
+      
+      if (cliclickModifiers.length > 0) {
+        // For modifier+char combinations, use AppleScript (more reliable)
+        const modifierFlags: string[] = [];
+        if (cliclickModifiers.includes('cmd')) modifierFlags.push('command down');
+        if (cliclickModifiers.includes('ctrl')) modifierFlags.push('control down');
+        if (cliclickModifiers.includes('shift')) modifierFlags.push('shift down');
+        if (cliclickModifiers.includes('alt')) modifierFlags.push('option down');
+        
+        const usingClause = modifierFlags.length > 0 ? ` using {${modifierFlags.join(', ')}}` : '';
+        const appleScript = `tell application "System Events" to keystroke "${escapedKey}"${usingClause}`;
+        
+        await executeCommand(`osascript -e '${appleScript.replace(/'/g, "'\"'\"'")}'`);
+        const modifierStr = modifiers.join('+');
+        return `Pressed: ${modifierStr}+${key} (using AppleScript)`;
+      } else {
+        // No modifiers, just type the character using cliclick
+        command = `t:"${escapedKey}"`;
+        await executeCliclick(command);
+      }
+    } else {
+      // Multi-character key name not in keyMap - this is an error
+      throw new Error(
+        `Unknown key: "${key}". ` +
+        `Supported special keys: ${Object.keys(keyMap).join(', ')}, ` +
+        `or single characters (a-z, 0-9, etc.) for typing text.`
+      );
+    }
   }
-  
-  await executeCliclick(command);
   
   const modifierStr = modifiers.length > 0 ? `${modifiers.join('+')}+` : '';
   return `Pressed: ${modifierStr}${key}`;
@@ -602,8 +675,12 @@ async function takeScreenshot(
   region?: { x: number; y: number; width: number; height: number }
 ): Promise<string> {
   const timestamp = Date.now();
-  const defaultPath = path.join(os.tmpdir(), `screenshot_${timestamp}.png`);
+  const defaultPath = path.join(WORKSPACE_DIR, `screenshot_${timestamp}.png`);
   const finalPath = outputPath || defaultPath;
+  
+  // Ensure the directory exists
+  const dir = path.dirname(finalPath);
+  await fs.mkdir(dir, { recursive: true });
   
   let command = 'screencapture';
   
@@ -711,6 +788,700 @@ async function moveMouse(
   await executeCliclick(`m:${globalX},${globalY}`);
   
   return `Moved mouse to (${x}, ${y}) on display ${displayIndex}`;
+}
+
+// ============================================================================
+// Vision-based GUI Operations
+// ============================================================================
+
+/**
+ * Call vision API to analyze images
+ */
+async function callVisionAPI(
+  base64Image: string,
+  prompt: string,
+  maxTokens: number = 2048,
+  functionName?: string
+): Promise<string> {
+  // Get API configuration from environment
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN;
+  const baseUrl = process.env.ANTHROPIC_BASE_URL;
+  const model = process.env.CLAUDE_MODEL || process.env.ANTHROPIC_DEFAULT_SONNET_MODEL || 'claude-3-5-sonnet-20241022';
+  
+  if (!apiKey) {
+    throw new Error('API key not configured. Please set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN environment variable.');
+  }
+  
+  // Check if using OpenRouter (has AUTH_TOKEN and baseUrl is openrouter.ai)
+  const isOpenRouter = !!process.env.ANTHROPIC_AUTH_TOKEN && 
+                       baseUrl && 
+                       (baseUrl.includes('openrouter.ai') || baseUrl.includes('openrouter'));
+  
+  // Check if model is OpenAI-compatible (Gemini, etc.)
+  const isOpenAICompatible = model.includes('gemini') || 
+                              model.includes('gpt-') || 
+                              model.includes('openai/') ||
+                              isOpenRouter;
+  
+  if (isOpenAICompatible) {
+    // Use OpenAI-compatible API format (for Gemini, GPT, etc. via OpenRouter)
+    const openAIBaseUrl = baseUrl || 'https://api.openai.com/v1';
+    const openAIUrl = openAIBaseUrl.endsWith('/v1') 
+      ? `${openAIBaseUrl}/chat/completions`
+      : `${openAIBaseUrl}/v1/chat/completions`;
+    
+    // Use Node.js built-in https module for better compatibility
+    const https = require('https');
+    const http = require('http');
+    const url = require('url');
+    
+    const urlObj = new url.URL(openAIUrl);
+    const isHttps = urlObj.protocol === 'https:';
+    const httpModule = isHttps ? https : http;
+    
+    const requestBodyObj: any = {
+      model: model,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/png;base64,${base64Image}`,
+              },
+            },
+            {
+              type: 'text',
+              text: prompt,
+            },
+          ],
+        },
+      ],
+      max_tokens: maxTokens,
+    };
+    
+    const requestBody = JSON.stringify(requestBodyObj);
+    
+    const headers: any = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Length': Buffer.byteLength(requestBody),
+    };
+    
+    if (isOpenRouter) {
+      headers['HTTP-Referer'] = 'https://github.com/OpenCoworkAI/open-cowork';
+      headers['X-Title'] = 'Open Cowork';
+    }
+    
+    return new Promise<string>((resolve, reject) => {
+      const options = {
+        hostname: urlObj.hostname,
+        port: urlObj.port || (isHttps ? 443 : 80),
+        path: urlObj.pathname + urlObj.search,
+        method: 'POST',
+        headers: headers,
+      };
+      
+      const req = httpModule.request(options, (res: any) => {
+        let data = '';
+        
+        res.on('data', (chunk: Buffer) => {
+          data += chunk.toString();
+        });
+        
+        res.on('end', () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              writeMCPLog(`[callVisionAPI] Response: ${data}`);
+              const jsonData = JSON.parse(data);
+              const responseContent = jsonData.choices[0]?.message?.content || '';
+              
+              // Log the response
+              const logLabel = functionName ? `Vision API Response [${functionName}]` : 'Vision API Response';
+              writeMCPLog(responseContent, logLabel);
+              
+              resolve(responseContent);
+            } catch (e: any) {
+              reject(new Error(`Failed to parse API response: ${e.message}`));
+            }
+          } else {
+            reject(new Error(`API request failed: ${res.statusCode} ${res.statusMessage} - ${data}`));
+          }
+        });
+      });
+      
+      req.on('error', (error: Error) => {
+        reject(new Error(`API request error: ${error.message}`));
+      });
+      
+      req.write(requestBody);
+      req.end();
+    });
+  } else {
+    // Use Anthropic API format
+    const Anthropic = require('@anthropic-ai/sdk');
+    const anthropic = new Anthropic({
+      apiKey: apiKey,
+      baseURL: baseUrl,
+    });
+    
+    const message = await anthropic.messages.create({
+      model: model,
+      max_tokens: maxTokens,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: 'image/png',
+                data: base64Image,
+              },
+            },
+            {
+              type: 'text',
+              text: prompt,
+            },
+          ],
+        },
+      ],
+    });
+    
+    const responseContent = message.content[0].type === 'text' ? message.content[0].text : '';
+    
+    // Log the response
+    const logLabel = functionName ? `Vision API Response [${functionName}]` : 'Vision API Response';
+    writeMCPLog(responseContent, logLabel);
+    
+    return responseContent;
+  }
+}
+
+/**
+ * Analyze screenshot with vision model to locate element
+ */
+async function analyzeScreenshotWithVision(
+  screenshotPath: string,
+  elementDescription: string,
+  displayIndex?: number
+): Promise<{ x: number; y: number; confidence: number; displayIndex: number }> {
+  try {
+    // Get display configuration for coordinate system info
+    const config = await getDisplayConfiguration();
+    const targetDisplay = displayIndex !== undefined 
+      ? config.displays.find(d => d.index === displayIndex)
+      : config.displays.find(d => d.isMain);
+    
+    if (!targetDisplay) {
+      throw new Error(`Display index ${displayIndex} not found`);
+    }
+    
+    // Read screenshot as base64
+    const imageBuffer = await fs.readFile(screenshotPath);
+    const base64Image = imageBuffer.toString('base64');
+    
+    // Get image dimensions
+    const imageDims = await getImageDimensions(screenshotPath);
+    
+    const prompt = `Analyze this GUI screenshot and locate the following element: "${elementDescription}"
+
+**COORDINATE SYSTEM:**
+- Image dimensions: ${imageDims.width}x${imageDims.height} pixels
+- Origin (0,0) is at TOP-LEFT corner
+- X increases from left to right (0 to ${imageDims.width})
+- Y increases from top to bottom (0 to ${imageDims.height})
+
+**TASK:**
+Find the element "${elementDescription}" and provide its EXACT CENTER coordinates.
+
+**INSTRUCTIONS:**
+1. Measure coordinates precisely from the top-left corner
+2. Provide the CENTER POINT of the element
+3. Estimate confidence based on visual clarity and match quality
+
+**RESPONSE FORMAT (JSON only, no markdown):**
+{
+  "x": <integer between 0 and ${imageDims.width}>,
+  "y": <integer between 0 and ${imageDims.height}>,
+  "confidence": <integer 0-100>,
+  "reasoning": "<brief explanation of what you found and where>",
+  "element_bounds": {
+    "left": <left edge X>,
+    "top": <top edge Y>,
+    "right": <right edge X>,
+    "bottom": <bottom edge Y>
+  }
+}
+
+If you cannot find the element, set confidence to 0.`;
+
+    writeMCPLog(`[analyzeScreenshotWithVision] Prompt: ${prompt}`);
+    
+    const responseText = await callVisionAPI(base64Image, prompt, 20000, 'analyzeScreenshotWithVision');
+    writeMCPLog(`[analyzeScreenshotWithVision] Raw Response Length: ${responseText.length}`, 'Response');
+    writeMCPLog(`[analyzeScreenshotWithVision] Raw Response (first 500 chars): ${responseText.substring(0, 500)}`, 'Response Preview');
+    
+    // Parse the response
+    let jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      writeMCPLog(`[analyzeScreenshotWithVision] No JSON found with simple regex, trying code block pattern`, 'Parse Attempt');
+      const codeBlockMatch = responseText.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+      if (codeBlockMatch) {
+        jsonMatch = [codeBlockMatch[1]];
+        writeMCPLog(`[analyzeScreenshotWithVision] Found JSON in code block, length: ${jsonMatch[0].length}`, 'Parse Success');
+      }
+    } else {
+      writeMCPLog(`[analyzeScreenshotWithVision] Found JSON with simple regex, length: ${jsonMatch[0].length}`, 'Parse Success');
+    }
+    
+    if (!jsonMatch) {
+      writeMCPLog(`[analyzeScreenshotWithVision] Failed to find JSON in response. Full response: ${responseText}`, 'Parse Error');
+      throw new Error('Failed to parse vision model response: No JSON found in response');
+    }
+    
+    let result;
+    try {
+      writeMCPLog(`[analyzeScreenshotWithVision] Attempting to parse JSON (first 200 chars): ${jsonMatch[0].substring(0, 200)}`, 'JSON Parse');
+      result = JSON.parse(jsonMatch[0]);
+      writeMCPLog(`[analyzeScreenshotWithVision] JSON parsed successfully`, 'JSON Parse Success');
+    } catch (parseError: any) {
+      writeMCPLog(`[analyzeScreenshotWithVision] JSON parse failed: ${parseError.message}`, 'JSON Parse Error');
+      writeMCPLog(`[analyzeScreenshotWithVision] JSON string that failed to parse: ${jsonMatch[0]}`, 'JSON Parse Error');
+      throw new Error(`Failed to parse JSON: ${parseError.message}. JSON string: ${jsonMatch[0].substring(0, 500)}`);
+    }
+    
+    // Validate and clamp coordinates
+    result.x = Math.max(0, Math.min(imageDims.width, result.x));
+    result.y = Math.max(0, Math.min(imageDims.height, result.y));
+    
+    return {
+      x: Math.round(result.x),
+      y: Math.round(result.y),
+      confidence: result.confidence,
+      displayIndex: targetDisplay.index,
+    };
+  } catch (error: any) {
+    throw new Error(`Vision analysis failed: ${error.message}`);
+  }
+}
+
+/**
+ * Get image dimensions
+ */
+async function getImageDimensions(imagePath: string): Promise<{ width: number; height: number }> {
+  try {
+    // Use sips on macOS to get image dimensions
+    const platform = os.platform();
+    
+    if (platform === 'darwin') {
+      const { stdout } = await executeCommand(`sips -g pixelWidth -g pixelHeight "${imagePath}"`);
+      const widthMatch = stdout.match(/pixelWidth:\s*(\d+)/);
+      const heightMatch = stdout.match(/pixelHeight:\s*(\d+)/);
+      
+      if (widthMatch && heightMatch) {
+        return {
+          width: parseInt(widthMatch[1]),
+          height: parseInt(heightMatch[1]),
+        };
+      }
+    }
+    
+    // Fallback: read PNG dimensions from file header
+    const buffer = await fs.readFile(imagePath);
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+      // PNG file
+      const width = buffer.readUInt32BE(16);
+      const height = buffer.readUInt32BE(20);
+      return { width, height };
+    }
+    
+    throw new Error('Could not determine image dimensions');
+  } catch (error: any) {
+    // Fallback: use display dimensions
+    const config = await getDisplayConfiguration();
+    const mainDisplay = config.displays.find(d => d.isMain) || config.displays[0];
+    return { width: mainDisplay.width, height: mainDisplay.height };
+  }
+}
+
+/**
+ * Plan GUI actions based on natural language task description
+ * Returns a step-by-step plan for executing the task
+ */
+async function planGUIActions(
+  taskDescription: string,
+  displayIndex?: number
+): Promise<{ steps: Array<{ step: number; action: string; element_description: string; value?: string; reasoning: string }>; summary?: string }> {
+  const platform = os.platform();
+  
+  if (platform !== 'darwin') {
+    throw new Error('GUI action planning is currently only supported on macOS');
+  }
+  
+  // Take screenshot to understand current GUI state
+  const screenshotPath = path.join(WORKSPACE_DIR, `gui_plan_${Date.now()}.png`);
+  await takeScreenshot(screenshotPath, displayIndex);
+  
+  // Get image dimensions
+  const imageDims = await getImageDimensions(screenshotPath);
+  
+  // Read screenshot as base64
+  const imageBuffer = await fs.readFile(screenshotPath);
+  const base64Image = imageBuffer.toString('base64');
+  
+  const prompt = `Analyze this GUI screenshot and create a step-by-step plan to accomplish the following task: "${taskDescription}"
+
+**COORDINATE SYSTEM:**
+- Image dimensions: ${imageDims.width}x${imageDims.height} pixels
+- Origin (0,0) is at TOP-LEFT corner
+
+**TASK:**
+Break down the task "${taskDescription}" into a sequence of GUI operations.
+
+**INSTRUCTIONS:**
+1. Analyze the current GUI state shown in the screenshot
+2. Identify what elements need to be interacted with
+3. Create a step-by-step plan with specific actions
+4. For each step, describe the element to interact with and what action to perform
+5. Include any text values that need to be entered
+
+**AVAILABLE ACTIONS:**
+- click: Single click on an element
+- double_click: Double click on an element
+- right_click: Right click on an element
+- type: Type text into an input field (requires value parameter)
+- hover: Move mouse over an element
+- key_press: Press a key (requires value parameter with key name)
+
+**RESPONSE FORMAT (JSON only, no markdown):**
+{
+  "steps": [
+    {
+      "step": 1,
+      "action": "click|double_click|right_click|type|hover|key_press",
+      "element_description": "<detailed description of the element to interact with>",
+      "value": "<optional: text to type or key to press>",
+      "reasoning": "<explanation of why this step is needed>"
+    }
+  ],
+  "summary": "<brief summary of the plan>"
+}
+
+Be specific and detailed in element descriptions. For example:
+- Instead of "button", use "the red Start button in the top-right corner"
+- Instead of "input", use "the text input field labeled 'File Name'"
+- Instead of "menu", use "the File menu in the menu bar"`;
+
+  const responseText = await callVisionAPI(base64Image, prompt, 20000, 'planGUIActions');
+  writeMCPLog(`[planGUIActions] Raw Response Length: ${responseText.length}`, 'Response');
+  writeMCPLog(`[planGUIActions] Raw Response (first 500 chars): ${responseText.substring(0, 500)}`, 'Response Preview');
+  
+  // Parse the response
+  let jsonMatch = responseText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    writeMCPLog(`[planGUIActions] No JSON found with simple regex, trying code block pattern`, 'Parse Attempt');
+    const codeBlockMatch = responseText.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+    if (codeBlockMatch) {
+      jsonMatch = [codeBlockMatch[1]];
+      writeMCPLog(`[planGUIActions] Found JSON in code block, length: ${jsonMatch[0].length}`, 'Parse Success');
+    }
+  } else {
+    writeMCPLog(`[planGUIActions] Found JSON with simple regex, length: ${jsonMatch[0].length}`, 'Parse Success');
+  }
+  
+  if (!jsonMatch) {
+    writeMCPLog(`[planGUIActions] Failed to find JSON in response. Full response: ${responseText}`, 'Parse Error');
+    throw new Error('Failed to parse action plan response: No JSON found in response');
+  }
+  
+  let plan;
+  try {
+    writeMCPLog(`[planGUIActions] Attempting to parse JSON (first 200 chars): ${jsonMatch[0].substring(0, 200)}`, 'JSON Parse');
+    plan = JSON.parse(jsonMatch[0]);
+    writeMCPLog(`[planGUIActions] JSON parsed successfully. Steps count: ${plan.steps?.length || 0}`, 'JSON Parse Success');
+  } catch (parseError: any) {
+    writeMCPLog(`[planGUIActions] JSON parse failed: ${parseError.message}`, 'JSON Parse Error');
+    writeMCPLog(`[planGUIActions] JSON string that failed to parse: ${jsonMatch[0]}`, 'JSON Parse Error');
+    throw new Error(`Failed to parse action plan JSON: ${parseError.message}. JSON string: ${jsonMatch[0].substring(0, 500)}`);
+  }
+  
+  if (!plan.steps || !Array.isArray(plan.steps)) {
+    writeMCPLog(`[planGUIActions] Invalid plan format. Plan keys: ${Object.keys(plan).join(', ')}, steps type: ${typeof plan.steps}`, 'Validation Error');
+    throw new Error(`Invalid action plan format: missing steps array. Plan structure: ${JSON.stringify(plan, null, 2).substring(0, 500)}`);
+  }
+  
+  return plan;
+}
+
+/**
+ * Locate a GUI element using vision
+ */
+async function locateGUIElement(
+  elementDescription: string,
+  displayIndex?: number
+): Promise<{ x: number; y: number; confidence: number; displayIndex: number; reasoning?: string }> {
+  const platform = os.platform();
+  
+  if (platform !== 'darwin') {
+    throw new Error('Element location is currently only supported on macOS');
+  }
+  
+  // Take screenshot
+  const screenshotPath = path.join(WORKSPACE_DIR, `gui_locate_${Date.now()}.png`);
+  await takeScreenshot(screenshotPath, displayIndex);
+  
+  // Analyze screenshot to find element
+  const coords = await analyzeScreenshotWithVision(screenshotPath, elementDescription, displayIndex);
+  
+  return coords;
+}
+
+/**
+ * Execute a single GUI action step
+ */
+async function executeActionStep(
+  step: { step: number; action: string; element_description: string; value?: string },
+  displayIndex?: number
+): Promise<{ success: boolean; step: number; action: string; coordinates?: { x: number; y: number }; error?: string }> {
+  try {
+    writeMCPLog(`[executeActionStep] Starting step ${step.step}: ${step.action} on "${step.element_description}"`, 'Step Execution');
+    
+    // Locate the element
+    const coords = await locateGUIElement(step.element_description, displayIndex);
+    writeMCPLog(`[executeActionStep] Step ${step.step}: Located element at (${coords.x}, ${coords.y}) with confidence ${coords.confidence}%`, 'Step Execution');
+    
+    if (coords.confidence < 50) {
+      writeMCPLog(`[executeActionStep] Step ${step.step}: Low confidence (${coords.confidence}%), aborting`, 'Step Execution');
+      return {
+        success: false,
+        step: step.step,
+        action: step.action,
+        error: `Element "${step.element_description}" not found with sufficient confidence (${coords.confidence}%)`,
+      };
+    }
+    
+    // Perform the action
+    writeMCPLog(`[executeActionStep] Step ${step.step}: Executing action "${step.action}"`, 'Step Execution');
+    switch (step.action) {
+      case 'click':
+        await performClick(coords.x, coords.y, coords.displayIndex, 'single');
+        writeMCPLog(`[executeActionStep] Step ${step.step}: Click completed successfully`, 'Step Execution');
+        return {
+          success: true,
+          step: step.step,
+          action: 'click',
+          coordinates: { x: coords.x, y: coords.y },
+        };
+        
+      case 'double_click':
+        await performClick(coords.x, coords.y, coords.displayIndex, 'double');
+        writeMCPLog(`[executeActionStep] Step ${step.step}: Double click completed successfully`, 'Step Execution');
+        return {
+          success: true,
+          step: step.step,
+          action: 'double_click',
+          coordinates: { x: coords.x, y: coords.y },
+        };
+        
+      case 'right_click':
+        await performClick(coords.x, coords.y, coords.displayIndex, 'right');
+        writeMCPLog(`[executeActionStep] Step ${step.step}: Right click completed successfully`, 'Step Execution');
+        return {
+          success: true,
+          step: step.step,
+          action: 'right_click',
+          coordinates: { x: coords.x, y: coords.y },
+        };
+        
+      case 'type':
+        if (!step.value) {
+          writeMCPLog(`[executeActionStep] Step ${step.step}: Type action missing value`, 'Step Execution Error');
+          return {
+            success: false,
+            step: step.step,
+            action: 'type',
+            error: 'Value is required for type action',
+          };
+        }
+        // Click first to focus, then type
+        writeMCPLog(`[executeActionStep] Step ${step.step}: Clicking to focus, then typing "${step.value}"`, 'Step Execution');
+        await performClick(coords.x, coords.y, coords.displayIndex, 'single');
+        await new Promise(resolve => setTimeout(resolve, 200));
+        await performType(step.value);
+        writeMCPLog(`[executeActionStep] Step ${step.step}: Type completed successfully`, 'Step Execution');
+        return {
+          success: true,
+          step: step.step,
+          action: 'type',
+          coordinates: { x: coords.x, y: coords.y },
+        };
+        
+      case 'hover':
+        await moveMouse(coords.x, coords.y, coords.displayIndex);
+        writeMCPLog(`[executeActionStep] Step ${step.step}: Hover completed successfully`, 'Step Execution');
+        return {
+          success: true,
+          step: step.step,
+          action: 'hover',
+          coordinates: { x: coords.x, y: coords.y },
+        };
+        
+      case 'key_press':
+        if (!step.value) {
+          writeMCPLog(`[executeActionStep] Step ${step.step}: Key press action missing key name`, 'Step Execution Error');
+          return {
+            success: false,
+            step: step.step,
+            action: 'key_press',
+            error: 'Key name is required for key_press action',
+          };
+        }
+        writeMCPLog(`[executeActionStep] Step ${step.step}: Pressing key "${step.value}"`, 'Step Execution');
+        await performKeyPress(step.value);
+        writeMCPLog(`[executeActionStep] Step ${step.step}: Key press completed successfully`, 'Step Execution');
+        return {
+          success: true,
+          step: step.step,
+          action: 'key_press',
+        };
+        
+      default:
+        writeMCPLog(`[executeActionStep] Step ${step.step}: Unsupported action "${step.action}"`, 'Step Execution Error');
+        return {
+          success: false,
+          step: step.step,
+          action: step.action,
+          error: `Unsupported action: ${step.action}`,
+        };
+    }
+  } catch (error: any) {
+    writeMCPLog(`[executeActionStep] Step ${step.step}: Error occurred: ${error.message}`, 'Step Execution Error');
+    writeMCPLog(`[executeActionStep] Step ${step.step}: Error stack: ${error.stack}`, 'Step Execution Error');
+    return {
+      success: false,
+      step: step.step,
+      action: step.action,
+      error: error.message,
+    };
+  }
+}
+
+/**
+ * Perform GUI interaction using vision - automatically plans and executes steps
+ */
+async function performVisionBasedInteraction(
+  taskDescription: string,
+  displayIndex?: number
+): Promise<string> {
+  const platform = os.platform();
+  
+  if (platform !== 'darwin') {
+    throw new Error('Vision-based GUI interaction is currently only supported on macOS');
+  }
+  
+  writeMCPLog(`[performVisionBasedInteraction] Starting task: "${taskDescription}"`, 'Task Start');
+  writeMCPLog(`[performVisionBasedInteraction] Display index: ${displayIndex ?? 'main'}`, 'Task Start');
+  
+  // Step 1: Plan the actions
+  writeMCPLog(`[performVisionBasedInteraction] Step 1: Planning actions...`, 'Task Planning');
+  let plan;
+  try {
+    plan = await planGUIActions(taskDescription, displayIndex);
+    writeMCPLog(`[performVisionBasedInteraction] Planning completed. Total steps: ${plan.steps.length}`, 'Task Planning');
+    writeMCPLog(`[performVisionBasedInteraction] Plan summary: ${plan.summary || 'No summary'}`, 'Task Planning');
+  } catch (error: any) {
+    writeMCPLog(`[performVisionBasedInteraction] Planning failed: ${error.message}`, 'Task Planning Error');
+    throw error;
+  }
+  
+  // Step 2: Execute each step
+  writeMCPLog(`[performVisionBasedInteraction] Step 2: Executing ${plan.steps.length} steps...`, 'Task Execution');
+  const results: Array<{ step: number; success: boolean; action: string; element_description: string; error?: string; coordinates?: { x: number; y: number } }> = [];
+  
+  for (const step of plan.steps) {
+    writeMCPLog(`[performVisionBasedInteraction] Executing step ${step.step}/${plan.steps.length}: ${step.action}`, 'Task Execution');
+    // Wait a bit between steps to allow GUI to update
+    // Longer wait after type actions to allow UI to process
+    if (results.length > 0) {
+      const lastAction = results[results.length - 1]?.action;
+      const waitTime = lastAction === 'type' ? 800 : 500;
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+    
+    const result = await executeActionStep(step, displayIndex);
+    results.push({
+      step: step.step,
+      success: result.success,
+      action: step.action,
+      element_description: step.element_description,
+      error: result.error,
+      coordinates: result.coordinates,
+    });
+    
+    // If a step fails, stop execution
+    if (!result.success) {
+      writeMCPLog(`[performVisionBasedInteraction] Step ${step.step} failed, stopping execution`, 'Task Execution Error');
+      break;
+    } else {
+      writeMCPLog(`[performVisionBasedInteraction] Step ${step.step} completed successfully`, 'Task Execution');
+    }
+    
+    // Additional wait after click actions that might open dialogs/menus
+    if (step.action === 'click' || step.action === 'double_click') {
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+  }
+  
+  const allSuccessful = results.every(r => r.success);
+  writeMCPLog(`[performVisionBasedInteraction] Task completed. Success: ${allSuccessful}, Steps executed: ${results.length}/${plan.steps.length}`, 'Task Completion');
+  
+  return JSON.stringify({
+    success: allSuccessful,
+    task: taskDescription,
+    plan_summary: plan.summary || 'No summary provided',
+    steps_executed: results.length,
+    total_steps: plan.steps.length,
+    results,
+    failed_at_step: allSuccessful ? undefined : results.findIndex(r => !r.success) + 1,
+  });
+}
+
+/**
+ * Verify GUI state using vision
+ */
+async function verifyGUIState(
+  question: string,
+  displayIndex?: number
+): Promise<string> {
+  const platform = os.platform();
+  
+  if (platform !== 'darwin') {
+    throw new Error('GUI verification is currently only supported on macOS');
+  }
+  
+  // Take screenshot
+  const screenshotPath = path.join(WORKSPACE_DIR, `gui_verify_${Date.now()}.png`);
+  await takeScreenshot(screenshotPath, displayIndex);
+  
+  // Analyze with vision model
+  const imageBuffer = await fs.readFile(screenshotPath);
+  const base64Image = imageBuffer.toString('base64');
+  
+  const prompt = `Analyze this GUI screenshot and answer the following question:\n\n${question}\n\nProvide a detailed answer based on what you can see in the image.`;
+  const answer = await callVisionAPI(base64Image, prompt, 20000, 'verifyGUIState');
+  writeMCPLog(`[verifyGUIState] Response Length: ${answer.length}`, 'Response');
+  writeMCPLog(`[verifyGUIState] Response (first 500 chars): ${answer.substring(0, 500)}`, 'Response Preview');
+  
+  return JSON.stringify({
+    success: true,
+    question,
+    answer,
+    screenshot_path: screenshotPath,
+    displayIndex: displayIndex ?? 'all',
+  });
 }
 
 // ============================================================================
@@ -880,7 +1651,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             output_path: {
               type: 'string',
-              description: 'Path to save the screenshot. If not provided, saves to temp directory.',
+              description: 'Path to save the screenshot. If not provided, saves to workspace directory.',
             },
             display_index: {
               type: 'number',
@@ -930,6 +1701,78 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
           },
           required: ['x', 'y'],
+        },
+      },
+      // {
+      //   name: 'gui_plan_action',
+      //   description: 'Plan GUI actions based on a natural language task description. Analyzes the current screen and breaks down the task into step-by-step GUI operations. Returns a plan with specific actions and element descriptions.',
+      //   inputSchema: {
+      //     type: 'object',
+      //     properties: {
+      //       task_description: {
+      //         type: 'string',
+      //         description: 'Natural language description of the task to accomplish (e.g., "create a new file named a.py in Cursor", "click the Save button and enter filename")',
+      //       },
+      //       display_index: {
+      //         type: 'number',
+      //         description: 'Display index to analyze. If not provided, uses main display.',
+      //       },
+      //     },
+      //     required: ['task_description'],
+      //   },
+      // },
+      {
+        name: 'gui_locate_element',
+        description: 'Locate a GUI element on screen using AI vision. Returns the coordinates and confidence level for the element.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            element_description: {
+              type: 'string',
+              description: 'Natural language description of the element to locate (e.g., "the red Start button", "the text input field labeled File Name")',
+            },
+            display_index: {
+              type: 'number',
+              description: 'Display index to search on. If not provided, uses main display.',
+            },
+          },
+          required: ['element_description'],
+        },
+      },
+      // {
+      //   name: 'gui_interact_vision',
+      //   description: 'Execute a GUI task using natural language description. Automatically plans the task into steps, locates elements, and executes actions. Example: "create a new file named a.py in Cursor" will automatically find the new file button, click it, locate the filename input, and type "a.py".',
+      //   inputSchema: {
+      //     type: 'object',
+      //     properties: {
+      //       task_description: {
+      //         type: 'string',
+      //         description: 'Natural language description of the complete task to accomplish (e.g., "create a new file named a.py", "click the Save button and enter filename test.txt", "open the File menu and select New")',
+      //       },
+      //       display_index: {
+      //         type: 'number',
+      //         description: 'Display index to operate on. If not provided, uses main display.',
+      //       },
+      //     },
+      //     required: ['task_description'],
+      //   },
+      // },
+      {
+        name: 'gui_verify_vision',
+        description: 'Verify GUI state using AI vision. Ask questions about what is visible on screen and get intelligent answers (e.g., "Is the game board visible?", "What is the current player shown?", "Are there any error messages?").',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            question: {
+              type: 'string',
+              description: 'Question about the GUI state',
+            },
+            display_index: {
+              type: 'number',
+              description: 'Display index to verify. If not provided, uses main display.',
+            },
+          },
+          required: ['question'],
         },
       },
     ],
@@ -1030,6 +1873,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
       
+      case 'gui_plan_action': {
+        const { task_description, display_index } = args as {
+          task_description: string;
+          display_index?: number;
+        };
+        const plan = await planGUIActions(task_description, display_index);
+        result = JSON.stringify(plan, null, 2);
+        break;
+      }
+      
+      case 'gui_locate_element': {
+        const { element_description, display_index } = args as {
+          element_description: string;
+          display_index?: number;
+        };
+        const location = await locateGUIElement(element_description, display_index);
+        result = JSON.stringify(location, null, 2);
+        break;
+      }
+      
+      case 'gui_interact_vision': {
+        const { task_description, display_index } = args as {
+          task_description: string;
+          display_index?: number;
+        };
+        result = await performVisionBasedInteraction(task_description, display_index);
+        break;
+      }
+      
+      case 'gui_verify_vision': {
+        const { question, display_index } = args as {
+          question: string;
+          display_index?: number;
+        };
+        result = await verifyGUIState(question, display_index);
+        break;
+      }
+      
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -1063,10 +1944,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('GUI Operate MCP Server running on stdio');
+  writeMCPLog('GUI Operate MCP Server running on stdio', 'Server Start');
 }
 
 main().catch((error) => {
-  console.error('Fatal error:', error);
+  writeMCPLog(`Fatal error: ${error instanceof Error ? error.message : String(error)}`, 'Fatal Error');
   process.exit(1);
 });
