@@ -35,6 +35,70 @@ const execAsync = promisify(exec);
 const WORKSPACE_DIR = process.env.WORKSPACE_DIR || process.cwd();
 
 // ============================================================================
+// Operation Experience Tracking
+// ============================================================================
+
+interface OperationExperience {
+  id: string;
+  timestamp: string;
+  operation: string;
+  parameters: Record<string, any>;
+  screenshotPath: string;
+  success: boolean;
+  error?: string;
+}
+
+// Store operation experiences in memory
+const operationExperiences: OperationExperience[] = [];
+
+/**
+ * Save operation experience with screenshot
+ */
+async function saveOperationExperience(
+  operation: string,
+  parameters: Record<string, any>,
+  success: boolean,
+  error?: string
+): Promise<string> {
+  const timestamp = Date.now();
+  const screenshotPath = path.join(WORKSPACE_DIR, `experience_${operation}_${timestamp}.png`);
+  
+  // Take screenshot after operation
+  await new Promise(resolve => setTimeout(resolve, 300)); // Wait for UI to update
+  await takeScreenshot(screenshotPath, parameters.display_index);
+  
+  const experience: OperationExperience = {
+    id: `exp_${timestamp}`,
+    timestamp: new Date().toISOString(),
+    operation,
+    parameters,
+    screenshotPath,
+    success,
+    error,
+  };
+  
+  operationExperiences.push(experience);
+  writeMCPLog(`[Experience] Saved: ${operation} at ${screenshotPath}`, 'Experience Tracking');
+  
+  return screenshotPath;
+}
+
+/**
+ * Get all operation experiences
+ */
+function getOperationExperiences(): OperationExperience[] {
+  return operationExperiences;
+}
+
+/**
+ * Clear operation experiences
+ */
+function clearOperationExperiences(): void {
+  operationExperiences.length = 0;
+  writeMCPLog('[Experience] Cleared all operation experiences', 'Experience Tracking');
+}
+
+// ============================================================================
 // Display Information Types
 // ============================================================================
 
@@ -415,7 +479,8 @@ async function performClick(
   y: number,
   displayIndex: number = 0,
   clickType: 'single' | 'double' | 'right' | 'triple' = 'single',
-  modifiers: string[] = []
+  modifiers: string[] = [],
+  saveExperience: boolean = true
 ): Promise<string> {
   const { globalX, globalY } = await convertToGlobalCoordinates(x, y, displayIndex);
   
@@ -461,7 +526,21 @@ async function performClick(
     command = `kd:${cliclickModifiers} ${command} ku:${cliclickModifiers}`;
   }
   
-  await executeCliclick(command);
+  let success = true;
+  let error: string | undefined;
+  
+  try {
+    await executeCliclick(command);
+  } catch (e: any) {
+    success = false;
+    error = e.message;
+    throw e;
+  } finally {
+    // Save experience
+    if (saveExperience) {
+      await saveOperationExperience('click', { x, y, display_index: displayIndex, click_type: clickType, modifiers }, success, error);
+    }
+  }
   
   return `Performed ${clickType} click at (${x}, ${y}) on display ${displayIndex} (global: ${globalX}, ${globalY})`;
 }
@@ -471,20 +550,38 @@ async function performClick(
  */
 async function performType(
   text: string,
-  pressEnter: boolean = false
+  pressEnter: boolean = false,
+  saveExperience: boolean = true,
+  displayIndex?: number
 ): Promise<string> {
-  // cliclick uses t: for typing - double quotes are escaped inside the string
-  const escapedText = text.replace(/"/g, '\\"');
+  let success = true;
+  let error: string | undefined;
   
-  let command = `t:"${escapedText}"`;
-  
-  if (pressEnter) {
-    command += ' kp:return';
+  try {
+    // For complex text with special characters, use AppleScript which is more reliable
+    // Escape single quotes for AppleScript
+    const escapedText = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const appleScript = `tell application "System Events" to keystroke "${escapedText}"`;
+    
+    writeMCPLog(`[performType] Typing text length: ${text.length}, using AppleScript`, 'Type Operation');
+    await executeCommand(`osascript -e '${appleScript.replace(/'/g, "'\"'\"'")}'`);
+    
+    if (pressEnter) {
+      await executeCommand(`osascript -e 'tell application "System Events" to key code 36'`);
+    }
+  } catch (e: any) {
+    success = false;
+    error = e.message;
+    writeMCPLog(`[performType] Error: ${error}`, 'Type Operation Error');
+    throw e;
+  } finally {
+    // Save experience
+    if (saveExperience) {
+      await saveOperationExperience('type_text', { text, press_enter: pressEnter, display_index: displayIndex }, success, error);
+    }
   }
   
-  await executeCliclick(command);
-  
-  return `Typed: "${text}"${pressEnter ? ' and pressed Enter' : ''}`;
+  return `Typed: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"${pressEnter ? ' and pressed Enter' : ''}`;
 }
 
 /**
@@ -492,7 +589,9 @@ async function performType(
  */
 async function performKeyPress(
   key: string,
-  modifiers: string[] = []
+  modifiers: string[] = [],
+  saveExperience: boolean = true,
+  displayIndex?: number
 ): Promise<string> {
   // Map common key names to cliclick key codes
   const keyMap: Record<string, string> = {
@@ -545,47 +644,65 @@ async function performKeyPress(
     .filter(m => m);
   
   let command = '';
+  let success = true;
+  let error: string | undefined;
+  let resultMessage = '';
   
-  // If key is in keyMap, use kp: command for special keys
-  if (cliclickKey) {
-    if (cliclickModifiers.length > 0) {
-      command = `kd:${cliclickModifiers.join(',')} kp:${cliclickKey} ku:${cliclickModifiers.join(',')}`;
-    } else {
-      command = `kp:${cliclickKey}`;
-    }
-    await executeCliclick(command);
-  } else {
-    // For single characters, cliclick's kp: doesn't work, use t: command instead
-    if (key.length === 1) {
-      const escapedKey = key.replace(/"/g, '\\"');
-      
+  try {
+    // If key is in keyMap, use kp: command for special keys
+    if (cliclickKey) {
       if (cliclickModifiers.length > 0) {
-        // For modifier+char combinations, use AppleScript (more reliable)
-        const modifierFlags: string[] = [];
-        if (cliclickModifiers.includes('cmd')) modifierFlags.push('command down');
-        if (cliclickModifiers.includes('ctrl')) modifierFlags.push('control down');
-        if (cliclickModifiers.includes('shift')) modifierFlags.push('shift down');
-        if (cliclickModifiers.includes('alt')) modifierFlags.push('option down');
-        
-        const usingClause = modifierFlags.length > 0 ? ` using {${modifierFlags.join(', ')}}` : '';
-        const appleScript = `tell application "System Events" to keystroke "${escapedKey}"${usingClause}`;
-        
-        await executeCommand(`osascript -e '${appleScript.replace(/'/g, "'\"'\"'")}'`);
-        const modifierStr = modifiers.join('+');
-        return `Pressed: ${modifierStr}+${key} (using AppleScript)`;
+        command = `kd:${cliclickModifiers.join(',')} kp:${cliclickKey} ku:${cliclickModifiers.join(',')}`;
       } else {
-        // No modifiers, just type the character using cliclick
-        command = `t:"${escapedKey}"`;
-        await executeCliclick(command);
+        command = `kp:${cliclickKey}`;
       }
+      await executeCliclick(command);
     } else {
-      // Multi-character key name not in keyMap - this is an error
-      throw new Error(
-        `Unknown key: "${key}". ` +
-        `Supported special keys: ${Object.keys(keyMap).join(', ')}, ` +
-        `or single characters (a-z, 0-9, etc.) for typing text.`
-      );
+      // For single characters, cliclick's kp: doesn't work, use t: command instead
+      if (key.length === 1) {
+        const escapedKey = key.replace(/"/g, '\\"');
+        
+        if (cliclickModifiers.length > 0) {
+          // For modifier+char combinations, use AppleScript (more reliable)
+          const modifierFlags: string[] = [];
+          if (cliclickModifiers.includes('cmd')) modifierFlags.push('command down');
+          if (cliclickModifiers.includes('ctrl')) modifierFlags.push('control down');
+          if (cliclickModifiers.includes('shift')) modifierFlags.push('shift down');
+          if (cliclickModifiers.includes('alt')) modifierFlags.push('option down');
+          
+          const usingClause = modifierFlags.length > 0 ? ` using {${modifierFlags.join(', ')}}` : '';
+          const appleScript = `tell application "System Events" to keystroke "${escapedKey}"${usingClause}`;
+          
+          await executeCommand(`osascript -e '${appleScript.replace(/'/g, "'\"'\"'")}'`);
+          const modifierStr = modifiers.join('+');
+          resultMessage = `Pressed: ${modifierStr}+${key} (using AppleScript)`;
+        } else {
+          // No modifiers, just type the character using cliclick
+          command = `t:"${escapedKey}"`;
+          await executeCliclick(command);
+        }
+      } else {
+        // Multi-character key name not in keyMap - this is an error
+        throw new Error(
+          `Unknown key: "${key}". ` +
+          `Supported special keys: ${Object.keys(keyMap).join(', ')}, ` +
+          `or single characters (a-z, 0-9, etc.) for typing text.`
+        );
+      }
     }
+  } catch (e: any) {
+    success = false;
+    error = e.message;
+    throw e;
+  } finally {
+    // Save experience
+    if (saveExperience) {
+      await saveOperationExperience('key_press', { key, modifiers, display_index: displayIndex }, success, error);
+    }
+  }
+  
+  if (resultMessage) {
+    return resultMessage;
   }
   
   const modifierStr = modifiers.length > 0 ? `${modifiers.join('+')}+` : '';
@@ -682,7 +799,7 @@ async function takeScreenshot(
   const dir = path.dirname(finalPath);
   await fs.mkdir(dir, { recursive: true });
   
-  let command = 'screencapture';
+  let command = 'screencapture -C';
   
   // -x: no sound
   command += ' -x';
@@ -790,18 +907,84 @@ async function moveMouse(
   return `Moved mouse to (${x}, ${y}) on display ${displayIndex}`;
 }
 
+/**
+ * Wait for a specified duration
+ */
+async function performWait(
+  duration: number,
+  reason?: string
+): Promise<string> {
+  const startTime = Date.now();
+  
+  writeMCPLog(`[performWait] Waiting for ${duration}ms${reason ? `: ${reason}` : ''}`, 'Wait Operation');
+  
+  await new Promise(resolve => setTimeout(resolve, duration));
+  
+  const actualDuration = Date.now() - startTime;
+  writeMCPLog(`[performWait] Wait completed. Actual duration: ${actualDuration}ms`, 'Wait Operation');
+  
+  return `Waited for ${actualDuration}ms${reason ? ` (${reason})` : ''}`;
+}
+
 // ============================================================================
 // Vision-based GUI Operations
 // ============================================================================
 
 /**
- * Call vision API to analyze images
+ * Call vision API to analyze images with timeout and retry
  */
 async function callVisionAPI(
   base64Image: string,
   prompt: string,
   maxTokens: number = 2048,
   functionName?: string
+): Promise<string> {
+  const MAX_RETRIES = 3;
+  const TIMEOUT_MS = 45000; // 45 seconds
+  
+  const logPrefix = functionName ? `[callVisionAPI:${functionName}]` : '[callVisionAPI]';
+  
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      writeMCPLog(`${logPrefix} Attempt ${attempt}/${MAX_RETRIES} - Starting API call`, 'API Request');
+      
+      const result = await callVisionAPIWithTimeout(base64Image, prompt, maxTokens, functionName, TIMEOUT_MS);
+      
+      writeMCPLog(`${logPrefix} Attempt ${attempt}/${MAX_RETRIES} - Success`, 'API Request');
+      return result;
+    } catch (error: any) {
+      const isLastAttempt = attempt === MAX_RETRIES;
+      
+      if (error.message.includes('timeout')) {
+        writeMCPLog(`${logPrefix} Attempt ${attempt}/${MAX_RETRIES} - Timeout after ${TIMEOUT_MS}ms`, 'API Request Error');
+      } else {
+        writeMCPLog(`${logPrefix} Attempt ${attempt}/${MAX_RETRIES} - Error: ${error.message}`, 'API Request Error');
+      }
+      
+      if (isLastAttempt) {
+        writeMCPLog(`${logPrefix} All ${MAX_RETRIES} attempts failed`, 'API Request Failed');
+        throw new Error(`Vision API failed after ${MAX_RETRIES} attempts: ${error.message}`);
+      }
+      
+      // Wait before retry (exponential backoff: 1s, 2s, 4s)
+      const waitTime = Math.pow(2, attempt - 1) * 1000;
+      writeMCPLog(`${logPrefix} Waiting ${waitTime}ms before retry...`, 'API Request Retry');
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+  }
+  
+  throw new Error('Vision API failed: Maximum retries exceeded');
+}
+
+/**
+ * Call vision API with timeout
+ */
+async function callVisionAPIWithTimeout(
+  base64Image: string,
+  prompt: string,
+  maxTokens: number,
+  functionName: string | undefined,
+  timeoutMs: number
 ): Promise<string> {
   // Get API configuration from environment
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN;
@@ -875,12 +1058,16 @@ async function callVisionAPI(
     }
     
     return new Promise<string>((resolve, reject) => {
+      let timeoutId: NodeJS.Timeout;
+      let isResolved = false;
+      
       const options = {
         hostname: urlObj.hostname,
         port: urlObj.port || (isHttps ? 443 : 80),
         path: urlObj.pathname + urlObj.search,
         method: 'POST',
         headers: headers,
+        timeout: timeoutMs,
       };
       
       const req = httpModule.request(options, (res: any) => {
@@ -891,9 +1078,12 @@ async function callVisionAPI(
         });
         
         res.on('end', () => {
+          if (isResolved) return;
+          clearTimeout(timeoutId);
+          
           if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
             try {
-              writeMCPLog(`[callVisionAPI] Response: ${data}`);
+              writeMCPLog(`[callVisionAPIWithTimeout] Response received, length: ${data.length}`, 'API Response');
               const jsonData = JSON.parse(data);
               const responseContent = jsonData.choices[0]?.message?.content || '';
               
@@ -901,18 +1091,41 @@ async function callVisionAPI(
               const logLabel = functionName ? `Vision API Response [${functionName}]` : 'Vision API Response';
               writeMCPLog(responseContent, logLabel);
               
+              isResolved = true;
               resolve(responseContent);
             } catch (e: any) {
+              isResolved = true;
               reject(new Error(`Failed to parse API response: ${e.message}`));
             }
           } else {
+            isResolved = true;
             reject(new Error(`API request failed: ${res.statusCode} ${res.statusMessage} - ${data}`));
           }
         });
       });
       
+      // Set timeout
+      timeoutId = setTimeout(() => {
+        if (!isResolved) {
+          isResolved = true;
+          req.destroy();
+          reject(new Error(`API request timeout after ${timeoutMs}ms`));
+        }
+      }, timeoutMs);
+      
       req.on('error', (error: Error) => {
+        if (isResolved) return;
+        clearTimeout(timeoutId);
+        isResolved = true;
         reject(new Error(`API request error: ${error.message}`));
+      });
+      
+      req.on('timeout', () => {
+        if (isResolved) return;
+        clearTimeout(timeoutId);
+        isResolved = true;
+        req.destroy();
+        reject(new Error(`API request timeout after ${timeoutMs}ms`));
       });
       
       req.write(requestBody);
@@ -924,9 +1137,11 @@ async function callVisionAPI(
     const anthropic = new Anthropic({
       apiKey: apiKey,
       baseURL: baseUrl,
+      timeout: timeoutMs,
     });
     
-    const message = await anthropic.messages.create({
+    // Wrap the API call with timeout promise
+    const apiCallPromise = anthropic.messages.create({
       model: model,
       max_tokens: maxTokens,
       messages: [
@@ -950,13 +1165,29 @@ async function callVisionAPI(
       ],
     });
     
-    const responseContent = message.content[0].type === 'text' ? message.content[0].text : '';
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`API request timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
     
-    // Log the response
-    const logLabel = functionName ? `Vision API Response [${functionName}]` : 'Vision API Response';
-    writeMCPLog(responseContent, logLabel);
-    
-    return responseContent;
+    try {
+      const message = await Promise.race([apiCallPromise, timeoutPromise]);
+      
+      const responseContent = message.content[0].type === 'text' ? message.content[0].text : '';
+      
+      // Log the response
+      const logLabel = functionName ? `Vision API Response [${functionName}]` : 'Vision API Response';
+      writeMCPLog(responseContent, logLabel);
+      writeMCPLog(`[callVisionAPIWithTimeout] Response received, length: ${responseContent.length}`, 'API Response');
+      
+      return responseContent;
+    } catch (error: any) {
+      if (error.message.includes('timeout')) {
+        throw new Error(`API request timeout after ${timeoutMs}ms`);
+      }
+      throw error;
+    }
   }
 }
 
@@ -1310,7 +1541,7 @@ async function executeActionStep(
         writeMCPLog(`[executeActionStep] Step ${step.step}: Clicking to focus, then typing "${step.value}"`, 'Step Execution');
         await performClick(coords.x, coords.y, coords.displayIndex, 'single');
         await new Promise(resolve => setTimeout(resolve, 200));
-        await performType(step.value);
+        await performType(step.value, false, true, displayIndex);
         writeMCPLog(`[executeActionStep] Step ${step.step}: Type completed successfully`, 'Step Execution');
         return {
           success: true,
@@ -1340,7 +1571,7 @@ async function executeActionStep(
           };
         }
         writeMCPLog(`[executeActionStep] Step ${step.step}: Pressing key "${step.value}"`, 'Step Execution');
-        await performKeyPress(step.value);
+        await performKeyPress(step.value, [], true, displayIndex);
         writeMCPLog(`[executeActionStep] Step ${step.step}: Key press completed successfully`, 'Step Execution');
         return {
           success: true,
@@ -1559,8 +1790,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'boolean',
               description: 'Whether to press Enter after typing. Default: false',
             },
+            display_index: {
+              type: 'number',
+              description: 'Display index for screenshot capture in operation experience. Default: 0',
+            },
           },
-          required: ['text'],
+          required: ['text', 'display_index'],
         },
       },
       {
@@ -1578,8 +1813,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               items: { type: 'string' },
               description: 'Modifier keys: command/cmd, shift, option/alt, control/ctrl',
             },
+            display_index: {
+              type: 'number',
+              description: 'Display index for screenshot capture in operation experience. Default: 0',
+            },
           },
-          required: ['key'],
+          required: ['key', 'display_index'],
         },
       },
       {
@@ -1703,6 +1942,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['x', 'y'],
         },
       },
+      {
+        name: 'wait',
+        description: 'Wait for a specified duration in milliseconds. Use this to allow GUI applications to complete internal operations, animations, loading states, or asynchronous updates. Common use cases: waiting for dialogs to appear, menus to render, files to load, or network requests to complete.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            duration: {
+              type: 'number',
+              description: 'Duration to wait in milliseconds (e.g., 1000 = 1 second, 500 = 0.5 seconds)',
+            },
+            reason: {
+              type: 'string',
+              description: 'Optional description of why waiting (e.g., "waiting for dialog to appear", "waiting for file to load"). Helps with debugging and logging.',
+            },
+          },
+          required: ['duration'],
+        },
+      },
       // {
       //   name: 'gui_plan_action',
       //   description: 'Plan GUI actions based on a natural language task description. Analyzes the current screen and breaks down the task into step-by-step GUI operations. Returns a plan with specific actions and element descriptions.',
@@ -1775,6 +2032,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['question'],
         },
       },
+      {
+        name: 'get_operation_experiences',
+        description: 'Get all saved operation experiences. Returns a list of operations with their parameters, screenshots, and success status. Use this to review what operations were performed and their results, which helps you adjust future operations based on visual feedback. When you find your operations failed, you can use this tool to get the experiences and adjust your future operations. Note that after getting these experiences, you should read the saved screenshots and understand the operations and their results.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          required: [],
+        },
+      },
+      {
+        name: 'clear_operation_experiences',
+        description: 'Clear all saved operation experiences. Use this to reset the experience history when starting a new task or to free up memory.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          required: [],
+        },
+      },
     ],
   };
 });
@@ -1806,20 +2081,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       
       case 'type_text': {
-        const { text, press_enter = false } = args as {
+        const { text, press_enter = false, display_index } = args as {
           text: string;
           press_enter?: boolean;
+          display_index?: number;
         };
-        result = await performType(text, press_enter);
+        result = await performType(text, press_enter, true, display_index);
         break;
       }
       
       case 'key_press': {
-        const { key, modifiers = [] } = args as {
+        const { key, modifiers = [], display_index } = args as {
           key: string;
           modifiers?: string[];
+          display_index?: number;
         };
-        result = await performKeyPress(key, modifiers);
+        result = await performKeyPress(key, modifiers, true, display_index);
         break;
       }
       
@@ -1873,6 +2150,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
       
+      case 'wait': {
+        const { duration, reason } = args as {
+          duration: number;
+          reason?: string;
+        };
+        result = await performWait(duration, reason);
+        break;
+      }
+      
       case 'gui_plan_action': {
         const { task_description, display_index } = args as {
           task_description: string;
@@ -1908,6 +2194,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           display_index?: number;
         };
         result = await verifyGUIState(question, display_index);
+        break;
+      }
+      
+      case 'get_operation_experiences': {
+        const experiences = getOperationExperiences();
+        result = JSON.stringify({
+          success: true,
+          count: experiences.length,
+          experiences: experiences,
+        }, null, 2);
+        break;
+      }
+      
+      case 'clear_operation_experiences': {
+        clearOperationExperiences();
+        result = JSON.stringify({
+          success: true,
+          message: 'All operation experiences cleared',
+        });
         break;
       }
       

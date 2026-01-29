@@ -1332,7 +1332,7 @@ Then follow the workflow described in that file.
         pathToClaudeCodeExecutable: claudeCodePath,
         cwd: workingDir,  // Windows path for claude-code process
         model: currentModel,
-        maxTurns: 50,
+        maxTurns: 1000,  // Increased from 50 to allow more complex tasks
         abortController: controller,
         env: envWithSkills,
         // Thinking mode configuration based on settings
@@ -1735,16 +1735,24 @@ Cowork mode includes **WebFetch** and **WebSearch** tools for retrieving web con
           };
       
       log('[ClaudeAgentRunner] Query input:', JSON.stringify(queryInput, null, 2));
-      for await (const message of query(queryInput)) {
-        if (!firstMessageReceived) {
-          logTiming('FIRST MESSAGE RECEIVED from SDK');
-          firstMessageReceived = true;
-        }
-        
-        if (controller.signal.aborted) break;
+      
+      // Retry configuration
+      const MAX_RETRIES = 3;
+      let retryCount = 0;
+      let shouldContinue = true;
+      
+      while (shouldContinue && retryCount <= MAX_RETRIES) {
+        try {
+          for await (const message of query(queryInput)) {
+            if (!firstMessageReceived) {
+              logTiming('FIRST MESSAGE RECEIVED from SDK');
+              firstMessageReceived = true;
+            }
+            
+            if (controller.signal.aborted) break;
 
-        log('[ClaudeAgentRunner] Message type:', message.type);
-        log('[ClaudeAgentRunner] Full message:', JSON.stringify(message, null, 2));
+            log('[ClaudeAgentRunner] Message type:', message.type);
+            log('[ClaudeAgentRunner] Full message:', JSON.stringify(message, null, 2));
 
         if (message.type === 'system' && (message as any).subtype === 'init') {
           const sdkSessionId = (message as any).session_id;
@@ -1887,7 +1895,7 @@ Cowork mode includes **WebFetch** and **WebSearch** tools for retrieving web con
               // These tools show their output directly, no need for extra message
             } else {
               // completionText = `✓ Task completed.`;
-              completionText = `Tool executed.`;
+              // completionText = `Tool executed.`;
             }
             
             if (completionText) {
@@ -1903,6 +1911,90 @@ Cowork mode includes **WebFetch** and **WebSearch** tools for retrieving web con
           }
         }
       }
+      
+      // Successfully completed the query loop
+      log('[ClaudeAgentRunner] Query completed successfully');
+      shouldContinue = false;
+      
+    } catch (error) {
+      // Handle errors with retry logic
+      const err = error as Error;
+      
+      // Check if this is an abort error - don't retry
+      if (err.name === 'AbortError') {
+        log('[ClaudeAgentRunner] Query aborted by user');
+        throw err;
+      }
+      
+      // Check if this is a retryable error
+      const errorMessage = err.message || String(error);
+      const isRetryable = errorMessage.includes('Provider returned error') ||
+                          errorMessage.includes('Unable to submit request') ||
+                          errorMessage.includes('API Error: 400') ||
+                          errorMessage.includes('API Error: 500') ||
+                          errorMessage.includes('API Error: 502') ||
+                          errorMessage.includes('API Error: 503') ||
+                          errorMessage.includes('timeout') ||
+                          errorMessage.includes('ECONNREFUSED');
+      
+      if (isRetryable && retryCount < MAX_RETRIES) {
+        retryCount++;
+        const waitTime = Math.pow(2, retryCount - 1) * 1000; // Exponential backoff: 1s, 2s, 4s
+        
+        logError(`[ClaudeAgentRunner] Retryable error (attempt ${retryCount}/${MAX_RETRIES}): ${errorMessage}`);
+        log(`[ClaudeAgentRunner] Waiting ${waitTime}ms before retry...`);
+        
+        // Show retry message to user
+        this.sendToRenderer({
+          type: 'stream.partial',
+          payload: { 
+            sessionId: session.id, 
+            delta: `\n\n⚠️ API调用出错，正在重试 (${retryCount}/${MAX_RETRIES})...\n\n` 
+          },
+        });
+        
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        
+        // Clear the retry message
+        this.sendToRenderer({
+          type: 'stream.partial',
+          payload: { sessionId: session.id, delta: '' },
+        });
+        
+        // Get the current SDK session ID for resume
+        const currentSdkSessionId = this.sdkSessions.get(session.id);
+        if (currentSdkSessionId) {
+          log(`[ClaudeAgentRunner] Resuming from SDK session: ${currentSdkSessionId}`);
+          
+          // Update queryInput to use resume
+          if (hasImages) {
+            (queryInput as any).options.resume = currentSdkSessionId;
+          } else {
+            (queryInput as any).options.resume = currentSdkSessionId;
+          }
+          
+          // Continue the while loop to retry
+          shouldContinue = true;
+        } else {
+          logError(`[ClaudeAgentRunner] No SDK session ID found for resume, cannot retry`);
+          throw err;
+        }
+      } else {
+        // Not retryable or max retries exceeded
+        if (retryCount >= MAX_RETRIES) {
+          logError(`[ClaudeAgentRunner] Max retries (${MAX_RETRIES}) exceeded`);
+        } else {
+          logError(`[ClaudeAgentRunner] Non-retryable error: ${errorMessage}`);
+        }
+        throw err;
+      }
+    }
+  }
+  
+  // If we exit the retry loop, check if there was an error
+  if (shouldContinue) {
+    throw new Error('Retry loop exited unexpectedly');
+  }
 
       // Complete - update the initial thinking step
       this.sendTraceUpdate(session.id, thinkingStepId, {

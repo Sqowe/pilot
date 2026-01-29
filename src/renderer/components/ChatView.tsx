@@ -112,6 +112,28 @@ export function ChatView() {
     prevPartialLengthRef.current = partialLength;
   }, [messages.length, partialMessage]);
 
+  // Additional scroll trigger for content height changes (e.g., TodoWrite expand/collapse)
+  useEffect(() => {
+    if (!isUserAtBottomRef.current) return;
+    
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    // Use ResizeObserver to detect height changes in the messages container
+    const resizeObserver = new ResizeObserver(() => {
+      if (isUserAtBottomRef.current) {
+        // Scroll to bottom when content height changes
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      }
+    });
+
+    resizeObserver.observe(container);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [displayedMessages.length]);
+
   useEffect(() => {
     textareaRef.current?.focus();
   }, [activeSessionId]);
