@@ -44,7 +44,7 @@ const OPEN_COWORK_DATA_DIR = path.join(os.homedir(), 'Library', 'Application Sup
 
 interface ClickHistoryEntry {
   index: number;
-  x: number;
+  x: number;  // Logical coordinates (runtime, scaled to current display)
   y: number;
   displayIndex: number;
   timestamp: number;
@@ -52,10 +52,22 @@ interface ClickHistoryEntry {
   count: number; // Number of times this coordinate was clicked
 }
 
+interface StoredClickHistoryEntry {
+  index: number;
+  x_normalized: number;  // Normalized coordinates (0-1000, stored on disk)
+  y_normalized: number;
+  displayIndex: number;
+  displayWidth: number;  // Display dimensions when click was recorded
+  displayHeight: number;
+  timestamp: number;
+  operation: string;
+  count: number;
+}
+
 interface AppClickHistory {
   appName: string;
   lastUpdated: number;
-  clicks: ClickHistoryEntry[];
+  clicks: StoredClickHistoryEntry[];  // Stored with normalized coordinates
   counter: number;
 }
 
@@ -122,6 +134,7 @@ async function getAllVisitedApps(): Promise<string[]> {
 
 /**
  * Load click history from disk for a specific app
+ * Converts normalized coordinates (0-1000) to current display's logical coordinates
  */
 async function loadClickHistoryForApp(appName: string): Promise<void> {
   try {
@@ -135,7 +148,38 @@ async function loadClickHistoryForApp(appName: string): Promise<void> {
       const data = await fs.readFile(filePath, 'utf-8');
       const appHistory: AppClickHistory = JSON.parse(data);
       
-      clickHistory = appHistory.clicks || [];
+      // Get current display configuration
+      const config = await getDisplayConfiguration();
+      
+      // Convert stored normalized coordinates to current display's logical coordinates
+      clickHistory = [];
+      for (const storedClick of appHistory.clicks || []) {
+        // Find the display for this click
+        const display = config.displays.find(d => d.index === storedClick.displayIndex);
+        if (!display) {
+          writeMCPLog(`[ClickHistory] Display ${storedClick.displayIndex} not found, skipping click #${storedClick.index}`, 'Click History Load Warning');
+          continue;
+        }
+        
+        // Convert normalized coordinates (0-1000) to logical coordinates
+        // x_normalized and y_normalized are in range [0, 1000]
+        // We need to scale them to the current display's dimensions
+        const x = Math.round((storedClick.x_normalized / 1000) * display.width);
+        const y = Math.round((storedClick.y_normalized / 1000) * display.height);
+        
+        clickHistory.push({
+          index: storedClick.index,
+          x: x,
+          y: y,
+          displayIndex: storedClick.displayIndex,
+          timestamp: storedClick.timestamp,
+          operation: storedClick.operation,
+          count: storedClick.count,
+        });
+        
+        writeMCPLog(`[ClickHistory] Loaded click #${storedClick.index}: normalized (${storedClick.x_normalized}, ${storedClick.y_normalized}) → logical (${x}, ${y}) on display ${storedClick.displayIndex} (${display.width}x${display.height})`, 'Click History Load');
+      }
+      
       clickHistoryCounter = appHistory.counter || 0;
       currentAppName = appName;
       
@@ -161,9 +205,11 @@ async function loadClickHistoryForApp(appName: string): Promise<void> {
 }
 
 /**
- * Save click history to disk for the current app
+ * Save the latest click to disk for the current app
+ * Only updates the most recent click entry, merging if coordinates match
+ * This function should only be called after a click operation
  */
-async function saveClickHistoryForApp(): Promise<void> {
+async function saveLatestClickToHistory(latestClick: ClickHistoryEntry): Promise<void> {
   if (!currentAppName) {
     writeMCPLog('[ClickHistory] No app initialized, skipping save', 'Click History Save');
     return;
@@ -174,19 +220,84 @@ async function saveClickHistoryForApp(): Promise<void> {
     const appDir = getAppDirectory(currentAppName);
     await fs.mkdir(appDir, { recursive: true });
     
-    const appHistory: AppClickHistory = {
-      appName: currentAppName,
-      lastUpdated: Date.now(),
-      clicks: clickHistory,
-      counter: clickHistoryCounter,
-    };
-    
     const filePath = getAppClickHistoryFilePath(currentAppName);
-    await fs.writeFile(filePath, JSON.stringify(appHistory, null, 2), 'utf-8');
     
-    writeMCPLog(`[ClickHistory] Saved ${clickHistory.length} clicks for app "${currentAppName}" to ${filePath}`, 'Click History Save');
+    // Read existing history from disk
+    let existingHistory: AppClickHistory;
+    try {
+      const data = await fs.readFile(filePath, 'utf-8');
+      existingHistory = JSON.parse(data);
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        // File doesn't exist, create new history
+        existingHistory = {
+          appName: currentAppName,
+          lastUpdated: Date.now(),
+          clicks: [],
+          counter: 0,
+        };
+      } else {
+        throw error;
+      }
+    }
+    
+    // Get current display configuration
+    const config = await getDisplayConfiguration();
+    const display = config.displays.find(d => d.index === latestClick.displayIndex);
+    
+    if (!display) {
+      writeMCPLog(`[ClickHistory] Display ${latestClick.displayIndex} not found, skipping save`, 'Click History Save Warning');
+      return;
+    }
+    
+    // Convert logical coordinates to normalized coordinates (0-1000)
+    const x_normalized = Math.round((latestClick.x / display.width) * 1000);
+    const y_normalized = Math.round((latestClick.y / display.height) * 1000);
+    
+    // Check if this coordinate already exists in the stored history
+    const existingClickIndex = existingHistory.clicks.findIndex(
+      click => 
+        click.x_normalized === x_normalized && 
+        click.y_normalized === y_normalized && 
+        click.displayIndex === latestClick.displayIndex
+    );
+    
+    if (existingClickIndex !== -1) {
+      // Coordinate exists, merge by incrementing count
+      existingHistory.clicks[existingClickIndex].count++;
+      existingHistory.clicks[existingClickIndex].timestamp = latestClick.timestamp;
+      existingHistory.clicks[existingClickIndex].operation = latestClick.operation;
+      
+      writeMCPLog(`[ClickHistory] Merged click at normalized (${x_normalized}, ${y_normalized}), new count: ${existingHistory.clicks[existingClickIndex].count}`, 'Click History Save');
+    } else {
+      // New coordinate, add to history
+      const newStoredClick: StoredClickHistoryEntry = {
+        index: latestClick.index,
+        x_normalized: x_normalized,
+        y_normalized: y_normalized,
+        displayIndex: latestClick.displayIndex,
+        displayWidth: display.width,
+        displayHeight: display.height,
+        timestamp: latestClick.timestamp,
+        operation: latestClick.operation,
+        count: latestClick.count,
+      };
+      
+      existingHistory.clicks.push(newStoredClick);
+      existingHistory.counter = latestClick.index;
+      
+      writeMCPLog(`[ClickHistory] Added new click #${latestClick.index}: logical (${latestClick.x}, ${latestClick.y}) → normalized (${x_normalized}, ${y_normalized}) on display ${latestClick.displayIndex}`, 'Click History Save');
+    }
+    
+    // Update metadata
+    existingHistory.lastUpdated = Date.now();
+    
+    // Write back to disk
+    await fs.writeFile(filePath, JSON.stringify(existingHistory, null, 2), 'utf-8');
+    
+    writeMCPLog(`[ClickHistory] Saved latest click for app "${currentAppName}" to ${filePath}`, 'Click History Save');
   } catch (error: any) {
-    writeMCPLog(`[ClickHistory] Error saving history: ${error.message}`, 'Click History Save Error');
+    writeMCPLog(`[ClickHistory] Error saving latest click: ${error.message}`, 'Click History Save Error');
   }
 }
 
@@ -195,10 +306,7 @@ async function saveClickHistoryForApp(): Promise<void> {
  * This should be called before starting GUI operations on a new app
  */
 async function initApp(appName: string): Promise<{ appName: string; clickCount: number; isNew: boolean; appDirectory: string }> {
-  // Save current app's history before switching
-  if (currentAppName && currentAppName !== appName) {
-    await saveClickHistoryForApp();
-  }
+  // No need to save when switching apps - each click is saved individually
   
   // Check if this is a new app (no existing directory or click_history.json)
   const appDir = getAppDirectory(appName);
@@ -227,7 +335,7 @@ async function initApp(appName: string): Promise<{ appName: string; clickCount: 
 /**
  * Add a click to history
  * If the same coordinate already exists, increment its count instead of adding a new entry
- * Automatically saves to disk after adding
+ * Automatically saves the latest click to disk
  */
 async function addClickToHistory(x: number, y: number, displayIndex: number, operation: string): Promise<void> {
   // Check if this coordinate already exists in history
@@ -235,16 +343,19 @@ async function addClickToHistory(x: number, y: number, displayIndex: number, ope
     entry => entry.x === x && entry.y === y && entry.displayIndex === displayIndex
   );
   
+  let latestClick: ClickHistoryEntry;
+  
   if (existingEntry) {
     // Increment count for existing coordinate
     existingEntry.count++;
     existingEntry.timestamp = Date.now(); // Update timestamp
     existingEntry.operation = operation; // Update operation type
+    latestClick = existingEntry;
     writeMCPLog(`[ClickHistory] Updated click at (${x}, ${y}) on display ${displayIndex}, count: ${existingEntry.count}`, 'Click History');
   } else {
     // Add new coordinate
     clickHistoryCounter++;
-    clickHistory.push({
+    latestClick = {
       index: clickHistoryCounter,
       x,
       y,
@@ -252,12 +363,13 @@ async function addClickToHistory(x: number, y: number, displayIndex: number, ope
       timestamp: Date.now(),
       operation,
       count: 1,
-    });
+    };
+    clickHistory.push(latestClick);
     writeMCPLog(`[ClickHistory] Added click #${clickHistoryCounter} at (${x}, ${y}) on display ${displayIndex}`, 'Click History');
   }
   
-  // Save to disk after each click
-  await saveClickHistoryForApp();
+  // Save only the latest click to disk
+  await saveLatestClickToHistory(latestClick);
 }
 
 /**
@@ -270,13 +382,26 @@ function getClickHistoryForDisplay(displayIndex: number): ClickHistoryEntry[] {
 /**
  * Clear click history for the current app
  */
+/**
+ * Clear click history for the current app
+ */
 async function clearClickHistory(): Promise<void> {
   clickHistory.length = 0;
   clickHistoryCounter = 0;
   writeMCPLog('[ClickHistory] Cleared all click history', 'Click History');
   
-  // Save the cleared state to disk
-  await saveClickHistoryForApp();
+  // Delete the click history file from disk
+  if (currentAppName) {
+    try {
+      const filePath = getAppClickHistoryFilePath(currentAppName);
+      await fs.unlink(filePath);
+      writeMCPLog(`[ClickHistory] Deleted click history file: ${filePath}`, 'Click History');
+    } catch (error: any) {
+      if (error.code !== 'ENOENT') {
+        writeMCPLog(`[ClickHistory] Error deleting click history file: ${error.message}`, 'Click History Error');
+      }
+    }
+  }
 }
 
 // ============================================================================
@@ -1418,16 +1543,42 @@ async function annotateScreenshotWithClickHistory(
   
   writeMCPLog(`[annotateScreenshot] Image dimensions: ${imageDims.width}x${imageDims.height}, scaleFactor: ${scaleFactor}`, 'Image Info');
   
-  // Sort clicks by count (descending) - prioritize frequently clicked coordinates
-  const sortedClicks = [...clickHistoryForDisplay].sort((a, b) => b.count - a.count);
+  // Find the most recent click (highest timestamp) to display as #0
+  const mostRecentClick = clickHistoryForDisplay.reduce((latest, current) => 
+    current.timestamp > latest.timestamp ? current : latest
+  , clickHistoryForDisplay[0]);
   
-  writeMCPLog(`[annotateScreenshot] Sorted ${sortedClicks.length} clicks by frequency`, 'Click Sorting');
+  writeMCPLog(`[annotateScreenshot] Most recent click: (${mostRecentClick.x}, ${mostRecentClick.y}) at timestamp ${mostRecentClick.timestamp}`, 'Click Sorting');
+  
+  // Sort remaining clicks by count (descending), then by timestamp (descending) for same count
+  // Exclude the most recent click from this sorting
+  const remainingClicks = clickHistoryForDisplay.filter(click => click !== mostRecentClick);
+  const sortedClicks = remainingClicks.sort((a, b) => {
+    if (b.count !== a.count) {
+      return b.count - a.count; // Higher count first
+    }
+    return b.timestamp - a.timestamp; // Newer timestamp first (for same count)
+  });
+  
+  writeMCPLog(`[annotateScreenshot] Sorted ${sortedClicks.length} remaining clicks by frequency (and recency for ties)`, 'Click Sorting');
   
   // Filter out overlapping clicks - keep only clicks that are far enough apart
-  const MIN_DISTANCE_PIXELS = 30; // Minimum distance between annotations (in pixels)
+  // Maximum 9 markers to avoid cluttering the screenshot (including the #0 marker)
+  const MIN_DISTANCE_PIXELS = 50; // Minimum distance between annotations (in pixels)
+  const MAX_MARKERS = 10; // Maximum number of markers to display (including #0)
   const filteredClicks: ClickHistoryEntry[] = [];
   
+  // Always add the most recent click as #0
+  filteredClicks.push(mostRecentClick);
+  
+  // Filter remaining clicks
   for (const entry of sortedClicks) {
+    // Stop if we've reached the maximum number of markers
+    if (filteredClicks.length >= MAX_MARKERS) {
+      writeMCPLog(`[annotateScreenshot] Reached maximum of ${MAX_MARKERS} markers, stopping`, 'Click Filtering');
+      break;
+    }
+    
     // Convert logical coordinates to pixel coordinates
     const pixelX = entry.x * scaleFactor;
     const pixelY = entry.y * scaleFactor;
@@ -1455,9 +1606,17 @@ async function annotateScreenshotWithClickHistory(
     }
   }
   
-  writeMCPLog(`[annotateScreenshot] Filtered clicks: ${sortedClicks.length} -> ${filteredClicks.length} (removed overlapping)`, 'Click Filtering');
+  writeMCPLog(`[annotateScreenshot] Filtered clicks: ${clickHistoryForDisplay.length} -> ${filteredClicks.length} (removed overlapping, max ${MAX_MARKERS})`, 'Click Filtering');
   
-  const uniqueClicks = filteredClicks;
+  // Renumber the filtered clicks with consecutive indices starting from 0
+  // The first click (most recent) gets #0, then #1, #2, #3...
+  const uniqueClicks = filteredClicks.map((entry, index) => ({
+    ...entry,
+    displayIndex_original: entry.displayIndex, // Keep original display index
+    displayNumber: index, // New consecutive number for display (0, 1, 2, 3...)
+  }));
+  
+  writeMCPLog(`[annotateScreenshot] Renumbered ${uniqueClicks.length} clicks with consecutive indices 0-${uniqueClicks.length - 1} (most recent click is #0)`, 'Click Renumbering');
   
   // Build click history info text with normalized coordinates
   const historyLines = uniqueClicks.map(entry => {
@@ -1469,7 +1628,7 @@ async function annotateScreenshotWithClickHistory(
     const normX = Math.round((pixelX / imageDims.width) * 1000);
     const normY = Math.round((pixelY / imageDims.height) * 1000);
     
-    return `  #${entry.index}: [${normY}, ${normX}] (logical: ${entry.x}, ${entry.y}) - ${entry.operation}`;
+    return `  #${entry.displayNumber}: [${normY}, ${normX}] (logical: ${entry.x}, ${entry.y}) - ${entry.operation}`;
   });
   const clickHistoryInfo = `Previous clicks on this display (normalized to 0-1000, sorted by frequency):\n${historyLines.join('\n')}`;
   
@@ -1507,7 +1666,7 @@ try:
     for click in clicks:
         # Logical coordinates from click history
         logical_x, logical_y = click['x'], click['y']
-        index = click['index']
+        display_number = click['displayNumber']  # Use the renumbered consecutive index
         
         # Convert logical coordinates to pixel coordinates for drawing
         pixel_x = int(logical_x * scale_factor)
@@ -1548,7 +1707,7 @@ try:
         )
         
         # Draw number label with NORMALIZED coordinates (0-1000)
-        label = f"#{index}"
+        label = f"#{display_number}"
         coord_label = f"[{norm_y},{norm_x}]"
         
         # Get text bounding boxes
@@ -1673,7 +1832,7 @@ async function analyzeScreenshotWithVision(
     
     const prompt = `给我${elementDescription}的grounding坐标。
 
-**注意**：图片上可能有黄色圆圈标记，这些是之前点击过的位置（用于参考），标记格式为"#序号"和已经归一化之后的"[y,x]"坐标。这些标记不是界面的一部分，请忽略它们，只定位实际的界面元素。
+**注意**：图片上可能有黄色圆圈标记，这些是之前点击过的位置（仅用于相对位置参考，它们并不一定是正确的点击位置），标记格式为"#序号"和已经归一化之后的"[y,x]"坐标。这些标记不是界面的一部分，请忽略它们，只定位实际的界面元素。
 
 坐标格式：归一化到0-1000，格式为[ymin, xmin, ymax, xmax]
 
@@ -2553,7 +2712,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // },
       {
         name: 'gui_locate_element',
-        description: 'Locate a GUI element on screen using AI vision. Returns the coordinates and confidence level for the element.',
+        description: 'Locate a GUI element on screen using AI vision. Returns the coordinates and confidence level for the element. You may need to re-call this function if you find previously found positions are not accurate (indicated by unsuccessful following operations).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2858,16 +3017,14 @@ async function main() {
   await server.connect(transport);
   writeMCPLog('GUI Operate MCP Server running on stdio', 'Server Start');
   
-  // Auto-save click history on process exit
-  process.on('SIGINT', async () => {
-    writeMCPLog('Received SIGINT, saving click history...', 'Server Shutdown');
-    await saveClickHistoryForApp();
+  // No need for auto-save on exit - each click is saved individually
+  process.on('SIGINT', () => {
+    writeMCPLog('Received SIGINT, exiting...', 'Server Shutdown');
     process.exit(0);
   });
   
-  process.on('SIGTERM', async () => {
-    writeMCPLog('Received SIGTERM, saving click history...', 'Server Shutdown');
-    await saveClickHistoryForApp();
+  process.on('SIGTERM', () => {
+    writeMCPLog('Received SIGTERM, exiting...', 'Server Shutdown');
     process.exit(0);
   });
   
