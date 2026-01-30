@@ -164,17 +164,24 @@ async function checkCliclickInstalled(): Promise<boolean> {
  */
 async function executeCliclick(command: string): Promise<{ stdout: string; stderr: string }> {
   const platform = os.platform();
-  
+
   if (platform !== 'darwin') {
     throw new Error('This MCP server only supports macOS. cliclick is only available on macOS.');
   }
-  
+
   const isInstalled = await checkCliclickInstalled();
   if (!isInstalled) {
     throw new Error('cliclick is not installed. Install it with: brew install cliclick');
   }
-  
-  return await executeCommand(`cliclick ${command}`);
+
+  const fullCommand = `cliclick ${command}`;
+  writeMCPLog(`[executeCliclick] Executing command: ${fullCommand}`, 'Cliclick Command');
+
+  const result = await executeCommand(fullCommand);
+
+  writeMCPLog(`[executeCliclick] Command completed. stdout: ${result.stdout}, stderr: ${result.stderr}`, 'Cliclick Result');
+
+  return result;
 }
 
 // ============================================================================
@@ -452,18 +459,22 @@ async function convertToGlobalCoordinates(
   
   // Validate coordinates are within display bounds
   if (x < 0 || x >= display.width || y < 0 || y >= display.height) {
-    console.warn(`Warning: Coordinates (${x}, ${y}) may be outside display ${displayIndex} bounds (${display.width}x${display.height})`);
+    writeMCPLog(`[convertToGlobalCoordinates] Warning: Coordinates (${x}, ${y}) may be outside display ${displayIndex} bounds (${display.width}x${display.height})`, 'Coordinate Warning');
   }
-  
+
+  writeMCPLog(`[convertToGlobalCoordinates] Display info: width=${display.width}, height=${display.height}, originX=${display.originX}, originY=${display.originY}, scaleFactor=${display.scaleFactor}`, 'Coordinate Conversion');
+
   // Now originX and originY are already in cliclick coordinate system (top-left origin)
   // originX: distance from left edge of main display to left edge of this display
   // originY: distance from top edge of main display to top edge of this display
   // x, y: coordinates relative to the top-left of this display
-  
+
   // Calculate global coordinates for cliclick
   const globalX = display.originX + x;
   const globalY = display.originY + y;
-  
+
+  writeMCPLog(`[convertToGlobalCoordinates] Input: (${x}, ${y}) + Origin: (${display.originX}, ${display.originY}) = Global: (${globalX}, ${globalY})`, 'Coordinate Conversion');
+
   return { globalX, globalY };
 }
 
@@ -482,8 +493,12 @@ async function performClick(
   modifiers: string[] = [],
   saveExperience: boolean = true
 ): Promise<string> {
+  writeMCPLog(`[performClick] Input coordinates: x=${x}, y=${y}, displayIndex=${displayIndex}, clickType=${clickType}`, 'Click Operation');
+
   const { globalX, globalY } = await convertToGlobalCoordinates(x, y, displayIndex);
-  
+
+  writeMCPLog(`[performClick] Global coordinates for cliclick: globalX=${globalX}, globalY=${globalY}`, 'Click Operation');
+
   // Build cliclick command
   let command = '';
   
@@ -1198,7 +1213,13 @@ async function analyzeScreenshotWithVision(
   screenshotPath: string,
   elementDescription: string,
   displayIndex?: number
-): Promise<{ x: number; y: number; confidence: number; displayIndex: number }> {
+): Promise<{
+  x: number;
+  y: number;
+  confidence: number;
+  displayIndex: number;
+  boundingBox?: { left: number; top: number; right: number; bottom: number };
+}> {
   try {
     // Get display configuration for coordinate system info
     const config = await getDisplayConfiguration();
@@ -1217,37 +1238,12 @@ async function analyzeScreenshotWithVision(
     // Get image dimensions
     const imageDims = await getImageDimensions(screenshotPath);
     
-    const prompt = `Analyze this GUI screenshot and locate the following element: "${elementDescription}"
+    const prompt = `给我${elementDescription}的grounding坐标。
 
-**COORDINATE SYSTEM:**
-- Image dimensions: ${imageDims.width}x${imageDims.height} pixels
-- Origin (0,0) is at TOP-LEFT corner
-- X increases from left to right (0 to ${imageDims.width})
-- Y increases from top to bottom (0 to ${imageDims.height})
+坐标格式：归一化到0-1000，格式为[ymin, xmin, ymax, xmax]
 
-**TASK:**
-Find the element "${elementDescription}" and provide its EXACT CENTER coordinates.
-
-**INSTRUCTIONS:**
-1. Measure coordinates precisely from the top-left corner
-2. Provide the CENTER POINT of the element
-3. Estimate confidence based on visual clarity and match quality
-
-**RESPONSE FORMAT (JSON only, no markdown):**
-{
-  "x": <integer between 0 and ${imageDims.width}>,
-  "y": <integer between 0 and ${imageDims.height}>,
-  "confidence": <integer 0-100>,
-  "reasoning": "<brief explanation of what you found and where>",
-  "element_bounds": {
-    "left": <left edge X>,
-    "top": <top edge Y>,
-    "right": <right edge X>,
-    "bottom": <bottom edge Y>
-  }
-}
-
-If you cannot find the element, set confidence to 0.`;
+返回JSON（不要markdown）:
+{"box_2d": [ymin, xmin, ymax, xmax], "confidence": <0-100>}`;
 
     writeMCPLog(`[analyzeScreenshotWithVision] Prompt: ${prompt}`);
     
@@ -1283,19 +1279,137 @@ If you cannot find the element, set confidence to 0.`;
       writeMCPLog(`[analyzeScreenshotWithVision] JSON string that failed to parse: ${jsonMatch[0]}`, 'JSON Parse Error');
       throw new Error(`Failed to parse JSON: ${parseError.message}. JSON string: ${jsonMatch[0].substring(0, 500)}`);
     }
-    
-    // Validate and clamp coordinates
-    result.x = Math.max(0, Math.min(imageDims.width, result.x));
-    result.y = Math.max(0, Math.min(imageDims.height, result.y));
-    
+
+    // Validate that box_2d exists and is an array
+    if (!result.box_2d || !Array.isArray(result.box_2d) || result.box_2d.length !== 4) {
+      writeMCPLog(`[analyzeScreenshotWithVision] Invalid box_2d in response: ${JSON.stringify(result)}`, 'Parse Error');
+      throw new Error('Vision response missing or invalid box_2d field. Expected format: [ymin, xmin, ymax, xmax]');
+    }
+
+    // Extract normalized coordinates (0-1000 range)
+    // Format: [ymin, xmin, ymax, xmax]
+    const [ymin_norm, xmin_norm, ymax_norm, xmax_norm] = result.box_2d;
+
+    writeMCPLog(`[analyzeScreenshotWithVision] Normalized box (0-1000): [ymin=${ymin_norm}, xmin=${xmin_norm}, ymax=${ymax_norm}, xmax=${xmax_norm}]`, 'Normalized Coordinates');
+
+    // Convert normalized coordinates (0-1000) to pixel coordinates
+    // Image dimensions: imageDims.width x imageDims.height
+    const xmin_pixel = Math.round((xmin_norm / 1000) * imageDims.width);
+    const ymin_pixel = Math.round((ymin_norm / 1000) * imageDims.height);
+    const xmax_pixel = Math.round((xmax_norm / 1000) * imageDims.width);
+    const ymax_pixel = Math.round((ymax_norm / 1000) * imageDims.height);
+
+    writeMCPLog(`[analyzeScreenshotWithVision] Pixel coordinates: xmin=${xmin_pixel}, ymin=${ymin_pixel}, xmax=${xmax_pixel}, ymax=${ymax_pixel}`, 'Pixel Coordinates');
+    writeMCPLog(`[analyzeScreenshotWithVision] Image dimensions: ${imageDims.width}x${imageDims.height}`, 'Image Info');
+
+    // Calculate center point from bounding box (in pixel space)
+    const pixelCenterX = Math.round((xmin_pixel + xmax_pixel) / 2);
+    const pixelCenterY = Math.round((ymin_pixel + ymax_pixel) / 2);
+
+    writeMCPLog(`[analyzeScreenshotWithVision] Calculated center from bounding box (pixels): x=${pixelCenterX}, y=${pixelCenterY}`, 'Center Calculation');
+
+    // Convert from pixel coordinates to logical coordinates
+    // On Retina displays (scaleFactor=2), screenshots are 2x the logical resolution
+    // Vision returns pixel coordinates, but cliclick uses logical coordinates
+    const scaleFactor = targetDisplay.scaleFactor || 1;
+    writeMCPLog(`[analyzeScreenshotWithVision] Display scaleFactor: ${scaleFactor}`, 'Coordinate Conversion');
+
+    const logicalX = pixelCenterX / scaleFactor;
+    const logicalY = pixelCenterY / scaleFactor;
+
+    writeMCPLog(`[analyzeScreenshotWithVision] Logical coordinates for cliclick: x=${logicalX}, y=${logicalY}`, 'Coordinate Conversion');
+
     return {
-      x: Math.round(result.x),
-      y: Math.round(result.y),
-      confidence: result.confidence,
+      x: Math.round(logicalX),
+      y: Math.round(logicalY),
+      confidence: result.confidence || 0,
       displayIndex: targetDisplay.index,
+      boundingBox: {
+        left: xmin_pixel,
+        top: ymin_pixel,
+        right: xmax_pixel,
+        bottom: ymax_pixel
+      }
     };
   } catch (error: any) {
     throw new Error(`Vision analysis failed: ${error.message}`);
+  }
+}
+
+/**
+ * Mark a point on an image with a visual indicator
+ * Creates a copy of the image with a red circle and crosshair at the specified coordinates
+ * Optionally draws a bounding box if provided
+ * Uses Python PIL/Pillow for cross-platform compatibility
+ */
+async function markPointOnImage(
+  imagePath: string,
+  x: number,
+  y: number,
+  outputPath?: string,
+  boundingBox?: { left: number; top: number; right: number; bottom: number }
+): Promise<string> {
+  const markedPath = outputPath || imagePath.replace(/\.png$/, '_marked.png');
+
+  try {
+    // Build bounding box parameters for Python script
+    const bboxParams = boundingBox
+      ? `bbox = {"left": ${boundingBox.left}, "top": ${boundingBox.top}, "right": ${boundingBox.right}, "bottom": ${boundingBox.bottom}}`
+      : `bbox = None`;
+
+    const pythonScript = `
+try:
+    from PIL import Image, ImageDraw
+
+    # Load image
+    img = Image.open("${imagePath.replace(/\\/g, '\\\\')}")
+    draw = ImageDraw.Draw(img)
+
+    # Bounding box (if provided)
+    ${bboxParams}
+
+    # Draw bounding box if provided
+    if bbox:
+        draw.rectangle([bbox["left"], bbox["top"], bbox["right"], bbox["bottom"]], outline='green', width=2)
+
+    # Draw center point markers
+    x, y = ${x}, ${y}
+    radius = 20
+    draw.ellipse([x - radius, y - radius, x + radius, y + radius], outline='red', width=3)
+
+    # Draw crosshair
+    draw.line([x - 30, y, x + 30, y], fill='red', width=2)
+    draw.line([x, y - 30, x, y + 30], fill='red', width=2)
+
+    # Draw center point
+    draw.ellipse([x - 2, y - 2, x + 2, y + 2], fill='red')
+
+    # Save marked image
+    img.save("${markedPath.replace(/\\/g, '\\\\')}")
+    print(f"Success: Marked image saved to ${markedPath.replace(/\\/g, '\\\\')}")
+except ImportError:
+    print("Error: PIL/Pillow not installed. Install with: pip install Pillow")
+    exit(1)
+except Exception as e:
+    print(f"Error: {e}")
+    exit(1)
+    `.trim();
+
+    const result = await executeCommand(`python3 -c "${pythonScript.replace(/"/g, '\\"')}"`, 5000);
+
+    if (result.stdout.includes('Success')) {
+      const markInfo = boundingBox
+        ? `point (${x}, ${y}) with bounding box [${boundingBox.left}, ${boundingBox.top}, ${boundingBox.right}, ${boundingBox.bottom}]`
+        : `point (${x}, ${y})`;
+      writeMCPLog(`[markPointOnImage] Marked ${markInfo} on image, saved to: ${markedPath}`, 'Image Marking');
+      return markedPath;
+    } else {
+      throw new Error(result.stdout || result.stderr || 'Unknown error');
+    }
+  } catch (error: any) {
+    writeMCPLog(`[markPointOnImage] Could not mark image: ${error.message}`, 'Image Marking Warning');
+    writeMCPLog(`[markPointOnImage] To enable image marking, install Pillow: pip3 install Pillow`, 'Image Marking Warning');
+    return imagePath; // Return original path if marking fails
   }
 }
 
@@ -1453,7 +1567,14 @@ Be specific and detailed in element descriptions. For example:
 async function locateGUIElement(
   elementDescription: string,
   displayIndex?: number
-): Promise<{ x: number; y: number; confidence: number; displayIndex: number; reasoning?: string }> {
+): Promise<{
+  x: number;
+  y: number;
+  confidence: number;
+  displayIndex: number;
+  reasoning?: string;
+  boundingBox?: { left: number; top: number; right: number; bottom: number };
+}> {
   const platform = os.platform();
   
   if (platform !== 'darwin') {
@@ -1463,10 +1584,35 @@ async function locateGUIElement(
   // Take screenshot
   const screenshotPath = path.join(WORKSPACE_DIR, `gui_locate_${Date.now()}.png`);
   await takeScreenshot(screenshotPath, displayIndex);
-  
+
   // Analyze screenshot to find element
   const coords = await analyzeScreenshotWithVision(screenshotPath, elementDescription, displayIndex);
-  
+
+  // Mark the located point on the screenshot
+  // Note: coords are in logical coordinates, but the screenshot is in pixel coordinates
+  // So we need to convert back to pixel coordinates for marking
+  try {
+    const config = await getDisplayConfiguration();
+    const targetDisplay = displayIndex !== undefined
+      ? config.displays.find(d => d.index === displayIndex)
+      : config.displays.find(d => d.isMain);
+
+    if (targetDisplay) {
+      const scaleFactor = targetDisplay.scaleFactor || 1;
+      const pixelX = coords.x * scaleFactor;
+      const pixelY = coords.y * scaleFactor;
+
+      writeMCPLog(`[locateGUIElement] Marking point on screenshot: logical=(${coords.x}, ${coords.y}), pixel=(${pixelX}, ${pixelY})`, 'Image Marking');
+
+      // coords.boundingBox is already in pixel coordinates
+      const markedPath = await markPointOnImage(screenshotPath, pixelX, pixelY, undefined, coords.boundingBox);
+      writeMCPLog(`[locateGUIElement] Marked screenshot saved to: ${markedPath}`, 'Image Marking');
+    }
+  } catch (markError: any) {
+    // Don't fail if marking fails, just log the error
+    writeMCPLog(`[locateGUIElement] Failed to mark screenshot: ${markError.message}`, 'Image Marking Warning');
+  }
+
   return coords;
 }
 
