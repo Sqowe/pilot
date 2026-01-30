@@ -1737,7 +1737,7 @@ Cowork mode includes **WebFetch** and **WebSearch** tools for retrieving web con
       log('[ClaudeAgentRunner] Query input:', JSON.stringify(queryInput, null, 2));
       
       // Retry configuration
-      const MAX_RETRIES = 3;
+      const MAX_RETRIES = 10;
       let retryCount = 0;
       let shouldContinue = true;
       

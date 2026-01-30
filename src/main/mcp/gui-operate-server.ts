@@ -34,8 +34,12 @@ const execAsync = promisify(exec);
 // Get workspace directory from environment or use current directory
 const WORKSPACE_DIR = process.env.WORKSPACE_DIR || process.cwd();
 
+// Get Open Cowork data directory for persistent storage
+// Use ~/Library/Application Support/open-cowork on macOS
+const OPEN_COWORK_DATA_DIR = path.join(os.homedir(), 'Library', 'Application Support', 'open-cowork');
+
 // ============================================================================
-// Click History Tracking for GUI Locate
+// Click History Tracking for GUI Locate (App-level Persistent Storage)
 // ============================================================================
 
 interface ClickHistoryEntry {
@@ -45,26 +49,215 @@ interface ClickHistoryEntry {
   displayIndex: number;
   timestamp: number;
   operation: string; // 'click', 'double_click', 'right_click', etc.
+  count: number; // Number of times this coordinate was clicked
 }
 
-// Store click history for current session
-const clickHistory: ClickHistoryEntry[] = [];
+interface AppClickHistory {
+  appName: string;
+  lastUpdated: number;
+  clicks: ClickHistoryEntry[];
+  counter: number;
+}
+
+// Store click history for current session (in-memory cache)
+let clickHistory: ClickHistoryEntry[] = [];
 let clickHistoryCounter = 0;
+let currentAppName: string = '';
+
+// Base directory for storing app-level data
+const GUI_APPS_DIR = path.join(OPEN_COWORK_DATA_DIR, 'gui_apps');
+
+/**
+ * Get the directory path for a specific app
+ */
+function getAppDirectory(appName: string): string {
+  // Sanitize app name for use in directory name
+  const sanitizedName = appName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+  return path.join(GUI_APPS_DIR, sanitizedName);
+}
+
+/**
+ * Get the file path for storing click history for a specific app
+ */
+function getAppClickHistoryFilePath(appName: string): string {
+  return path.join(getAppDirectory(appName), 'click_history.json');
+}
+
+/**
+ * Get all visited apps (apps that have directories in gui_apps)
+ */
+async function getAllVisitedApps(): Promise<string[]> {
+  try {
+    // Ensure directory exists
+    await fs.mkdir(GUI_APPS_DIR, { recursive: true });
+    
+    // Read all directories in gui_apps
+    const entries = await fs.readdir(GUI_APPS_DIR, { withFileTypes: true });
+    
+    // Filter directories and read their click_history.json to get actual app names
+    const actualAppNames: string[] = [];
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        try {
+          const clickHistoryPath = path.join(GUI_APPS_DIR, entry.name, 'click_history.json');
+          const data = await fs.readFile(clickHistoryPath, 'utf-8');
+          const appHistory: AppClickHistory = JSON.parse(data);
+          if (appHistory.appName) {
+            actualAppNames.push(appHistory.appName);
+          }
+        } catch (error) {
+          // Skip directories without valid click_history.json
+          continue;
+        }
+      }
+    }
+    
+    writeMCPLog(`[getAllVisitedApps] Found ${actualAppNames.length} visited apps`, 'App List');
+    return actualAppNames;
+  } catch (error: any) {
+    writeMCPLog(`[getAllVisitedApps] Error reading visited apps: ${error.message}`, 'App List Error');
+    return [];
+  }
+}
+
+/**
+ * Load click history from disk for a specific app
+ */
+async function loadClickHistoryForApp(appName: string): Promise<void> {
+  try {
+    // Ensure app directory exists
+    const appDir = getAppDirectory(appName);
+    await fs.mkdir(appDir, { recursive: true });
+    
+    const filePath = getAppClickHistoryFilePath(appName);
+    
+    try {
+      const data = await fs.readFile(filePath, 'utf-8');
+      const appHistory: AppClickHistory = JSON.parse(data);
+      
+      clickHistory = appHistory.clicks || [];
+      clickHistoryCounter = appHistory.counter || 0;
+      currentAppName = appName;
+      
+      writeMCPLog(`[ClickHistory] Loaded ${clickHistory.length} clicks for app "${appName}" from ${filePath}`, 'Click History Load');
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        // File doesn't exist, start fresh
+        clickHistory = [];
+        clickHistoryCounter = 0;
+        currentAppName = appName;
+        writeMCPLog(`[ClickHistory] No existing history for app "${appName}", starting fresh`, 'Click History Load');
+      } else {
+        throw error;
+      }
+    }
+  } catch (error: any) {
+    writeMCPLog(`[ClickHistory] Error loading history: ${error.message}`, 'Click History Load Error');
+    // Fallback to empty history
+    clickHistory = [];
+    clickHistoryCounter = 0;
+    currentAppName = appName;
+  }
+}
+
+/**
+ * Save click history to disk for the current app
+ */
+async function saveClickHistoryForApp(): Promise<void> {
+  if (!currentAppName) {
+    writeMCPLog('[ClickHistory] No app initialized, skipping save', 'Click History Save');
+    return;
+  }
+  
+  try {
+    // Ensure app directory exists
+    const appDir = getAppDirectory(currentAppName);
+    await fs.mkdir(appDir, { recursive: true });
+    
+    const appHistory: AppClickHistory = {
+      appName: currentAppName,
+      lastUpdated: Date.now(),
+      clicks: clickHistory,
+      counter: clickHistoryCounter,
+    };
+    
+    const filePath = getAppClickHistoryFilePath(currentAppName);
+    await fs.writeFile(filePath, JSON.stringify(appHistory, null, 2), 'utf-8');
+    
+    writeMCPLog(`[ClickHistory] Saved ${clickHistory.length} clicks for app "${currentAppName}" to ${filePath}`, 'Click History Save');
+  } catch (error: any) {
+    writeMCPLog(`[ClickHistory] Error saving history: ${error.message}`, 'Click History Save Error');
+  }
+}
+
+/**
+ * Initialize app context for GUI operations
+ * This should be called before starting GUI operations on a new app
+ */
+async function initApp(appName: string): Promise<{ appName: string; clickCount: number; isNew: boolean; appDirectory: string }> {
+  // Save current app's history before switching
+  if (currentAppName && currentAppName !== appName) {
+    await saveClickHistoryForApp();
+  }
+  
+  // Check if this is a new app (no existing directory or click_history.json)
+  const appDir = getAppDirectory(appName);
+  const filePath = getAppClickHistoryFilePath(appName);
+  let isNew = false;
+  try {
+    await fs.access(filePath);
+  } catch {
+    isNew = true;
+  }
+  
+  // Load history for the target app
+  await loadClickHistoryForApp(appName);
+  
+  writeMCPLog(`[App Init] Initialized for app "${appName}" with ${clickHistory.length} existing clicks (new: ${isNew})`, 'App Init');
+  writeMCPLog(`[App Init] App directory: ${appDir}`, 'App Init');
+  
+  return {
+    appName: appName,
+    clickCount: clickHistory.length,
+    isNew: isNew,
+    appDirectory: appDir,
+  };
+}
 
 /**
  * Add a click to history
+ * If the same coordinate already exists, increment its count instead of adding a new entry
+ * Automatically saves to disk after adding
  */
-function addClickToHistory(x: number, y: number, displayIndex: number, operation: string): void {
-  clickHistoryCounter++;
-  clickHistory.push({
-    index: clickHistoryCounter,
-    x,
-    y,
-    displayIndex,
-    timestamp: Date.now(),
-    operation,
-  });
-  writeMCPLog(`[ClickHistory] Added click #${clickHistoryCounter} at (${x}, ${y}) on display ${displayIndex}`, 'Click History');
+async function addClickToHistory(x: number, y: number, displayIndex: number, operation: string): Promise<void> {
+  // Check if this coordinate already exists in history
+  const existingEntry = clickHistory.find(
+    entry => entry.x === x && entry.y === y && entry.displayIndex === displayIndex
+  );
+  
+  if (existingEntry) {
+    // Increment count for existing coordinate
+    existingEntry.count++;
+    existingEntry.timestamp = Date.now(); // Update timestamp
+    existingEntry.operation = operation; // Update operation type
+    writeMCPLog(`[ClickHistory] Updated click at (${x}, ${y}) on display ${displayIndex}, count: ${existingEntry.count}`, 'Click History');
+  } else {
+    // Add new coordinate
+    clickHistoryCounter++;
+    clickHistory.push({
+      index: clickHistoryCounter,
+      x,
+      y,
+      displayIndex,
+      timestamp: Date.now(),
+      operation,
+      count: 1,
+    });
+    writeMCPLog(`[ClickHistory] Added click #${clickHistoryCounter} at (${x}, ${y}) on display ${displayIndex}`, 'Click History');
+  }
+  
+  // Save to disk after each click
+  await saveClickHistoryForApp();
 }
 
 /**
@@ -75,12 +268,15 @@ function getClickHistoryForDisplay(displayIndex: number): ClickHistoryEntry[] {
 }
 
 /**
- * Clear click history
+ * Clear click history for the current app
  */
-function clearClickHistory(): void {
+async function clearClickHistory(): Promise<void> {
   clickHistory.length = 0;
   clickHistoryCounter = 0;
   writeMCPLog('[ClickHistory] Cleared all click history', 'Click History');
+  
+  // Save the cleared state to disk
+  await saveClickHistoryForApp();
 }
 
 // ============================================================================
@@ -149,17 +345,24 @@ async function checkCliclickInstalled(): Promise<boolean> {
  */
 async function executeCliclick(command: string): Promise<{ stdout: string; stderr: string }> {
   const platform = os.platform();
-  
+
   if (platform !== 'darwin') {
     throw new Error('This MCP server only supports macOS. cliclick is only available on macOS.');
   }
-  
+
   const isInstalled = await checkCliclickInstalled();
   if (!isInstalled) {
     throw new Error('cliclick is not installed. Install it with: brew install cliclick');
   }
-  
-  return await executeCommand(`cliclick ${command}`);
+
+  const fullCommand = `cliclick ${command}`;
+  writeMCPLog(`[executeCliclick] Executing command: ${fullCommand}`, 'Cliclick Command');
+
+  const result = await executeCommand(fullCommand);
+
+  writeMCPLog(`[executeCliclick] Command completed. stdout: ${result.stdout}, stderr: ${result.stderr}`, 'Cliclick Result');
+
+  return result;
 }
 
 // ============================================================================
@@ -437,18 +640,22 @@ async function convertToGlobalCoordinates(
   
   // Validate coordinates are within display bounds
   if (x < 0 || x >= display.width || y < 0 || y >= display.height) {
-    console.warn(`Warning: Coordinates (${x}, ${y}) may be outside display ${displayIndex} bounds (${display.width}x${display.height})`);
+    writeMCPLog(`[convertToGlobalCoordinates] Warning: Coordinates (${x}, ${y}) may be outside display ${displayIndex} bounds (${display.width}x${display.height})`, 'Coordinate Warning');
   }
-  
+
+  writeMCPLog(`[convertToGlobalCoordinates] Display info: width=${display.width}, height=${display.height}, originX=${display.originX}, originY=${display.originY}, scaleFactor=${display.scaleFactor}`, 'Coordinate Conversion');
+
   // Now originX and originY are already in cliclick coordinate system (top-left origin)
   // originX: distance from left edge of main display to left edge of this display
   // originY: distance from top edge of main display to top edge of this display
   // x, y: coordinates relative to the top-left of this display
-  
+
   // Calculate global coordinates for cliclick
   const globalX = display.originX + x;
   const globalY = display.originY + y;
-  
+
+  writeMCPLog(`[convertToGlobalCoordinates] Input: (${x}, ${y}) + Origin: (${display.originX}, ${display.originY}) = Global: (${globalX}, ${globalY})`, 'Coordinate Conversion');
+
   return { globalX, globalY };
 }
 
@@ -466,8 +673,12 @@ async function performClick(
   clickType: 'single' | 'double' | 'right' | 'triple' = 'single',
   modifiers: string[] = []
 ): Promise<string> {
+  writeMCPLog(`[performClick] Input coordinates: x=${x}, y=${y}, displayIndex=${displayIndex}, clickType=${clickType}`, 'Click Operation');
+
   const { globalX, globalY } = await convertToGlobalCoordinates(x, y, displayIndex);
-  
+
+  writeMCPLog(`[performClick] Global coordinates for cliclick: globalX=${globalX}, globalY=${globalY}`, 'Click Operation');
+
   // Build cliclick command
   let command = '';
   
@@ -512,8 +723,8 @@ async function performClick(
   
   await executeCliclick(command);
   
-  // Add to click history after successful click
-  addClickToHistory(x, y, displayIndex, clickType);
+  // Add to click history after successful click (now async with persistence)
+  await addClickToHistory(x, y, displayIndex, clickType);
   
   return `Performed ${clickType} click at (${x}, ${y}) on display ${displayIndex} (global: ${globalX}, ${globalY})`;
 }
@@ -579,6 +790,17 @@ async function performKeyPress(
     'f12': 'f12',
   };
   
+  // Map characters to AppleScript key codes (for reliable modifier+key combinations)
+  const keyCodeMap: Record<string, number> = {
+    'a': 0, 'b': 11, 'c': 8, 'd': 2, 'e': 14, 'f': 3, 'g': 5, 'h': 4,
+    'i': 34, 'j': 38, 'k': 40, 'l': 37, 'm': 46, 'n': 45, 'o': 31, 'p': 35,
+    'q': 12, 'r': 15, 's': 1, 't': 17, 'u': 32, 'v': 9, 'w': 13, 'x': 7,
+    'y': 16, 'z': 6,
+    '0': 29, '1': 18, '2': 19, '3': 20, '4': 21, '5': 23,
+    '6': 22, '7': 26, '8': 28, '9': 25,
+    ' ': 49, // space
+  };
+  
   const keyLower = key.toLowerCase();
   const cliclickKey = keyMap[keyLower];
   
@@ -614,19 +836,40 @@ async function performKeyPress(
       const escapedKey = key.replace(/"/g, '\\"');
       
       if (cliclickModifiers.length > 0) {
-        // For modifier+char combinations, use AppleScript (more reliable)
-        const modifierFlags: string[] = [];
-        if (cliclickModifiers.includes('cmd')) modifierFlags.push('command down');
-        if (cliclickModifiers.includes('ctrl')) modifierFlags.push('control down');
-        if (cliclickModifiers.includes('shift')) modifierFlags.push('shift down');
-        if (cliclickModifiers.includes('alt')) modifierFlags.push('option down');
+        // For modifier+char combinations, use AppleScript key code for reliability
+        // This is especially important for system shortcuts like Ctrl+C
+        const keyCode = keyCodeMap[keyLower];
         
-        const usingClause = modifierFlags.length > 0 ? ` using {${modifierFlags.join(', ')}}` : '';
-        const appleScript = `tell application "System Events" to keystroke "${escapedKey}"${usingClause}`;
-        
-        await executeCommand(`osascript -e '${appleScript.replace(/'/g, "'\"'\"'")}'`);
-        const modifierStr = modifiers.join('+');
-        resultMessage = `Pressed: ${modifierStr}+${key} (using AppleScript)`;
+        if (keyCode !== undefined) {
+          // Use key code method for reliable modifier combinations
+          const modifierFlags: string[] = [];
+          if (cliclickModifiers.includes('cmd')) modifierFlags.push('command down');
+          if (cliclickModifiers.includes('ctrl')) modifierFlags.push('control down');
+          if (cliclickModifiers.includes('shift')) modifierFlags.push('shift down');
+          if (cliclickModifiers.includes('alt')) modifierFlags.push('option down');
+          
+          const usingClause = modifierFlags.length > 0 ? ` using {${modifierFlags.join(', ')}}` : '';
+          const appleScript = `tell application "System Events" to key code ${keyCode}${usingClause}`;
+          
+          writeMCPLog(`[performKeyPress] Using key code ${keyCode} for ${key} with modifiers: ${modifierFlags.join(', ')}`, 'Key Press');
+          await executeCommand(`osascript -e '${appleScript.replace(/'/g, "'\"'\"'")}'`);
+          const modifierStr = modifiers.join('+');
+          resultMessage = `Pressed: ${modifierStr}+${key} (using key code)`;
+        } else {
+          // Fallback to keystroke for characters not in keyCodeMap
+          const modifierFlags: string[] = [];
+          if (cliclickModifiers.includes('cmd')) modifierFlags.push('command down');
+          if (cliclickModifiers.includes('ctrl')) modifierFlags.push('control down');
+          if (cliclickModifiers.includes('shift')) modifierFlags.push('shift down');
+          if (cliclickModifiers.includes('alt')) modifierFlags.push('option down');
+          
+          const usingClause = modifierFlags.length > 0 ? ` using {${modifierFlags.join(', ')}}` : '';
+          const appleScript = `tell application "System Events" to keystroke "${escapedKey}"${usingClause}`;
+          
+          await executeCommand(`osascript -e '${appleScript.replace(/'/g, "'\"'\"'")}'`);
+          const modifierStr = modifiers.join('+');
+          resultMessage = `Pressed: ${modifierStr}+${key} (using keystroke)`;
+        }
       } else {
         // No modifiers, just type the character using cliclick
         command = `t:"${escapedKey}"`;
@@ -1140,7 +1383,14 @@ async function annotateScreenshotWithClickHistory(
   screenshotPath: string,
   displayIndex: number
 ): Promise<{ annotatedPath: string; clickHistoryInfo: string }> {
+  // Debug: Log the full click history array
+  writeMCPLog(`[annotateScreenshot] Total clicks in history: ${clickHistory.length}`, 'Click History Debug');
+  writeMCPLog(`[annotateScreenshot] Full click history: ${JSON.stringify(clickHistory)}`, 'Click History Debug');
+  writeMCPLog(`[annotateScreenshot] Requested displayIndex: ${displayIndex}`, 'Click History Debug');
+  
   const clickHistoryForDisplay = getClickHistoryForDisplay(displayIndex);
+  
+  writeMCPLog(`[annotateScreenshot] Filtered clicks for display ${displayIndex}: ${clickHistoryForDisplay.length}`, 'Click History Debug');
   
   if (clickHistoryForDisplay.length === 0) {
     // No click history, return original path
@@ -1158,27 +1408,73 @@ async function annotateScreenshotWithClickHistory(
     `${basename}_annotated_${timestamp}.png`
   );
   
-  // Deduplicate clicks by coordinates - keep only the first click at each position
-  const uniqueClicks: ClickHistoryEntry[] = [];
-  const seenCoords = new Set<string>();
+  // Get image dimensions to calculate normalized coordinates
+  const imageDims = await getImageDimensions(screenshotPath);
   
-  for (const entry of clickHistoryForDisplay) {
-    const coordKey = `${entry.x},${entry.y}`;
-    if (!seenCoords.has(coordKey)) {
-      seenCoords.add(coordKey);
-      uniqueClicks.push(entry);
+  // Get display configuration to handle Retina scaling
+  const config = await getDisplayConfiguration();
+  const targetDisplay = config.displays.find(d => d.index === displayIndex);
+  const scaleFactor = targetDisplay?.scaleFactor || 1;
+  
+  writeMCPLog(`[annotateScreenshot] Image dimensions: ${imageDims.width}x${imageDims.height}, scaleFactor: ${scaleFactor}`, 'Image Info');
+  
+  // Sort clicks by count (descending) - prioritize frequently clicked coordinates
+  const sortedClicks = [...clickHistoryForDisplay].sort((a, b) => b.count - a.count);
+  
+  writeMCPLog(`[annotateScreenshot] Sorted ${sortedClicks.length} clicks by frequency`, 'Click Sorting');
+  
+  // Filter out overlapping clicks - keep only clicks that are far enough apart
+  const MIN_DISTANCE_PIXELS = 30; // Minimum distance between annotations (in pixels)
+  const filteredClicks: ClickHistoryEntry[] = [];
+  
+  for (const entry of sortedClicks) {
+    // Convert logical coordinates to pixel coordinates
+    const pixelX = entry.x * scaleFactor;
+    const pixelY = entry.y * scaleFactor;
+    
+    // Check if this click is too close to any already-selected click
+    let tooClose = false;
+    for (const selected of filteredClicks) {
+      const selectedPixelX = selected.x * scaleFactor;
+      const selectedPixelY = selected.y * scaleFactor;
+      
+      const distance = Math.sqrt(
+        Math.pow(pixelX - selectedPixelX, 2) + 
+        Math.pow(pixelY - selectedPixelY, 2)
+      );
+      
+      if (distance < MIN_DISTANCE_PIXELS) {
+        tooClose = true;
+        writeMCPLog(`[annotateScreenshot] Skipping click at (${entry.x}, ${entry.y}) - too close to (${selected.x}, ${selected.y}), distance: ${Math.round(distance)}px`, 'Click Filtering');
+        break;
+      }
+    }
+    
+    if (!tooClose) {
+      filteredClicks.push(entry);
     }
   }
   
-  writeMCPLog(`[annotateScreenshot] Deduplicated clicks: ${clickHistoryForDisplay.length} -> ${uniqueClicks.length}`, 'Click Deduplication');
+  writeMCPLog(`[annotateScreenshot] Filtered clicks: ${sortedClicks.length} -> ${filteredClicks.length} (removed overlapping)`, 'Click Filtering');
   
-  // Build click history info text
-  const historyLines = uniqueClicks.map(entry => 
-    `  #${entry.index}: (${entry.x}, ${entry.y}) - ${entry.operation}`
-  );
-  const clickHistoryInfo = `Previous clicks on this display:\n${historyLines.join('\n')}`;
+  const uniqueClicks = filteredClicks;
+  
+  // Build click history info text with normalized coordinates
+  const historyLines = uniqueClicks.map(entry => {
+    // Convert logical coordinates to pixel coordinates for the screenshot
+    const pixelX = entry.x * scaleFactor;
+    const pixelY = entry.y * scaleFactor;
+    
+    // Calculate normalized coordinates (0-1000)
+    const normX = Math.round((pixelX / imageDims.width) * 1000);
+    const normY = Math.round((pixelY / imageDims.height) * 1000);
+    
+    return `  #${entry.index}: [${normY}, ${normX}] (logical: ${entry.x}, ${entry.y}) - ${entry.operation}`;
+  });
+  const clickHistoryInfo = `Previous clicks on this display (normalized to 0-1000, sorted by frequency):\n${historyLines.join('\n')}`;
   
   // Create Python script to annotate image
+  // Pass image dimensions and scale factor to Python
   const pythonScript = `
 import sys
 from PIL import Image, ImageDraw, ImageFont
@@ -1186,6 +1482,9 @@ from PIL import Image, ImageDraw, ImageFont
 try:
     # Load image
     img = Image.open('${screenshotPath.replace(/'/g, "\\'")}')
+    img_width, img_height = img.size
+    scale_factor = ${scaleFactor}
+    
     # Create a semi-transparent overlay for drawing
     overlay = Image.new('RGBA', img.size, (255, 255, 255, 0))
     draw = ImageDraw.Draw(overlay)
@@ -1206,14 +1505,23 @@ try:
     clicks = ${JSON.stringify(uniqueClicks)}
     
     for click in clicks:
-        x, y = click['x'], click['y']
+        # Logical coordinates from click history
+        logical_x, logical_y = click['x'], click['y']
         index = click['index']
+        
+        # Convert logical coordinates to pixel coordinates for drawing
+        pixel_x = int(logical_x * scale_factor)
+        pixel_y = int(logical_y * scale_factor)
+        
+        # Calculate normalized coordinates (0-1000) for display
+        norm_x = round((pixel_x / img_width) * 1000)
+        norm_y = round((pixel_y / img_height) * 1000)
         
         # Draw circle with semi-transparent fill and bright outline
         radius = 20
         # Semi-transparent yellow fill
         draw.ellipse(
-            [(x - radius, y - radius), (x + radius, y + radius)],
+            [(pixel_x - radius, pixel_y - radius), (pixel_x + radius, pixel_y + radius)],
             fill=(255, 255, 0, 60),  # Yellow with 60/255 opacity
             outline=(255, 200, 0, 255),  # Bright orange outline, fully opaque
             width=3
@@ -1222,12 +1530,12 @@ try:
         # Draw crosshair (the exact click position) - bright and visible
         cross_size = 12
         draw.line(
-            [(x - cross_size, y), (x + cross_size, y)], 
+            [(pixel_x - cross_size, pixel_y), (pixel_x + cross_size, pixel_y)], 
             fill=(255, 0, 0, 255),  # Bright red, fully opaque
             width=2
         )
         draw.line(
-            [(x, y - cross_size), (x, y + cross_size)], 
+            [(pixel_x, pixel_y - cross_size), (pixel_x, pixel_y + cross_size)], 
             fill=(255, 0, 0, 255),  # Bright red, fully opaque
             width=2
         )
@@ -1235,13 +1543,13 @@ try:
         # Draw center dot for extra visibility
         dot_radius = 3
         draw.ellipse(
-            [(x - dot_radius, y - dot_radius), (x + dot_radius, y + dot_radius)],
+            [(pixel_x - dot_radius, pixel_y - dot_radius), (pixel_x + dot_radius, pixel_y + dot_radius)],
             fill=(255, 0, 0, 255)  # Bright red dot
         )
         
-        # Draw number label with coordinates
+        # Draw number label with NORMALIZED coordinates (0-1000)
         label = f"#{index}"
-        coord_label = f"({x},{y})"
+        coord_label = f"[{norm_y},{norm_x}]"
         
         # Get text bounding boxes
         bbox_num = draw.textbbox((0, 0), label, font=font)
@@ -1257,14 +1565,14 @@ try:
         total_height = num_height + coord_height + 4  # 4px spacing between lines
         
         # Position label above and to the right of the marker
-        label_x = x + radius + 8
-        label_y = y - radius - total_height - 8
+        label_x = pixel_x + radius + 8
+        label_y = pixel_y - radius - total_height - 8
         
         # Ensure label stays within image bounds
-        if label_x + max_width + 10 > img.width:
-            label_x = x - radius - max_width - 18
+        if label_x + max_width + 10 > img_width:
+            label_x = pixel_x - radius - max_width - 18
         if label_y < 0:
-            label_y = y + radius + 8
+            label_y = pixel_y + radius + 8
         
         # Draw semi-transparent background rectangle with border
         padding = 4
@@ -1282,7 +1590,7 @@ try:
         # Draw number text in bright yellow
         draw.text((label_x, label_y), label, fill=(255, 255, 0, 255), font=font)
         
-        # Draw coordinate text below the number in white
+        # Draw normalized coordinate text below the number in white
         coord_y = label_y + num_height + 2
         draw.text((label_x, coord_y), coord_label, fill=(255, 255, 255, 255), font=small_font)
     
@@ -1329,7 +1637,13 @@ async function analyzeScreenshotWithVision(
   screenshotPath: string,
   elementDescription: string,
   displayIndex?: number
-): Promise<{ x: number; y: number; confidence: number; displayIndex: number }> {
+): Promise<{
+  x: number;
+  y: number;
+  confidence: number;
+  displayIndex: number;
+  boundingBox?: { left: number; top: number; right: number; bottom: number };
+}> {
   try {
     // Get display configuration for coordinate system info
     const config = await getDisplayConfiguration();
@@ -1346,7 +1660,7 @@ async function analyzeScreenshotWithVision(
       screenshotPath,
       targetDisplay.index
     );
-    
+
     writeMCPLog(`[analyzeScreenshotWithVision] Using screenshot: ${annotatedPath}`, 'Screenshot Selection');
     writeMCPLog(`[analyzeScreenshotWithVision] Click history: ${clickHistoryInfo}`, 'Click History');
     
@@ -1357,43 +1671,14 @@ async function analyzeScreenshotWithVision(
     // Get image dimensions
     const imageDims = await getImageDimensions(annotatedPath);
     
-    const prompt = `Analyze this GUI screenshot and locate the following element: "${elementDescription}"
+    const prompt = `给我${elementDescription}的grounding坐标。
 
-**COORDINATE SYSTEM:**
-- Image dimensions: ${imageDims.width}x${imageDims.height} pixels
-- Origin (0,0) is at TOP-LEFT corner
-- X increases from left to right (0 to ${imageDims.width})
-- Y increases from top to bottom (0 to ${imageDims.height})
+**注意**：图片上可能有黄色圆圈标记，这些是之前点击过的位置（用于参考），标记格式为"#序号"和已经归一化之后的"[y,x]"坐标。这些标记不是界面的一部分，请忽略它们，只定位实际的界面元素。
 
-**CLICK HISTORY:**
-${clickHistoryInfo}
+坐标格式：归一化到0-1000，格式为[ymin, xmin, ymax, xmax]
 
-Note: The screenshot shows red numbered markers indicating previous click locations. These markers are for reference only - they show where clicks have already been performed. The numbers correspond to the click sequence.
-
-**TASK:**
-Find the element "${elementDescription}" and provide its EXACT CENTER coordinates.
-
-**INSTRUCTIONS:**
-1. Measure coordinates precisely from the top-left corner
-2. Provide the CENTER POINT of the element
-3. Estimate confidence based on visual clarity and match quality
-4. Use the click history markers as reference points to help locate the element
-
-**RESPONSE FORMAT (JSON only, no markdown):**
-{
-  "x": <integer between 0 and ${imageDims.width}>,
-  "y": <integer between 0 and ${imageDims.height}>,
-  "confidence": <integer 0-100>,
-  "reasoning": "<brief explanation of what you found and where>",
-  "element_bounds": {
-    "left": <left edge X>,
-    "top": <top edge Y>,
-    "right": <right edge X>,
-    "bottom": <bottom edge Y>
-  }
-}
-
-If you cannot find the element, set confidence to 0.`;
+返回JSON（不要markdown）:
+{"box_2d": [ymin, xmin, ymax, xmax], "confidence": <0-100>}`;
 
     writeMCPLog(`[analyzeScreenshotWithVision] Prompt: ${prompt}`);
     
@@ -1429,19 +1714,137 @@ If you cannot find the element, set confidence to 0.`;
       writeMCPLog(`[analyzeScreenshotWithVision] JSON string that failed to parse: ${jsonMatch[0]}`, 'JSON Parse Error');
       throw new Error(`Failed to parse JSON: ${parseError.message}. JSON string: ${jsonMatch[0].substring(0, 500)}`);
     }
-    
-    // Validate and clamp coordinates
-    result.x = Math.max(0, Math.min(imageDims.width, result.x));
-    result.y = Math.max(0, Math.min(imageDims.height, result.y));
-    
+
+    // Validate that box_2d exists and is an array
+    if (!result.box_2d || !Array.isArray(result.box_2d) || result.box_2d.length !== 4) {
+      writeMCPLog(`[analyzeScreenshotWithVision] Invalid box_2d in response: ${JSON.stringify(result)}`, 'Parse Error');
+      throw new Error('Vision response missing or invalid box_2d field. Expected format: [ymin, xmin, ymax, xmax]');
+    }
+
+    // Extract normalized coordinates (0-1000 range)
+    // Format: [ymin, xmin, ymax, xmax]
+    const [ymin_norm, xmin_norm, ymax_norm, xmax_norm] = result.box_2d;
+
+    writeMCPLog(`[analyzeScreenshotWithVision] Normalized box (0-1000): [ymin=${ymin_norm}, xmin=${xmin_norm}, ymax=${ymax_norm}, xmax=${xmax_norm}]`, 'Normalized Coordinates');
+
+    // Convert normalized coordinates (0-1000) to pixel coordinates
+    // Image dimensions: imageDims.width x imageDims.height
+    const xmin_pixel = Math.round((xmin_norm / 1000) * imageDims.width);
+    const ymin_pixel = Math.round((ymin_norm / 1000) * imageDims.height);
+    const xmax_pixel = Math.round((xmax_norm / 1000) * imageDims.width);
+    const ymax_pixel = Math.round((ymax_norm / 1000) * imageDims.height);
+
+    writeMCPLog(`[analyzeScreenshotWithVision] Pixel coordinates: xmin=${xmin_pixel}, ymin=${ymin_pixel}, xmax=${xmax_pixel}, ymax=${ymax_pixel}`, 'Pixel Coordinates');
+    writeMCPLog(`[analyzeScreenshotWithVision] Image dimensions: ${imageDims.width}x${imageDims.height}`, 'Image Info');
+
+    // Calculate center point from bounding box (in pixel space)
+    const pixelCenterX = Math.round((xmin_pixel + xmax_pixel) / 2);
+    const pixelCenterY = Math.round((ymin_pixel + ymax_pixel) / 2);
+
+    writeMCPLog(`[analyzeScreenshotWithVision] Calculated center from bounding box (pixels): x=${pixelCenterX}, y=${pixelCenterY}`, 'Center Calculation');
+
+    // Convert from pixel coordinates to logical coordinates
+    // On Retina displays (scaleFactor=2), screenshots are 2x the logical resolution
+    // Vision returns pixel coordinates, but cliclick uses logical coordinates
+    const scaleFactor = targetDisplay.scaleFactor || 1;
+    writeMCPLog(`[analyzeScreenshotWithVision] Display scaleFactor: ${scaleFactor}`, 'Coordinate Conversion');
+
+    const logicalX = pixelCenterX / scaleFactor;
+    const logicalY = pixelCenterY / scaleFactor;
+
+    writeMCPLog(`[analyzeScreenshotWithVision] Logical coordinates for cliclick: x=${logicalX}, y=${logicalY}`, 'Coordinate Conversion');
+
     return {
-      x: Math.round(result.x),
-      y: Math.round(result.y),
-      confidence: result.confidence,
+      x: Math.round(logicalX),
+      y: Math.round(logicalY),
+      confidence: result.confidence || 0,
       displayIndex: targetDisplay.index,
+      boundingBox: {
+        left: xmin_pixel,
+        top: ymin_pixel,
+        right: xmax_pixel,
+        bottom: ymax_pixel
+      }
     };
   } catch (error: any) {
     throw new Error(`Vision analysis failed: ${error.message}`);
+  }
+}
+
+/**
+ * Mark a point on an image with a visual indicator
+ * Creates a copy of the image with a red circle and crosshair at the specified coordinates
+ * Optionally draws a bounding box if provided
+ * Uses Python PIL/Pillow for cross-platform compatibility
+ */
+async function markPointOnImage(
+  imagePath: string,
+  x: number,
+  y: number,
+  outputPath?: string,
+  boundingBox?: { left: number; top: number; right: number; bottom: number }
+): Promise<string> {
+  const markedPath = outputPath || imagePath.replace(/\.png$/, '_marked.png');
+
+  try {
+    // Build bounding box parameters for Python script
+    const bboxParams = boundingBox
+      ? `bbox = {"left": ${boundingBox.left}, "top": ${boundingBox.top}, "right": ${boundingBox.right}, "bottom": ${boundingBox.bottom}}`
+      : `bbox = None`;
+
+    const pythonScript = `
+try:
+    from PIL import Image, ImageDraw
+
+    # Load image
+    img = Image.open("${imagePath.replace(/\\/g, '\\\\')}")
+    draw = ImageDraw.Draw(img)
+
+    # Bounding box (if provided)
+    ${bboxParams}
+
+    # Draw bounding box if provided
+    if bbox:
+        draw.rectangle([bbox["left"], bbox["top"], bbox["right"], bbox["bottom"]], outline='green', width=2)
+
+    # Draw center point markers
+    x, y = ${x}, ${y}
+    radius = 20
+    draw.ellipse([x - radius, y - radius, x + radius, y + radius], outline='red', width=3)
+
+    # Draw crosshair
+    draw.line([x - 30, y, x + 30, y], fill='red', width=2)
+    draw.line([x, y - 30, x, y + 30], fill='red', width=2)
+
+    # Draw center point
+    draw.ellipse([x - 2, y - 2, x + 2, y + 2], fill='red')
+
+    # Save marked image
+    img.save("${markedPath.replace(/\\/g, '\\\\')}")
+    print(f"Success: Marked image saved to ${markedPath.replace(/\\/g, '\\\\')}")
+except ImportError:
+    print("Error: PIL/Pillow not installed. Install with: pip install Pillow")
+    exit(1)
+except Exception as e:
+    print(f"Error: {e}")
+    exit(1)
+    `.trim();
+
+    const result = await executeCommand(`python -c "${pythonScript.replace(/"/g, '\\"')}"`, 5000);
+
+    if (result.stdout.includes('Success')) {
+      const markInfo = boundingBox
+        ? `point (${x}, ${y}) with bounding box [${boundingBox.left}, ${boundingBox.top}, ${boundingBox.right}, ${boundingBox.bottom}]`
+        : `point (${x}, ${y})`;
+      writeMCPLog(`[markPointOnImage] Marked ${markInfo} on image, saved to: ${markedPath}`, 'Image Marking');
+      return markedPath;
+    } else {
+      throw new Error(result.stdout || result.stderr || 'Unknown error');
+    }
+  } catch (error: any) {
+    writeMCPLog(`[markPointOnImage] Could not mark image: ${error.message}`, 'Image Marking Warning');
+    writeMCPLog(`[markPointOnImage] To enable image marking, install Pillow: pip3 install Pillow`, 'Image Marking Warning');
+    return imagePath; // Return original path if marking fails
   }
 }
 
@@ -1599,7 +2002,14 @@ Be specific and detailed in element descriptions. For example:
 async function locateGUIElement(
   elementDescription: string,
   displayIndex?: number
-): Promise<{ x: number; y: number; confidence: number; displayIndex: number; reasoning?: string }> {
+): Promise<{
+  x: number;
+  y: number;
+  confidence: number;
+  displayIndex: number;
+  reasoning?: string;
+  boundingBox?: { left: number; top: number; right: number; bottom: number };
+}> {
   const platform = os.platform();
   
   if (platform !== 'darwin') {
@@ -1609,10 +2019,35 @@ async function locateGUIElement(
   // Take screenshot
   const screenshotPath = path.join(WORKSPACE_DIR, `gui_locate_${Date.now()}.png`);
   await takeScreenshot(screenshotPath, displayIndex);
-  
+
   // Analyze screenshot to find element
   const coords = await analyzeScreenshotWithVision(screenshotPath, elementDescription, displayIndex);
-  
+
+  // Mark the located point on the screenshot
+  // Note: coords are in logical coordinates, but the screenshot is in pixel coordinates
+  // So we need to convert back to pixel coordinates for marking
+  try {
+    const config = await getDisplayConfiguration();
+    const targetDisplay = displayIndex !== undefined
+      ? config.displays.find(d => d.index === displayIndex)
+      : config.displays.find(d => d.isMain);
+
+    if (targetDisplay) {
+      const scaleFactor = targetDisplay.scaleFactor || 1;
+      const pixelX = coords.x * scaleFactor;
+      const pixelY = coords.y * scaleFactor;
+
+      writeMCPLog(`[locateGUIElement] Marking point on screenshot: logical=(${coords.x}, ${coords.y}), pixel=(${pixelX}, ${pixelY})`, 'Image Marking');
+
+      // coords.boundingBox is already in pixel coordinates
+      const markedPath = await markPointOnImage(screenshotPath, pixelX, pixelY, undefined, coords.boundingBox);
+      writeMCPLog(`[locateGUIElement] Marked screenshot saved to: ${markedPath}`, 'Image Marking');
+    }
+  } catch (markError: any) {
+    // Don't fail if marking fails, just log the error
+    writeMCPLog(`[locateGUIElement] Failed to mark screenshot: ${markError.message}`, 'Image Marking Warning');
+  }
+
   return coords;
 }
 
@@ -2171,8 +2606,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'get_all_visited_apps',
+        description: 'Get a list of all applications that have been used before (have stored click history). IMPORTANT: You should call this BEFORE init_app to check if the app already exists and get the exact app name. This prevents creating duplicate directories due to name variations (e.g., "Cursor" vs "cursor" vs "Cursor IDE"). If the app you want is not in the list, you can use init_app with a new app name.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          required: [],
+        },
+      },
+      {
+        name: 'init_app',
+        description: 'Initialize app context for GUI operations. This MUST be called once before starting GUI operations on any application. IMPORTANT: Call get_all_visited_apps FIRST to check if the app already exists and get the exact app name to avoid creating duplicate directories. This tool loads the persistent click history and other app-specific data from disk. Each application has its own independent storage directory.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            app_name: {
+              type: 'string',
+              description: 'Name of the application (e.g., "Cursor", "Safari", "Terminal"). REQUIRED. Call get_all_visited_apps first to see previously used apps and get the exact name.',
+            },
+          },
+          required: ['app_name'],
+        },
+      },
+      {
         name: 'clear_click_history',
-        description: 'Clear the click history used for annotating screenshots in gui_locate_element. Use this when starting a new task or when you want to reset the visual markers on screenshots.',
+        description: 'Clear the click history for the current application. This removes all click markers from screenshots and deletes the persistent storage for this app. Use this when starting a completely new task or when you want to reset all visual markers.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -2324,11 +2782,43 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
       
-      case 'clear_click_history': {
-        clearClickHistory();
+      case 'init_app': {
+        const { app_name } = args as {
+          app_name: string;
+        };
+        
+        if (!app_name) {
+          throw new Error('app_name is required');
+        }
+        
+        const initResult = await initApp(app_name);
         result = JSON.stringify({
           success: true,
-          message: 'Click history cleared',
+          message: `Initialized app context for "${initResult.appName}"`,
+          app_name: initResult.appName,
+          app_directory: initResult.appDirectory,
+          existing_clicks: initResult.clickCount,
+          is_new_app: initResult.isNew,
+        });
+        break;
+      }
+      
+      case 'get_all_visited_apps': {
+        const visitedApps = await getAllVisitedApps();
+        result = JSON.stringify({
+          success: true,
+          visited_apps: visitedApps,
+          count: visitedApps.length,
+        });
+        break;
+      }
+      
+      case 'clear_click_history': {
+        await clearClickHistory();
+        result = JSON.stringify({
+          success: true,
+          message: `Click history cleared for app "${currentAppName}"`,
+          app_name: currentAppName,
         });
         break;
       }
@@ -2367,6 +2857,23 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   writeMCPLog('GUI Operate MCP Server running on stdio', 'Server Start');
+  
+  // Auto-save click history on process exit
+  process.on('SIGINT', async () => {
+    writeMCPLog('Received SIGINT, saving click history...', 'Server Shutdown');
+    await saveClickHistoryForApp();
+    process.exit(0);
+  });
+  
+  process.on('SIGTERM', async () => {
+    writeMCPLog('Received SIGTERM, saving click history...', 'Server Shutdown');
+    await saveClickHistoryForApp();
+    process.exit(0);
+  });
+  
+  process.on('exit', () => {
+    writeMCPLog('Process exiting', 'Server Shutdown');
+  });
 }
 
 main().catch((error) => {
