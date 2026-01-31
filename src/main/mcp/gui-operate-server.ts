@@ -50,6 +50,7 @@ interface ClickHistoryEntry {
   timestamp: number;
   operation: string; // 'click', 'double_click', 'right_click', etc.
   count: number; // Number of times this coordinate was clicked
+  successCount: number; // Number of times this click led to successful operations
 }
 
 interface StoredClickHistoryEntry {
@@ -62,6 +63,7 @@ interface StoredClickHistoryEntry {
   timestamp: number;
   operation: string;
   count: number;
+  successCount: number; // Number of times this click led to successful operations
 }
 
 interface AppClickHistory {
@@ -75,6 +77,7 @@ interface AppClickHistory {
 let clickHistory: ClickHistoryEntry[] = [];
 let clickHistoryCounter = 0;
 let currentAppName: string = '';
+let lastClickEntry: ClickHistoryEntry | null = null; // Track the most recent click for success verification
 
 // Base directory for storing app-level data
 const GUI_APPS_DIR = path.join(OPEN_COWORK_DATA_DIR, 'gui_apps');
@@ -175,6 +178,7 @@ async function loadClickHistoryForApp(appName: string): Promise<void> {
           timestamp: storedClick.timestamp,
           operation: storedClick.operation,
           count: storedClick.count,
+          successCount: storedClick.successCount || 0, // Default to 0 for backward compatibility
         });
         
         writeMCPLog(`[ClickHistory] Loaded click #${storedClick.index}: normalized (${storedClick.x_normalized}, ${storedClick.y_normalized}) → logical (${x}, ${y}) on display ${storedClick.displayIndex} (${display.width}x${display.height})`, 'Click History Load');
@@ -267,6 +271,7 @@ async function saveLatestClickToHistory(latestClick: ClickHistoryEntry): Promise
       existingHistory.clicks[existingClickIndex].count++;
       existingHistory.clicks[existingClickIndex].timestamp = latestClick.timestamp;
       existingHistory.clicks[existingClickIndex].operation = latestClick.operation;
+      existingHistory.clicks[existingClickIndex].successCount = latestClick.successCount || 0;
       
       writeMCPLog(`[ClickHistory] Merged click at normalized (${x_normalized}, ${y_normalized}), new count: ${existingHistory.clicks[existingClickIndex].count}`, 'Click History Save');
     } else {
@@ -281,6 +286,7 @@ async function saveLatestClickToHistory(latestClick: ClickHistoryEntry): Promise
         timestamp: latestClick.timestamp,
         operation: latestClick.operation,
         count: latestClick.count,
+        successCount: latestClick.successCount || 0, // Default to 0
       };
       
       existingHistory.clicks.push(newStoredClick);
@@ -363,10 +369,14 @@ async function addClickToHistory(x: number, y: number, displayIndex: number, ope
       timestamp: Date.now(),
       operation,
       count: 1,
+      successCount: 0, // Initialize to 0
     };
     clickHistory.push(latestClick);
     writeMCPLog(`[ClickHistory] Added click #${clickHistoryCounter} at (${x}, ${y}) on display ${displayIndex}`, 'Click History');
   }
+  
+  // Track this as the most recent click for success verification
+  lastClickEntry = latestClick;
   
   // Save only the latest click to disk
   await saveLatestClickToHistory(latestClick);
@@ -883,6 +893,9 @@ async function performKeyPress(
   key: string,
   modifiers: string[] = []
 ): Promise<string> {
+  // Log input parameters for debugging
+  writeMCPLog(`[performKeyPress] Input: key="${key}", modifiers=${JSON.stringify(modifiers)}`, 'Key Press Debug');
+  
   // Map common key names to cliclick key codes
   const keyMap: Record<string, string> = {
     'enter': 'return',
@@ -938,11 +951,16 @@ async function performKeyPress(
     'alt': 'alt',
     'control': 'ctrl',
     'ctrl': 'ctrl',
+    'control/ctrl': 'ctrl',  // Handle common mistake
+    'command/cmd': 'cmd',    // Handle common mistake
+    'option/alt': 'alt',     // Handle common mistake
   };
   
   const cliclickModifiers = modifiers
     .map(m => modifierMap[m.toLowerCase()])
     .filter(m => m);
+  
+  writeMCPLog(`[performKeyPress] Mapped modifiers: ${JSON.stringify(cliclickModifiers)}`, 'Key Press Debug');
   
   let command = '';
   let resultMessage = '';
@@ -1550,17 +1568,20 @@ async function annotateScreenshotWithClickHistory(
   
   writeMCPLog(`[annotateScreenshot] Most recent click: (${mostRecentClick.x}, ${mostRecentClick.y}) at timestamp ${mostRecentClick.timestamp}`, 'Click Sorting');
   
-  // Sort remaining clicks by count (descending), then by timestamp (descending) for same count
+  // Sort remaining clicks by weighted score (successCount * 2 + count), then by timestamp (descending) for same score
   // Exclude the most recent click from this sorting
   const remainingClicks = clickHistoryForDisplay.filter(click => click !== mostRecentClick);
   const sortedClicks = remainingClicks.sort((a, b) => {
-    if (b.count !== a.count) {
-      return b.count - a.count; // Higher count first
+    const scoreA = (a.successCount || 0) * 2 + a.count;
+    const scoreB = (b.successCount || 0) * 2 + b.count;
+    
+    if (scoreB !== scoreA) {
+      return scoreB - scoreA; // Higher weighted score first
     }
-    return b.timestamp - a.timestamp; // Newer timestamp first (for same count)
+    return b.timestamp - a.timestamp; // Newer timestamp first (for same score)
   });
   
-  writeMCPLog(`[annotateScreenshot] Sorted ${sortedClicks.length} remaining clicks by frequency (and recency for ties)`, 'Click Sorting');
+  writeMCPLog(`[annotateScreenshot] Sorted ${sortedClicks.length} remaining clicks by weighted score (successCount*2 + count) and recency`, 'Click Sorting');
   
   // Filter out overlapping clicks - keep only clicks that are far enough apart
   // Maximum 9 markers to avoid cluttering the screenshot (including the #0 marker)
@@ -2441,15 +2462,51 @@ async function verifyGUIState(
   const imageBuffer = await fs.readFile(screenshotPath);
   const base64Image = imageBuffer.toString('base64');
   
-  const prompt = `Analyze this GUI screenshot and answer the following question:\n\n${question}\n\nProvide a detailed answer based on what you can see in the image.`;
+  const prompt = `Analyze this GUI screenshot and answer the following question:
+
+${question}
+
+Provide a detailed answer based on what you can see in the image.
+
+IMPORTANT: At the end of your response, you MUST provide a formatted judgment on whether the most recent GUI operation was accurate/successful. Use this exact format:
+
+**Operation Success Judgment:**
+- Status: [SUCCESS/FAILURE]
+- Reason: [Brief explanation of why the operation succeeded or failed]
+
+Example:
+**Operation Success Judgment:**
+- Status: SUCCESS
+- Reason: The button was clicked correctly in the expected dialog window.`;
+
   const answer = await callVisionAPI(base64Image, prompt, 20000, 'verifyGUIState');
   writeMCPLog(`[verifyGUIState] Response Length: ${answer.length}`, 'Response');
   writeMCPLog(`[verifyGUIState] Response (first 500 chars): ${answer.substring(0, 500)}`, 'Response Preview');
+  
+  // Parse the operation success judgment
+  let operationSuccess = false;
+  const successMatch = answer.match(/\*\*Operation Success Judgment:\*\*[\s\S]*?Status:\s*(SUCCESS|FAILURE)/i);
+  if (successMatch) {
+    operationSuccess = successMatch[1].toUpperCase() === 'SUCCESS';
+    writeMCPLog(`[verifyGUIState] Parsed operation success: ${operationSuccess}`, 'Success Parsing');
+    
+    // If operation was successful and we have a recent click, increment its successCount
+    if (operationSuccess && lastClickEntry) {
+      lastClickEntry.successCount = (lastClickEntry.successCount || 0) + 1;
+      writeMCPLog(`[verifyGUIState] Incremented successCount for click at (${lastClickEntry.x}, ${lastClickEntry.y}) to ${lastClickEntry.successCount}`, 'Success Tracking');
+      
+      // Save the updated click history to disk
+      await saveLatestClickToHistory(lastClickEntry);
+    }
+  } else {
+    writeMCPLog(`[verifyGUIState] Could not parse operation success judgment from response`, 'Success Parsing Warning');
+  }
   
   return JSON.stringify({
     success: true,
     question,
     answer,
+    operationSuccess,
     screenshot_path: screenshotPath,
     displayIndex: displayIndex ?? 'all',
   });
@@ -2536,18 +2593,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'key_press',
-        description: 'Press a key or key combination. Useful for special keys like Enter, Tab, Escape, arrow keys, or shortcuts like Cmd+C.',
+        description: 'Press a key or key combination. Useful for special keys like Enter, Tab, Escape, arrow keys, or shortcuts like Cmd+C, Ctrl+C. For system shortcuts like Ctrl+C to interrupt programs, use key="c" with modifiers=["ctrl"].',
         inputSchema: {
           type: 'object',
           properties: {
             key: {
               type: 'string',
-              description: 'Key to press: enter, tab, escape, space, delete, up, down, left, right, home, end, pageup, pagedown, f1-f12, or a single character',
+              description: 'Key to press: enter, tab, escape, space, delete, up, down, left, right, home, end, pageup, pagedown, f1-f12, or a single character (a-z, 0-9, etc.)',
             },
             modifiers: {
               type: 'array',
               items: { type: 'string' },
-              description: 'Modifier keys: command/cmd, shift, option/alt, control/ctrl',
+              description: 'Modifier keys (array of strings). Use: "ctrl" for Control, "cmd" for Command, "shift" for Shift, "alt" for Option. Example: ["ctrl"] for Ctrl+C, ["cmd", "shift"] for Cmd+Shift+Key.',
             },
           },
           required: ['key'],
@@ -2748,7 +2805,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // },
       {
         name: 'gui_verify_vision',
-        description: 'Verify GUI state using AI vision. Ask questions about what is visible on screen and get intelligent answers (e.g., "Is the game board visible?", "What is the current player shown?", "Are there any error messages?").',
+        description: 'Verify GUI state using AI vision. Ask questions about what is visible on screen and get intelligent answers (e.g., "Is the game board visible?", "What is the current player shown?", "Are there any error messages?"). This tool is used to verify the state of the GUI after some operation to ensure the operation was successful (e.g., whether the click was successful, whether the text was typed, etc.).',
         inputSchema: {
           type: 'object',
           properties: {

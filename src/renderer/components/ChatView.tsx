@@ -134,7 +134,7 @@ export function ChatView() {
     return () => {
       resizeObserver.disconnect();
     };
-  }, [displayedMessages.length]); // Re-create observer when messages change to ensure we're observing the right element
+  }, [displayedMessages]); // Re-create observer when messages change to ensure we're observing the right element
 
   useEffect(() => {
     textareaRef.current?.focus();
