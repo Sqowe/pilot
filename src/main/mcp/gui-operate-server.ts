@@ -114,12 +114,14 @@ async function getAllVisitedApps(): Promise<string[]> {
     for (const entry of entries) {
       if (entry.isDirectory()) {
         try {
-          const clickHistoryPath = path.join(GUI_APPS_DIR, entry.name, 'click_history.json');
-          const data = await fs.readFile(clickHistoryPath, 'utf-8');
-          const appHistory: AppClickHistory = JSON.parse(data);
-          if (appHistory.appName) {
-            actualAppNames.push(appHistory.appName);
-          }
+          // const clickHistoryPath = path.join(GUI_APPS_DIR, entry.name, 'click_history.json');
+          // const data = await fs.readFile(clickHistoryPath, 'utf-8');
+          // const appHistory: AppClickHistory = JSON.parse(data);
+          // if (appHistory.appName) {
+          //   actualAppNames.push(appHistory.appName);
+          // }
+          actualAppNames.push(entry.name);
+          writeMCPLog(`[getAllVisitedApps] Found app: ${entry.name}`, 'App List');
         } catch (error) {
           // Skip directories without valid click_history.json
           continue;
@@ -211,9 +213,14 @@ async function loadClickHistoryForApp(appName: string): Promise<void> {
 /**
  * Save the latest click to disk for the current app
  * Only updates the most recent click entry, merging if coordinates match
- * This function should only be called after a click operation
+ * By default, this increments the stored click count when merging.
+ * Set { incrementCount: false } to persist metadata updates (e.g. successCount) without changing click count.
  */
-async function saveLatestClickToHistory(latestClick: ClickHistoryEntry): Promise<void> {
+async function saveLatestClickToHistory(
+  latestClick: ClickHistoryEntry,
+  options: { incrementCount?: boolean } = {}
+): Promise<void> {
+  const incrementCount = options.incrementCount !== false;
   if (!currentAppName) {
     writeMCPLog('[ClickHistory] No app initialized, skipping save', 'Click History Save');
     return;
@@ -267,13 +274,18 @@ async function saveLatestClickToHistory(latestClick: ClickHistoryEntry): Promise
     );
     
     if (existingClickIndex !== -1) {
-      // Coordinate exists, merge by incrementing count
-      existingHistory.clicks[existingClickIndex].count++;
+      // Coordinate exists, merge (optionally incrementing count)
+      if (incrementCount) {
+        existingHistory.clicks[existingClickIndex].count++;
+      }
       existingHistory.clicks[existingClickIndex].timestamp = latestClick.timestamp;
       existingHistory.clicks[existingClickIndex].operation = latestClick.operation;
       existingHistory.clicks[existingClickIndex].successCount = latestClick.successCount || 0;
       
-      writeMCPLog(`[ClickHistory] Merged click at normalized (${x_normalized}, ${y_normalized}), new count: ${existingHistory.clicks[existingClickIndex].count}`, 'Click History Save');
+      writeMCPLog(
+        `[ClickHistory] Merged click at normalized (${x_normalized}, ${y_normalized}), count: ${existingHistory.clicks[existingClickIndex].count}, successCount: ${existingHistory.clicks[existingClickIndex].successCount}${incrementCount ? '' : ' (count not incremented)'}`,
+        'Click History Save'
+      );
     } else {
       // New coordinate, add to history
       const newStoredClick: StoredClickHistoryEntry = {
@@ -309,9 +321,20 @@ async function saveLatestClickToHistory(latestClick: ClickHistoryEntry): Promise
 
 /**
  * Initialize app context for GUI operations
- * This should be called before starting GUI operations on a new app
+ * This should be called before starting GUI operations on a new app.
+ *
+ * This also loads an optional per-app guide file at `<appDirectory>/guide.md` (if present)
+ * and returns its contents so the agent can follow app-specific instructions.
  */
-async function initApp(appName: string): Promise<{ appName: string; clickCount: number; isNew: boolean; appDirectory: string }> {
+async function initApp(appName: string): Promise<{
+  appName: string;
+  clickCount: number;
+  isNew: boolean;
+  appDirectory: string;
+  hasGuide: boolean;
+  guidePath: string;
+  guide: string | null;
+}> {
   // No need to save when switching apps - each click is saved individually
   
   // Check if this is a new app (no existing directory or click_history.json)
@@ -326,6 +349,20 @@ async function initApp(appName: string): Promise<{ appName: string; clickCount: 
   
   // Load history for the target app
   await loadClickHistoryForApp(appName);
+
+  // Load optional per-app guide
+  const guidePath = path.join(appDir, 'guide.md');
+  let guide: string | null = null;
+  let hasGuide = false;
+  try {
+    guide = await fs.readFile(guidePath, 'utf-8');
+    hasGuide = true;
+    writeMCPLog(`[App Init] Loaded guide.md for app "${appName}" (${guide.length} chars)`, 'App Init');
+  } catch (error: any) {
+    if (error?.code !== 'ENOENT') {
+      writeMCPLog(`[App Init] Failed to read guide.md for app "${appName}": ${error.message}`, 'App Init Warning');
+    }
+  }
   
   writeMCPLog(`[App Init] Initialized for app "${appName}" with ${clickHistory.length} existing clicks (new: ${isNew})`, 'App Init');
   writeMCPLog(`[App Init] App directory: ${appDir}`, 'App Init');
@@ -335,6 +372,9 @@ async function initApp(appName: string): Promise<{ appName: string; clickCount: 
     clickCount: clickHistory.length,
     isNew: isNew,
     appDirectory: appDir,
+    hasGuide,
+    guidePath,
+    guide,
   };
 }
 
@@ -794,6 +834,44 @@ async function convertToGlobalCoordinates(
   return { globalX, globalY };
 }
 
+/**
+ * Convert normalized (0-1000) coordinates to display-local logical coordinates.
+ *
+ * Normalized coordinates are relative to the target display:
+ * - (0, 0) is top-left
+ * - (1000, 1000) is bottom-right
+ */
+async function convertNormalizedToDisplayCoordinates(
+  xNormalized: number,
+  yNormalized: number,
+  displayIndex: number = 0
+): Promise<{ x: number; y: number }> {
+  const config = await getDisplayConfiguration();
+
+  const display = config.displays.find(d => d.index === displayIndex);
+  if (!display) {
+    throw new Error(`Display index ${displayIndex} not found. Available displays: 0-${config.displays.length - 1}`);
+  }
+
+  // Clamp normalized values to [0, 1000]
+  const xn = Math.max(0, Math.min(1000, xNormalized));
+  const yn = Math.max(0, Math.min(1000, yNormalized));
+
+  // Convert to display-local logical coordinates and clamp within bounds
+  let x = Math.round((xn / 1000) * display.width);
+  let y = Math.round((yn / 1000) * display.height);
+
+  if (display.width > 0) x = Math.max(0, Math.min(display.width - 1, x));
+  if (display.height > 0) y = Math.max(0, Math.min(display.height - 1, y));
+
+  writeMCPLog(
+    `[convertNormalizedToDisplayCoordinates] Normalized (${xNormalized}, ${yNormalized}) -> clamped (${xn}, ${yn}) -> logical (${x}, ${y}) on display ${displayIndex} (${display.width}x${display.height})`,
+    'Coordinate Conversion'
+  );
+
+  return { x, y };
+}
+
 // ============================================================================
 // GUI Operation Functions
 // ============================================================================
@@ -869,20 +947,79 @@ async function performClick(
  */
 async function performType(
   text: string,
-  pressEnter: boolean = false
+  pressEnter: boolean = false,
+  inputMethod: 'auto' | 'keystroke' | 'paste' = 'auto',
+  preserveClipboard: boolean = true
 ): Promise<string> {
-  // For complex text with special characters, use AppleScript which is more reliable
-  // Escape single quotes for AppleScript
+  const hasNonAscii = /[^\x00-\x7F]/.test(text);
+  const usePaste = inputMethod === 'paste' || (inputMethod === 'auto' && hasNonAscii);
+
+  // Clipboard-paste method is much more reliable for Unicode/CJK (e.g. Chinese)
+  if (usePaste) {
+    writeMCPLog(
+      `[performType] Typing via clipboard paste (unicode-safe). text length: ${text.length}, preserveClipboard=${preserveClipboard}`,
+      'Type Operation'
+    );
+
+    // Try to snapshot current clipboard as base64 so we can restore it after paste
+    let previousClipboardBase64: string | null = null;
+    if (preserveClipboard) {
+      try {
+        const { stdout } = await executeCommand(
+          `python3 -c "import base64, subprocess, sys; sys.stdout.write(base64.b64encode(subprocess.check_output(['pbpaste'])).decode())"`,
+          2000
+        );
+        previousClipboardBase64 = stdout.trim() || null;
+      } catch {
+        // If pbpaste fails (non-text clipboard, permissions, etc.), skip restore
+        previousClipboardBase64 = null;
+      }
+    }
+
+    // Set clipboard to the target text (as bytes) via base64 to avoid shell escaping issues
+    const textBase64 = Buffer.from(text, 'utf-8').toString('base64');
+    await executeCommand(
+      `python3 -c "import base64, subprocess; subprocess.run(['pbcopy'], input=base64.b64decode('${textBase64}'), check=True)"`,
+      5000
+    );
+
+    // Paste (Cmd+V)
+    await performKeyPress('v', ['cmd']);
+
+    // Optionally press Enter
+    if (pressEnter) {
+      await executeCommand(`osascript -e 'tell application "System Events" to key code 36'`);
+    }
+
+    // Restore previous clipboard if we captured it and it's not too large for a command line
+    if (preserveClipboard && previousClipboardBase64 && previousClipboardBase64.length <= 200000) {
+      try {
+        await executeCommand(
+          `python3 -c "import base64, subprocess; subprocess.run(['pbcopy'], input=base64.b64decode('${previousClipboardBase64}'), check=True)"`,
+          5000
+        );
+      } catch {
+        // Best-effort restore
+      }
+    }
+
+    return `Typed (paste): "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"${pressEnter ? ' and pressed Enter' : ''}`;
+  }
+
+  // Default: AppleScript keystroke for ASCII text
   const escapedText = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const appleScript = `tell application "System Events" to keystroke "${escapedText}"`;
-  
-  writeMCPLog(`[performType] Typing text length: ${text.length}, using AppleScript`, 'Type Operation');
+
+  writeMCPLog(
+    `[performType] Typing via AppleScript keystroke. text length: ${text.length}, inputMethod=${inputMethod}`,
+    'Type Operation'
+  );
   await executeCommand(`osascript -e '${appleScript.replace(/'/g, "'\"'\"'")}'`);
-  
+
   if (pressEnter) {
     await executeCommand(`osascript -e 'tell application "System Events" to key code 36'`);
   }
-  
+
   return `Typed: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"${pressEnter ? ' and pressed Enter' : ''}`;
 }
 
@@ -2496,7 +2633,7 @@ Example:
       writeMCPLog(`[verifyGUIState] Incremented successCount for click at (${lastClickEntry.x}, ${lastClickEntry.y}) to ${lastClickEntry.successCount}`, 'Success Tracking');
       
       // Save the updated click history to disk
-      await saveLatestClickToHistory(lastClickEntry);
+      await saveLatestClickToHistory(lastClickEntry, { incrementCount: false });
     }
   } else {
     writeMCPLog(`[verifyGUIState] Could not parse operation success judgment from response`, 'Success Parsing Warning');
@@ -2575,7 +2712,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'type_text',
-        description: 'Type text using the keyboard. The text will be typed at the current cursor/focus position.',
+        description: 'Type text at the current cursor/focus position. Supports Unicode (Chinese/Japanese/emoji) by automatically using clipboard paste (Cmd+V) when needed.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2586,6 +2723,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             press_enter: {
               type: 'boolean',
               description: 'Whether to press Enter after typing. Default: false',
+            },
+            input_method: {
+              type: 'string',
+              enum: ['auto', 'keystroke', 'paste'],
+              description: 'Typing method. "auto" (default) uses clipboard paste for Unicode/CJK and keystroke for ASCII. Use "paste" to force clipboard paste. Use "keystroke" to force AppleScript keystroke.',
+            },
+            preserve_clipboard: {
+              type: 'boolean',
+              description: 'Whether to restore the previous clipboard after pasting (best-effort). Default: true',
             },
           },
           required: ['text'],
@@ -2643,25 +2789,30 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'drag',
-        description: 'Perform a drag operation from one point to another.',
+        description: 'Perform a drag operation from one point to another. By default coordinates are normalized (0-1000) relative to the target display (top-left origin).',
         inputSchema: {
           type: 'object',
           properties: {
+            coordinate_type: {
+              type: 'string',
+              enum: ['normalized', 'absolute'],
+              description: 'Coordinate interpretation. "normalized" means 0-1000 relative coords on the display. "absolute" means display-local logical pixel coords. Default: normalized',
+            },
             from_x: {
               type: 'number',
-              description: 'Starting X coordinate',
+              description: 'Starting X coordinate (normalized 0-1000 by default)',
             },
             from_y: {
               type: 'number',
-              description: 'Starting Y coordinate',
+              description: 'Starting Y coordinate (normalized 0-1000 by default)',
             },
             to_x: {
               type: 'number',
-              description: 'Ending X coordinate',
+              description: 'Ending X coordinate (normalized 0-1000 by default)',
             },
             to_y: {
               type: 'number',
-              description: 'Ending Y coordinate',
+              description: 'Ending Y coordinate (normalized 0-1000 by default)',
             },
             display_index: {
               type: 'number',
@@ -2832,7 +2983,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'init_app',
-        description: 'Initialize app context for GUI operations. This MUST be called once before starting GUI operations on any application. IMPORTANT: Call get_all_visited_apps FIRST to check if the app already exists and get the exact app name to avoid creating duplicate directories. This tool loads the persistent click history and other app-specific data from disk. Each application has its own independent storage directory.',
+        description: 'Initialize app context for GUI operations. This MUST be called once before starting GUI operations on any application. IMPORTANT: Call get_all_visited_apps FIRST to check if the app already exists and get the exact app name to avoid creating duplicate directories. This tool loads the persistent click history and other app-specific data from disk. It also loads an optional per-app guide file at `<appDirectory>/guide.md` (if present) and returns its contents as `guide` so you can follow app-specific guidance. Each application has its own independent storage directory.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2884,11 +3035,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       
       case 'type_text': {
-        const { text, press_enter = false } = args as {
+        const { text, press_enter = false, input_method = 'auto', preserve_clipboard = true } = args as {
           text: string;
           press_enter?: boolean;
+          input_method?: 'auto' | 'keystroke' | 'paste';
+          preserve_clipboard?: boolean;
         };
-        result = await performType(text, press_enter);
+        result = await performType(text, press_enter, input_method, preserve_clipboard);
         break;
       }
       
@@ -2914,14 +3067,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       
       case 'drag': {
-        const { from_x, from_y, to_x, to_y, display_index = 0 } = args as {
+        const { from_x, from_y, to_x, to_y, display_index = 0, coordinate_type = 'normalized' } = args as {
           from_x: number;
           from_y: number;
           to_x: number;
           to_y: number;
           display_index?: number;
+          coordinate_type?: 'normalized' | 'absolute';
         };
-        result = await performDrag(from_x, from_y, to_x, to_y, display_index);
+
+        let fromX = from_x;
+        let fromY = from_y;
+        let toX = to_x;
+        let toY = to_y;
+
+        if (coordinate_type !== 'absolute') {
+          const from = await convertNormalizedToDisplayCoordinates(from_x, from_y, display_index);
+          const to = await convertNormalizedToDisplayCoordinates(to_x, to_y, display_index);
+          fromX = from.x;
+          fromY = from.y;
+          toX = to.x;
+          toY = to.y;
+        }
+
+        result = await performDrag(fromX, fromY, toX, toY, display_index);
         break;
       }
       
@@ -3015,6 +3184,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           app_directory: initResult.appDirectory,
           existing_clicks: initResult.clickCount,
           is_new_app: initResult.isNew,
+          has_guide: initResult.hasGuide,
+          guide_path: initResult.guidePath,
+          guide: initResult.guide,
         });
         break;
       }
