@@ -208,6 +208,43 @@ contextBridge.exposeInMainWorld('electronAPI', {
     isEnabled: (): Promise<{ success: boolean; enabled?: boolean; error?: string }> =>
       ipcRenderer.invoke('logs.isEnabled'),
   },
+
+  // Remote control methods
+  remote: {
+    getConfig: (): Promise<any> => ipcRenderer.invoke('remote.getConfig'),
+    getStatus: (): Promise<{
+      running: boolean;
+      port?: number;
+      publicUrl?: string;
+      channels: Array<{ type: string; connected: boolean; error?: string }>;
+      activeSessions: number;
+      pendingPairings: number;
+    }> => ipcRenderer.invoke('remote.getStatus'),
+    setEnabled: (enabled: boolean): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('remote.setEnabled', enabled),
+    updateGatewayConfig: (config: any): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('remote.updateGatewayConfig', config),
+    updateFeishuConfig: (config: any): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('remote.updateFeishuConfig', config),
+    getPairedUsers: (): Promise<any[]> => ipcRenderer.invoke('remote.getPairedUsers'),
+    getPendingPairings: (): Promise<any[]> => ipcRenderer.invoke('remote.getPendingPairings'),
+    approvePairing: (channelType: string, userId: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('remote.approvePairing', channelType, userId),
+    revokePairing: (channelType: string, userId: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('remote.revokePairing', channelType, userId),
+    getRemoteSessions: (): Promise<any[]> => ipcRenderer.invoke('remote.getRemoteSessions'),
+    clearRemoteSession: (sessionId: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('remote.clearRemoteSession', sessionId),
+    getTunnelStatus: (): Promise<{
+      connected: boolean;
+      url: string | null;
+      provider: string;
+      error?: string;
+    }> => ipcRenderer.invoke('remote.getTunnelStatus'),
+    getWebhookUrl: (): Promise<string | null> => ipcRenderer.invoke('remote.getWebhookUrl'),
+    restart: (): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('remote.restart'),
+  },
 });
 
 // Type declaration for the renderer process
@@ -329,6 +366,34 @@ declare global {
         clear: () => Promise<{ success: boolean; deletedCount?: number; error?: string }>;
         setEnabled: (enabled: boolean) => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
         isEnabled: () => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
+      };
+      remote: {
+        getConfig: () => Promise<any>;
+        getStatus: () => Promise<{
+          running: boolean;
+          port?: number;
+          publicUrl?: string;
+          channels: Array<{ type: string; connected: boolean; error?: string }>;
+          activeSessions: number;
+          pendingPairings: number;
+        }>;
+        setEnabled: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
+        updateGatewayConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
+        updateFeishuConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
+        getPairedUsers: () => Promise<any[]>;
+        getPendingPairings: () => Promise<any[]>;
+        approvePairing: (channelType: string, userId: string) => Promise<{ success: boolean; error?: string }>;
+        revokePairing: (channelType: string, userId: string) => Promise<{ success: boolean; error?: string }>;
+        getRemoteSessions: () => Promise<any[]>;
+        clearRemoteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+        getTunnelStatus: () => Promise<{
+          connected: boolean;
+          url: string | null;
+          provider: string;
+          error?: string;
+        }>;
+        getWebhookUrl: () => Promise<string | null>;
+        restart: () => Promise<{ success: boolean; error?: string }>;
       };
     };
   }
