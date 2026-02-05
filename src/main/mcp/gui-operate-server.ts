@@ -2820,6 +2820,20 @@ async function takeScreenshotForDisplay(
     metadata.region = region;
   }
 
+  const disableImageOutput = process.env.OPEN_COWORK_DISABLE_IMAGE_TOOL_OUTPUT === '1';
+  if (disableImageOutput) {
+    metadata.imageOmitted = true;
+    metadata.omitReason = 'provider_does_not_support_image';
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(metadata, null, 2),
+        },
+      ],
+    };
+  }
+
   // if (clickHistoryInfo) {
   //   metadata.clickHistoryInfo = clickHistoryInfo;
   // }

@@ -1039,29 +1039,12 @@ Then follow the workflow described in that file.
         contentCount: lastUserMessage.content.length,
       } : 'none');
 
-      const hasImages = lastUserMessage?.content.some((c: any) => c.type === 'image') || false;
+      let hasImages = lastUserMessage?.content.some((c: any) => c.type === 'image') || false;
 
       if (hasImages) {
         log('[ClaudeAgentRunner] User message contains images, will use AsyncIterable format');
       } else {
         log('[ClaudeAgentRunner] No images detected in last message');
-      }
-
-      // Build conversation context for text-only history
-      let contextualPrompt = prompt;
-      const historyItems = existingMessages
-        .filter(msg => msg.role === 'user' || msg.role === 'assistant')
-        .map(msg => {
-          const textContent = msg.content
-            .filter(c => c.type === 'text')
-            .map(c => (c as any).text)
-            .join('\n');
-          return `${msg.role === 'user' ? 'Human' : 'Assistant'}: ${textContent}`;
-        });
-
-      if (historyItems.length > 0 && !hasImages) {
-        contextualPrompt = `${historyItems.join('\n')}\nHuman: ${prompt}\nAssistant:`;
-        log('[ClaudeAgentRunner] Including', historyItems.length, 'history messages in context');
       }
 
       logTiming('before getDefaultClaudeCodePath');
@@ -1167,6 +1150,25 @@ Then follow the workflow described in that file.
       // Get current model from environment (re-read each time for config changes)
       const currentModel = this.getCurrentModel();
 
+      const supportsImageInputs = (model: string | undefined, baseUrl: string | undefined): boolean => {
+        const modelLower = (model || '').toLowerCase();
+        const baseLower = (baseUrl || '').toLowerCase();
+
+        if (baseLower.includes('deepseek')) return false;
+        if (baseLower.includes('open.bigmodel.cn')) return false;
+        if (!modelLower) return false;
+
+        return (
+          modelLower.includes('claude-3') ||
+          modelLower.includes('claude-3.5') ||
+          modelLower.includes('claude-3-5') ||
+          modelLower.includes('claude-4') ||
+          modelLower.includes('claude-sonnet') ||
+          modelLower.includes('claude-opus') ||
+          modelLower.includes('claude-haiku')
+        );
+      };
+
       // Use app-specific Claude config directory to avoid conflicts with user settings
       // SDK uses CLAUDE_CONFIG_DIR to locate skills
       const userClaudeDir = this.getAppClaudeDir();
@@ -1230,6 +1232,29 @@ Then follow the workflow described in that file.
 
       log('[ClaudeAgentRunner] CLAUDE_CONFIG_DIR:', userClaudeDir);
       log('[ClaudeAgentRunner] PATH in env:', (envWithSkills.PATH || '').substring(0, 200) + '...');
+
+      const imageCapable = supportsImageInputs(currentModel, envWithSkills.ANTHROPIC_BASE_URL);
+      if (hasImages && !imageCapable) {
+        logWarn('[ClaudeAgentRunner] Image content detected but model/provider does not support images; dropping image blocks');
+        hasImages = false;
+      }
+
+      // Build conversation context for text-only history
+      let contextualPrompt = prompt;
+      const historyItems = existingMessages
+        .filter(msg => msg.role === 'user' || msg.role === 'assistant')
+        .map(msg => {
+          const textContent = msg.content
+            .filter(c => c.type === 'text')
+            .map(c => (c as any).text)
+            .join('\n');
+          return `${msg.role === 'user' ? 'Human' : 'Assistant'}: ${textContent}`;
+        });
+
+      if (historyItems.length > 0 && !hasImages) {
+        contextualPrompt = `${historyItems.join('\n')}\nHuman: ${prompt}\nAssistant:`;
+        log('[ClaudeAgentRunner] Including', historyItems.length, 'history messages in context');
+      }
       
       logTiming('before building MCP servers config');
       
@@ -1293,6 +1318,10 @@ Then follow the workflow described in that file.
               // Prepend bundled node bin to PATH so npx can find node
               serverEnv.PATH = `${nodeBinDir}${path.delimiter}${currentPath}`;
               log(`[ClaudeAgentRunner]   Added bundled node bin to PATH: ${nodeBinDir}`);
+            }
+            
+            if (!imageCapable) {
+              serverEnv.OPEN_COWORK_DISABLE_IMAGE_TOOL_OUTPUT = '1';
             }
             
             // Resolve path placeholders for presets
