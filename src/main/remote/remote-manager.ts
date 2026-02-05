@@ -5,6 +5,7 @@
 
 import { EventEmitter } from 'events';
 import { log, logError } from '../utils/logger';
+import { v4 as uuidv4 } from 'uuid';
 import { RemoteGateway } from './gateway';
 import { MessageRouter } from './message-router';
 import { FeishuChannel } from './channels/feishu';
@@ -985,6 +986,8 @@ export class RemoteManager extends EventEmitter {
         type: 'session.update',
         payload: { sessionId: newSession.id, updates: newSession },
       });
+
+      this.emitRemoteUserMessage(newSession.id, content, prompt);
     } else {
       // Continue existing session - use actual session ID
       const actualSessionId = this.reverseSessionIdMapping.get(sessionId);
@@ -992,6 +995,7 @@ export class RemoteManager extends EventEmitter {
         throw new Error(`No actual session ID found for remote session: ${sessionId}`);
       }
       log('[RemoteManager] Continuing session:', actualSessionId, 'for remote:', sessionId);
+      this.emitRemoteUserMessage(actualSessionId, content, prompt);
       await this.agentExecutor.continueSession(actualSessionId, prompt, content);
     }
     
@@ -1022,6 +1026,30 @@ export class RemoteManager extends EventEmitter {
       this.sendToRenderer(event);
     }
     this.emit('renderer-event', event);
+  }
+
+  /**
+   * 发送远程用户消息到本地 UI（仅远程会话使用）
+   */
+  private emitRemoteUserMessage(actualSessionId: string, content: ContentBlock[], prompt: string): void {
+    if (!this.sendToRenderer) return;
+
+    const messageContent = content && content.length > 0
+      ? content
+      : [{ type: 'text', text: prompt }];
+
+    const userMessage: Message = {
+      id: uuidv4(),
+      sessionId: actualSessionId,
+      role: 'user',
+      content: messageContent,
+      timestamp: Date.now(),
+    };
+
+    this.sendToRenderer({
+      type: 'stream.message',
+      payload: { sessionId: actualSessionId, message: userMessage },
+    });
   }
 }
 
