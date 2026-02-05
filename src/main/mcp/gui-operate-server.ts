@@ -653,8 +653,13 @@ async function resolveCliclickPath(): Promise<string | null> {
     return envOverride;
   }
 
-  // 2) Bundled with the app (recommended): Resources/tools/bin/cliclick
-  const bundled = await resolveBundledExecutable(path.join('tools', 'bin', 'cliclick'));
+  // 2) 内置随应用打包（推荐）
+  // 打包布局：Resources/tools/darwin-{arch}/bin/cliclick
+  // 旧版布局：Resources/tools/bin/cliclick
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const archBundled = await resolveBundledExecutable(path.join('tools', `darwin-${arch}`, 'bin', 'cliclick'));
+  const legacyBundled = await resolveBundledExecutable(path.join('tools', 'bin', 'cliclick'));
+  const bundled = archBundled || legacyBundled;
   if (bundled) {
     cachedCliclickPath = bundled;
     return bundled;
@@ -683,6 +688,55 @@ async function resolveCliclickPath(): Promise<string | null> {
 
   cachedCliclickPath = null;
   return null;
+}
+
+function normalizeModifierKeys(modifiers: string[]): string[] {
+  const modifierMap: Record<string, string> = {
+    'command': 'cmd',
+    'cmd': 'cmd',
+    'shift': 'shift',
+    'option': 'alt',
+    'alt': 'alt',
+    'control': 'ctrl',
+    'ctrl': 'ctrl',
+    'control/ctrl': 'ctrl',
+    'command/cmd': 'cmd',
+    'option/alt': 'alt',
+  };
+
+  return modifiers
+    .map(m => modifierMap[m.toLowerCase()])
+    .filter((m): m is string => Boolean(m));
+}
+
+async function convertCliclickToCocoaCoordinates(
+  globalX: number,
+  globalY: number
+): Promise<{ cocoaX: number; cocoaY: number }> {
+  const config = await getDisplayConfiguration();
+  const mainDisplay = config.displays.find(d => d.isMain) || config.displays[0];
+  const mainHeight = mainDisplay.height;
+
+  let targetDisplay = config.displays[0];
+  for (const display of config.displays) {
+    if (
+      globalX >= display.originX &&
+      globalX < display.originX + display.width &&
+      globalY >= display.originY &&
+      globalY < display.originY + display.height
+    ) {
+      targetDisplay = display;
+      break;
+    }
+  }
+
+  const localX = globalX - targetDisplay.originX;
+  const localY = globalY - targetDisplay.originY;
+  const originYCocoa = mainHeight - targetDisplay.height - targetDisplay.originY;
+  const cocoaX = targetDisplay.originX + localX;
+  const cocoaY = originYCocoa + (targetDisplay.height - localY);
+
+  return { cocoaX, cocoaY };
 }
 
 type PythonExec = {
@@ -844,6 +898,108 @@ async function executePython(
   });
 }
 
+async function performMacMouseMoveViaQuartz(
+  globalX: number,
+  globalY: number,
+  modifiers: string[]
+): Promise<void> {
+  const { cocoaX, cocoaY } = await convertCliclickToCocoaCoordinates(globalX, globalY);
+  const modsJson = JSON.stringify(normalizeModifierKeys(modifiers));
+  const script = `
+import Quartz, json
+mods = json.loads(${JSON.stringify(modsJson)})
+flag_map = {
+  "cmd": Quartz.kCGEventFlagMaskCommand,
+  "ctrl": Quartz.kCGEventFlagMaskControl,
+  "shift": Quartz.kCGEventFlagMaskShift,
+  "alt": Quartz.kCGEventFlagMaskAlternate,
+}
+flags = 0
+for m in mods:
+  flags |= flag_map.get(m, 0)
+event = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, (${cocoaX}, ${cocoaY}), Quartz.kCGMouseButtonLeft)
+if flags:
+  Quartz.CGEventSetFlags(event, flags)
+Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+  `.trim();
+  await executePython(script, 5000);
+}
+
+async function performMacClickViaQuartz(
+  globalX: number,
+  globalY: number,
+  clickType: 'single' | 'double' | 'right' | 'triple',
+  modifiers: string[]
+): Promise<void> {
+  const { cocoaX, cocoaY } = await convertCliclickToCocoaCoordinates(globalX, globalY);
+  const modsJson = JSON.stringify(normalizeModifierKeys(modifiers));
+  const clickCount = clickType === 'double' ? 2 : clickType === 'triple' ? 3 : 1;
+  const isRight = clickType === 'right';
+  const script = `
+import Quartz, json, time
+mods = json.loads(${JSON.stringify(modsJson)})
+flag_map = {
+  "cmd": Quartz.kCGEventFlagMaskCommand,
+  "ctrl": Quartz.kCGEventFlagMaskControl,
+  "shift": Quartz.kCGEventFlagMaskShift,
+  "alt": Quartz.kCGEventFlagMaskAlternate,
+}
+flags = 0
+for m in mods:
+  flags |= flag_map.get(m, 0)
+button = Quartz.kCGMouseButtonRight if ${isRight ? 'True' : 'False'} else Quartz.kCGMouseButtonLeft
+down_event = Quartz.kCGEventRightMouseDown if ${isRight ? 'True' : 'False'} else Quartz.kCGEventLeftMouseDown
+up_event = Quartz.kCGEventRightMouseUp if ${isRight ? 'True' : 'False'} else Quartz.kCGEventLeftMouseUp
+def post(evt_type, click_state):
+  ev = Quartz.CGEventCreateMouseEvent(None, evt_type, (${cocoaX}, ${cocoaY}), button)
+  Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGMouseEventClickState, click_state)
+  if flags:
+    Quartz.CGEventSetFlags(ev, flags)
+  Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+for i in range(${clickCount}):
+  state = i + 1 if ${clickCount} > 1 else 1
+  post(down_event, state)
+  post(up_event, state)
+  if ${clickCount} > 1:
+    time.sleep(0.05)
+  `.trim();
+  await executePython(script, 8000);
+}
+
+async function performMacDragViaQuartz(
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  modifiers: string[]
+): Promise<void> {
+  const from = await convertCliclickToCocoaCoordinates(fromX, fromY);
+  const to = await convertCliclickToCocoaCoordinates(toX, toY);
+  const modsJson = JSON.stringify(normalizeModifierKeys(modifiers));
+  const script = `
+import Quartz, json, time
+mods = json.loads(${JSON.stringify(modsJson)})
+flag_map = {
+  "cmd": Quartz.kCGEventFlagMaskCommand,
+  "ctrl": Quartz.kCGEventFlagMaskControl,
+  "shift": Quartz.kCGEventFlagMaskShift,
+  "alt": Quartz.kCGEventFlagMaskAlternate,
+}
+flags = 0
+for m in mods:
+  flags |= flag_map.get(m, 0)
+def post(evt_type, x, y):
+  ev = Quartz.CGEventCreateMouseEvent(None, evt_type, (x, y), Quartz.kCGMouseButtonLeft)
+  if flags:
+    Quartz.CGEventSetFlags(ev, flags)
+  Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+post(Quartz.kCGEventLeftMouseDown, ${from.cocoaX}, ${from.cocoaY})
+post(Quartz.kCGEventLeftMouseDragged, ${to.cocoaX}, ${to.cocoaY})
+post(Quartz.kCGEventLeftMouseUp, ${to.cocoaX}, ${to.cocoaY})
+  `.trim();
+  await executePython(script, 8000);
+}
+
 async function macReadClipboardBytes(timeoutMs: number = 2000): Promise<Buffer | null> {
   if (PLATFORM !== 'darwin') return null;
 
@@ -957,9 +1113,11 @@ async function executeCliclick(command: string): Promise<{ stdout: string; stder
   if (!cliclickPath) {
     throw new Error(
       'cliclick is required for GUI automation on macOS but was not found.\n' +
-      '- Recommended: bundle it inside the app at Resources/tools/bin/cliclick\n' +
+      `- Recommended: bundle it inside the app at Resources/tools/darwin-${process.arch === 'arm64' ? 'arm64' : 'x64'}/bin/cliclick\n` +
+      '- Or legacy path: Resources/tools/bin/cliclick\n' +
       '- Or install it on this machine: brew install cliclick\n' +
-      `Searched: bundled Resources/tools/bin/cliclick, /opt/homebrew/bin/cliclick, /usr/local/bin/cliclick, and PATH.`
+      `Searched: bundled Resources/tools/darwin-${process.arch === 'arm64' ? 'arm64' : 'x64'}/bin/cliclick, ` +
+      'Resources/tools/bin/cliclick, /opt/homebrew/bin/cliclick, /usr/local/bin/cliclick, and PATH.'
     );
   }
 
@@ -2061,24 +2219,21 @@ async function performClick(
   }
 
   // macOS implementation using cliclick
+  const normalizedModifiers = normalizeModifierKeys(modifiers);
+  const cliclickPath = await resolveCliclickPath();
+
+  if (!cliclickPath) {
+    // 无 cliclick 时，使用 Quartz 事件作为降级方案
+    await performMacClickViaQuartz(globalX, globalY, clickType, normalizedModifiers);
+    await addClickToHistory(x, y, displayIndex, clickType);
+    return `Performed ${clickType} click at (${x}, ${y}) on display ${displayIndex} (global: ${globalX}, ${globalY})`;
+  }
+
   // Build cliclick command
   let command = '';
   
   // Add modifiers (if any)
-  const modifierMap: Record<string, string> = {
-    'command': 'cmd',
-    'cmd': 'cmd',
-    'shift': 'shift',
-    'option': 'alt',
-    'alt': 'alt',
-    'control': 'ctrl',
-    'ctrl': 'ctrl',
-  };
-  
-  const cliclickModifiers = modifiers
-    .map(m => modifierMap[m.toLowerCase()])
-    .filter(m => m)
-    .join(',');
+  const cliclickModifiers = normalizedModifiers.join(',');
   
   // Build click command based on type
   switch (clickType) {
@@ -2254,40 +2409,78 @@ async function performKeyPress(
     ' ': 49, // space
   };
   
+  const specialKeyCodeMap: Record<string, number> = {
+    'enter': 36,
+    'return': 36,
+    'tab': 48,
+    'escape': 53,
+    'esc': 53,
+    'space': 49,
+    'delete': 51,
+    'backspace': 51,
+    'up': 126,
+    'down': 125,
+    'left': 123,
+    'right': 124,
+    'home': 115,
+    'end': 119,
+    'pageup': 116,
+    'pagedown': 121,
+    'f1': 122,
+    'f2': 120,
+    'f3': 99,
+    'f4': 118,
+    'f5': 96,
+    'f6': 97,
+    'f7': 98,
+    'f8': 100,
+    'f9': 101,
+    'f10': 109,
+    'f11': 103,
+    'f12': 111,
+  };
+  
   const keyLower = key.toLowerCase();
   const cliclickKey = keyMap[keyLower];
   
   // Handle modifiers
-  const modifierMap: Record<string, string> = {
-    'command': 'cmd',
-    'cmd': 'cmd',
-    'shift': 'shift',
-    'option': 'alt',
-    'alt': 'alt',
-    'control': 'ctrl',
-    'ctrl': 'ctrl',
-    'control/ctrl': 'ctrl',  // Handle common mistake
-    'command/cmd': 'cmd',    // Handle common mistake
-    'option/alt': 'alt',     // Handle common mistake
-  };
-  
-  const cliclickModifiers = modifiers
-    .map(m => modifierMap[m.toLowerCase()])
-    .filter(m => m);
+  const cliclickModifiers = normalizeModifierKeys(modifiers);
   
   writeMCPLog(`[performKeyPress] Mapped modifiers: ${JSON.stringify(cliclickModifiers)}`, 'Key Press Debug');
+  const hasCliclick = Boolean(await resolveCliclickPath());
   
   let command = '';
   let resultMessage = '';
   
   // If key is in keyMap, use kp: command for special keys
   if (cliclickKey) {
-    if (cliclickModifiers.length > 0) {
-      command = `kd:${cliclickModifiers.join(',')} kp:${cliclickKey} ku:${cliclickModifiers.join(',')}`;
+    if (hasCliclick) {
+      if (cliclickModifiers.length > 0) {
+        command = `kd:${cliclickModifiers.join(',')} kp:${cliclickKey} ku:${cliclickModifiers.join(',')}`;
+      } else {
+        command = `kp:${cliclickKey}`;
+      }
+      await executeCliclick(command);
     } else {
-      command = `kp:${cliclickKey}`;
+      // 无 cliclick 时，使用 AppleScript key code 方案
+      const keyCode = specialKeyCodeMap[keyLower];
+      if (keyCode === undefined) {
+        throw new Error(
+          `Key "${key}" requires cliclick on macOS. ` +
+          `Please install/bundle cliclick or use a supported single character key.`
+        );
+      }
+      const modifierFlags: string[] = [];
+      if (cliclickModifiers.includes('cmd')) modifierFlags.push('command down');
+      if (cliclickModifiers.includes('ctrl')) modifierFlags.push('control down');
+      if (cliclickModifiers.includes('shift')) modifierFlags.push('shift down');
+      if (cliclickModifiers.includes('alt')) modifierFlags.push('option down');
+      const usingClause = modifierFlags.length > 0 ? ` using {${modifierFlags.join(', ')}}` : '';
+      const appleScript = `tell application "System Events" to key code ${keyCode}${usingClause}`;
+      await executeCommand(`osascript -e '${appleScript.replace(/'/g, "'\"'\"'")}'`);
+      const modifierStr = modifiers.join('+');
+      resultMessage = `Pressed: ${modifierStr ? `${modifierStr}+` : ''}${key} (using key code)`;
     }
-    await executeCliclick(command);
   } else {
     // For single characters, cliclick's kp: doesn't work, use t: command instead
     if (key.length === 1) {
@@ -2329,9 +2522,15 @@ async function performKeyPress(
           resultMessage = `Pressed: ${modifierStr}+${key} (using keystroke)`;
         }
       } else {
-        // No modifiers, just type the character using cliclick
-        command = `t:"${escapedKey}"`;
-        await executeCliclick(command);
+        // No modifiers
+        if (hasCliclick) {
+          command = `t:"${escapedKey}"`;
+          await executeCliclick(command);
+        } else {
+          const appleScript = `tell application "System Events" to keystroke "${escapedKey}"`;
+          await executeCommand(`osascript -e '${appleScript.replace(/'/g, "'\"'\"'")}'`);
+          resultMessage = `Pressed: ${key} (using keystroke)`;
+        }
       }
     } else {
       // Multi-character key name not in keyMap - this is an error
@@ -2372,12 +2571,15 @@ async function performScroll(
   // macOS implementation
   // First move to the position
   const moveCommand = `m:${globalX},${globalY}`;
+  const hasCliclick = Boolean(await resolveCliclickPath());
   
   // cliclick doesn't directly support scrolling, but we can use AppleScript
   // via osascript for more reliable scrolling
-  
-  // Use cliclick's move command first
-  await executeCliclick(moveCommand);
+  if (hasCliclick) {
+    await executeCliclick(moveCommand);
+  } else {
+    await performMacMouseMoveViaQuartz(globalX, globalY, []);
+  }
   
   // Use Python with pyobjc for scrolling via CGEventCreateScrollWheelEvent
   // This is the most reliable method for programmatic scrolling on macOS
@@ -2433,8 +2635,19 @@ async function performDrag(
   // macOS implementation
   // cliclick drag command: dd: (drag down/start) then du: (drag up/end)
   const command = `dd:${fromCoords.globalX},${fromCoords.globalY} du:${toCoords.globalX},${toCoords.globalY}`;
+  const hasCliclick = Boolean(await resolveCliclickPath());
   
-  await executeCliclick(command);
+  if (hasCliclick) {
+    await executeCliclick(command);
+  } else {
+    await performMacDragViaQuartz(
+      fromCoords.globalX,
+      fromCoords.globalY,
+      toCoords.globalX,
+      toCoords.globalY,
+      []
+    );
+  }
   
   return `Dragged from (${fromX}, ${fromY}) to (${toX}, ${toY}) on display ${displayIndex}`;
 }
@@ -2697,7 +2910,12 @@ async function moveMouse(
   }
   
   // macOS implementation
-  await executeCliclick(`m:${globalX},${globalY}`);
+  const hasCliclick = Boolean(await resolveCliclickPath());
+  if (hasCliclick) {
+    await executeCliclick(`m:${globalX},${globalY}`);
+  } else {
+    await performMacMouseMoveViaQuartz(globalX, globalY, []);
+  }
   
   return `Moved mouse to (${x}, ${y}) on display ${displayIndex}`;
 }
