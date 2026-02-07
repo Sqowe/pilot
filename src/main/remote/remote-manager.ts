@@ -1034,7 +1034,7 @@ export class RemoteManager extends EventEmitter {
   private emitRemoteUserMessage(actualSessionId: string, content: ContentBlock[], prompt: string): void {
     if (!this.sendToRenderer) return;
 
-    const messageContent = content && content.length > 0
+    const messageContent: ContentBlock[] = content && content.length > 0
       ? content
       : [{ type: 'text', text: prompt }];
 
