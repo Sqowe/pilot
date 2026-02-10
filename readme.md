@@ -75,6 +75,12 @@ https://github.com/user-attachments/assets/30299ded-0260-468f-b11d-d282bb9c97f2
 ### 3. Generate XLSX Spreadsheets 📉
 https://github.com/user-attachments/assets/f57b9106-4b2c-4747-aecd-a07f78af5dfc
 
+### 4. GUI Operation🖥
+https://github.com/user-attachments/assets/75542c76-210f-414d-8182-1da988c148f2
+
+### 5. Remote control with Feishu(Lark) 🤖
+https://github.com/user-attachments/assets/05a703de-c0f5-407b-9a43-18b6a172fd74
+
 ---
 
 <a id="installation"></a>
