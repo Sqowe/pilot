@@ -45,6 +45,7 @@ export function ChatView() {
   const [isDragging, setIsDragging] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isUserAtBottomRef = useRef(true);
   const isComposingRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -171,12 +172,8 @@ export function ChatView() {
   // Additional scroll trigger for content height changes (e.g., TodoWrite expand/collapse)
   useEffect(() => {
     const container = scrollContainerRef.current;
-    if (!container) return;
-
-    // Use ResizeObserver to detect height changes in the messages container
-    // We need to observe the inner content div, not the scroll container itself
-    const messagesContainer = container.querySelector('.max-w-3xl');
-    if (!messagesContainer) return;
+    const messagesContainer = messagesContainerRef.current;
+    if (!container || !messagesContainer) return;
 
     const resizeObserver = new ResizeObserver(() => {
       // Don't interfere with ongoing scrolls
@@ -602,7 +599,7 @@ export function ChatView() {
 
       {/* Messages */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto py-6 px-4 space-y-4">
+        <div ref={messagesContainerRef} className="w-full max-w-[1180px] mx-auto py-6 px-4 lg:px-6 space-y-4">
           {displayedMessages.length === 0 ? (
             <div className="text-center py-12 text-text-muted">
               <p>{t('chat.startConversation')}</p>
