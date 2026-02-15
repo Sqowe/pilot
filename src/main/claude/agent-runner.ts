@@ -1410,6 +1410,7 @@ Then follow the workflow described in that file.
       // Get enableThinking from config
       const enableThinking = configStore.get('enableThinking') ?? false;
       log('[ClaudeAgentRunner] Enable thinking mode:', enableThinking);
+      const sdkPlugins: Array<{ type: 'local'; path: string }> = [];
       
       // if (enableThinking) {
       //   envWithSkills.MAX_THINKING_TOKENS = '10000';
