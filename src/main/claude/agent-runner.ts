@@ -15,20 +15,13 @@ import { SandboxSync } from '../sandbox/sandbox-sync';
 import { extractArtifactsFromText, buildArtifactTraceSteps } from '../utils/artifact-parser';
 import { buildClaudeEnv, getClaudeEnvOverrides } from './claude-env';
 import { buildThinkingOptions } from './thinking-options';
+import { redactSensitiveText } from './redaction';
 // import { PathGuard } from '../sandbox/path-guard';
 
 // Virtual workspace path shown to the model (hides real sandbox path)
 const VIRTUAL_WORKSPACE_PATH = '/workspace';
 const MAX_CLAUDE_STDERR_LINES = 120;
 const STDERR_TAIL_LINES_FOR_ERROR = 20;
-
-function redactSensitiveText(text: string): string {
-  return text
-    // Common API key formats (sk-*, sk-ant-*, sk-or-v1-*)
-    .replace(/\bsk-[a-z0-9_-]{16,}\b/gi, '[REDACTED_KEY]')
-    // Generic token-like patterns in env-style output
-    .replace(/(ANTHROPIC_AUTH_TOKEN|ANTHROPIC_API_KEY|OPENAI_API_KEY)\s*[:=]\s*[^\s"']+/gi, '$1=[REDACTED_KEY]');
-}
 
 function summarizeEnvForLog(env: NodeJS.ProcessEnv): Record<string, string> {
   const pick = (key: string): string => {

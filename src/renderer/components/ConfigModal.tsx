@@ -279,6 +279,7 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
   if (!isOpen) return null;
 
   const currentPreset = presets?.[provider];
+  const showsCompatibilityProbeHint = provider === 'openrouter' || (provider === 'custom' && customProtocol === 'anthropic');
   const testErrorMessage = (result: ApiTestResult) => {
     switch (result.errorType) {
       case 'missing_key':
@@ -533,6 +534,9 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
             <label htmlFor="api-live-test-modal" className="space-y-0.5">
               <div className="text-text-primary">{t('api.liveTest')}</div>
               <div>{t('api.liveTestHint')}</div>
+              {showsCompatibilityProbeHint && (
+                <div>{t('api.liveTestCompatibilityHint')}</div>
+              )}
             </label>
           </div>
           <div className="grid grid-cols-2 gap-2">
