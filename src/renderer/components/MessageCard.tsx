@@ -70,7 +70,7 @@ export function MessageCard({ message, isStreaming }: MessageCardProps) {
         // User message - compact styling with smaller padding and radius
         <div className="flex items-start gap-2 justify-end group">
         <div
-          className={`message-user px-4 py-2.5 max-w-[80%] break-words ${
+          className={`message-user px-4 py-2.5 max-w-[80%] min-w-0 break-words ${
             isQueued ? 'opacity-70 border-dashed' : ''
           } ${isCancelled ? 'opacity-60' : ''}`}
         >
@@ -360,7 +360,7 @@ function ContentBlockView({ block, isUser, isStreaming, allBlocks, message }: Co
       const fileBlock = block as FileAttachmentContent;
 
       return (
-        <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-muted border border-border">
+        <div className="flex max-w-full min-w-0 items-center gap-2 px-3 py-2 rounded-lg bg-surface-muted border border-border overflow-hidden">
           <FileText className="w-4 h-4 text-accent flex-shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-sm text-text-primary truncate">{fileBlock.filename}</p>

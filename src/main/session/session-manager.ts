@@ -337,62 +337,72 @@ export class SessionManager {
           }
 
           // Get source file path from the file attachment
-          const sourcePath = fileBlock.relativePath; // This is the full path from Electron
+          const sourcePath = (fileBlock.relativePath || '').trim(); // This is the full path from Electron
           // IMPORTANT: Use path.basename() to extract only the filename, not the full path
-          const destFilename = path.basename(fileBlock.filename || sourcePath);
+          const fallbackFilename = fileBlock.filename || sourcePath || `attachment-${Date.now()}`;
+          const destFilename = path.basename(fallbackFilename);
           const destPath = path.join(tmpDir, destFilename);
+          let actualSize = 0;
 
           // Copy file to .tmp directory
-          if (fs.existsSync(sourcePath)) {
+          if (sourcePath && fs.existsSync(sourcePath)) {
             fs.copyFileSync(sourcePath, destPath);
 
             // Get actual file size
             const stats = fs.statSync(destPath);
-            const actualSize = stats.size;
+            actualSize = stats.size;
 
             log('[SessionManager] Copied file:', sourcePath, '->', destPath, `(${actualSize} bytes)`);
+          } else if (fileBlock.inlineDataBase64) {
+            const buffer = Buffer.from(fileBlock.inlineDataBase64, 'base64');
+            fs.writeFileSync(destPath, buffer);
+            actualSize = buffer.length;
+            log('[SessionManager] Wrote file from inline data:', destPath, `(${actualSize} bytes)`);
+          } else {
+            logError('[SessionManager] Source file not found and inline data missing:', sourcePath || '(empty path)');
+            // Skip this file attachment
+            continue;
+          }
 
-            // If sandbox is already initialized, sync the file to sandbox as well
-            // This handles the case where user attaches files in subsequent messages
-            const sandboxPath = SandboxSync.getSandboxPath(session.id);
-            if (sandboxPath) {
-              const sandboxRelativePath = `.tmp/${destFilename}`;
-              log('[SessionManager] Syncing attached file to sandbox:', sandboxRelativePath);
-              const syncResult = await SandboxSync.syncFileToSandbox(session.id, destPath, sandboxRelativePath);
-              if (syncResult.success) {
-                log('[SessionManager] File synced to sandbox:', syncResult.sandboxPath);
-              } else {
-                logError('[SessionManager] Failed to sync file to sandbox:', syncResult.error);
-                // Continue anyway - file is in Windows .tmp, agent might still work via /mnt/
-              }
+          // If sandbox is already initialized, sync the file to sandbox as well
+          // This handles the case where user attaches files in subsequent messages
+          const sandboxPath = SandboxSync.getSandboxPath(session.id);
+          if (sandboxPath) {
+            const sandboxRelativePath = `.tmp/${destFilename}`;
+            log('[SessionManager] Syncing attached file to sandbox:', sandboxRelativePath);
+            const syncResult = await SandboxSync.syncFileToSandbox(session.id, destPath, sandboxRelativePath);
+            if (syncResult.success) {
+              log('[SessionManager] File synced to sandbox:', syncResult.sandboxPath);
             } else {
-              // Check for Lima sandbox
-              const { LimaSync } = await import('../sandbox/lima-sync');
-              const limaSandboxPath = LimaSync.getSandboxPath(session.id);
-              if (limaSandboxPath) {
-                const sandboxRelativePath = `.tmp/${destFilename}`;
-                log('[SessionManager] Syncing attached file to Lima sandbox:', sandboxRelativePath);
-                const syncResult = await LimaSync.syncFileToSandbox(session.id, destPath, sandboxRelativePath);
-                if (syncResult.success) {
-                  log('[SessionManager] File synced to Lima sandbox:', syncResult.sandboxPath);
-                } else {
-                  logError('[SessionManager] Failed to sync file to Lima sandbox:', syncResult.error);
-                  // Continue anyway - file is in macOS .tmp, agent might still work via direct access
-                }
+              logError('[SessionManager] Failed to sync file to sandbox:', syncResult.error);
+              // Continue anyway - file is in Windows .tmp, agent might still work via /mnt/
+            }
+          } else {
+            // Check for Lima sandbox
+            const { LimaSync } = await import('../sandbox/lima-sync');
+            const limaSandboxPath = LimaSync.getSandboxPath(session.id);
+            if (limaSandboxPath) {
+              const sandboxRelativePath = `.tmp/${destFilename}`;
+              log('[SessionManager] Syncing attached file to Lima sandbox:', sandboxRelativePath);
+              const syncResult = await LimaSync.syncFileToSandbox(session.id, destPath, sandboxRelativePath);
+              if (syncResult.success) {
+                log('[SessionManager] File synced to Lima sandbox:', syncResult.sandboxPath);
+              } else {
+                logError('[SessionManager] Failed to sync file to Lima sandbox:', syncResult.error);
+                // Continue anyway - file is in macOS .tmp, agent might still work via direct access
               }
             }
-
-            // Update the content block with the new relative path and actual size
-            const relativePathFromCwd = path.join('.tmp', destFilename);
-            processedContent.push({
-              ...fileBlock,
-              relativePath: relativePathFromCwd,
-              size: actualSize,
-            });
-          } else {
-            logError('[SessionManager] Source file not found:', sourcePath);
-            // Skip this file attachment
           }
+
+          // Update the content block with the new relative path and actual size
+          const relativePathFromCwd = path.join('.tmp', destFilename);
+          const restFileBlock = { ...fileBlock };
+          delete restFileBlock.inlineDataBase64;
+          processedContent.push({
+            ...restFileBlock,
+            relativePath: relativePathFromCwd,
+            size: actualSize,
+          });
         } catch (error) {
           logError('[SessionManager] Error copying file:', error);
           // Skip this file attachment

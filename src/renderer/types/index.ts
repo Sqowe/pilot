@@ -60,6 +60,7 @@ export interface FileAttachmentContent {
   relativePath: string; // Path relative to session's .tmp folder
   size: number;
   mimeType?: string;
+  inlineDataBase64?: string;
 }
 
 export interface ToolUseContent {
