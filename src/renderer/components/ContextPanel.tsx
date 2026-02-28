@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import { resolveArtifactPath } from '../utils/artifact-path';
-import { extractFilePathFromToolOutput } from '../utils/tool-output-path';
+import { extractFilePathFromToolInput, extractFilePathFromToolOutput } from '../utils/tool-output-path';
 import { getArtifactLabel, getArtifactIconComponent, getArtifactSteps } from '../utils/artifact-steps';
 import { useIPC } from '../hooks/useIPC';
 import {
@@ -169,54 +169,61 @@ export function ContextPanel() {
         </button>
         
         {artifactsOpen && (
-          <div className="px-4 pb-4 space-y-1">
+          <div className="px-4 pb-4 max-h-80 overflow-y-auto">
             {/* Extract artifacts from trace steps */}
             {displayArtifactSteps.length === 0 ? (
               <p className="text-xs text-text-muted">{t('context.noArtifactsYet')}</p>
             ) : (
-              displayArtifactSteps.map((step, index) => {
+              <div className="space-y-1">
+                {displayArtifactSteps.map((step, index) => {
                 const artifactInfo = parseArtifactOutput(step.toolOutput);
-                const fallbackPath = extractFilePathFromToolOutput(step.toolOutput);
-                const resolvedFallbackPath = fallbackPath
-                  ? resolveArtifactPath(fallbackPath, currentWorkingDir)
-                  : '';
-                const label = artifactSteps.length > 0
-                  ? getArtifactLabel(artifactInfo?.path || '', artifactInfo?.name)
-                  : (fallbackPath ? getArtifactLabel(fallbackPath) : t('context.fileCreated'));
-                const artifactPath = artifactSteps.length > 0
-                  ? resolveArtifactPath(artifactInfo?.path || '', currentWorkingDir)
-                  : resolvedFallbackPath;
-                const canClick = Boolean(artifactPath && canShowItemInFolder);
-                const iconComponent = getArtifactIconComponent(label);
-                const IconComponent =
-                  iconComponent === 'presentation' ? FilePieChart
-                  : iconComponent === 'table' ? FileSpreadsheet
-                  : iconComponent === 'document' ? FileText
-                  : iconComponent === 'code' ? FileCode2
-                  : iconComponent === 'image' ? ImageIcon
-                  : iconComponent === 'audio' ? FileAudio2
-                  : iconComponent === 'video' ? FileVideo
-                  : iconComponent === 'archive' ? FileArchive
-                  : iconComponent === 'text' ? File
-                  : File;
+                const fallbackPath = extractFilePathFromToolOutput(step.toolOutput)
+                  || extractFilePathFromToolInput(step.toolInput);
+                  const resolvedFallbackPath = fallbackPath
+                    ? resolveArtifactPath(fallbackPath, currentWorkingDir)
+                    : '';
+                  const label = artifactSteps.length > 0
+                    ? getArtifactLabel(artifactInfo?.path || '', artifactInfo?.name)
+                    : (fallbackPath ? getArtifactLabel(fallbackPath) : t('context.fileCreated'));
+                  const artifactPath = artifactSteps.length > 0
+                    ? resolveArtifactPath(artifactInfo?.path || '', currentWorkingDir)
+                    : resolvedFallbackPath;
+                  const canClick = Boolean(artifactPath && canShowItemInFolder);
+                  const iconComponent = getArtifactIconComponent(label);
+                  const IconComponent =
+                    iconComponent === 'presentation' ? FilePieChart
+                    : iconComponent === 'table' ? FileSpreadsheet
+                    : iconComponent === 'document' ? FileText
+                    : iconComponent === 'code' ? FileCode2
+                    : iconComponent === 'image' ? ImageIcon
+                    : iconComponent === 'audio' ? FileAudio2
+                    : iconComponent === 'video' ? FileVideo
+                    : iconComponent === 'archive' ? FileArchive
+                    : iconComponent === 'text' ? File
+                    : File;
 
-                return (
-                  <div
-                    key={index}
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors ${canClick ? 'cursor-pointer hover:bg-surface-hover' : ''}`}
-                    onClick={() => {
-                      if (!canClick) return;
-                      void window.electronAPI.showItemInFolder(artifactPath);
-                    }}
-                    title={canClick ? artifactPath : undefined}
-                  >
-                    <IconComponent className="w-4 h-4 text-text-muted" />
-                    <span className="text-sm text-text-primary truncate">
-                      {label}
-                    </span>
-                  </div>
-                );
-              })
+                  return (
+                    <div
+                      key={index}
+                      className={`flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors ${canClick ? 'cursor-pointer hover:bg-surface-hover' : ''}`}
+                      onClick={async () => {
+                        if (!canClick) return;
+                        const revealed = await window.electronAPI.showItemInFolder(artifactPath, currentWorkingDir);
+                        if (!revealed && window.electronAPI?.openExternal) {
+                          const fallbackUrl = `file://${encodeURI(artifactPath)}`;
+                          void window.electronAPI.openExternal(fallbackUrl);
+                        }
+                      }}
+                      title={canClick ? artifactPath : undefined}
+                    >
+                      <IconComponent className="w-4 h-4 text-text-muted" />
+                      <span className="text-sm text-text-primary truncate">
+                        {label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         )}

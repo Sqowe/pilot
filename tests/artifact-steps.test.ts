@@ -33,6 +33,71 @@ describe('getArtifactSteps', () => {
     expect(displayArtifactSteps[0].toolName).toBe('Write');
   });
 
+  it('uses toolInput path when toolOutput does not include a path', () => {
+    const steps: TraceStep[] = [
+      {
+        id: 'call_write_input_only',
+        type: 'tool_call',
+        status: 'completed',
+        title: 'Write',
+        toolName: 'Write',
+        toolInput: { path: '/tmp/from-input-only.txt', content: 'hello' },
+        toolOutput: 'File created',
+        timestamp: Date.now(),
+      },
+    ];
+
+    const { fileSteps, displayArtifactSteps } = getArtifactSteps(steps);
+    expect(fileSteps).toHaveLength(1);
+    expect(displayArtifactSteps).toHaveLength(1);
+  });
+
+  it('filters out file steps without any resolvable file path', () => {
+    const steps: TraceStep[] = [
+      {
+        id: 'call_write_no_path',
+        type: 'tool_call',
+        status: 'completed',
+        title: 'Write',
+        toolName: 'Write',
+        toolOutput: 'File created successfully',
+        timestamp: Date.now(),
+      },
+    ];
+
+    const { fileSteps, displayArtifactSteps } = getArtifactSteps(steps);
+    expect(fileSteps).toHaveLength(0);
+    expect(displayArtifactSteps).toHaveLength(0);
+  });
+
+  it('deduplicates repeated updates for the same file path', () => {
+    const steps: TraceStep[] = [
+      {
+        id: 'write_1',
+        type: 'tool_call',
+        status: 'completed',
+        title: 'Write',
+        toolName: 'Write',
+        toolOutput: 'File created successfully at: /tmp/repeated.txt',
+        timestamp: Date.now(),
+      },
+      {
+        id: 'write_2',
+        type: 'tool_call',
+        status: 'completed',
+        title: 'Write',
+        toolName: 'Write',
+        toolInput: { path: '/tmp/repeated.txt', content: 'updated' },
+        toolOutput: 'Updated',
+        timestamp: Date.now(),
+      },
+    ];
+
+    const { fileSteps, displayArtifactSteps } = getArtifactSteps(steps);
+    expect(fileSteps).toHaveLength(1);
+    expect(displayArtifactSteps).toHaveLength(1);
+  });
+
   it('prefers explicit artifact steps over file steps', () => {
     const steps: TraceStep[] = [
       {

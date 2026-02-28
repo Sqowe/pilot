@@ -3,6 +3,13 @@ type ParsedOutput = {
   filePath?: string;
 };
 
+type ParsedInput = {
+  path?: string;
+  filePath?: string;
+  file_path?: string;
+  relativePath?: string;
+};
+
 export function extractFilePathFromToolOutput(toolOutput?: string): string | null {
   if (!toolOutput) {
     return null;
@@ -31,6 +38,24 @@ export function extractFilePathFromToolOutput(toolOutput?: string): string | nul
     || trimmed.match(/File created successfully at:?\s*(.+)$/i);
   if (match && match[1]) {
     return match[1].trim();
+  }
+
+  return null;
+}
+
+export function extractFilePathFromToolInput(
+  toolInput?: Record<string, unknown>
+): string | null {
+  if (!toolInput || typeof toolInput !== 'object') {
+    return null;
+  }
+
+  const input = toolInput as ParsedInput;
+  const candidates = [input.path, input.filePath, input.file_path, input.relativePath];
+  for (const value of candidates) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
   }
 
   return null;
