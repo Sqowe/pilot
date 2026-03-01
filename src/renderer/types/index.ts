@@ -353,12 +353,31 @@ export interface ExecutionContext {
 export type ProviderType = 'openrouter' | 'anthropic' | 'custom' | 'openai';
 export type CustomProtocolType = 'anthropic' | 'openai';
 export type ProviderProfileKey = 'openrouter' | 'anthropic' | 'openai' | 'custom:anthropic' | 'custom:openai';
+export type ConfigSetId = string;
 
 export interface ProviderProfile {
   apiKey: string;
   baseUrl?: string;
   model: string;
   openaiMode?: 'responses' | 'chat';
+}
+
+export interface ApiConfigSet {
+  id: ConfigSetId;
+  name: string;
+  isSystem?: boolean;
+  provider: ProviderType;
+  customProtocol: CustomProtocolType;
+  activeProfileKey: ProviderProfileKey;
+  profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
+  enableThinking: boolean;
+  updatedAt: string;
+}
+
+export interface CreateSetPayload {
+  name: string;
+  mode: 'blank' | 'clone';
+  fromSetId?: string;
 }
 
 export interface AppConfig {
@@ -370,6 +389,8 @@ export interface AppConfig {
   openaiMode?: 'responses' | 'chat';
   activeProfileKey: ProviderProfileKey;
   profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
+  activeConfigSetId: ConfigSetId;
+  configSets: ApiConfigSet[];
   claudeCodePath?: string;
   defaultWorkdir?: string;
   sandboxEnabled?: boolean;

@@ -3,6 +3,7 @@ import { X, Key, Server, Cpu, CheckCircle, AlertCircle, Loader2, Edit3, Plug } f
 import { useTranslation } from 'react-i18next';
 import type { AppConfig, ApiTestResult } from '../types';
 import { useApiConfigState } from '../hooks/useApiConfigState';
+import { ApiConfigSetManager } from './ApiConfigSetManager';
 
 interface ConfigModalProps {
   isOpen: boolean;
@@ -42,6 +43,14 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
     isOpenAIMode,
     requiresApiKey,
     showsCompatibilityProbeHint,
+    configSets,
+    activeConfigSetId,
+    currentConfigSet,
+    pendingConfigSetAction,
+    pendingConfigSet,
+    hasUnsavedChanges,
+    isMutatingConfigSet,
+    canDeleteCurrentConfigSet,
     setApiKey,
     setBaseUrl,
     setModel,
@@ -50,6 +59,13 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
     setUseLiveTest,
     changeProvider,
     changeProtocol,
+    requestConfigSetSwitch,
+    requestCreateBlankConfigSet,
+    cancelPendingConfigSetAction,
+    saveAndContinuePendingConfigSetAction,
+    discardAndContinuePendingConfigSetAction,
+    renameConfigSet,
+    deleteConfigSet,
     handleSave,
     handleTest,
     handleImportLocalAuth,
@@ -61,14 +77,14 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
   });
 
   useEffect(() => {
-    if (!successMessage) {
+    if (!successMessage || successMessage !== t('common.saved')) {
       return;
     }
     const timer = setTimeout(() => {
       onClose();
     }, 1000);
     return () => clearTimeout(timer);
-  }, [onClose, successMessage]);
+  }, [onClose, successMessage, t]);
 
   if (!isOpen) return null;
 
@@ -121,6 +137,27 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
 
         {/* Content */}
         <div className="p-6 space-y-5 flex-1 overflow-y-auto">
+          {/* Config Set Switcher */}
+          <ApiConfigSetManager
+            configSets={configSets}
+            activeConfigSetId={activeConfigSetId}
+            currentConfigSet={currentConfigSet}
+            pendingConfigSetAction={pendingConfigSetAction}
+            pendingConfigSet={pendingConfigSet}
+            hasUnsavedChanges={hasUnsavedChanges}
+            isMutatingConfigSet={isMutatingConfigSet}
+            isSaving={isSaving}
+            canDeleteCurrentConfigSet={canDeleteCurrentConfigSet}
+            onSwitchSet={requestConfigSetSwitch}
+            onRequestCreateBlankSet={requestCreateBlankConfigSet}
+            onSaveCurrentSet={handleSave}
+            onRenameSet={renameConfigSet}
+            onDeleteSet={deleteConfigSet}
+            onCancelPendingAction={cancelPendingConfigSetAction}
+            onSaveAndContinuePendingAction={saveAndContinuePendingConfigSetAction}
+            onDiscardAndContinuePendingAction={discardAndContinuePendingConfigSetAction}
+          />
+
           {/* Provider Selection */}
           <div className="space-y-2">
             <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
@@ -370,7 +407,7 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
               )}
             </button>
             <button
-              onClick={handleSave}
+              onClick={() => { void handleSave(); }}
               disabled={isSaving || (requiresApiKey && !apiKey.trim())}
               className="w-full py-3 px-4 rounded-xl bg-accent text-white font-medium hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
             >

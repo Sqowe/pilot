@@ -8,7 +8,7 @@ import { SessionManager } from './session/session-manager';
 import { SkillsManager } from './skills/skills-manager';
 import { PluginCatalogService } from './skills/plugin-catalog-service';
 import { PluginRuntimeService } from './skills/plugin-runtime-service';
-import { configStore, PROVIDER_PRESETS, type AppConfig } from './config/config-store';
+import { configStore, PROVIDER_PRESETS, type AppConfig, type CreateConfigSetPayload } from './config/config-store';
 import { testApiConnection } from './config/api-tester';
 import { getLocalAuthStatuses, importLocalAuthToken, type LocalAuthProvider } from './auth/local-auth';
 import { mcpConfigStore } from './mcp/mcp-config-store';
@@ -837,12 +837,7 @@ ipcMain.handle('config.getPresets', () => {
   return PROVIDER_PRESETS;
 });
 
-ipcMain.handle('config.save', (_event, newConfig: Partial<AppConfig>) => {
-  log('[Config] Saving config:', { ...newConfig, apiKey: newConfig.apiKey ? '***' : '' });
-
-  // Update config
-  configStore.update(newConfig);
-
+const syncConfigAfterMutation = () => {
   // Mark as configured if current provider has usable credentials
   configStore.set('isConfigured', configStore.hasUsableCredentials());
 
@@ -866,7 +861,44 @@ ipcMain.handle('config.save', (_event, newConfig: Partial<AppConfig>) => {
     },
   });
   log('[Config] Notified renderer of config update, isConfigured:', isConfigured);
+  return updatedConfig;
+};
 
+ipcMain.handle('config.save', (_event, newConfig: Partial<AppConfig>) => {
+  log('[Config] Saving config:', { ...newConfig, apiKey: newConfig.apiKey ? '***' : '' });
+
+  // Update config
+  configStore.update(newConfig);
+  const updatedConfig = syncConfigAfterMutation();
+
+  return { success: true, config: updatedConfig };
+});
+
+ipcMain.handle('config.createSet', (_event, payload: CreateConfigSetPayload) => {
+  log('[Config] Creating config set:', payload);
+  configStore.createSet(payload);
+  const updatedConfig = syncConfigAfterMutation();
+  return { success: true, config: updatedConfig };
+});
+
+ipcMain.handle('config.renameSet', (_event, payload: { id: string; name: string }) => {
+  log('[Config] Renaming config set:', payload);
+  configStore.renameSet(payload);
+  const updatedConfig = syncConfigAfterMutation();
+  return { success: true, config: updatedConfig };
+});
+
+ipcMain.handle('config.deleteSet', (_event, payload: { id: string }) => {
+  log('[Config] Deleting config set:', payload);
+  configStore.deleteSet(payload);
+  const updatedConfig = syncConfigAfterMutation();
+  return { success: true, config: updatedConfig };
+});
+
+ipcMain.handle('config.switchSet', (_event, payload: { id: string }) => {
+  log('[Config] Switching config set:', payload);
+  configStore.switchSet(payload);
+  const updatedConfig = syncConfigAfterMutation();
   return { success: true, config: updatedConfig };
 });
 

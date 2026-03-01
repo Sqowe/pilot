@@ -3,6 +3,7 @@ import type {
   ClientEvent,
   ServerEvent,
   AppConfig,
+  CreateSetPayload,
   ProviderPresets,
   Skill,
   ApiTestInput,
@@ -84,6 +85,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getPresets: (): Promise<ProviderPresets> => ipcRenderer.invoke('config.getPresets'),
     save: (config: Partial<AppConfig>): Promise<{ success: boolean; config: AppConfig }> => 
       ipcRenderer.invoke('config.save', config),
+    createSet: (payload: CreateSetPayload): Promise<{ success: boolean; config: AppConfig }> =>
+      ipcRenderer.invoke('config.createSet', payload),
+    renameSet: (payload: { id: string; name: string }): Promise<{ success: boolean; config: AppConfig }> =>
+      ipcRenderer.invoke('config.renameSet', payload),
+    deleteSet: (payload: { id: string }): Promise<{ success: boolean; config: AppConfig }> =>
+      ipcRenderer.invoke('config.deleteSet', payload),
+    switchSet: (payload: { id: string }): Promise<{ success: boolean; config: AppConfig }> =>
+      ipcRenderer.invoke('config.switchSet', payload),
     isConfigured: (): Promise<boolean> => ipcRenderer.invoke('config.isConfigured'),
     test: (config: ApiTestInput): Promise<ApiTestResult> =>
       ipcRenderer.invoke('config.test', config),
@@ -324,6 +333,10 @@ declare global {
         get: () => Promise<AppConfig>;
         getPresets: () => Promise<ProviderPresets>;
         save: (config: Partial<AppConfig>) => Promise<{ success: boolean; config: AppConfig }>;
+        createSet: (payload: CreateSetPayload) => Promise<{ success: boolean; config: AppConfig }>;
+        renameSet: (payload: { id: string; name: string }) => Promise<{ success: boolean; config: AppConfig }>;
+        deleteSet: (payload: { id: string }) => Promise<{ success: boolean; config: AppConfig }>;
+        switchSet: (payload: { id: string }) => Promise<{ success: boolean; config: AppConfig }>;
         isConfigured: () => Promise<boolean>;
         test: (config: ApiTestInput) => Promise<ApiTestResult>;
       };

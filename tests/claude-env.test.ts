@@ -43,6 +43,7 @@ describe('getClaudeEnvOverrides', () => {
     model: 'claude-sonnet-4-5',
     openaiMode: 'responses',
     activeProfileKey: 'anthropic',
+    activeConfigSetId: 'default',
     profiles: {
       anthropic: {
         apiKey: 'sk-ant-test-key',
@@ -75,6 +76,50 @@ describe('getClaudeEnvOverrides', () => {
         openaiMode: 'responses',
       },
     },
+    configSets: [
+      {
+        id: 'default',
+        name: '默认方案',
+        isSystem: true,
+        provider: 'anthropic',
+        customProtocol: 'anthropic',
+        activeProfileKey: 'anthropic',
+        profiles: {
+          anthropic: {
+            apiKey: 'sk-ant-test-key',
+            baseUrl: 'https://api.anthropic.com',
+            model: 'claude-sonnet-4-5',
+            openaiMode: 'responses',
+          },
+          openrouter: {
+            apiKey: '',
+            baseUrl: 'https://openrouter.ai/api',
+            model: 'anthropic/claude-sonnet-4.5',
+            openaiMode: 'responses',
+          },
+          openai: {
+            apiKey: '',
+            baseUrl: 'https://api.openai.com/v1',
+            model: 'gpt-5.2',
+            openaiMode: 'responses',
+          },
+          'custom:anthropic': {
+            apiKey: '',
+            baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+            model: 'glm-4.7',
+            openaiMode: 'responses',
+          },
+          'custom:openai': {
+            apiKey: '',
+            baseUrl: 'https://api.openai.com/v1',
+            model: 'gpt-5.2',
+            openaiMode: 'responses',
+          },
+        },
+        enableThinking: false,
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
     claudeCodePath: '',
     defaultWorkdir: '',
     enableDevLogs: true,

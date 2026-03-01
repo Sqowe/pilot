@@ -9,6 +9,7 @@ import type {
 } from '../types';
 import { RemoteControlPanel } from './RemoteControlPanel';
 import { useApiConfigState } from '../hooks/useApiConfigState';
+import { ApiConfigSetManager } from './ApiConfigSetManager';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
@@ -214,6 +215,14 @@ function APISettingsTab() {
     isImportingAuth,
     isOpenAIMode,
     requiresApiKey,
+    configSets,
+    activeConfigSetId,
+    currentConfigSet,
+    pendingConfigSetAction,
+    pendingConfigSet,
+    hasUnsavedChanges,
+    isMutatingConfigSet,
+    canDeleteCurrentConfigSet,
     setApiKey,
     setBaseUrl,
     setModel,
@@ -223,6 +232,13 @@ function APISettingsTab() {
     setEnableThinking,
     changeProvider,
     changeProtocol,
+    requestConfigSetSwitch,
+    requestCreateBlankConfigSet,
+    cancelPendingConfigSetAction,
+    saveAndContinuePendingConfigSetAction,
+    discardAndContinuePendingConfigSetAction,
+    renameConfigSet,
+    deleteConfigSet,
     handleSave,
     handleTest,
     handleImportLocalAuth,
@@ -240,6 +256,27 @@ function APISettingsTab() {
 
   return (
     <div className="space-y-5">
+      {/* Config Set Switcher */}
+      <ApiConfigSetManager
+        configSets={configSets}
+        activeConfigSetId={activeConfigSetId}
+        currentConfigSet={currentConfigSet}
+        pendingConfigSetAction={pendingConfigSetAction}
+        pendingConfigSet={pendingConfigSet}
+        hasUnsavedChanges={hasUnsavedChanges}
+        isMutatingConfigSet={isMutatingConfigSet}
+        isSaving={isSaving}
+        canDeleteCurrentConfigSet={canDeleteCurrentConfigSet}
+        onSwitchSet={requestConfigSetSwitch}
+        onRequestCreateBlankSet={requestCreateBlankConfigSet}
+        onSaveCurrentSet={handleSave}
+        onRenameSet={renameConfigSet}
+        onDeleteSet={deleteConfigSet}
+        onCancelPendingAction={cancelPendingConfigSetAction}
+        onSaveAndContinuePendingAction={saveAndContinuePendingConfigSetAction}
+        onDiscardAndContinuePendingAction={discardAndContinuePendingConfigSetAction}
+      />
+
       {/* Provider Selection */}
       <div className="space-y-2">
         <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
@@ -493,7 +530,7 @@ function APISettingsTab() {
           )}
         </button>
         <button
-          onClick={handleSave}
+          onClick={() => { void handleSave(); }}
           disabled={isSaving || (requiresApiKey && !apiKey.trim())}
           className="w-full py-3 px-4 rounded-xl bg-accent text-white font-medium hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
         >
