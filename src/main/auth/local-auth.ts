@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-export type LocalAuthProvider = 'codex' | 'claude';
+export type LocalAuthProvider = 'codex';
 
 export interface LocalAuthStatus {
   provider: LocalAuthProvider;
@@ -33,7 +33,6 @@ type ParsedToken = {
 };
 
 const CODEX_AUTH_PATH = path.join(os.homedir(), '.codex', 'auth.json');
-const CLAUDE_AUTH_PATH = path.join(os.homedir(), '.claude', '.credentials.json');
 
 const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -131,27 +130,6 @@ export function parseCodexAuthPayload(payload: unknown): ParsedToken | null {
   return null;
 }
 
-export function parseClaudeAuthPayload(payload: unknown): ParsedToken | null {
-  const root = asRecord(payload);
-  if (!root) {
-    return null;
-  }
-
-  const oauth = asRecord(root.claudeAiOauth) ?? asRecord(root.oauth) ?? asRecord(root.auth);
-  const target = oauth || root;
-  const token = getStringField(target, ['accessToken', 'access_token', 'token']);
-  if (!token) {
-    return null;
-  }
-
-  return {
-    token,
-    account: getStringField(target, ['email', 'account_id', 'accountId']),
-    expiresAt: getStringField(target, ['expiresAt', 'expires_at']),
-    updatedAt: getStringField(target, ['updatedAt', 'updated_at', 'lastRefresh']),
-  };
-}
-
 function readCodexToken(): ImportedLocalAuthToken | null {
   const parsed = parseCodexAuthPayload(readJsonFile(CODEX_AUTH_PATH));
   if (!parsed) {
@@ -164,21 +142,8 @@ function readCodexToken(): ImportedLocalAuthToken | null {
   };
 }
 
-function readClaudeToken(): ImportedLocalAuthToken | null {
-  const parsed = parseClaudeAuthPayload(readJsonFile(CLAUDE_AUTH_PATH));
-  if (!parsed) {
-    return null;
-  }
-  return {
-    provider: 'claude',
-    path: CLAUDE_AUTH_PATH,
-    ...parsed,
-  };
-}
-
 export function getLocalAuthStatuses(): LocalAuthStatus[] {
   const codex = readCodexToken();
-  const claude = readClaudeToken();
   return [
     codex
       ? {
@@ -191,19 +156,12 @@ export function getLocalAuthStatuses(): LocalAuthStatus[] {
           updatedAt: codex.updatedAt,
         }
       : { provider: 'codex', available: false, path: CODEX_AUTH_PATH },
-    claude
-      ? {
-          provider: 'claude',
-          available: true,
-          path: claude.path,
-          account: claude.account,
-          expiresAt: claude.expiresAt,
-          updatedAt: claude.updatedAt,
-        }
-      : { provider: 'claude', available: false, path: CLAUDE_AUTH_PATH },
   ];
 }
 
 export function importLocalAuthToken(provider: LocalAuthProvider): ImportedLocalAuthToken | null {
-  return provider === 'codex' ? readCodexToken() : readClaudeToken();
+  if (provider !== 'codex') {
+    return null;
+  }
+  return readCodexToken();
 }

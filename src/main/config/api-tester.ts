@@ -191,12 +191,15 @@ export async function testApiConnection(input: ApiTestInput): Promise<ApiTestRes
   });
   const useLiveRequest = Boolean(input.useLiveRequest);
   const useCodexOAuth = hasLocalCodex || Boolean(resolvedOpenAI?.useCodexOAuth);
+  const candidateOrder = apiKey
+    ? 'apiKey-first'
+    : (hasLocalCodex ? 'local-only' : 'none');
   log('[Config][ApiTest] Start', {
     provider: input.provider,
     customProtocol: input.customProtocol || undefined,
     useOpenAI,
     useCodexOAuth,
-    source: hasLocalCodex ? 'localCodex-first' : (resolvedOpenAI?.source || undefined),
+    source: candidateOrder,
     hasApiKey: Boolean(apiKey),
     hasLocalCodex,
     baseUrl: useOpenAI ? (resolvedOpenAI?.baseUrl || OPENAI_CODEX_BACKEND_BASE_URL || '(default)') : (resolvedBaseUrl || '(default)'),
@@ -231,15 +234,6 @@ export async function testApiConnection(input: ApiTestInput): Promise<ApiTestRes
   try {
     if (useOpenAI) {
       const candidates: OpenAITestCredentials[] = [];
-      if (hasLocalCodex) {
-        candidates.push({
-          apiKey: localCodexToken,
-          baseUrl: OPENAI_CODEX_BACKEND_BASE_URL,
-          accountId: localCodex?.account,
-          useCodexOAuth: true,
-          source: 'localCodex',
-        });
-      }
       if (apiKey) {
         candidates.push({
           apiKey,
@@ -247,6 +241,15 @@ export async function testApiConnection(input: ApiTestInput): Promise<ApiTestRes
           accountId: resolvedOpenAI?.accountId,
           useCodexOAuth: Boolean(resolvedOpenAI?.useCodexOAuth),
           source: 'apiKey',
+        });
+      }
+      if (hasLocalCodex) {
+        candidates.push({
+          apiKey: localCodexToken,
+          baseUrl: OPENAI_CODEX_BACKEND_BASE_URL,
+          accountId: localCodex?.account,
+          useCodexOAuth: true,
+          source: 'localCodex',
         });
       }
 

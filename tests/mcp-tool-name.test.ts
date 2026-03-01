@@ -96,4 +96,47 @@ describe('MCP tool name parsing', () => {
     expect(mockClient.callTool).toHaveBeenCalledTimes(2);
     expect(result).toEqual({ ok: true });
   });
+
+  it('does not reconnect when tool returns plain text content without structured error envelope', async () => {
+    const toolName = 'mcp__GUI_Operate__screenshot_for_display';
+    const manager = new MCPManager();
+    const mockClient = {
+      callTool: vi.fn().mockResolvedValue({
+        content: [
+          {
+            type: 'text',
+            text: 'Not connected',
+          },
+        ],
+      }),
+    } as any;
+
+    (manager as any).clients = new Map([['server-1', mockClient]]);
+    (manager as any).tools = new Map([
+      [
+        toolName,
+        {
+          name: toolName,
+          description: '',
+          inputSchema: { type: 'object', properties: {} },
+          serverId: 'server-1',
+          serverName: 'GUI_Operate',
+        },
+      ],
+    ]);
+    (manager as any).reconnectServer = vi.fn().mockResolvedValue(true);
+
+    const result = await manager.callTool(toolName, { display_index: 0 });
+
+    expect((manager as any).reconnectServer).not.toHaveBeenCalled();
+    expect(mockClient.callTool).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      content: [
+        {
+          type: 'text',
+          text: 'Not connected',
+        },
+      ],
+    });
+  });
 });

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
-import { join, resolve } from 'path';
+import { join, resolve, dirname, isAbsolute, basename } from 'path';
 import * as fs from 'fs';
+import { execFileSync } from 'child_process';
 import { config } from 'dotenv';
 import { initDatabase } from './db/database';
 import { SessionManager } from './session/session-manager';
@@ -87,6 +88,7 @@ async function waitForDevServer(url: string, maxAttempts = 30, intervalMs = 500)
 // Ensure a single app instance in dev/prod to avoid duplicate windows on hot restart.
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
+  logWarn('[App] Another instance is already running, quitting this instance');
   app.quit();
 } else {
   app.on('second-instance', () => {
@@ -97,7 +99,19 @@ if (!hasSingleInstanceLock) {
       mainWindow.show();
       mainWindow.focus();
       log('[App] Blocked second instance and focused existing window');
+      return;
     }
+
+    log('[App] Blocked second instance and recreated main window');
+    if (app.isReady()) {
+      createWindow();
+      return;
+    }
+    void app.whenReady().then(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        createWindow();
+      }
+    });
   });
 }
 
@@ -168,7 +182,44 @@ function createWindow() {
     }
   };
 
+  const decodePathSafely = (value: string) => {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  };
+
+  const extractLocalPathFromAppUrl = (url: string): string | null => {
+    try {
+      const parsed = new URL(url);
+      if (!allowedOrigins.has(parsed.origin)) {
+        return null;
+      }
+      const pathname = decodePathSafely(parsed.pathname || '');
+      if (!pathname) {
+        return null;
+      }
+
+      if (/^\/[A-Za-z]:\//.test(pathname)) {
+        return pathname.slice(1);
+      }
+      if (/^\/(?:Users|home|opt|tmp|var)\//.test(pathname)) {
+        return pathname;
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    const localPath = extractLocalPathFromAppUrl(url);
+    if (localPath) {
+      shell.showItemInFolder(localPath);
+      return { action: 'deny' };
+    }
     if (isExternalUrl(url)) {
       void shell.openExternal(url);
       return { action: 'deny' };
@@ -177,6 +228,12 @@ function createWindow() {
   });
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
+    const localPath = extractLocalPathFromAppUrl(url);
+    if (localPath) {
+      event.preventDefault();
+      shell.showItemInFolder(localPath);
+      return;
+    }
     if (isExternalUrl(url)) {
       event.preventDefault();
       void shell.openExternal(url);
@@ -213,7 +270,7 @@ function createWindow() {
       type: 'config.status',
       payload: { 
         isConfigured,
-        config: isConfigured ? configStore.getAll() : null,
+        config: configStore.getAll(),
       },
     });
 
@@ -605,12 +662,157 @@ ipcMain.handle('shell.openExternal', async (_event, url: string) => {
   return shell.openExternal(url);
 });
 
-ipcMain.handle('shell.showItemInFolder', async (_event, filePath: string) => {
+ipcMain.handle('shell.showItemInFolder', async (_event, filePath: string, cwd?: string) => {
   if (!filePath) {
     return false;
   }
 
-  return shell.showItemInFolder(filePath);
+  const decodePathSafely = (value: string): string => {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  };
+
+  const trimInput = filePath.trim();
+  if (!trimInput) {
+    return false;
+  }
+
+  let normalizedPath = decodePathSafely(trimInput);
+
+  if (normalizedPath.startsWith('file://')) {
+    try {
+      const url = new URL(normalizedPath);
+      normalizedPath = decodePathSafely(url.pathname || '');
+      if (/^\/[A-Za-z]:\//.test(normalizedPath)) {
+        normalizedPath = normalizedPath.slice(1);
+      }
+    } catch {
+      normalizedPath = decodePathSafely(normalizedPath.replace(/^file:\/\//i, ''));
+    }
+  }
+
+  const baseDir = cwd && isAbsolute(cwd) ? cwd : (getWorkingDir() || app.getPath('home'));
+  if (!isAbsolute(normalizedPath) && !/^[A-Za-z]:[\\/]/.test(normalizedPath)) {
+    normalizedPath = resolve(baseDir, normalizedPath);
+  }
+
+  if (normalizedPath.startsWith('/workspace/')) {
+    normalizedPath = resolve(baseDir, normalizedPath.slice('/workspace/'.length));
+  }
+
+  normalizedPath = resolve(normalizedPath);
+  log('[shell.showItemInFolder] request:', { filePath, cwd, resolved: normalizedPath });
+
+  const findFileByName = (fileName: string, roots: string[]): string | null => {
+    if (!fileName) {
+      return null;
+    }
+
+    const visited = new Set<string>();
+    const queue = roots
+      .map((root) => resolve(root))
+      .filter((root) => !!root && fs.existsSync(root) && fs.statSync(root).isDirectory());
+
+    let scannedDirs = 0;
+    const MAX_DIRS = 2000;
+
+    while (queue.length > 0 && scannedDirs < MAX_DIRS) {
+      const dir = queue.shift()!;
+      if (visited.has(dir)) {
+        continue;
+      }
+      visited.add(dir);
+      scannedDirs += 1;
+
+      let entries: fs.Dirent[] = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        const fullPath = join(dir, entry.name);
+        if (entry.isFile() && entry.name === fileName) {
+          return fullPath;
+        }
+        if (entry.isDirectory()) {
+          queue.push(fullPath);
+        }
+      }
+    }
+
+    return null;
+  };
+
+  try {
+    if (fs.existsSync(normalizedPath)) {
+      const stat = fs.statSync(normalizedPath);
+      if (stat.isDirectory()) {
+        const openDirResult = await shell.openPath(normalizedPath);
+        if (openDirResult) {
+          logWarn('[shell.showItemInFolder] openPath returned warning:', openDirResult);
+        }
+      } else {
+        if (process.platform === 'darwin') {
+          try {
+            execFileSync('open', ['-R', normalizedPath]);
+          } catch (error) {
+            logWarn('[shell.showItemInFolder] open -R failed, fallback to shell.showItemInFolder:', error);
+            shell.showItemInFolder(normalizedPath);
+          }
+        } else {
+          shell.showItemInFolder(normalizedPath);
+        }
+      }
+      return true;
+    }
+
+    const fileName = basename(normalizedPath);
+    const defaultWorkingDir = getWorkingDir() || '';
+    const discoveredPath = findFileByName(fileName, [
+      cwd || '',
+      defaultWorkingDir,
+      join(app.getPath('userData'), 'default_working_dir'),
+    ]);
+
+    if (discoveredPath) {
+      logWarn('[shell.showItemInFolder] resolved path not found, discovered by filename:', {
+        requested: normalizedPath,
+        discoveredPath,
+      });
+      if (process.platform === 'darwin') {
+        try {
+          execFileSync('open', ['-R', discoveredPath]);
+        } catch (error) {
+          logWarn('[shell.showItemInFolder] open -R discovered file failed, fallback to shell.showItemInFolder:', error);
+          shell.showItemInFolder(discoveredPath);
+        }
+      } else {
+        shell.showItemInFolder(discoveredPath);
+      }
+      return true;
+    }
+
+    const parentDir = dirname(normalizedPath);
+    if (parentDir && fs.existsSync(parentDir)) {
+      logWarn('[shell.showItemInFolder] file not found, opening parent directory:', parentDir);
+      const openParentResult = await shell.openPath(parentDir);
+      if (openParentResult) {
+        logWarn('[shell.showItemInFolder] openPath parent returned warning:', openParentResult);
+      }
+      return true;
+    }
+
+    logWarn('[shell.showItemInFolder] path and parent directory do not exist:', normalizedPath);
+    return false;
+  } catch (error) {
+    logError('[shell.showItemInFolder] failed:', error);
+    return false;
+  }
 });
 
 ipcMain.handle('dialog.selectFiles', async () => {
@@ -660,7 +862,7 @@ ipcMain.handle('config.save', (_event, newConfig: Partial<AppConfig>) => {
     type: 'config.status',
     payload: {
       isConfigured,
-      config: isConfigured ? updatedConfig : null,
+      config: updatedConfig,
     },
   });
   log('[Config] Notified renderer of config update, isConfigured:', isConfigured);
@@ -690,7 +892,7 @@ ipcMain.handle('auth.getStatus', () => {
 });
 
 ipcMain.handle('auth.importToken', (_event, provider: LocalAuthProvider) => {
-  if (provider !== 'codex' && provider !== 'claude') {
+  if (provider !== 'codex') {
     throw new Error(`Unsupported auth provider: ${provider}`);
   }
   return importLocalAuthToken(provider);
@@ -1567,7 +1769,7 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
     });
     sendToRenderer({
       type: 'config.status',
-      payload: { isConfigured: false, config: null },
+      payload: { isConfigured: false, config: configStore.getAll() },
     });
     return null;
   }

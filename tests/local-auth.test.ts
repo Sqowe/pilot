@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCodexAuthPayload, parseClaudeAuthPayload } from '../src/main/auth/local-auth';
+import { parseCodexAuthPayload } from '../src/main/auth/local-auth';
 
 describe('parseCodexAuthPayload', () => {
   it('extracts token from nested tokens payload', () => {
@@ -50,28 +50,7 @@ describe('parseCodexAuthPayload', () => {
     expect(parsed?.token).toBe('flat-token');
     expect(parsed?.account).toBe('flat-user');
   });
-});
-
-describe('parseClaudeAuthPayload', () => {
-  it('extracts token from claudeAiOauth section', () => {
-    const parsed = parseClaudeAuthPayload({
-      claudeAiOauth: {
-        accessToken: 'claude-token',
-        expiresAt: '2026-03-01T00:00:00.000Z',
-        email: 'claude@example.com',
-      },
-    });
-
-    expect(parsed).toEqual({
-      token: 'claude-token',
-      account: 'claude@example.com',
-      expiresAt: '2026-03-01T00:00:00.000Z',
-      updatedAt: undefined,
-    });
-  });
-
   it('returns null for invalid payload', () => {
-    expect(parseClaudeAuthPayload({})).toBeNull();
     expect(parseCodexAuthPayload({ profiles: {} })).toBeNull();
   });
 });

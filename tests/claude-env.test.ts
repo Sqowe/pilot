@@ -42,10 +42,44 @@ describe('getClaudeEnvOverrides', () => {
     customProtocol: 'anthropic',
     model: 'claude-sonnet-4-5',
     openaiMode: 'responses',
+    activeProfileKey: 'anthropic',
+    profiles: {
+      anthropic: {
+        apiKey: 'sk-ant-test-key',
+        baseUrl: 'https://api.anthropic.com',
+        model: 'claude-sonnet-4-5',
+        openaiMode: 'responses',
+      },
+      openrouter: {
+        apiKey: '',
+        baseUrl: 'https://openrouter.ai/api',
+        model: 'anthropic/claude-sonnet-4.5',
+        openaiMode: 'responses',
+      },
+      openai: {
+        apiKey: '',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-5.2',
+        openaiMode: 'responses',
+      },
+      'custom:anthropic': {
+        apiKey: '',
+        baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+        model: 'glm-4.7',
+        openaiMode: 'responses',
+      },
+      'custom:openai': {
+        apiKey: '',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-5.2',
+        openaiMode: 'responses',
+      },
+    },
     claudeCodePath: '',
     defaultWorkdir: '',
     enableDevLogs: true,
     sandboxEnabled: false,
+    enableThinking: false,
     isConfigured: true,
   };
 

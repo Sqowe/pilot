@@ -2,14 +2,13 @@ import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Key, Plug, Settings, ChevronRight, AlertCircle, Eye, EyeOff, Plus, Trash2, Edit3, Save, Mail, Globe, Lock, Server, Cpu, Loader2, Power, PowerOff, CheckCircle, ChevronDown, Package, Languages, Shield, Wifi } from 'lucide-react';
 import type {
-  ProviderPresets,
   Skill,
-  ApiTestResult,
   PluginCatalogItemV2,
   InstalledPlugin,
   PluginComponentKind,
 } from '../types';
 import { RemoteControlPanel } from './RemoteControlPanel';
+import { useApiConfigState } from '../hooks/useApiConfigState';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
@@ -46,8 +45,6 @@ interface MCPServerStatus {
   connected: boolean;
   toolCount: number;
 }
-
-type LocalAuthProvider = 'codex' | 'claude';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -195,236 +192,42 @@ export function SettingsPanel({ isOpen, onClose, initialTab = 'api' }: SettingsP
 
 function APISettingsTab() {
   const { t } = useTranslation();
-  const [provider, setProvider] = useState<'openrouter' | 'anthropic' | 'custom' | 'openai'>('openrouter');
-  const [apiKey, setApiKey] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
-  const [customProtocol, setCustomProtocol] = useState<'anthropic' | 'openai'>('anthropic');
-  const [model, setModel] = useState('');
-  const [customModel, setCustomModel] = useState('');
-  const [useCustomModel, setUseCustomModel] = useState(false);
-  const [presets, setPresets] = useState<ProviderPresets | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isLoadingConfig, setIsLoadingConfig] = useState(true);
-  const [error, setError] = useState('');
-  const [successMessage, setSuccessMessage] = useState('');
-  const [isTesting, setIsTesting] = useState(false);
-  const [testResult, setTestResult] = useState<ApiTestResult | null>(null);
-  const [useLiveTest, setUseLiveTest] = useState(false);
-  const [enableThinking, setEnableThinking] = useState(false);
-  const [isImportingAuth, setIsImportingAuth] = useState<LocalAuthProvider | null>(null);
-  const previousProviderRef = useRef(provider);
-  const isLoadingConfigRef = useRef(false);
-
-  useEffect(() => {
-    if (isElectron) {
-      loadConfig();
-    } else {
-      setIsLoadingConfig(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    setTestResult(null);
-  }, [provider, apiKey, baseUrl, customProtocol, model, customModel, useCustomModel]);
-
-  // Handle provider change synchronously for immediate feedback
-  const handleProviderChange = (newProvider: typeof provider) => {
-    if (newProvider === provider || !presets) return;
-    
-    const preset = presets[newProvider];
-    if (preset) {
-      // Batch state updates
-      setProvider(newProvider);
-      if (newProvider !== 'custom') {
-        setBaseUrl(preset.baseUrl);
-      } else if (previousProviderRef.current !== 'custom') {
-        setBaseUrl(preset.baseUrl);
-      }
-      setUseCustomModel(false);
-      setModel(preset.models[0]?.id || '');
-    } else {
-      setProvider(newProvider);
-    }
-    previousProviderRef.current = newProvider;
-  };
-
-  async function loadConfig() {
-    isLoadingConfigRef.current = true;
-    setIsLoadingConfig(true);
-    try {
-      const [cfg, prs] = await Promise.all([
-        window.electronAPI.config.get(),
-        window.electronAPI.config.getPresets(),
-      ]);
-      setPresets(prs);
-      
-      if (cfg) {
-        const newProvider = cfg.provider || 'openrouter';
-        setProvider(newProvider);
-        previousProviderRef.current = newProvider;
-        setApiKey(cfg.apiKey || '');
-        const preset = prs?.[cfg.provider];
-        setBaseUrl(cfg.baseUrl || preset?.baseUrl || '');
-        setCustomProtocol(cfg.customProtocol || 'anthropic');
-        
-        const isPresetModel = preset?.models.some((m: any) => m.id === cfg.model);
-        
-        if (isPresetModel) {
-          setModel(cfg.model || '');
-          setUseCustomModel(false);
-        } else if (cfg.model) {
-          setUseCustomModel(true);
-          setCustomModel(cfg.model);
-        }
-        setEnableThinking(cfg.enableThinking || false);
-      }
-    } catch (err) {
-      console.error('Failed to load config:', err);
-    } finally {
-      isLoadingConfigRef.current = false;
-      setIsLoadingConfig(false);
-    }
-  }
-
-  async function handleTest() {
-    const isOpenAIMode = provider === 'openai' || (provider === 'custom' && customProtocol === 'openai');
-    if (!isOpenAIMode && !apiKey.trim()) {
-      setError(t('api.apiKey') + ' is required');
-      return;
-    }
-
-    const finalModel = useCustomModel ? customModel.trim() : model;
-    if (!finalModel) {
-      setError(t('api.model') + ' is required');
-      return;
-    }
-
-    setError('');
-    setIsTesting(true);
-    setTestResult(null);
-
-    try {
-      const presetBaseUrl = presets?.[provider]?.baseUrl;
-      const resolvedBaseUrl = provider === 'custom'
-        ? baseUrl.trim()
-        : (presetBaseUrl || baseUrl).trim();
-
-      const result = await window.electronAPI.config.test({
-        provider,
-        apiKey: apiKey.trim(),
-        baseUrl: resolvedBaseUrl || undefined,
-        customProtocol,
-        model: finalModel,
-        useLiveRequest: useLiveTest,
-      });
-      setTestResult(result);
-    } catch (err) {
-      setTestResult({
-        ok: false,
-        errorType: 'unknown',
-        details: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      setIsTesting(false);
-    }
-  }
-
-  async function handleSave() {
-    const isOpenAIMode = provider === 'openai' || (provider === 'custom' && customProtocol === 'openai');
-    if (!isOpenAIMode && !apiKey.trim()) {
-      setError(t('api.apiKey') + ' is required');
-      return;
-    }
-
-    const finalModel = useCustomModel ? customModel.trim() : model;
-    if (!finalModel) {
-      setError(t('api.model') + ' is required');
-      return;
-    }
-
-    setError('');
-    setIsSaving(true);
-
-    try {
-      const presetBaseUrl = presets?.[provider]?.baseUrl;
-      const resolvedBaseUrl = provider === 'custom'
-        ? baseUrl.trim()
-        : (presetBaseUrl || baseUrl).trim();
-      const resolvedOpenaiMode =
-        provider === 'openai' || (provider === 'custom' && customProtocol === 'openai')
-          ? 'responses'
-          : undefined;
-
-      await window.electronAPI.config.save({
-        provider,
-        apiKey: apiKey.trim(),
-        baseUrl: resolvedBaseUrl || undefined,
-        customProtocol,
-        model: finalModel,
-        openaiMode: resolvedOpenaiMode,
-        enableThinking,
-      });
-      setSuccessMessage(t('common.saved'));
-      setTimeout(() => setSuccessMessage(''), 2000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  function resolveLocalAuthProvider(): LocalAuthProvider | null {
-    if (provider === 'openai' || (provider === 'custom' && customProtocol === 'openai')) {
-      return 'codex';
-    }
-    if (provider === 'anthropic') {
-      return 'claude';
-    }
-    return null;
-  }
-
-  async function handleImportLocalAuth() {
-    if (!window.electronAPI?.auth) {
-      setError('Current environment does not support local auth import');
-      return;
-    }
-
-    const authProvider = resolveLocalAuthProvider();
-    if (!authProvider) {
-      setError('Current provider does not support Codex/Claude local auth import');
-      return;
-    }
-
-    setIsImportingAuth(authProvider);
-    setError('');
-    try {
-      const imported = await window.electronAPI.auth.importToken(authProvider);
-      if (!imported?.token) {
-        setError(
-          authProvider === 'codex'
-            ? 'No local Codex login found. Please run: codex auth login'
-            : 'No local Claude Code login found. Please run: claude setup-token or claude auth login'
-        );
-        return;
-      }
-
-      setApiKey(imported.token);
-      setSuccessMessage(
-        authProvider === 'codex'
-          ? 'Imported token from local Codex login'
-          : 'Imported token from local Claude Code login'
-      );
-      setTimeout(() => setSuccessMessage(''), 2500);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to import local auth token');
-    } finally {
-      setIsImportingAuth(null);
-    }
-  }
-
-  const currentPreset = presets?.[provider];
-  const isOpenAIMode = provider === 'openai' || (provider === 'custom' && customProtocol === 'openai');
-  const requiresApiKey = !isOpenAIMode;
+  const {
+    provider,
+    customProtocol,
+    apiKey,
+    baseUrl,
+    model,
+    customModel,
+    useCustomModel,
+    presets,
+    currentPreset,
+    modelOptions,
+    isSaving,
+    isLoadingConfig,
+    error,
+    successMessage,
+    isTesting,
+    testResult,
+    useLiveTest,
+    enableThinking,
+    isImportingAuth,
+    isOpenAIMode,
+    requiresApiKey,
+    setApiKey,
+    setBaseUrl,
+    setModel,
+    setCustomModel,
+    toggleCustomModel,
+    setUseLiveTest,
+    setEnableThinking,
+    changeProvider,
+    changeProtocol,
+    handleSave,
+    handleTest,
+    handleImportLocalAuth,
+    resolveLocalAuthProvider,
+  } = useApiConfigState();
 
   if (isLoadingConfig) {
     return (
@@ -447,7 +250,7 @@ function APISettingsTab() {
           {(['openrouter', 'anthropic', 'openai', 'custom'] as const).map((p) => (
             <button
               key={p}
-              onClick={() => handleProviderChange(p)}
+              onClick={() => changeProvider(p)}
               disabled={isLoadingConfig}
               className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors active:scale-95 ${
                 provider === p
@@ -478,7 +281,7 @@ function APISettingsTab() {
           <p className="text-xs text-text-muted">{currentPreset.keyHint}</p>
         )}
         {isOpenAIMode && (
-          <p className="text-xs text-text-muted">OpenAI 默认走 Codex CLI（自动执行、无审批弹窗）；优先使用本地 Codex 登录，无本地登录时自动回退到 API Key 链路。</p>
+          <p className="text-xs text-text-muted">OpenAI 默认走 Codex CLI（自动执行、无审批弹窗）；优先使用手填 API Key，本地 Codex 登录作为回退链路。</p>
         )}
         {resolveLocalAuthProvider() && (
           <button
@@ -511,7 +314,7 @@ function APISettingsTab() {
             ] as const).map((mode) => (
               <button
                 key={mode.id}
-                onClick={() => setCustomProtocol(mode.id)}
+                onClick={() => changeProtocol(mode.id)}
                 className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors active:scale-95 ${
                   customProtocol === mode.id
                     ? 'bg-accent text-white'
@@ -561,7 +364,7 @@ function APISettingsTab() {
           </label>
           <button
             type="button"
-            onClick={() => setUseCustomModel(!useCustomModel)}
+            onClick={toggleCustomModel}
             className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors active:scale-95 ${
               useCustomModel
                 ? 'bg-accent-muted text-accent'
@@ -592,7 +395,7 @@ function APISettingsTab() {
             onChange={(e) => setModel(e.target.value)}
             className="w-full px-4 py-3 rounded-xl bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all appearance-none cursor-pointer"
           >
-            {currentPreset?.models.map((m: any) => (
+            {modelOptions.map((m: any) => (
               <option key={m.id} value={m.id}>
                 {m.name}
               </option>
@@ -2468,7 +2271,7 @@ function SkillsTab() {
   const { t } = useTranslation();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [plugins, setPlugins] = useState<PluginCatalogItemV2[]>([]);
-  const [installedPluginsByName, setInstalledPluginsByName] = useState<Record<string, InstalledPlugin>>({});
+  const [installedPluginsByKey, setInstalledPluginsByKey] = useState<Record<string, InstalledPlugin>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [isPluginLoading, setIsPluginLoading] = useState(false);
   const [isPluginModalOpen, setIsPluginModalOpen] = useState(false);
@@ -2478,6 +2281,43 @@ function SkillsTab() {
   const [success, setSuccess] = useState('');
   const pluginToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const componentOrder: PluginComponentKind[] = ['skills', 'commands', 'agents', 'hooks', 'mcp'];
+
+  function normalizePluginLookupKey(value: string | undefined): string {
+    if (!value) {
+      return '';
+    }
+    return value
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  function getCatalogLookupKeys(plugin: PluginCatalogItemV2): string[] {
+    const keys = new Set<string>();
+    const addKey = (value: string | undefined) => {
+      if (!value) {
+        return;
+      }
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return;
+      }
+      keys.add(trimmed);
+      keys.add(trimmed.toLowerCase());
+      const normalized = normalizePluginLookupKey(trimmed);
+      if (normalized) {
+        keys.add(normalized);
+      }
+    };
+
+    addKey(plugin.name);
+    addKey(plugin.pluginId);
+
+    const marketplaceId = plugin.pluginId?.split('@')[0];
+    addKey(marketplaceId);
+
+    return [...keys];
+  }
 
   useEffect(() => {
     if (isElectron) {
@@ -2521,11 +2361,27 @@ function SkillsTab() {
         window.electronAPI.plugins.listInstalled(),
       ]);
       setPlugins(catalog || []);
-      const nextInstalledByName: Record<string, InstalledPlugin> = {};
+      const nextInstalledByKey: Record<string, InstalledPlugin> = {};
+      const addLookupKey = (key: string, plugin: InstalledPlugin) => {
+        if (!key || nextInstalledByKey[key]) {
+          return;
+        }
+        nextInstalledByKey[key] = plugin;
+      };
       for (const plugin of installed || []) {
-        nextInstalledByName[plugin.name] = plugin;
+        const candidates = [
+          plugin.name,
+          plugin.name?.toLowerCase(),
+          normalizePluginLookupKey(plugin.name),
+          plugin.pluginId,
+          plugin.pluginId?.toLowerCase(),
+          normalizePluginLookupKey(plugin.pluginId),
+        ].filter((value): value is string => Boolean(value));
+        for (const key of candidates) {
+          addLookupKey(key, plugin);
+        }
       }
-      setInstalledPluginsByName(nextInstalledByName);
+      setInstalledPluginsByKey(nextInstalledByKey);
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : t('skills.pluginInstallFailed'));
@@ -2592,11 +2448,12 @@ function SkillsTab() {
   }
 
   async function handleInstallPlugin(plugin: PluginCatalogItemV2) {
-    setPluginActionKey(`install:${plugin.name}`);
+    const installTarget = plugin.pluginId ?? plugin.name;
+    setPluginActionKey(`install:${installTarget}`);
     setError('');
     setSuccess('');
     try {
-      const result = await window.electronAPI.plugins.install(plugin.name);
+      const result = await window.electronAPI.plugins.install(installTarget);
       await loadSkills();
       await loadPlugins();
       const message = t('skills.pluginInstallSuccess', { name: result.plugin.name });
@@ -2761,13 +2618,18 @@ function SkillsTab() {
                 <div className="py-8 text-center text-text-muted">{t('skills.noPluginsFound')}</div>
               ) : (
                 plugins.map((plugin) => (
-                  <div key={plugin.name} className="rounded-xl border border-border bg-surface-hover p-4">
+                  <div key={plugin.pluginId || plugin.name} className="rounded-xl border border-border bg-surface-hover p-4">
                     {(() => {
-                      const installedPlugin = installedPluginsByName[plugin.name];
-                      const isInstalling = pluginActionKey === `install:${plugin.name}`;
+                      const installedPlugin = getCatalogLookupKeys(plugin)
+                        .map((key) => installedPluginsByKey[key])
+                        .find((item): item is InstalledPlugin => Boolean(item));
+                      const installTarget = plugin.pluginId ?? plugin.name;
+                      const isInstalling = pluginActionKey === `install:${installTarget}`;
                       const componentEntries = componentOrder.filter(
                         (component) => plugin.componentCounts[component] > 0
                       );
+                      const isMarketplaceCatalog = plugin.catalogSource === 'claude-marketplace';
+                      const hasKnownComponents = componentEntries.length > 0;
                       const isInstallable = plugin.installable;
                       return (
                         <>
@@ -2784,26 +2646,34 @@ function SkillsTab() {
                         {plugin.description && (
                           <p className="text-sm text-text-muted line-clamp-2">{plugin.description}</p>
                         )}
-                        <p className="text-xs text-text-muted mt-2">
-                          {t('skills.pluginComponents', {
-                            skills: plugin.componentCounts.skills,
-                            commands: plugin.componentCounts.commands,
-                            agents: plugin.componentCounts.agents,
-                            hooks: plugin.componentCounts.hooks,
-                            mcp: plugin.componentCounts.mcp,
-                          })}
-                        </p>
-                        {plugin.componentCounts.hooks > 0 && !installedPlugin && (
+                        {hasKnownComponents ? (
+                          <p className="text-xs text-text-muted mt-2">
+                            {t('skills.pluginComponents', {
+                              skills: plugin.componentCounts.skills,
+                              commands: plugin.componentCounts.commands,
+                              agents: plugin.componentCounts.agents,
+                              hooks: plugin.componentCounts.hooks,
+                              mcp: plugin.componentCounts.mcp,
+                            })}
+                          </p>
+                        ) : (
+                          isMarketplaceCatalog && !installedPlugin && (
+                            <p className="text-xs text-text-muted mt-2">
+                              {t('skills.pluginComponentsAvailableAfterInstall')}
+                            </p>
+                          )
+                        )}
+                        {hasKnownComponents && plugin.componentCounts.hooks > 0 && !installedPlugin && (
                           <p className="text-xs text-warning mt-1">
                             {t('skills.pluginComponentHooksDisabledByDefault')}
                           </p>
                         )}
-                        {plugin.componentCounts.mcp > 0 && !installedPlugin && (
+                        {hasKnownComponents && plugin.componentCounts.mcp > 0 && !installedPlugin && (
                           <p className="text-xs text-warning mt-1">
                             {t('skills.pluginComponentMcpDisabledByDefault')}
                           </p>
                         )}
-                        {!isInstallable && (
+                        {!isInstallable && !isMarketplaceCatalog && (
                           <p className="text-xs text-error mt-1">{t('skills.pluginNoComponents')}</p>
                         )}
                       </div>

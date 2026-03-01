@@ -48,6 +48,7 @@ export interface SessionRow {
   id: string;
   title: string;
   claude_session_id: string | null;
+  openai_thread_id: string | null;
   status: string;
   cwd: string | null;
   mounted_paths: string; // JSON string
@@ -112,6 +113,7 @@ function initializeSchema(database: Database.Database): void {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       claude_session_id TEXT,
+      openai_thread_id TEXT,
       status TEXT NOT NULL DEFAULT 'idle',
       cwd TEXT,
       mounted_paths TEXT NOT NULL DEFAULT '[]',
@@ -121,6 +123,8 @@ function initializeSchema(database: Database.Database): void {
       updated_at INTEGER NOT NULL
     )
   `);
+
+  ensureColumn(database, 'sessions', 'openai_thread_id', 'openai_thread_id TEXT');
   
   // Create messages table
   database.exec(`
@@ -203,6 +207,20 @@ function initializeSchema(database: Database.Database): void {
   log('[Database] Schema initialized');
 }
 
+function ensureColumn(
+  database: Database.Database,
+  table: string,
+  column: string,
+  definition: string
+): void {
+  const rows = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  const exists = rows.some((row) => row.name === column);
+  if (exists) {
+    return;
+  }
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+}
+
 /**
  * Initialize the database
  */
@@ -223,8 +241,8 @@ export function initDatabase(): DatabaseInstance {
   // Prepare statements for better performance
   const insertSession = rawDb.prepare(`
     INSERT OR REPLACE INTO sessions 
-    (id, title, claude_session_id, status, cwd, mounted_paths, allowed_tools, memory_enabled, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, title, claude_session_id, openai_thread_id, status, cwd, mounted_paths, allowed_tools, memory_enabled, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   // Note: Dynamic update queries are built in sessions.update() for flexibility
@@ -285,6 +303,7 @@ export function initDatabase(): DatabaseInstance {
           session.id,
           session.title,
           session.claude_session_id,
+          session.openai_thread_id,
           session.status,
           session.cwd,
           session.mounted_paths,

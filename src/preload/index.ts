@@ -73,7 +73,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Open links in default browser
   openExternal: (url: string) => ipcRenderer.invoke('shell.openExternal', url),
-  showItemInFolder: (filePath: string) => ipcRenderer.invoke('shell.showItemInFolder', filePath),
+  showItemInFolder: (filePath: string, cwd?: string) => ipcRenderer.invoke('shell.showItemInFolder', filePath, cwd),
 
   // Select files using native dialog
   selectFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog.selectFiles'),
@@ -91,7 +91,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   auth: {
     getStatus: (): Promise<Array<{
-      provider: 'codex' | 'claude';
+      provider: 'codex';
       available: boolean;
       path: string;
       profile?: string;
@@ -99,8 +99,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       expiresAt?: string;
       updatedAt?: string;
     }>> => ipcRenderer.invoke('auth.getStatus'),
-    importToken: (provider: 'codex' | 'claude'): Promise<{
-      provider: 'codex' | 'claude';
+    importToken: (provider: 'codex'): Promise<{
+      provider: 'codex';
       token: string;
       path: string;
       profile?: string;
@@ -318,7 +318,7 @@ declare global {
       platform: NodeJS.Platform;
       getVersion: () => Promise<string>;
       openExternal: (url: string) => Promise<boolean>;
-      showItemInFolder: (filePath: string) => Promise<boolean>;
+      showItemInFolder: (filePath: string, cwd?: string) => Promise<boolean>;
       selectFiles: () => Promise<string[]>;
       config: {
         get: () => Promise<AppConfig>;
@@ -329,7 +329,7 @@ declare global {
       };
       auth: {
         getStatus: () => Promise<Array<{
-          provider: 'codex' | 'claude';
+          provider: 'codex';
           available: boolean;
           path: string;
           profile?: string;
@@ -337,8 +337,8 @@ declare global {
           expiresAt?: string;
           updatedAt?: string;
         }>>;
-        importToken: (provider: 'codex' | 'claude') => Promise<{
-          provider: 'codex' | 'claude';
+        importToken: (provider: 'codex') => Promise<{
+          provider: 'codex';
           token: string;
           path: string;
           profile?: string;

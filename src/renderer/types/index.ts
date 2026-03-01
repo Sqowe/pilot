@@ -3,6 +3,7 @@ export interface Session {
   id: string;
   title: string;
   claudeSessionId?: string;
+  openaiThreadId?: string;
   status: SessionStatus;
   cwd?: string;
   mountedPaths: MountedPath[];
@@ -147,6 +148,10 @@ export interface PluginCatalogItemV2 {
   installable: boolean;
   hasManifest: boolean;
   componentCounts: PluginComponentCounts;
+  pluginId?: string;
+  installCommand?: string;
+  detailUrl?: string;
+  catalogSource?: 'claude-marketplace';
 }
 
 export interface PluginCatalogItem extends PluginCatalogItemV2 {
@@ -309,7 +314,7 @@ export type ServerEvent =
   | { type: 'trace.step'; payload: { sessionId: string; step: TraceStep } }
   | { type: 'trace.update'; payload: { sessionId: string; stepId: string; updates: Partial<TraceStep> } }
   | { type: 'folder.selected'; payload: { path: string } }
-  | { type: 'config.status'; payload: { isConfigured: boolean; config: AppConfig | null } }
+  | { type: 'config.status'; payload: { isConfigured: boolean; config: AppConfig } }
   | { type: 'sandbox.progress'; payload: SandboxSetupProgress }
   | { type: 'sandbox.sync'; payload: SandboxSyncStatus }
   | { type: 'plugins.runtimeApplied'; payload: { sessionId: string; plugins: Array<{ name: string; path: string }> } }
@@ -345,13 +350,26 @@ export interface ExecutionContext {
 }
 
 // App Config types
-export interface AppConfig {
-  provider: 'openrouter' | 'anthropic' | 'custom' | 'openai';
+export type ProviderType = 'openrouter' | 'anthropic' | 'custom' | 'openai';
+export type CustomProtocolType = 'anthropic' | 'openai';
+export type ProviderProfileKey = 'openrouter' | 'anthropic' | 'openai' | 'custom:anthropic' | 'custom:openai';
+
+export interface ProviderProfile {
   apiKey: string;
   baseUrl?: string;
-  customProtocol?: 'anthropic' | 'openai';
   model: string;
   openaiMode?: 'responses' | 'chat';
+}
+
+export interface AppConfig {
+  provider: ProviderType;
+  apiKey: string;
+  baseUrl?: string;
+  customProtocol?: CustomProtocolType;
+  model: string;
+  openaiMode?: 'responses' | 'chat';
+  activeProfileKey: ProviderProfileKey;
+  profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
   claudeCodePath?: string;
   defaultWorkdir?: string;
   sandboxEnabled?: boolean;

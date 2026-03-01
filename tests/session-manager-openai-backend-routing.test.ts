@@ -17,4 +17,24 @@ describe('selectOpenAIBackendRoute', () => {
   it('uses codex-cli when both local login and api key are missing', () => {
     expect(selectOpenAIBackendRoute({ hasLocalCodexLogin: false, apiKey: '' })).toBe('codex-cli');
   });
+
+  it('supports force responses fallback when api key exists', () => {
+    expect(
+      selectOpenAIBackendRoute({
+        hasLocalCodexLogin: true,
+        apiKey: 'sk-test',
+        forceResponsesFallback: true,
+      })
+    ).toBe('responses-fallback');
+  });
+
+  it('keeps codex-cli when force fallback enabled but api key missing', () => {
+    expect(
+      selectOpenAIBackendRoute({
+        hasLocalCodexLogin: true,
+        apiKey: '',
+        forceResponsesFallback: true,
+      })
+    ).toBe('codex-cli');
+  });
 });

@@ -217,7 +217,7 @@ describe('testApiConnection', () => {
     expect(finalResponse).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to api key when local codex candidate fails', async () => {
+  it('falls back to local codex when api key candidate fails', async () => {
     const finalResponse = vi.fn().mockResolvedValue({});
     mocks.importLocalAuthToken.mockReturnValue({
       provider: 'codex',
@@ -230,7 +230,7 @@ describe('testApiConnection', () => {
         async *[Symbol.asyncIterator]() {
           yield { type: 'response.created' };
         },
-        finalResponse: vi.fn().mockRejectedValue(new Error('local auth failed')),
+        finalResponse: vi.fn().mockRejectedValue(new Error('api key failed')),
       }))
       .mockImplementationOnce(() => ({
         async *[Symbol.asyncIterator]() {
@@ -251,7 +251,7 @@ describe('testApiConnection', () => {
     expect(mocks.openaiCtor).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        apiKey: 'oauth-token-from-import',
+        apiKey: 'oauth-local-token',
       }),
     );
     expect(finalResponse).toHaveBeenCalledTimes(1);
