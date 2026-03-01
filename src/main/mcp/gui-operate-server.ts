@@ -830,6 +830,22 @@ function normalizeModifierKeys(modifiers: string[]): string[] {
     .filter((m): m is string => Boolean(m));
 }
 
+/**
+ * Format coordinates for cliclick command.
+ * cliclick requires a '=' prefix before negative coordinates.
+ * For example: c:=-1000,500 instead of c:-1000,500
+ * @param x X coordinate
+ * @param y Y coordinate
+ * @returns Formatted coordinate string like "500,300" or "=-1000,500"
+ */
+function formatCliclickCoords(x: number, y: number): string {
+  // If either coordinate is negative, we need the '=' prefix
+  if (x < 0 || y < 0) {
+    return `=${x},${y}`;
+  }
+  return `${x},${y}`;
+}
+
 async function convertCliclickToCocoaCoordinates(
   globalX: number,
   globalY: number
@@ -2586,19 +2602,21 @@ async function performClick(
   const cliclickModifiers = normalizedModifiers.join(',');
   
   // Build click command based on type
+  // Use formatCliclickCoords to handle negative coordinates (displays to left/above main)
+  const coords = formatCliclickCoords(globalX, globalY);
   switch (clickType) {
     case 'double':
-      command = `dc:${globalX},${globalY}`;
+      command = `dc:${coords}`;
       break;
     case 'right':
-      command = `rc:${globalX},${globalY}`;
+      command = `rc:${coords}`;
       break;
     case 'triple':
-      command = `tc:${globalX},${globalY}`;
+      command = `tc:${coords}`;
       break;
     case 'single':
     default:
-      command = `c:${globalX},${globalY}`;
+      command = `c:${coords}`;
       break;
   }
   
@@ -2920,7 +2938,9 @@ async function performScroll(
 
   // macOS implementation
   // First move to the position
-  const moveCommand = `m:${globalX},${globalY}`;
+  // Use formatCliclickCoords to handle negative coordinates (displays to left/above main)
+  const coords = formatCliclickCoords(globalX, globalY);
+  const moveCommand = `m:${coords}`;
   const hasCliclick = Boolean(await resolveCliclickPath());
   
   // cliclick doesn't directly support scrolling, but we can use AppleScript
@@ -2984,7 +3004,10 @@ async function performDrag(
 
   // macOS implementation
   // cliclick drag command: dd: (drag down/start) then du: (drag up/end)
-  const command = `dd:${fromCoords.globalX},${fromCoords.globalY} du:${toCoords.globalX},${toCoords.globalY}`;
+  // Use formatCliclickCoords to handle negative coordinates (displays to left/above main)
+  const fromCoordsStr = formatCliclickCoords(fromCoords.globalX, fromCoords.globalY);
+  const toCoordsStr = formatCliclickCoords(toCoords.globalX, toCoords.globalY);
+  const command = `dd:${fromCoordsStr} du:${toCoordsStr}`;
   const hasCliclick = Boolean(await resolveCliclickPath());
   
   if (hasCliclick) {
@@ -3219,8 +3242,8 @@ async function getMousePosition(): Promise<{ x: number; y: number; displayIndex:
   } else {
     // macOS implementation
     const result = await executeCliclick('p');
-    // Output format: "x,y" or similar
-    const match = result.stdout.trim().match(/(\d+),(\d+)/);
+    // Output format: "x,y" — coordinates may be negative for displays to the left of / above main
+    const match = result.stdout.trim().match(/(-?\d+),(-?\d+)/);
     
     if (!match) {
       throw new Error(`Failed to parse mouse position: ${result.stdout}`);
@@ -3274,9 +3297,11 @@ async function moveMouse(
   }
   
   // macOS implementation
+  // Use formatCliclickCoords to handle negative coordinates (displays to left/above main)
   const hasCliclick = Boolean(await resolveCliclickPath());
   if (hasCliclick) {
-    await executeCliclick(`m:${globalX},${globalY}`);
+    const coords = formatCliclickCoords(globalX, globalY);
+    await executeCliclick(`m:${coords}`);
   } else {
     await performMacMouseMoveViaQuartz(globalX, globalY, []);
   }
@@ -4628,6 +4653,54 @@ Example:
   });
 }
 
+/**
+ * Extract information from GUI screenshot using vision
+ */
+async function extractGUIInfo(
+  extractionPrompt: string,
+  displayIndex?: number
+): Promise<string> {
+  // Supported on both macOS and Windows
+  if (PLATFORM !== 'darwin' && PLATFORM !== 'win32') {
+    throw new Error(`GUI extraction is not supported on platform: ${PLATFORM}`);
+  }
+  
+  // Take screenshot
+  const screenshotPath = path.join(SCREENSHOTS_DIR, `gui_extract_${Date.now()}.png`);
+  await takeScreenshot(screenshotPath, displayIndex);
+  
+  // Analyze with vision model
+  const imageBuffer = await fs.readFile(screenshotPath);
+  const base64Image = imageBuffer.toString('base64');
+  
+  const prompt = `You are an expert at extracting information from GUI screenshots. Analyze this screenshot and extract the requested information.
+
+**Extraction Request:**
+${extractionPrompt}
+
+**Instructions:**
+1. Carefully examine the screenshot to find the requested information.
+2. Extract the information as accurately and completely as possible.
+3. If the information is structured (like a list of messages, table data, menu items), format it clearly.
+4. If certain information cannot be found or is partially visible, mention what is visible and what is missing.
+5. Use appropriate formatting (bullet points, numbered lists, etc.) to present the extracted information clearly.
+
+**Response Format:**
+Provide the extracted information in a clear, structured format. If extracting multiple items, organize them logically.`;
+
+  const extractedInfo = await callVisionAPI(base64Image, prompt, 30000, 'extractGUIInfo');
+  writeMCPLog(`[extractGUIInfo] Response Length: ${extractedInfo.length}`, 'Response');
+  writeMCPLog(`[extractGUIInfo] Response (first 500 chars): ${extractedInfo.substring(0, 500)}`, 'Response Preview');
+  
+  return JSON.stringify({
+    success: true,
+    extraction_prompt: extractionPrompt,
+    extracted_info: extractedInfo,
+    screenshot_path: screenshotPath,
+    displayIndex: displayIndex ?? 'all',
+  });
+}
+
 // ============================================================================
 // MCP Server Setup
 // ============================================================================
@@ -4742,17 +4815,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'scroll',
-        description: 'Perform a scroll operation at the specified position.',
+        description: 'Perform a scroll operation at the specified position. Coordinates are display-local logical coordinates by default. You can also pass normalized coordinates (0-1000) via coordinate_type.',
         inputSchema: {
           type: 'object',
           properties: {
+            coordinate_type: {
+              type: 'string',
+              enum: ['auto', 'absolute', 'normalized'],
+              description: 'Coordinate interpretation. "absolute" = display-local logical coordinates. "normalized" = 0-1000 relative coordinates. "auto" (default) uses absolute, but converts from normalized if values are out of bounds.',
+            },
             x: {
               type: 'number',
-              description: 'X coordinate to scroll at',
+              description: 'X coordinate to scroll at (interpretation depends on coordinate_type)',
             },
             y: {
               type: 'number',
-              description: 'Y coordinate to scroll at',
+              description: 'Y coordinate to scroll at (interpretation depends on coordinate_type)',
             },
             display_index: {
               type: 'number',
@@ -4779,8 +4857,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             coordinate_type: {
               type: 'string',
-              enum: ['normalized', 'absolute'],
-              description: 'Coordinate interpretation. "normalized" means 0-1000 relative coords on the display. "absolute" means display-local logical pixel coords. Default: normalized',
+              enum: ['auto', 'absolute', 'normalized'],
+              description: 'Coordinate interpretation. "normalized" (default) means 0-1000 relative coords on the display. "absolute" means display-local logical pixel coords. "auto" uses absolute, but converts from normalized if values are out of bounds.',
             },
             from_x: {
               type: 'number',
@@ -4879,17 +4957,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'move_mouse',
-        description: 'Move the mouse cursor to a specified position without clicking.',
+        description: 'Move the mouse cursor to a specified position without clicking. Coordinates are display-local logical coordinates by default. You can also pass normalized coordinates (0-1000) via coordinate_type.',
         inputSchema: {
           type: 'object',
           properties: {
+            coordinate_type: {
+              type: 'string',
+              enum: ['auto', 'absolute', 'normalized'],
+              description: 'Coordinate interpretation. "absolute" = display-local logical coordinates. "normalized" = 0-1000 relative coordinates. "auto" (default) uses absolute, but converts from normalized if values are out of bounds.',
+            },
             x: {
               type: 'number',
-              description: 'X coordinate',
+              description: 'X coordinate (interpretation depends on coordinate_type)',
             },
             y: {
               type: 'number',
-              description: 'Y coordinate',
+              description: 'Y coordinate (interpretation depends on coordinate_type)',
             },
             display_index: {
               type: 'number',
@@ -4990,6 +5073,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'gui_extract_info',
+        description: 'Extract information from GUI screenshot using AI vision. Use natural language to describe what information you want to extract (e.g., "Extract all chat messages currently visible in this group chat", "List all menu items shown", "Extract the table data displayed", "Get the notification text", "List all filenames in this folder view").',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            extraction_prompt: {
+              type: 'string',
+              description: 'Natural language description of what information to extract from the screen',
+            },
+            display_index: {
+              type: 'number',
+              description: 'Display index to capture. If not provided, uses main display.',
+            },
+          },
+          required: ['extraction_prompt'],
+        },
+      },
+      {
         name: 'get_all_visited_apps',
         description: 'Get a list of all applications that have been used before (have stored click history). IMPORTANT: You should call this BEFORE init_app to check if the app already exists and get the exact app name. This prevents creating duplicate directories due to name variations (e.g., "Cursor" vs "cursor" vs "Cursor IDE"). If the app you want is not in the list, you can use init_app with a new app name.',
         inputSchema: {
@@ -5079,14 +5180,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       
       case 'scroll': {
-        const { x, y, display_index = 0, direction, amount = 3 } = args as {
+        const { x, y, display_index = 0, direction, amount = 3, coordinate_type = 'auto' } = args as {
           x: number;
           y: number;
           display_index?: number;
           direction: 'up' | 'down' | 'left' | 'right';
           amount?: number;
+          coordinate_type?: 'auto' | 'absolute' | 'normalized';
         };
-        result = await performScroll(x, y, display_index, direction, amount);
+        const resolved = await resolveClickCoordinates(x, y, display_index, coordinate_type);
+        result = await performScroll(resolved.x, resolved.y, display_index, direction, amount);
         break;
       }
       
@@ -5097,24 +5200,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           to_x: number;
           to_y: number;
           display_index?: number;
-          coordinate_type?: 'normalized' | 'absolute';
+          coordinate_type?: 'auto' | 'absolute' | 'normalized';
         };
 
-        let fromX = from_x;
-        let fromY = from_y;
-        let toX = to_x;
-        let toY = to_y;
+        // Use resolveClickCoordinates for consistent coordinate handling
+        const fromResolved = await resolveClickCoordinates(from_x, from_y, display_index, coordinate_type);
+        const toResolved = await resolveClickCoordinates(to_x, to_y, display_index, coordinate_type);
 
-        if (coordinate_type !== 'absolute') {
-          const from = await convertNormalizedToDisplayCoordinates(from_x, from_y, display_index);
-          const to = await convertNormalizedToDisplayCoordinates(to_x, to_y, display_index);
-          fromX = from.x;
-          fromY = from.y;
-          toX = to.x;
-          toY = to.y;
-        }
-
-        result = await performDrag(fromX, fromY, toX, toY, display_index);
+        result = await performDrag(fromResolved.x, fromResolved.y, toResolved.x, toResolved.y, display_index);
         break;
       }
       
@@ -5145,12 +5238,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       
       case 'move_mouse': {
-        const { x, y, display_index = 0 } = args as {
+        const { x, y, display_index = 0, coordinate_type = 'auto' } = args as {
           x: number;
           y: number;
           display_index?: number;
+          coordinate_type?: 'auto' | 'absolute' | 'normalized';
         };
-        result = await moveMouse(x, y, display_index);
+        const resolved = await resolveClickCoordinates(x, y, display_index, coordinate_type);
+        result = await moveMouse(resolved.x, resolved.y, display_index);
         break;
       }
       
@@ -5198,6 +5293,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           display_index?: number;
         };
         result = await verifyGUIState(question, display_index);
+        break;
+      }
+
+      case 'gui_extract_info': {
+        const { extraction_prompt, display_index } = args as {
+          extraction_prompt: string;
+          display_index?: number;
+        };
+        result = await extractGUIInfo(extraction_prompt, display_index);
         break;
       }
       
