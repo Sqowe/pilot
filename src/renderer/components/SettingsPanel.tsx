@@ -15,6 +15,7 @@ import { RemoteControlPanel } from './RemoteControlPanel';
 import { useApiConfigState } from '../hooks/useApiConfigState';
 import { ApiConfigSetManager } from './ApiConfigSetManager';
 import { useAppStore } from '../store';
+import { buildScheduledTaskTitle } from '../../shared/schedule/task-title';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
@@ -3013,13 +3014,13 @@ function SkillCard({ skill, onToggleEnabled, onDelete, isLoading }: {
 
 function ScheduleTab() {
   const workingDir = useAppStore((state) => state.workingDir);
+  const sessions = useAppStore((state) => state.sessions);
   const [tasks, setTasks] = useState<ScheduleTask[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTaskSnapshot, setEditingTaskSnapshot] = useState<ScheduleTask | null>(null);
-  const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
   const [cwd, setCwd] = useState('');
   const [runAt, setRunAt] = useState('');
@@ -3027,6 +3028,7 @@ function ScheduleTab() {
   const [repeatEnabled, setRepeatEnabled] = useState(false);
   const [repeatEvery, setRepeatEvery] = useState(1);
   const [repeatUnit, setRepeatUnit] = useState<ScheduleRepeatUnit>('day');
+  const previewTitle = buildScheduledTaskTitle(prompt);
 
   useEffect(() => {
     const defaultRunAt = Date.now() + 5 * 60 * 1000;
@@ -3089,7 +3091,7 @@ function ScheduleTab() {
     setError('');
     setSuccess('');
     try {
-      const normalizedTitle = title.trim() || '定时任务';
+      const normalizedTitle = buildScheduledTaskTitle(trimmedPrompt);
       if (editingId) {
         const originalRunAtInput = editingTaskSnapshot
           ? toLocalDateTimeInput(editingTaskSnapshot.nextRunAt ?? editingTaskSnapshot.runAt)
@@ -3183,9 +3185,41 @@ function ScheduleTab() {
     }
   }
 
+  async function stopTaskRun(task: ScheduleTask) {
+    if (!isElectron) return;
+    const sessionId = task.lastRunSessionId;
+    if (!sessionId) {
+      setError('该任务暂无可停止的执行会话');
+      return;
+    }
+    const targetSession = sessions.find((session) => session.id === sessionId);
+    if (!targetSession || targetSession.status !== 'running') {
+      setError('该任务当前没有正在执行的会话');
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      window.electronAPI.send({
+        type: 'session.stop',
+        payload: { sessionId },
+      });
+      setSuccess('已发送停止指令');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '停止执行失败');
+      setIsLoading(false);
+      return;
+    }
+
+    await loadTasks({ silent: true });
+    setIsLoading(false);
+  }
+
   async function deleteTask(task: ScheduleTask) {
     if (!isElectron) return;
-    if (!window.confirm(`确认删除任务「${task.title}」？`)) return;
+    if (!window.confirm(`确认删除任务「${buildScheduledTaskTitle(task.prompt)}」？`)) return;
     setIsLoading(true);
     setError('');
     setSuccess('');
@@ -3205,7 +3239,6 @@ function ScheduleTab() {
   function editTask(task: ScheduleTask) {
     setEditingId(task.id);
     setEditingTaskSnapshot(task);
-    setTitle(task.title);
     setPrompt(task.prompt);
     setCwd(task.cwd);
     setRunAt(toLocalDateTimeInput(task.nextRunAt ?? task.runAt));
@@ -3221,7 +3254,6 @@ function ScheduleTab() {
     const defaultRunAt = Date.now() + 5 * 60 * 1000;
     setEditingId(null);
     setEditingTaskSnapshot(null);
-    setTitle('');
     setPrompt('');
     setCwd(workingDir || '');
     setRunAt(toLocalDateTimeInput(defaultRunAt));
@@ -3250,12 +3282,10 @@ function ScheduleTab() {
         <h4 className="text-sm font-medium text-text-primary">
           {editingId ? '编辑定时任务' : '新建定时任务'}
         </h4>
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="任务标题（可选）"
-          className="w-full px-3 py-2 rounded-lg bg-background border border-border text-sm"
-        />
+        <div className="rounded-lg border border-border bg-background px-3 py-2">
+          <div className="text-xs text-text-muted mb-1">自动标题（用于会话区分）</div>
+          <div className="text-sm text-text-primary break-all">{previewTitle}</div>
+        </div>
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
@@ -3344,9 +3374,20 @@ function ScheduleTab() {
         ) : (
           tasks.map((task) => (
             <div key={task.id} className="rounded-xl border border-border bg-surface p-3 space-y-2">
+              {(() => {
+                const lastRunSession = task.lastRunSessionId
+                  ? sessions.find((session) => session.id === task.lastRunSessionId) ?? null
+                  : null;
+                const isTaskRunning = lastRunSession?.status === 'running';
+                const displayTitle = buildScheduledTaskTitle(task.prompt);
+                const lastRunStatusLabel = lastRunSession
+                  ? (isTaskRunning ? '运行中' : '已结束')
+                  : (task.lastRunSessionId ? '未知' : '无');
+                return (
+                  <>
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="font-medium text-sm text-text-primary truncate">{task.title}</div>
+                  <div className="font-medium text-sm text-text-primary truncate">{displayTitle}</div>
                   <div className="text-xs text-text-muted truncate">{task.prompt}</div>
                 </div>
                 <span className={`text-xs px-2 py-1 rounded ${task.enabled ? 'bg-success/10 text-success' : 'bg-surface-hover text-text-muted'}`}>
@@ -3367,6 +3408,9 @@ function ScheduleTab() {
                   最近会话：{task.lastRunSessionId}
                 </div>
               )}
+              <div className="text-xs text-text-muted">
+                会话状态：{lastRunStatusLabel}
+              </div>
               <div className="text-xs text-text-muted">
                 目录：{task.cwd}
               </div>
@@ -3389,6 +3433,18 @@ function ScheduleTab() {
                   立即执行
                 </button>
                 <button
+                  onClick={() => stopTaskRun(task)}
+                  disabled={isLoading || !isTaskRunning}
+                  title={isTaskRunning ? '停止该任务最近一次执行会话' : '该任务当前没有正在执行的会话'}
+                  className={`px-2 py-1 rounded text-xs disabled:opacity-50 ${
+                    isTaskRunning
+                      ? 'bg-warning/10 text-warning'
+                      : 'bg-surface-hover text-text-muted'
+                  }`}
+                >
+                  停止执行
+                </button>
+                <button
                   onClick={() => editTask(task)}
                   disabled={isLoading}
                   className="px-2 py-1 rounded bg-surface-hover text-xs text-text-secondary disabled:opacity-50"
@@ -3403,6 +3459,9 @@ function ScheduleTab() {
                   删除
                 </button>
               </div>
+                  </>
+                );
+              })()}
             </div>
           ))
         )}

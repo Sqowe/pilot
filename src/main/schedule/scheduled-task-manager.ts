@@ -1,3 +1,5 @@
+import { buildScheduledTaskTitle } from '../../shared/schedule/task-title';
+
 export type ScheduleRepeatUnit = 'minute' | 'hour' | 'day';
 
 export interface ScheduledTask {
@@ -113,12 +115,16 @@ export class ScheduledTaskManager {
   }
 
   create(input: ScheduledTaskCreateInput): ScheduledTask {
+    const normalizedPrompt = input.prompt.trim();
+    const normalizedTitle = buildScheduledTaskTitle(normalizedPrompt);
     const normalizedRepeatEvery = normalizeRepeatEvery(input.repeatEvery);
     const normalizedRepeatUnit = normalizedRepeatEvery === null
       ? null
       : normalizeRepeatUnit(input.repeatUnit);
     const created = this.store.create({
       ...input,
+      title: normalizedTitle,
+      prompt: normalizedPrompt,
       nextRunAt: input.nextRunAt ?? input.runAt,
       enabled: input.enabled ?? true,
       repeatEvery: normalizedRepeatEvery,
@@ -129,6 +135,10 @@ export class ScheduledTaskManager {
   }
 
   update(id: string, updates: ScheduledTaskUpdateInput): ScheduledTask | null {
+    const current = this.store.get(id);
+    if (!current) return null;
+    const nextPrompt = updates.prompt === undefined ? current.prompt : updates.prompt.trim();
+    const nextTitle = buildScheduledTaskTitle(nextPrompt);
     const nextRepeatEvery = updates.repeatEvery === undefined
       ? undefined
       : normalizeRepeatEvery(updates.repeatEvery);
@@ -140,6 +150,8 @@ export class ScheduledTaskManager {
     }
     const updated = this.store.update(id, {
       ...updates,
+      prompt: nextPrompt,
+      title: nextTitle,
       repeatEvery: nextRepeatEvery,
       repeatUnit: nextRepeatUnit,
     });
@@ -246,8 +258,18 @@ export class ScheduledTaskManager {
   }
 
   private async executeAndRecord(task: ScheduledTask): Promise<ScheduledTaskExecutionRecord> {
+    const runtimeTitle = buildScheduledTaskTitle(task.prompt);
+    const taskForExecution = task.title === runtimeTitle
+      ? task
+      : {
+          ...task,
+          title: runtimeTitle,
+        };
+    if (taskForExecution !== task) {
+      this.store.update(task.id, { title: runtimeTitle });
+    }
     try {
-      const result = await this.executeTask(task);
+      const result = await this.executeTask(taskForExecution);
       this.store.update(task.id, {
         lastRunAt: this.now(),
         lastRunSessionId: result.sessionId,

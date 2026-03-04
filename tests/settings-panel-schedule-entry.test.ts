@@ -32,6 +32,12 @@ describe('SettingsPanel schedule tab entry', () => {
     expect(settingsPanelContent).toContain('执行时间必须晚于当前时间；如需立刻执行请使用“立即执行”');
   });
 
+  it('builds schedule titles from prompt with fixed prefix', () => {
+    expect(settingsPanelContent).toContain('自动标题（用于会话区分）');
+    expect(settingsPanelContent).toContain('buildScheduledTaskTitle(trimmedPrompt)');
+    expect(settingsPanelContent).toContain('buildScheduledTaskTitle(task.prompt)');
+  });
+
   it('renders schedule rule and last-run details for better task readability', () => {
     expect(settingsPanelContent).toContain('执行策略：{formatScheduleRule(task)}');
     expect(settingsPanelContent).toContain('上次执行：{task.lastRunAt === null ? \'尚未执行\' : formatTime(task.lastRunAt)}');
@@ -40,5 +46,11 @@ describe('SettingsPanel schedule tab entry', () => {
 
   it('shows clear stop semantics hint', () => {
     expect(settingsPanelContent).toContain('停用仅阻止后续自动触发，已开始执行的会话需在会话列表中手动停止');
+  });
+
+  it('provides stop-run control for running scheduled sessions', () => {
+    expect(settingsPanelContent).toContain('停止执行');
+    expect(settingsPanelContent).toContain("type: 'session.stop'");
+    expect(settingsPanelContent).toContain('该任务当前没有正在执行的会话');
   });
 });
