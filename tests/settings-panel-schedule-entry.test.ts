@@ -31,4 +31,10 @@ describe('SettingsPanel schedule tab entry', () => {
   it('validates future run time and suggests runNow for immediate execution', () => {
     expect(settingsPanelContent).toContain('执行时间必须晚于当前时间；如需立刻执行请使用“立即执行”');
   });
+
+  it('renders schedule rule and last-run details for better task readability', () => {
+    expect(settingsPanelContent).toContain('执行策略：{formatScheduleRule(task)}');
+    expect(settingsPanelContent).toContain('上次执行：{task.lastRunAt === null ? \'尚未执行\' : formatTime(task.lastRunAt)}');
+    expect(settingsPanelContent).toContain('最近会话：{task.lastRunSessionId}');
+  });
 });

@@ -99,7 +99,17 @@ export class ScheduledTaskManager {
   }
 
   list(): ScheduledTask[] {
-    return this.store.list().sort((a, b) => a.createdAt - b.createdAt);
+    return this.store.list().sort((a, b) => {
+      if (a.enabled !== b.enabled) {
+        return a.enabled ? -1 : 1;
+      }
+      const aNextRun = a.nextRunAt ?? Number.MAX_SAFE_INTEGER;
+      const bNextRun = b.nextRunAt ?? Number.MAX_SAFE_INTEGER;
+      if (aNextRun !== bNextRun) {
+        return aNextRun - bNextRun;
+      }
+      return b.createdAt - a.createdAt;
+    });
   }
 
   create(input: ScheduledTaskCreateInput): ScheduledTask {
@@ -146,9 +156,7 @@ export class ScheduledTaskManager {
   toggle(id: string, enabled: boolean): ScheduledTask | null {
     const current = this.store.get(id);
     if (!current) return null;
-    const nextRunAt = enabled
-      ? (current.nextRunAt ?? current.runAt ?? this.now())
-      : null;
+    const nextRunAt = enabled ? this.computeToggleNextRunAt(current) : null;
     const updated = this.store.update(id, { enabled, nextRunAt });
     if (!updated) return null;
     this.scheduleTask(updated);
@@ -217,6 +225,18 @@ export class ScheduledTaskManager {
       enabled: false,
       nextRunAt: null,
     }) ?? task;
+  }
+
+  private computeToggleNextRunAt(task: ScheduledTask): number {
+    const now = this.now();
+    if (isRepeatingTask(task)) {
+      const nextRunAt = computeNextRunAt(task, now);
+      if (nextRunAt !== null) {
+        return nextRunAt;
+      }
+    }
+    const base = task.nextRunAt ?? task.runAt ?? now;
+    return Math.max(base, now);
   }
 
   private async executeAndRecord(task: ScheduledTask): Promise<ScheduledTaskExecutionRecord> {

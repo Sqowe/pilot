@@ -3352,6 +3352,17 @@ function ScheduleTab() {
                 下次执行：{task.nextRunAt === null ? '无' : formatTime(task.nextRunAt)}
               </div>
               <div className="text-xs text-text-muted">
+                执行策略：{formatScheduleRule(task)}
+              </div>
+              <div className="text-xs text-text-muted">
+                上次执行：{task.lastRunAt === null ? '尚未执行' : formatTime(task.lastRunAt)}
+              </div>
+              {task.lastRunSessionId && (
+                <div className="text-xs text-text-muted break-all">
+                  最近会话：{task.lastRunSessionId}
+                </div>
+              )}
+              <div className="text-xs text-text-muted">
                 目录：{task.cwd}
               </div>
               {task.lastError && (
@@ -3408,6 +3419,19 @@ function toLocalDateTimeInput(timestamp: number): string {
 
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleString();
+}
+
+function formatScheduleRule(task: ScheduleTask): string {
+  if (!task.repeatEvery || !task.repeatUnit) {
+    return '一次性';
+  }
+  if (task.repeatUnit === 'minute') {
+    return `每 ${task.repeatEvery} 分钟`;
+  }
+  if (task.repeatUnit === 'hour') {
+    return `每 ${task.repeatEvery} 小时`;
+  }
+  return `每 ${task.repeatEvery} 天`;
 }
 
 // ==================== Language Tab ====================

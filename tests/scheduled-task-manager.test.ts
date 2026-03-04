@@ -334,4 +334,41 @@ describe('ScheduledTaskManager', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(executeTask).toHaveBeenCalledTimes(1);
   });
+
+  it('re-enables repeating task with next future slot instead of immediate catch-up run', async () => {
+    const now = Date.now();
+    const store = createStore([
+      createTask({
+        id: 'toggle-repeat',
+        enabled: false,
+        runAt: now - 15 * 60 * 1000,
+        nextRunAt: null,
+        repeatEvery: 5,
+        repeatUnit: 'minute',
+      }),
+    ]);
+    const executeTask = vi.fn().mockResolvedValue({ sessionId: 'session-toggle-repeat' });
+    const manager = new ScheduledTaskManager({ store, executeTask, now: () => Date.now() });
+    manager.start();
+
+    const toggled = manager.toggle('toggle-repeat', true);
+    expect(toggled?.nextRunAt).toBe(now + 5 * 60 * 1000);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(executeTask).toHaveBeenCalledTimes(0);
+  });
+
+  it('sorts list by enabled then nearest nextRunAt', () => {
+    const now = Date.now();
+    const store = createStore([
+      createTask({ id: 'disabled', enabled: false, nextRunAt: null, createdAt: now - 1_000 }),
+      createTask({ id: 'enabled-late', enabled: true, nextRunAt: now + 10 * 60 * 1000, createdAt: now - 2_000 }),
+      createTask({ id: 'enabled-soon', enabled: true, nextRunAt: now + 60 * 1000, createdAt: now - 3_000 }),
+    ]);
+    const executeTask = vi.fn().mockResolvedValue({ sessionId: 'session-sort' });
+    const manager = new ScheduledTaskManager({ store, executeTask, now: () => Date.now() });
+
+    const ids = manager.list().map((task) => task.id);
+    expect(ids).toEqual(['enabled-soon', 'enabled-late', 'disabled']);
+  });
 });
