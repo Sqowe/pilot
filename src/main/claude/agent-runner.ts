@@ -34,6 +34,31 @@ const VIRTUAL_WORKSPACE_PATH = '/workspace';
 // Cache for shell environment (loaded once at startup)
 let cachedShellEnv: NodeJS.ProcessEnv | null = null;
 
+// Bundled node/npx paths never change at runtime — resolve once.
+let cachedBundledNodePaths: { node: string; npx: string } | null | undefined = undefined;
+
+function getBundledNodePaths(): { node: string; npx: string } | null {
+  if (cachedBundledNodePaths !== undefined) {
+    return cachedBundledNodePaths;
+  }
+  const platform = process.platform;
+  const arch = process.arch;
+  let resourcesPath: string;
+  if (process.env.NODE_ENV === 'development') {
+    const projectRoot = path.join(__dirname, '..', '..');
+    resourcesPath = path.join(projectRoot, 'resources', 'node', `${platform}-${arch}`);
+  } else {
+    resourcesPath = path.join(process.resourcesPath, 'node');
+  }
+  const binDir = platform === 'win32' ? resourcesPath : path.join(resourcesPath, 'bin');
+  const nodePath = path.join(binDir, platform === 'win32' ? 'node.exe' : 'node');
+  const npxPath = path.join(binDir, platform === 'win32' ? 'npx.cmd' : 'npx');
+  cachedBundledNodePaths = (fs.existsSync(nodePath) && fs.existsSync(npxPath))
+    ? { node: nodePath, npx: npxPath }
+    : null;
+  return cachedBundledNodePaths;
+}
+
 /**
  * Get shell environment with proper PATH (including node, npm, etc.)
  * GUI apps on macOS don't inherit shell PATH, so we need to extract it
@@ -567,6 +592,10 @@ export class ClaudeAgentRunner {
   private sdkSessions: Map<string, string> = new Map(); // sessionId -> sdk session_id
   private pendingQuestions: Map<string, PendingQuestion> = new Map(); // questionId -> resolver
 
+  // Per-instance caches — invalidated when the underlying config changes.
+  private _mcpServersCache: { fingerprint: string; servers: Record<string, unknown> } | null = null;
+  private _skillsSetupDone = false;
+
   /**
    * Clear SDK session cache for a session
    * Called when session's cwd changes - SDK sessions are bound to cwd
@@ -576,6 +605,16 @@ export class ClaudeAgentRunner {
       this.sdkSessions.delete(sessionId);
       log('[ClaudeAgentRunner] Cleared SDK session cache for:', sessionId);
     }
+  }
+
+  /** Call after the user installs / removes a skill so the next query re-links everything. */
+  invalidateSkillsSetup(): void {
+    this._skillsSetupDone = false;
+  }
+
+  /** Call after the user changes MCP server config so the next query rebuilds mcpServers. */
+  invalidateMcpServersCache(): void {
+    this._mcpServersCache = null;
   }
 
   /**
@@ -1485,42 +1524,49 @@ Then follow the workflow described in that file.
       // SDK uses CLAUDE_CONFIG_DIR to locate skills
       const userClaudeDir = this.getAppClaudeDir();
 
-      // Ensure app Claude config directory exists
-      if (!fs.existsSync(userClaudeDir)) {
-        fs.mkdirSync(userClaudeDir, { recursive: true });
-      }
+      // Skills directory setup: only run on the first query per runner instance.
+      // Symlinks and directories are stable across queries; re-running every time
+      // wastes ~10-30 syscalls per query for no benefit. Call invalidateSkillsSetup()
+      // to force a re-run after the user installs or removes a skill.
+      if (!this._skillsSetupDone) {
+        // Ensure app Claude config directory exists
+        if (!fs.existsSync(userClaudeDir)) {
+          fs.mkdirSync(userClaudeDir, { recursive: true });
+        }
 
-      // Ensure app Claude skills directory exists
-      const appSkillsDir = this.getRuntimeSkillsDir();
-      if (!fs.existsSync(appSkillsDir)) {
-        fs.mkdirSync(appSkillsDir, { recursive: true });
-      }
+        // Ensure app Claude skills directory exists
+        const appSkillsDir = this.getRuntimeSkillsDir();
+        if (!fs.existsSync(appSkillsDir)) {
+          fs.mkdirSync(appSkillsDir, { recursive: true });
+        }
 
-      // Copy built-in skills to app Claude skills directory if they don't exist
-      const builtinSkillsPath = this.getBuiltinSkillsPath();
-      if (builtinSkillsPath && fs.existsSync(builtinSkillsPath)) {
-        const builtinSkills = fs.readdirSync(builtinSkillsPath);
-        for (const skillName of builtinSkills) {
-          const builtinSkillPath = path.join(builtinSkillsPath, skillName);
-          const userSkillPath = path.join(appSkillsDir, skillName);
+        // Copy built-in skills to app Claude skills directory if they don't exist
+        const builtinSkillsPath = this.getBuiltinSkillsPath();
+        if (builtinSkillsPath && fs.existsSync(builtinSkillsPath)) {
+          const builtinSkills = fs.readdirSync(builtinSkillsPath);
+          for (const skillName of builtinSkills) {
+            const builtinSkillPath = path.join(builtinSkillsPath, skillName);
+            const userSkillPath = path.join(appSkillsDir, skillName);
 
-          // Only copy if it's a directory and doesn't exist in app directory
-          if (fs.statSync(builtinSkillPath).isDirectory() && !fs.existsSync(userSkillPath)) {
-            // Create symlink instead of copying to save space and allow updates
-            try {
-              fs.symlinkSync(builtinSkillPath, userSkillPath, 'dir');
-              log(`[ClaudeAgentRunner] Linked built-in skill: ${skillName}`);
-            } catch (err) {
-              // If symlink fails (e.g., on Windows without permissions), copy the directory
-              logWarn(`[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`, err);
-              // We'll skip copying for now to keep it simple
+            // Only copy if it's a directory and doesn't exist in app directory
+            if (fs.statSync(builtinSkillPath).isDirectory() && !fs.existsSync(userSkillPath)) {
+              // Create symlink instead of copying to save space and allow updates
+              try {
+                fs.symlinkSync(builtinSkillPath, userSkillPath, 'dir');
+                log(`[ClaudeAgentRunner] Linked built-in skill: ${skillName}`);
+              } catch (err) {
+                // If symlink fails (e.g., on Windows without permissions), copy the directory
+                logWarn(`[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`, err);
+                // We'll skip copying for now to keep it simple
+              }
             }
           }
         }
-      }
 
-      this.syncUserSkillsToAppDir(appSkillsDir);
-      this.syncConfiguredSkillsToRuntimeDir(appSkillsDir);
+        this.syncUserSkillsToAppDir(appSkillsDir);
+        this.syncConfiguredSkillsToRuntimeDir(appSkillsDir);
+        this._skillsSetupDone = true;
+      }
 
       // Build available skills section dynamically
       const availableSkillsPrompt = this.getAvailableSkillsPrompt(workingDir);
@@ -1623,10 +1669,10 @@ Then follow the workflow described in that file.
       }
       
       logTiming('before building MCP servers config');
-      
+
       // Build MCP servers configuration for SDK
       // IMPORTANT: SDK uses tool names in format: mcp__<ServerKey>__<toolName>
-      const mcpServers: Record<string, any> = {};
+      const mcpServers: Record<string, unknown> = {};
       if (this.mcpManager) {
         const serverStatuses = this.mcpManager.getServerStatus();
         const connectedServers = serverStatuses.filter((s) => s.connected);
@@ -1645,109 +1691,97 @@ Then follow the workflow described in that file.
           allConfigs = [];
         }
 
-        // 获取 STDIO 服务的内置 node/npx 路径
-        const getBundledNodePaths = (): { node: string; npx: string } | null => {
-          const platform = process.platform;
-          const arch = process.arch;
+        // Cache key: serialized config list + imageCapable flag.  The bundled node
+        // paths are stable for the lifetime of the process so they don't need to be
+        // part of the fingerprint.
+        const mcpFingerprint = JSON.stringify(allConfigs) + String(imageCapable);
+        if (this._mcpServersCache?.fingerprint === mcpFingerprint) {
+          Object.assign(mcpServers, this._mcpServersCache.servers);
+          log('[ClaudeAgentRunner] MCP servers config reused from cache');
+        } else {
+          // Use the module-level memoized helper — no more per-query fs.existsSync calls.
+          const bundledNodePaths = getBundledNodePaths();
+          const bundledNpx = bundledNodePaths?.npx ?? null;
 
-          let resourcesPath: string;
-          if (process.env.NODE_ENV === 'development') {
-            const projectRoot = path.join(__dirname, '..', '..');
-            resourcesPath = path.join(projectRoot, 'resources', 'node', `${platform}-${arch}`);
-          } else {
-            resourcesPath = path.join(process.resourcesPath, 'node');
-          }
+          for (const config of allConfigs) {
+            try {
+              // Use a simpler key without spaces to avoid issues
+              const serverKey = config.name;
 
-          const binDir = platform === 'win32' ? resourcesPath : path.join(resourcesPath, 'bin');
-          const nodeExe = platform === 'win32' ? 'node.exe' : 'node';
-          const npxExe = platform === 'win32' ? 'npx.cmd' : 'npx';
-          const nodePath = path.join(binDir, nodeExe);
-          const npxPath = path.join(binDir, npxExe);
+              if (config.type === 'stdio') {
+                // 当命令是 npx 或 node 时优先使用内置路径
+                const command = (config.command === 'npx' && bundledNpx)
+                  ? bundledNpx
+                  : (config.command === 'node' && bundledNodePaths ? bundledNodePaths.node : config.command);
 
-          if (fs.existsSync(nodePath) && fs.existsSync(npxPath)) {
-            return { node: nodePath, npx: npxPath };
-          }
-          return null;
-        };
-
-        const bundledNodePaths = getBundledNodePaths();
-        const bundledNpx = bundledNodePaths?.npx ?? null;
-
-        for (const config of allConfigs) {
-          try {
-            // Use a simpler key without spaces to avoid issues
-            const serverKey = config.name;
-
-            if (config.type === 'stdio') {
-              // 当命令是 npx 或 node 时优先使用内置路径
-              const command = (config.command === 'npx' && bundledNpx)
-                ? bundledNpx
-                : (config.command === 'node' && bundledNodePaths ? bundledNodePaths.node : config.command);
-
-              // 使用内置 npx/node 时，将内置 node bin 注入 PATH
-              let serverEnv = { ...config.env };
-              if (bundledNodePaths && (config.command === 'npx' || config.command === 'node')) {
-                const nodeBinDir = path.dirname(bundledNodePaths.node);
-                const currentPath = process.env.PATH || '';
-                // Prepend bundled node bin to PATH so npx can find node
-                serverEnv.PATH = `${nodeBinDir}${path.delimiter}${currentPath}`;
-                log(`[ClaudeAgentRunner]   Added bundled node bin to PATH: ${nodeBinDir}`);
-              }
-
-              if (!imageCapable) {
-                serverEnv.OPEN_COWORK_DISABLE_IMAGE_TOOL_OUTPUT = '1';
-              }
-
-              // Resolve path placeholders for presets
-              let resolvedArgs = config.args || [];
-
-              // Check if any args contain placeholders that need resolving
-              const hasPlaceholders = resolvedArgs.some((arg) =>
-                arg.includes('{SOFTWARE_DEV_SERVER_PATH}') ||
-                arg.includes('{GUI_OPERATE_SERVER_PATH}')
-              );
-
-              if (hasPlaceholders) {
-                // Get the appropriate preset based on config name
-                let presetKey: string | null = null;
-                if (config.name === 'Software_Development' || config.name === 'Software Development') {
-                  presetKey = 'software-development';
-                } else if (config.name === 'GUI_Operate' || config.name === 'GUI Operate') {
-                  presetKey = 'gui-operate';
+                // 使用内置 npx/node 时，将内置 node bin 注入 PATH
+                let serverEnv = { ...config.env };
+                if (bundledNodePaths && (config.command === 'npx' || config.command === 'node')) {
+                  const nodeBinDir = path.dirname(bundledNodePaths.node);
+                  const currentPath = process.env.PATH || '';
+                  // Prepend bundled node bin to PATH so npx can find node
+                  serverEnv.PATH = `${nodeBinDir}${path.delimiter}${currentPath}`;
+                  log(`[ClaudeAgentRunner]   Added bundled node bin to PATH: ${nodeBinDir}`);
                 }
 
-                if (presetKey) {
-                  const preset = mcpConfigStore.createFromPreset(presetKey, true);
-                  if (preset && preset.args) {
-                    resolvedArgs = preset.args;
+                if (!imageCapable) {
+                  serverEnv.OPEN_COWORK_DISABLE_IMAGE_TOOL_OUTPUT = '1';
+                }
+
+                // Resolve path placeholders for presets
+                let resolvedArgs = config.args || [];
+
+                // Check if any args contain placeholders that need resolving
+                const hasPlaceholders = resolvedArgs.some((arg) =>
+                  arg.includes('{SOFTWARE_DEV_SERVER_PATH}') ||
+                  arg.includes('{GUI_OPERATE_SERVER_PATH}')
+                );
+
+                if (hasPlaceholders) {
+                  // Get the appropriate preset based on config name
+                  let presetKey: string | null = null;
+                  if (config.name === 'Software_Development' || config.name === 'Software Development') {
+                    presetKey = 'software-development';
+                  } else if (config.name === 'GUI_Operate' || config.name === 'GUI Operate') {
+                    presetKey = 'gui-operate';
+                  }
+
+                  if (presetKey) {
+                    const preset = mcpConfigStore.createFromPreset(presetKey, true);
+                    if (preset && preset.args) {
+                      resolvedArgs = preset.args;
+                    }
                   }
                 }
-              }
 
-              mcpServers[serverKey] = {
-                type: 'stdio',
-                command,
-                args: resolvedArgs,
-                env: serverEnv,
-              };
-              log(`[ClaudeAgentRunner] Added STDIO MCP server: ${serverKey}`);
-              log(`[ClaudeAgentRunner]   Command: ${command} ${resolvedArgs.join(' ')}`);
-              log(`[ClaudeAgentRunner]   Tools will be named: mcp__${serverKey}__<toolName>`);
-            } else if (config.type === 'sse') {
-              mcpServers[serverKey] = {
-                type: 'sse',
-                url: config.url,
-                headers: config.headers || {},
-              };
-              log(`[ClaudeAgentRunner] Added SSE MCP server: ${serverKey}`);
+                mcpServers[serverKey] = {
+                  type: 'stdio',
+                  command,
+                  args: resolvedArgs,
+                  env: serverEnv,
+                };
+                log(`[ClaudeAgentRunner] Added STDIO MCP server: ${serverKey}`);
+                log(`[ClaudeAgentRunner]   Command: ${command} ${resolvedArgs.join(' ')}`);
+                log(`[ClaudeAgentRunner]   Tools will be named: mcp__${serverKey}__<toolName>`);
+              } else if (config.type === 'sse') {
+                mcpServers[serverKey] = {
+                  type: 'sse',
+                  url: config.url,
+                  headers: config.headers || {},
+                };
+                log(`[ClaudeAgentRunner] Added SSE MCP server: ${serverKey}`);
+              }
+            } catch (error) {
+              logError('[ClaudeAgentRunner] Failed to prepare MCP server config, skipping server', {
+                serverId: config.id,
+                serverName: config.name,
+                error: toErrorText(error),
+              });
             }
-          } catch (error) {
-            logError('[ClaudeAgentRunner] Failed to prepare MCP server config, skipping server', {
-              serverId: config.id,
-              serverName: config.name,
-              error: toErrorText(error),
-            });
           }
+
+          // Store in cache for subsequent queries
+          this._mcpServersCache = { fingerprint: mcpFingerprint, servers: { ...mcpServers } };
         }
 
         const mcpServersSummary = Object.entries(mcpServers).map(([name, serverConfig]) => {
@@ -2671,7 +2705,7 @@ When you produce a final deliverable file, declare it once using this exact bloc
       }
     } finally {
       if (proxyLeaseSignature) {
-        await claudeProxyManager.release(proxyLeaseSignature);
+        claudeProxyManager.release(proxyLeaseSignature);
       }
       this.activeControllers.delete(session.id);
       this.pathResolver.unregisterSession(session.id);

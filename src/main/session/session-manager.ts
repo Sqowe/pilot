@@ -35,7 +35,7 @@ import {
   normalizeGeneratedTitle,
 } from './session-title-utils';
 import { generateTitleWithClaudeSdk } from '../claude/claude-sdk-one-shot';
-import { getClaudeUnifiedModeState, shouldUseUnifiedClaudeProxy, shouldUseUnifiedClaudeSdk } from './claude-unified-mode';
+import { getClaudeUnifiedModeState, shouldUseUnifiedClaudeSdk } from './claude-unified-mode';
 import { buildScheduledTaskTitle } from '../../shared/schedule/task-title';
 
 interface AgentRunner {

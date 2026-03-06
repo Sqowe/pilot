@@ -503,18 +503,17 @@ export class ClaudeProxyManager {
     state.lastUsedAt = Date.now();
   }
 
-  async release(signature: string): Promise<void> {
-    await this.enqueue(async () => {
-      const state = this.activeStates.get(signature);
-      if (!state || state.process.exitCode !== null) {
-        return;
-      }
-      state.leaseCount = Math.max(0, state.leaseCount - 1);
-      state.lastUsedAt = Date.now();
-      if (state.leaseCount === 0) {
-        await this.pruneStaleStates(new Set());
-      }
-    });
+  release(signature: string): void {
+    const state = this.activeStates.get(signature);
+    if (!state || state.process.exitCode !== null) {
+      return;
+    }
+    state.leaseCount = Math.max(0, state.leaseCount - 1);
+    state.lastUsedAt = Date.now();
+    // Schedule prune check asynchronously — no need to block the caller.
+    if (state.leaseCount === 0) {
+      void this.enqueue(() => this.pruneStaleStates(new Set()));
+    }
   }
 
   async stop(): Promise<void> {
