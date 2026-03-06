@@ -300,18 +300,27 @@ async function waitForProcessExit(processRef: ChildProcess, timeoutMs: number): 
   });
 }
 
-async function findAvailablePort(start = PROXY_PORT_START, end = PROXY_PORT_END): Promise<number> {
-  for (let port = start; port <= end; port += 1) {
-    const available = await new Promise<boolean>((resolve) => {
-      const server = net.createServer();
-      server.once('error', () => resolve(false));
-      server.once('listening', () => {
-        server.close(() => resolve(true));
-      });
-      server.listen(port, PROXY_HOST);
+function checkPortAvailable(port: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.once('listening', () => {
+      server.close(() => resolve(true));
     });
-    if (available) {
-      return port;
+    server.listen(port, PROXY_HOST);
+  });
+}
+
+async function findAvailablePort(start = PROXY_PORT_START, end = PROXY_PORT_END): Promise<number> {
+  const BATCH_SIZE = 8;
+  for (let batchStart = start; batchStart <= end; batchStart += BATCH_SIZE) {
+    const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, end);
+    const ports = Array.from({ length: batchEnd - batchStart + 1 }, (_, i) => batchStart + i);
+    const results = await Promise.all(ports.map(checkPortAvailable));
+    for (let i = 0; i < results.length; i++) {
+      if (results[i]) {
+        return ports[i];
+      }
     }
   }
   throw new Error(`proxy_boot_failed:no_available_port:${start}-${end}`);
@@ -364,6 +373,8 @@ export function buildProxyEnvironment(profile: UnifiedGatewayProfile): NodeJS.Pr
 async function waitForHealthy(baseUrl: string, processRef: ChildProcess, logs: string[]): Promise<void> {
   const deadline = Date.now() + PROXY_START_TIMEOUT_MS;
   let lastError = '';
+  let delay = 50;
+  const MAX_DELAY = 400;
   while (Date.now() < deadline) {
     if (processRef.exitCode !== null) {
       throw new Error(
@@ -381,7 +392,8 @@ async function waitForHealthy(baseUrl: string, processRef: ChildProcess, logs: s
       lastError = error instanceof Error ? error.message : String(error);
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay = Math.min(Math.ceil(delay * 1.6), MAX_DELAY);
   }
 
   throw new Error(`proxy_health_failed:timeout:${lastError || trimLogs(logs)}`);
@@ -466,7 +478,9 @@ export class ClaudeProxyManager {
       if (existingState && existingState.process.exitCode === null) {
         existingState.lastUsedAt = Date.now();
         this.latestSignature = signature;
-        await this.pruneStaleStates(new Set([signature]));
+        // Don't await pruning on the happy path — let it run in the background
+        // while the caller already has a valid proxy reference.
+        void this.pruneStaleStates(new Set([signature]));
         const { process: _process, logs: _logs, ...rest } = existingState;
         return rest;
       }
