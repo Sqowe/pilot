@@ -60,10 +60,15 @@ describe('SettingsPanel schedule tab entry', () => {
   });
 
   it('allows editable custom time entries instead of fixed half-hour slots', () => {
-    expect(settingsPanelContent).toContain('可手动输入任意 HH:mm');
+    expect(settingsPanelContent).toContain('编辑时段');
+    expect(settingsPanelContent).toContain('支持输入任意 `HH:mm`');
     expect(settingsPanelContent).toContain('type="time"');
-    expect(settingsPanelContent).toContain('快捷建议');
+    expect(settingsPanelContent).toContain('常用建议');
     expect(settingsPanelContent).toContain('function isValidTimeValue(value: string): boolean');
+    expect(settingsPanelContent).toContain('const [openUpward, setOpenUpward] = useState(false)');
+    expect(settingsPanelContent).toContain('min-w-[92px]');
+    expect(settingsPanelContent).toContain('w-[min(22rem,calc(100vw-2rem))]');
+    expect(settingsPanelContent).toContain('rounded-full border px-3 py-1.5 text-sm');
   });
 
   it('formats daily and weekly schedule rules from scheduleConfig', () => {

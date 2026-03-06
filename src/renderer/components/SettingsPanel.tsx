@@ -79,11 +79,20 @@ const SERVICE_OPTIONS = [
 
 type ScheduleFormMode = 'once' | 'daily' | 'weekly' | 'legacy-interval';
 
-const SCHEDULE_TIME_SUGGESTIONS = Array.from({ length: 48 }, (_, index) => {
-  const hour = String(Math.floor(index / 2)).padStart(2, '0');
-  const minute = index % 2 === 0 ? '00' : '30';
-  return `${hour}:${minute}`;
-});
+const SCHEDULE_TIME_SUGGESTIONS = [
+  '06:00',
+  '07:30',
+  '08:00',
+  '09:00',
+  '10:30',
+  '12:00',
+  '14:00',
+  '15:30',
+  '18:00',
+  '19:30',
+  '21:00',
+  '22:30',
+];
 
 const WEEKDAY_OPTIONS: Array<{ value: ScheduleWeekday; label: string }> = [
   { value: 1, label: '周一' },
@@ -3760,6 +3769,7 @@ function TimeMultiSelectMenu(props: {
     onRemove,
   } = props;
   const [open, setOpen] = useState(false);
+  const [openUpward, setOpenUpward] = useState(false);
   const [draftTime, setDraftTime] = useState('');
   const containerRef = useRef<HTMLDivElement | null>(null);
   const buttonText = summary || (values.length > 0 ? values.join(', ') : placeholder);
@@ -3774,6 +3784,31 @@ function TimeMultiSelectMenu(props: {
     document.addEventListener('mousedown', handlePointerDown);
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, []);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function updatePlacement() {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) {
+        return;
+      }
+      const estimatedPanelHeight = 420;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      setOpenUpward(spaceBelow < estimatedPanelHeight && spaceAbove > spaceBelow);
+    }
+
+    updatePlacement();
+    window.addEventListener('resize', updatePlacement);
+    window.addEventListener('scroll', updatePlacement, true);
+    return () => {
+      window.removeEventListener('resize', updatePlacement);
+      window.removeEventListener('scroll', updatePlacement, true);
+    };
+  }, [open]);
 
   function addDraftTime() {
     if (!isValidTimeValue(draftTime)) {
@@ -3799,23 +3834,33 @@ function TimeMultiSelectMenu(props: {
         <ChevronDown className={`h-4 w-4 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
-        <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-20 rounded-xl border border-border bg-surface p-3 shadow-2xl">
+        <div className={`absolute right-0 z-20 w-[min(22rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-border/80 bg-surface p-3 shadow-[0_24px_60px_rgba(0,0,0,0.14)] ${
+          openUpward ? 'bottom-[calc(100%+8px)]' : 'top-[calc(100%+8px)]'
+        }`}>
           <div className="space-y-3">
             <div className="space-y-2">
-              <div className="text-xs text-text-muted">可手动输入任意 HH:mm</div>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm font-medium text-text-primary">编辑时段</div>
+                  <div className="text-xs text-text-muted">支持输入任意 `HH:mm`</div>
+                </div>
+                {values.length > 0 && (
+                  <div className="text-xs text-text-muted">{values.length} 个已选</div>
+                )}
+              </div>
               <div className="flex items-center gap-2">
                 <input
                   type="time"
                   step={60}
                   value={draftTime}
                   onChange={(event) => setDraftTime(event.target.value)}
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary"
+                  className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm text-text-primary"
                 />
                 <button
                   type="button"
                   onClick={addDraftTime}
                   disabled={!isValidTimeValue(draftTime)}
-                  className="inline-flex items-center gap-1 rounded-lg bg-accent px-3 py-2 text-sm text-white disabled:opacity-50"
+                  className="inline-flex min-w-[92px] flex-shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-xl bg-accent px-3 py-2 text-sm text-white disabled:opacity-50"
                 >
                   <Plus className="h-4 w-4" />
                   添加
@@ -3825,13 +3870,13 @@ function TimeMultiSelectMenu(props: {
             <div className="space-y-2">
               <div className="text-xs text-text-muted">已选时段</div>
               {values.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 rounded-xl bg-background/60 p-2">
                   {values.map((time) => (
                     <button
                       key={time}
                       type="button"
                       onClick={() => onRemove(time)}
-                      className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-sm text-accent"
+                      className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-white px-3 py-1 text-sm text-accent shadow-sm"
                     >
                       <span>{time}</span>
                       <X className="h-3 w-3" />
@@ -3839,37 +3884,37 @@ function TimeMultiSelectMenu(props: {
                   ))}
                 </div>
               ) : (
-                <div className="text-xs text-text-muted">还没有选择时段</div>
+                <div className="rounded-xl bg-background/60 px-3 py-2 text-xs text-text-muted">
+                  还没有选择时段
+                </div>
               )}
             </div>
             <div className="space-y-2">
-              <div className="text-xs text-text-muted">快捷建议</div>
-              <div className="max-h-40 overflow-y-auto">
-                <div className="grid grid-cols-4 gap-2">
-                  {SCHEDULE_TIME_SUGGESTIONS.map((time) => {
-                    const selected = values.includes(time);
-                    return (
-                      <button
-                        key={time}
-                        type="button"
-                        onClick={() => {
-                          if (selected) {
-                            onRemove(time);
-                            return;
-                          }
-                          onAdd(time);
-                        }}
-                        className={`rounded-lg border px-2 py-2 text-sm transition-colors ${
-                          selected
-                            ? 'border-accent bg-accent/10 text-accent'
-                            : 'border-border bg-background text-text-secondary hover:bg-surface-hover'
-                        }`}
-                      >
-                        {time}
-                      </button>
-                    );
-                  })}
-                </div>
+              <div className="text-xs text-text-muted">常用建议</div>
+              <div className="flex flex-wrap gap-2">
+                {SCHEDULE_TIME_SUGGESTIONS.map((time) => {
+                  const selected = values.includes(time);
+                  return (
+                    <button
+                      key={time}
+                      type="button"
+                      onClick={() => {
+                        if (selected) {
+                          onRemove(time);
+                          return;
+                        }
+                        onAdd(time);
+                      }}
+                      className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                        selected
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-border bg-background text-text-secondary hover:bg-surface-hover'
+                      }`}
+                    >
+                      {time}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
