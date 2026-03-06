@@ -134,4 +134,17 @@ describe('ClaudeAgentRunner plugin runtime integration', () => {
     expect(agentRunnerContent).toContain("if (!finalResultText.trim() && !emittedVisibleOutput)");
     expect(agentRunnerContent).toContain('模型返回了一个空的成功结果');
   });
+
+  it('treats synthetic tool transcript only responses as failures and retries them', () => {
+    expect(agentRunnerContent).toContain('empty_success_result: upstream returned only synthetic tool transcript content');
+    expect(agentRunnerContent).toContain('suppressedSyntheticAssistantOutput');
+    expect(agentRunnerContent).toContain('emittedNarrativeOutput');
+    expect(agentRunnerContent).toContain("if (text.includes('empty_success_result'))");
+  });
+
+  it('nudges the model to proceed with reasonable assumptions instead of reflexive clarification', () => {
+    expect(agentRunnerContent).toContain('proceed with reasonable assumptions instead of asking for clarification');
+    expect(agentRunnerContent).toContain('within two days');
+    expect(agentRunnerContent).toContain('most recent two relevant publication days');
+  });
 });

@@ -483,6 +483,9 @@ function isRetryableApiErrorText(errorText: string): boolean {
   if (text.includes('first_response_timeout')) {
     return false;
   }
+  if (text.includes('empty_success_result')) {
+    return true;
+  }
   const statusCode = extractStatusCodeFromErrorText(errorText);
   if (statusCode !== null) {
     if (statusCode === 408 || statusCode === 409 || statusCode === 425 || statusCode === 429) {
@@ -1804,6 +1807,7 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
       const includeCredentialsPrompt = /login|sign[\s-]?in|credential|password|gmail|邮箱|登录|账号|密码/i.test(prompt);
       const systemPromptSections = [
         'You are an Open Cowork coding assistant. Be concise, accurate, and tool-capable.',
+        'When a request is actionable, proceed with reasonable assumptions instead of asking for clarification unless a missing detail would make the next action likely wrong. For relative windows like "within two days" in browsing or research tasks, assume the most recent two relevant publication days unless the user explicitly defines another date range.',
         workspaceInfoPrompt,
         availableSkillsPrompt,
         includeVerboseMcpPrompt
@@ -2120,6 +2124,8 @@ When you produce a final deliverable file, declare it once using this exact bloc
       let sdkApiKeySource: string | null = null;
       let lastAssistantApiErrorText = '';
       let emittedVisibleOutput = false;
+      let emittedNarrativeOutput = false;
+      let suppressedSyntheticAssistantOutput = false;
       const firstResponseTimeoutFromEnv = Number.parseInt(process.env.COWORK_FIRST_RESPONSE_TIMEOUT_MS || '120000', 10);
       const firstResponseTimeoutMs = Number.isFinite(firstResponseTimeoutFromEnv) && firstResponseTimeoutFromEnv > 0
         ? firstResponseTimeoutFromEnv
@@ -2214,6 +2220,7 @@ When you produce a final deliverable file, declare it once using this exact bloc
 
               if (typeof content === 'string') {
                 if (isSyntheticEmptyAssistantText(content)) {
+                  suppressedSyntheticAssistantOutput = true;
                   log('[ClaudeAgentRunner] Suppressing synthetic empty assistant text block');
                 } else {
                   textContent = content;
@@ -2224,6 +2231,7 @@ When you produce a final deliverable file, declare it once using this exact bloc
                   if (block.type === 'text') {
                     const blockText = typeof block.text === 'string' ? block.text : '';
                     if (isSyntheticEmptyAssistantText(blockText)) {
+                      suppressedSyntheticAssistantOutput = true;
                       log('[ClaudeAgentRunner] Suppressing synthetic empty assistant text block');
                       continue;
                     }
@@ -2348,6 +2356,9 @@ When you produce a final deliverable file, declare it once using this exact bloc
             if (contentBlocks.length > 0) {
               log('[ClaudeAgentRunner] Sending assistant message with', contentBlocks.length, 'blocks');
               emittedVisibleOutput = true;
+              if (contentBlocks.some((block) => block.type === 'text' && block.text.trim().length > 0)) {
+                emittedNarrativeOutput = true;
+              }
               const assistantMsg: Message = {
                 id: uuidv4(),
                 sessionId: session.id,
@@ -2496,6 +2507,9 @@ When you produce a final deliverable file, declare it once using this exact bloc
           if (!finalResultText.trim() && !emittedVisibleOutput) {
             throw new Error('empty_success_result: upstream returned success with no visible assistant content');
           }
+          if (!finalResultText.trim() && suppressedSyntheticAssistantOutput && !emittedNarrativeOutput) {
+            throw new Error('empty_success_result: upstream returned only synthetic tool transcript content');
+          }
           if (!finalResultText.trim() && lastExecutedToolName) {
             log(`[ClaudeAgentRunner] Empty result after tool execution (${lastExecutedToolName}), adding completion message`);
             
@@ -2516,6 +2530,7 @@ When you produce a final deliverable file, declare it once using this exact bloc
             
             if (completionText) {
               emittedVisibleOutput = true;
+              emittedNarrativeOutput = true;
               const completionMsg: Message = {
                 id: uuidv4(),
                 sessionId: session.id,
