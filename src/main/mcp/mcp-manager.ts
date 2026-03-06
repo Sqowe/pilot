@@ -17,6 +17,7 @@ export interface MCPServerConfig {
   command?: string; // For stdio: command to run
   args?: string[]; // For stdio: command arguments
   env?: Record<string, string>; // Environment variables
+  cwd?: string; // Working directory for stdio command
   url?: string; // For SSE: server URL
   headers?: Record<string, string>; // For SSE: HTTP headers
   enabled: boolean;
@@ -199,6 +200,29 @@ export class MCPManager {
       } catch (error: any) {
         logWarn(`[MCPManager] Could not get environment from shell: ${error.message}`);
         logWarn(`[MCPManager] Using limited process.env, MCP servers may fail`);
+      }
+    } else if (platform === 'win32') {
+      // Windows: try PowerShell to get user PATH
+      try {
+        const { stdout } = await execAsync(
+          'powershell.exe -NoProfile -Command "[Environment]::GetEnvironmentVariable(\'Path\', \'User\') + \';\' + [Environment]::GetEnvironmentVariable(\'Path\', \'Machine\')"',
+          { timeout: 5000 }
+        );
+        if (stdout.trim()) {
+          const pathDelimiter = ';';
+          const winPaths = stdout.trim().split(pathDelimiter).filter(p => p.trim());
+          const currentPaths = (env.PATH || '').split(pathDelimiter).filter(p => p.trim());
+          const allPaths = [...winPaths];
+          for (const p of currentPaths) {
+            if (!allPaths.some(ep => ep.toLowerCase() === p.toLowerCase())) {
+              allPaths.push(p);
+            }
+          }
+          env.PATH = allPaths.join(pathDelimiter);
+          log(`[MCPManager] Enhanced Windows PATH: ${winPaths.length} user/machine paths + ${allPaths.length - winPaths.length} unique process paths = ${allPaths.length} total`);
+        }
+      } catch (error: any) {
+        logWarn(`[MCPManager] Could not get Windows PATH from PowerShell: ${error.message}`);
       }
     }
     
@@ -548,6 +572,7 @@ export class MCPManager {
         command,
         args,
         env,
+        cwd: config.cwd || undefined,
       });
       
       log(`[MCPManager] STDIO transport created successfully`);

@@ -130,7 +130,8 @@ if (!hasSingleInstanceLock) {
       : BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
 
     if (!existingWindow) {
-      logWarn('[App] Blocked second instance but no existing window to focus');
+      log('[App] No existing window found, creating new one');
+      createWindow();
       return;
     }
 
@@ -1280,6 +1281,7 @@ ipcMain.handle('skills.openStoragePath', async () => {
   }
   return { success: true, path: storagePath };
 });
+
 
 ipcMain.handle('plugins.listCatalog', async (_event, options?: { installableOnly?: boolean }) => {
   try {

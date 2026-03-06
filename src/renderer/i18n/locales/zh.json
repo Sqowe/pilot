@@ -83,6 +83,7 @@
     "configSetSwitched": "已切换配置方案",
     "provider": "API 提供商",
     "apiKey": "API 密钥",
+    "enterApiKey": "输入你的 API Key",
     "protocol": "协议",
     "baseUrl": "基础 URL",
     "model": "模型",
@@ -139,6 +140,12 @@
     "switchSetLabel": "切换到其他方案",
     "switchSetPlaceholder": "选择要切换的方案",
     "noOtherSetHint": "暂无其他方案可切换"
+  },
+  "window": {
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "restore": "还原",
+    "close": "关闭"
   },
   "sandbox": {
     "title": "沙盒环境",

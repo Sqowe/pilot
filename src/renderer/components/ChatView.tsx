@@ -13,6 +13,14 @@ import {
   X,
 } from 'lucide-react';
 
+type AttachedFile = {
+  name: string;
+  path: string;
+  size: number;
+  type: string;
+  inlineDataBase64?: string;
+};
+
 export function ChatView() {
   const { t } = useTranslation();
   const {
@@ -33,10 +41,11 @@ export function ChatView() {
   const titleRef = useRef<HTMLHeadingElement>(null);
   const connectorMeasureRef = useRef<HTMLDivElement>(null);
   const [pastedImages, setPastedImages] = useState<Array<{ url: string; base64: string; mediaType: string }>>([]);
-  const [attachedFiles, setAttachedFiles] = useState<Array<{ name: string; path: string; size: number; type: string }>>([]);
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isUserAtBottomRef = useRef(true);
   const isComposingRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -164,12 +173,8 @@ export function ChatView() {
   // Additional scroll trigger for content height changes (e.g., TodoWrite expand/collapse)
   useEffect(() => {
     const container = scrollContainerRef.current;
-    if (!container) return;
-
-    // Use ResizeObserver to detect height changes in the messages container
-    // We need to observe the inner content div, not the scroll container itself
-    const messagesContainer = container.querySelector('.max-w-3xl');
-    if (!messagesContainer) return;
+    const messagesContainer = messagesContainerRef.current;
+    if (!container || !messagesContainer) return;
 
     const resizeObserver = new ResizeObserver(() => {
       // Don't interfere with ongoing scrolls
@@ -413,12 +418,20 @@ export function ChatView() {
 
     // Process other files
     if (otherFiles.length > 0) {
-      const newFiles = otherFiles.map(file => ({
-        name: file.name,
-        path: ('path' in file && typeof file.path === 'string') ? file.path : '', // Electron may provide path property
-        size: file.size,
-        type: file.type || 'application/octet-stream',
-      }));
+      const newFiles = await Promise.all(
+        otherFiles.map(async (file) => {
+          const droppedPath = ('path' in file && typeof file.path === 'string') ? file.path : '';
+          const inlineDataBase64 = droppedPath ? undefined : await blobToBase64(file);
+
+          return {
+            name: file.name,
+            path: droppedPath,
+            size: file.size,
+            type: file.type || 'application/octet-stream',
+            inlineDataBase64,
+          };
+        })
+      );
 
       setAttachedFiles(prev => [...prev, ...newFiles]);
     }
@@ -504,6 +517,7 @@ export function ChatView() {
           relativePath: file.path, // Will be processed by backend to copy to .tmp
           size: file.size,
           mimeType: file.type,
+          inlineDataBase64: file.inlineDataBase64,
         });
       });
 
@@ -586,7 +600,7 @@ export function ChatView() {
 
       {/* Messages */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto py-6 px-4 space-y-4">
+        <div ref={messagesContainerRef} className="w-full max-w-[1180px] mx-auto py-6 px-4 lg:px-6 space-y-4">
           {displayedMessages.length === 0 ? (
             <div className="text-center py-12 text-text-muted">
               <p>{t('chat.startConversation')}</p>

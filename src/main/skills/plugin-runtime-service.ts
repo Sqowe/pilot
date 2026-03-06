@@ -289,8 +289,21 @@ export class PluginRuntimeService {
   }
 
   private static async defaultCommandRunner(command: string, args: string[]): Promise<CommandOutput> {
+    // Enrich PATH for packaged app (same strategy as agent-runner)
+    let env = { ...process.env };
+    if (process.platform === 'darwin' || process.platform === 'linux') {
+      try {
+        const userShell = process.env.SHELL || '/bin/bash';
+        const { execSync } = require('child_process');
+        const shellOutput = execSync(`${userShell} -l -c "echo $PATH"`, {
+          encoding: 'utf-8',
+          timeout: 3000,
+        }).trim();
+        if (shellOutput) env.PATH = shellOutput;
+      } catch { /* use process.env.PATH */ }
+    }
     const result = await execFileAsync(command, args, {
-      env: process.env,
+      env,
       encoding: 'utf8',
       maxBuffer: 20 * 1024 * 1024,
     });

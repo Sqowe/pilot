@@ -19,6 +19,7 @@ import { buildMcpToolsPrompt } from '../utils/cowork-instructions';
 import { buildClaudeEnv, getClaudeEnvOverrides } from './claude-env';
 import { buildThinkingOptions } from './thinking-options';
 import { isSyntheticAssistantTextBlock } from './assistant-text-filter';
+import { redactSensitiveText } from './redaction';
 import { PluginRuntimeService } from '../skills/plugin-runtime-service';
 import { configStore } from '../config/config-store';
 import { resolveClaudeCodeExecutablePath } from './claude-code-path';
@@ -30,6 +31,31 @@ import { isNodeExecutable, withBunHashShimEnv, withBunHashShimNodeArgs } from '.
 
 // Virtual workspace path shown to the model (hides real sandbox path)
 const VIRTUAL_WORKSPACE_PATH = '/workspace';
+const MAX_CLAUDE_STDERR_LINES = 120;
+const STDERR_TAIL_LINES_FOR_ERROR = 20;
+
+function summarizeEnvForLog(env: NodeJS.ProcessEnv): Record<string, string> {
+  const pick = (key: string): string => {
+    const value = env[key];
+    if (!value) return '(empty/unset)';
+    if (key === 'PATH') return `${value.substring(0, 120)}...`;
+    if (key.includes('KEY') || key.includes('TOKEN')) return '✓ Set';
+    return value;
+  };
+
+  return {
+    ANTHROPIC_API_KEY: pick('ANTHROPIC_API_KEY'),
+    ANTHROPIC_AUTH_TOKEN: pick('ANTHROPIC_AUTH_TOKEN'),
+    ANTHROPIC_BASE_URL: pick('ANTHROPIC_BASE_URL'),
+    CLAUDE_MODEL: pick('CLAUDE_MODEL'),
+    ANTHROPIC_DEFAULT_SONNET_MODEL: pick('ANTHROPIC_DEFAULT_SONNET_MODEL'),
+    OPENAI_API_KEY: pick('OPENAI_API_KEY'),
+    OPENAI_BASE_URL: pick('OPENAI_BASE_URL'),
+    OPENAI_MODEL: pick('OPENAI_MODEL'),
+    CLAUDE_CONFIG_DIR: pick('CLAUDE_CONFIG_DIR'),
+    PATH: pick('PATH'),
+  };
+}
 
 // Cache for shell environment (loaded once at startup)
 let cachedShellEnv: NodeJS.ProcessEnv | null = null;
@@ -1959,6 +1985,24 @@ When you produce a final deliverable file, declare it once using this exact bloc
         ? maxTurnsFromEnv
         : 200;
 
+      // Capture Claude Code stderr so "exit code 1" includes root-cause context.
+      const claudeStderrLines: string[] = [];
+      const onClaudeStderr = (data: string): void => {
+        if (!data) return;
+        const lines = data.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        for (const line of lines) {
+          const redactedLine = redactSensitiveText(line);
+          claudeStderrLines.push(redactedLine);
+          if (claudeStderrLines.length > MAX_CLAUDE_STDERR_LINES) {
+            claudeStderrLines.shift();
+          }
+          logError(`[ClaudeAgentRunner][stderr] ${redactedLine}`);
+        }
+      };
+      const getClaudeStderrTail = (): string => (
+        claudeStderrLines.slice(-STDERR_TAIL_LINES_FOR_ERROR).join('\n')
+      );
+
       const queryOptions: any = {
         pathToClaudeCodeExecutable: claudeCodePath,
         cwd: workingDir,  // Windows path for claude-code process
@@ -1968,16 +2012,7 @@ When you produce a final deliverable file, declare it once using this exact bloc
         env: envWithSkills,
         thinking: buildThinkingOptions(enableThinking),
         plugins: sdkPlugins.length > 0 ? sdkPlugins : undefined,
-        stderr: (data: string) => {
-          const trimmed = data.trim();
-          if (!trimmed) {
-            return;
-          }
-          logError('[ClaudeAgentRunner][stderr]', trimmed);
-          if (!lastAssistantApiErrorText) {
-            lastAssistantApiErrorText = trimmed;
-          }
-        },
+        stderr: onClaudeStderr,
         
         // Pass MCP servers to SDK
         mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
@@ -2216,7 +2251,7 @@ When you produce a final deliverable file, declare it once using this exact bloc
             prompt: contextualPrompt,
             options: queryOptions,
           };
-      
+
       const queryInputSummary = summarizeQueryInputForLog(queryInput);
       log('[ClaudeAgentRunner] Query input summary:', safeStringify(queryInputSummary, 2));
       if (process.env.COWORK_LOG_SDK_MESSAGES_FULL === '1') {
@@ -2276,6 +2311,7 @@ When you produce a final deliverable file, declare it once using this exact bloc
       while (shouldContinue) {
         try {
       lastAssistantApiErrorText = '';
+      claudeStderrLines.length = 0;
       timeoutTriggered = false;
       resetResponseWatchdog();
       for await (const message of query(queryInput)) {
@@ -2692,7 +2728,11 @@ When you produce a final deliverable file, declare it once using this exact bloc
       // Check if this is a retryable error
       const errorMessage = err.message || String(error);
       const errorString = String(error);
-      const fullErrorText = `${errorMessage} ${errorString} ${lastAssistantApiErrorText}`;
+      const stderrTail = getClaudeStderrTail();
+      if (stderrTail) {
+        logError(`[ClaudeAgentRunner] Claude Code stderr tail:\n${stderrTail}`);
+      }
+      const fullErrorText = `${errorMessage} ${errorString} ${lastAssistantApiErrorText} ${stderrTail}`;
       const isRetryable = isRetryableApiErrorText(fullErrorText);
       
       logError(`[ClaudeAgentRunner] Is retryable: ${isRetryable}, retryCount: ${retryCount}/${MAX_RETRIES}`);
@@ -2748,6 +2788,13 @@ When you produce a final deliverable file, declare it once using this exact bloc
           logError(`[ClaudeAgentRunner] Max retries (${MAX_RETRIES}) exceeded`);
         } else {
           logError(`[ClaudeAgentRunner] Non-retryable error: ${errorMessage}`);
+        }
+        if (stderrTail) {
+          const enhancedMessage = `${errorMessage}\n\nClaude Code stderr (tail):\n${stderrTail}`;
+          const enhancedError = new Error(enhancedMessage);
+          enhancedError.name = err.name || 'Error';
+          enhancedError.stack = err.stack;
+          throw enhancedError;
         }
         throw err;
       }

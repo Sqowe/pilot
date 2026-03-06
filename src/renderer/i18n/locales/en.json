@@ -83,6 +83,7 @@
     "configSetSwitched": "Config set switched",
     "provider": "API Provider",
     "apiKey": "API Key",
+    "enterApiKey": "Enter your API Key",
     "protocol": "Protocol",
     "baseUrl": "Base URL",
     "model": "Model",
@@ -139,6 +140,12 @@
     "switchSetLabel": "Switch to another set",
     "switchSetPlaceholder": "Select a set to switch",
     "noOtherSetHint": "No other set available"
+  },
+  "window": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "close": "Close"
   },
   "sandbox": {
     "title": "Sandbox Environment",

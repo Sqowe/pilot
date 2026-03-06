@@ -44,6 +44,7 @@ export interface SetGlobalSkillsPathResult {
   skippedCount: number;
 }
 
+
 /**
  * SkillsManager - Manages skill loading and MCP server lifecycle
  * 
