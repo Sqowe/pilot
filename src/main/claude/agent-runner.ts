@@ -59,6 +59,21 @@ function getBundledNodePaths(): { node: string; npx: string } | null {
   return cachedBundledNodePaths;
 }
 
+// Claude Code executable path is stable for the lifetime of the process.
+// The resolution scans many candidate directories and may spawn two `bash -l`
+// sub-processes (which claude, npm root -g) with 5 s timeouts each — memoize.
+let cachedClaudeCodeResolution: { preferredPath: string; result: ReturnType<typeof resolveClaudeCodeExecutablePath> } | undefined;
+
+function resolveClaudeCodePathCached(preferredPath?: string): ReturnType<typeof resolveClaudeCodeExecutablePath> {
+  const key = preferredPath ?? '';
+  if (cachedClaudeCodeResolution?.preferredPath === key) {
+    return cachedClaudeCodeResolution.result;
+  }
+  const result = resolveClaudeCodeExecutablePath({ preferredPath, env: process.env });
+  cachedClaudeCodeResolution = { preferredPath: key, result };
+  return result;
+}
+
 /**
  * Get shell environment with proper PATH (including node, npm, etc.)
  * GUI apps on macOS don't inherit shell PATH, so we need to extract it
@@ -79,29 +94,51 @@ function getShellEnvironment(): NodeJS.ProcessEnv {
 
   if (platform === 'darwin' || platform === 'linux') {
     try {
-      const shellEnvTimeoutMs = Number.parseInt(process.env.COWORK_SHELL_ENV_TIMEOUT_MS || '600', 10);
+      const shellEnvTimeoutMs = Number.parseInt(process.env.COWORK_SHELL_ENV_TIMEOUT_MS || '3000', 10);
       const effectiveShellEnvTimeoutMs = Number.isFinite(shellEnvTimeoutMs) && shellEnvTimeoutMs > 0
         ? shellEnvTimeoutMs
-        : 1500;
-      // Get PATH from login shell (includes nvm, homebrew, etc.)
+        : 3000;
+
+      // Use the user's actual login shell instead of hardcoding /bin/bash.
+      // On macOS / Linux, $SHELL reflects the user's configured shell (zsh, fish, bash …).
+      // Many PATH entries (nvm, pyenv, homebrew node keg-links, etc.) are only set up
+      // in the user's real shell profile, so using /bin/bash misses them.
+      const userShell = process.env.SHELL || '/bin/bash';
+      const shellName = path.basename(userShell);
+
+      // Build the command to extract PATH from a login shell.
+      // -l  → login shell (sources profile/rc files that set PATH)
+      // -i  → interactive (some tools like conda only init in interactive shells)
+      // fish uses a different syntax for echo.
+      let shellCmd: string;
+      if (shellName === 'fish') {
+        shellCmd = `${userShell} -l -c "echo \\$PATH"`;
+      } else {
+        // bash, zsh, and most POSIX shells
+        shellCmd = `${userShell} -l -i -c "echo \\$PATH" 2>/dev/null`;
+      }
+
       const execStart = Date.now();
-      const shellEnvOutput = execSync('/bin/bash -l -c "echo $PATH"', {
+      log(`[ShellEnv] Extracting PATH via: ${shellCmd}`);
+      const shellEnvOutput = execSync(shellCmd, {
         encoding: 'utf-8',
         timeout: effectiveShellEnvTimeoutMs,
       }).trim();
       log(`[ShellEnv] execSync took ${Date.now() - execStart}ms`);
-      
+
       if (shellEnvOutput) {
-        shellPath = shellEnvOutput;
-        log('[ShellEnv] Got PATH from login shell:', shellPath);
+        // fish separates PATH entries with spaces instead of colons
+        shellPath = shellName === 'fish' ? shellEnvOutput.replace(/ /g, ':') : shellEnvOutput;
+        log('[ShellEnv] Got PATH from login shell (' + shellName + '):', shellPath);
       }
     } catch (e) {
       logWarn('[ShellEnv] Failed to get PATH from login shell, using fallback');
-      
+
       // Add common paths as fallback
       const home = process.env.HOME || '';
       const fallbackPaths = [
         '/opt/homebrew/bin',                    // Homebrew Apple Silicon
+        '/opt/homebrew/sbin',                   // Homebrew Apple Silicon sbin
         '/usr/local/bin',                       // Homebrew Intel / system
         '/usr/bin',
         '/bin',
@@ -109,8 +146,28 @@ function getShellEnvironment(): NodeJS.ProcessEnv {
         '/sbin',
         `${home}/.local/bin`,                   // pip user installs
         `${home}/.npm-global/bin`,              // npm global
+        `${home}/.bun/bin`,                     // Bun
+        `${home}/.cargo/bin`,                   // Rust / Cargo
+        `${home}/.pyenv/shims`,                 // pyenv
+        `${home}/.volta/bin`,                   // Volta (Node version manager)
+        `${home}/.rbenv/shims`,                 // rbenv
       ];
-      
+
+      // Expand Homebrew-managed keg-only Node paths (e.g. /opt/homebrew/opt/node@20/bin)
+      const brewOptDir = platform === 'darwin'
+        ? (process.arch === 'arm64' ? '/opt/homebrew/opt' : '/usr/local/opt')
+        : '';
+      if (brewOptDir && fs.existsSync(brewOptDir)) {
+        try {
+          for (const entry of fs.readdirSync(brewOptDir)) {
+            if (entry.startsWith('node@')) {
+              const kegBin = path.join(brewOptDir, entry, 'bin');
+              if (fs.existsSync(kegBin)) fallbackPaths.unshift(kegBin);
+            }
+          }
+        } catch { /* ignore */ }
+      }
+
       // Expand nvm paths
       const nvmDir = path.join(home, '.nvm/versions/node');
       if (fs.existsSync(nvmDir)) {
@@ -119,10 +176,18 @@ function getShellEnvironment(): NodeJS.ProcessEnv {
           for (const version of versions) {
             fallbackPaths.push(path.join(nvmDir, version, 'bin'));
           }
-        } catch (e) { /* ignore */ }
+        } catch { /* ignore */ }
       }
-      
-      shellPath = [...fallbackPaths.filter(p => fs.existsSync(p) || p.includes('*')), shellPath].join(':');
+
+      // Expand miniconda / anaconda paths
+      for (const condaDir of [`${home}/miniconda3`, `${home}/anaconda3`, `${home}/miniforge3`]) {
+        if (fs.existsSync(path.join(condaDir, 'bin'))) {
+          fallbackPaths.push(path.join(condaDir, 'bin'));
+          fallbackPaths.push(path.join(condaDir, 'condabin'));
+        }
+      }
+
+      shellPath = [...fallbackPaths.filter(p => fs.existsSync(p)), shellPath].join(':');
     }
   }
 
@@ -595,6 +660,7 @@ export class ClaudeAgentRunner {
   // Per-instance caches — invalidated when the underlying config changes.
   private _mcpServersCache: { fingerprint: string; servers: Record<string, unknown> } | null = null;
   private _skillsSetupDone = false;
+  private _skillsPromptCache: { workingDir: string; prompt: string } | null = null;
 
   /**
    * Clear SDK session cache for a session
@@ -610,6 +676,7 @@ export class ClaudeAgentRunner {
   /** Call after the user installs / removes a skill so the next query re-links everything. */
   invalidateSkillsSetup(): void {
     this._skillsSetupDone = false;
+    this._skillsPromptCache = null;
   }
 
   /** Call after the user changes MCP server config so the next query rebuilds mcpServers. */
@@ -954,11 +1021,13 @@ ${sections.join('\n\n')}
       return '<available_skills>\nNo skills available.\n</available_skills>';
     }
     
-    // Format the skills list
-    const skillsList = skills.map(s => 
-      `- **${s.name}**: ${s.description}\n  SKILL.md path: ${s.skillMdPath}`
-    ).join('\n');
-    
+    // Format the skills list – include both SKILL.md path and skill base directory
+    // so the model can resolve relative script references.
+    const skillsList = skills.map(s => {
+      const skillDir = path.dirname(s.skillMdPath);
+      return `- **${s.name}**: ${s.description}\n  SKILL.md path: ${s.skillMdPath}\n  Skill directory: ${skillDir}`;
+    }).join('\n');
+
     return `<available_skills>
 The following skills are available. **CRITICAL**: Before starting any task that involves creating or editing files of these types, you MUST first read the corresponding SKILL.md file using the Read tool:
 
@@ -970,11 +1039,20 @@ ${skillsList}
 3. Follow the instructions in the SKILL.md file exactly
 4. The skills contain proven workflows that produce high-quality results
 
+**CRITICAL – Resolving script and resource paths inside skills:**
+Skills reference helper scripts and resources using **relative paths** (e.g. \`python scripts/rearrange.py\`, \`tar -xzf html2pptx.tgz\`). These paths are relative to the **Skill directory** shown above, NOT the current working directory.
+When you encounter a relative path in a SKILL.md, you MUST resolve it against that skill's directory. For example:
+- SKILL.md says: \`python scripts/rearrange.py template.pptx out.pptx 0,1,2\`
+- Skill directory is: /path/to/.claude/skills/pptx
+- You should run: \`python /path/to/.claude/skills/pptx/scripts/rearrange.py template.pptx out.pptx 0,1,2\`
+
+Similarly, for \`python3\` / \`python\` / \`node\` commands, always use the full command name available on this system. If a command is not found, try common alternatives (python3 instead of python, node instead of nodejs, etc.).
+
 **Example**: If the user asks to create a PowerPoint presentation:
 \`\`\`
 Read the file: ${skills.find(s => s.name === 'pptx')?.skillMdPath || '[pptx skill path]'}
 \`\`\`
-Then follow the workflow described in that file.
+Then follow the workflow described in that file, resolving all script paths against the skill directory.
 </available_skills>`;
   }
 
@@ -1376,12 +1454,11 @@ Then follow the workflow described in that file.
       }
 
       logTiming('before resolveClaudeCodeExecutablePath');
-      
+
       // Use query from @anthropic-ai/claude-agent-sdk
-      const resolvedClaudeCode = resolveClaudeCodeExecutablePath({
-        preferredPath: configStore.get('claudeCodePath')?.trim(),
-        env: process.env,
-      });
+      const resolvedClaudeCode = resolveClaudeCodePathCached(
+        configStore.get('claudeCodePath')?.trim()
+      );
       const claudeCodePath = resolvedClaudeCode?.executablePath ?? '';
       log('[ClaudeAgentRunner] Claude Code path:', claudeCodePath);
       if (resolvedClaudeCode?.source) {
@@ -1568,8 +1645,15 @@ Then follow the workflow described in that file.
         this._skillsSetupDone = true;
       }
 
-      // Build available skills section dynamically
-      const availableSkillsPrompt = this.getAvailableSkillsPrompt(workingDir);
+      // Build available skills section dynamically (cached per workingDir)
+      const cacheKey = workingDir ?? '';
+      const availableSkillsPrompt = (this._skillsPromptCache?.workingDir === cacheKey)
+        ? this._skillsPromptCache.prompt
+        : (() => {
+          const prompt = this.getAvailableSkillsPrompt(workingDir);
+          this._skillsPromptCache = { workingDir: cacheKey, prompt };
+          return prompt;
+        })();
 
       log('[ClaudeAgentRunner] App claude dir:', userClaudeDir);
       log('[ClaudeAgentRunner] User working directory:', workingDir);
@@ -1599,6 +1683,8 @@ Then follow the workflow described in that file.
           }
           throw new Error(`proxy_upstream_not_found:${reason}`);
         }
+        // Wait briefly for any in-progress warmup before ensureReady
+        await claudeProxyManager.awaitWarmup(3000);
         const proxyRuntime = await claudeProxyManager.ensureReady(route.profile);
         claudeProxyManager.retain(proxyRuntime.signature);
         proxyLeaseSignature = proxyRuntime.signature;
