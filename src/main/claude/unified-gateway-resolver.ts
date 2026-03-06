@@ -72,6 +72,20 @@ function shouldUseLiteLLMProviderAliases(config: Pick<AppConfig, 'provider' | 'b
   return true;
 }
 
+function shouldPreserveRawCustomOpenAIModel(config: Pick<AppConfig, 'provider' | 'baseUrl'>): boolean {
+  if (config.provider !== 'custom') {
+    return false;
+  }
+
+  const normalizedBaseUrl = normalizeOpenAICompatibleBaseUrl(config.baseUrl)?.toLowerCase() || '';
+  if (!normalizedBaseUrl) {
+    return false;
+  }
+
+  // DuckCoding 的 OpenAI 兼容接口要求保留裸模型名，例如 gpt-5.3-codex。
+  return normalizedBaseUrl.includes('duckcoding.ai');
+}
+
 function normalizeModelForUpstream(
   model: string,
   upstreamKind: UnifiedUpstreamKind,
@@ -92,6 +106,9 @@ function normalizeModelForUpstream(
     return trimmed;
   }
   if (upstreamKind === 'openai') {
+    if (shouldPreserveRawCustomOpenAIModel(config)) {
+      return trimmed;
+    }
     return `openai/${trimmed}`;
   }
   return trimmed;

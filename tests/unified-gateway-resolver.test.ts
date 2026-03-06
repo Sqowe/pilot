@@ -96,6 +96,25 @@ describe('resolveUnifiedGatewayProfile', () => {
     });
   });
 
+  it('preserves raw model ids for duckcoding custom openai upstreams', () => {
+    const decision = resolveUnifiedGatewayProfile(
+      createConfig({
+        provider: 'custom',
+        customProtocol: 'openai',
+        apiKey: 'sk-test',
+        baseUrl: 'https://api.duckcoding.ai/v1',
+        model: 'gpt-5.3-codex',
+      })
+    );
+
+    expect(decision.ok).toBe(true);
+    expect(decision.profile).toMatchObject({
+      upstreamKind: 'openai',
+      upstreamBaseUrl: 'https://api.duckcoding.ai/v1',
+      model: 'gpt-5.3-codex',
+    });
+  });
+
   it('does not drift openrouter to local codex oauth when key is missing', () => {
     mocks.importLocalAuthToken.mockReturnValue({
       provider: 'codex',
