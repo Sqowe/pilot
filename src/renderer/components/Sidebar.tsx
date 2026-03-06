@@ -2,7 +2,6 @@ import { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
-import { SettingsPanel } from './SettingsPanel';
 import {
   ChevronLeft,
   ChevronRight,
@@ -31,17 +30,18 @@ export function Sidebar() {
     isConfigured,
     sidebarCollapsed,
     toggleSidebar,
+    setShowSettings,
   } = useAppStore();
   const { deleteSession, getSessionMessages, getSessionTraceSteps, isElectron } = useIPC();
   const [hoveredSession, setHoveredSession] = useState<string | null>(null);
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
-  const [showSettings, setShowSettings] = useState(false);
 
   // Handle session click - load messages if needed
   const handleSessionClick = useCallback(async (sessionId: string) => {
     if (activeSessionId === sessionId) return;
-    
+
     setActiveSession(sessionId);
+    setShowSettings(false);
     
     // Check if we already have messages loaded for this session
     const existingMessages = messagesBySession[sessionId];
@@ -90,6 +90,7 @@ export function Sidebar() {
 
   const handleNewSession = () => {
     setActiveSession(null);
+    setShowSettings(false);
   };
 
   const handleDeleteSession = (e: React.MouseEvent, sessionId: string) => {
@@ -306,14 +307,6 @@ export function Sidebar() {
           </button>
         )}
       </div>
-      
-      {/* Settings Panel */}
-      {showSettings && (
-        <SettingsPanel
-          isOpen={showSettings}
-          onClose={() => setShowSettings(false)}
-        />
-      )}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { WelcomeView } from './components/WelcomeView';
 import { PermissionDialog } from './components/PermissionDialog';
 import { ContextPanel } from './components/ContextPanel';
 import { ConfigModal } from './components/ConfigModal';
+import { SettingsPanel } from './components/SettingsPanel';
 import { Titlebar } from './components/Titlebar';
 import { SandboxSetupDialog } from './components/SandboxSetupDialog';
 import { SandboxSyncToast } from './components/SandboxSyncToast';
@@ -19,10 +20,11 @@ const isElectronEnv = typeof window !== 'undefined' && window.electronAPI !== un
 
 function App() {
   const { 
-    activeSessionId, 
+    activeSessionId,
     pendingPermission,
     settings,
     showConfigModal,
+    showSettings,
     isConfigured,
     appConfig,
     globalNotice,
@@ -34,6 +36,7 @@ function App() {
     setAppConfig,
     clearGlobalNotice,
     setSandboxSetupComplete,
+    setShowSettings,
   } = useAppStore();
   const { listSessions, isElectron } = useIPC();
   const initialized = useRef(false);
@@ -104,11 +107,17 @@ function App() {
         
         {/* Main Content Area */}
         <main className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden bg-background">
-          {activeSessionId ? <ChatView /> : <WelcomeView />}
+          {showSettings ? (
+            <SettingsPanel onClose={() => setShowSettings(false)} />
+          ) : activeSessionId ? (
+            <ChatView />
+          ) : (
+            <WelcomeView />
+          )}
         </main>
 
-        {/* Context Panel - only show when in session */}
-        {activeSessionId && <ContextPanel />}
+        {/* Context Panel - only show when in session and not in settings */}
+        {activeSessionId && !showSettings && <ContextPanel />}
       </div>
       
       {/* Permission Dialog */}

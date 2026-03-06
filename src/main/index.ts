@@ -645,7 +645,8 @@ app.whenReady().then(async () => {
   createWindow();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    const hasVisibleWindow = BrowserWindow.getAllWindows().some((w) => !w.isDestroyed());
+    if (!hasVisibleWindow) {
       createWindow();
     }
   });

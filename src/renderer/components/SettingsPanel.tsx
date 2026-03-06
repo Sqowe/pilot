@@ -55,7 +55,6 @@ interface MCPServerStatus {
 }
 
 interface SettingsPanelProps {
-  isOpen: boolean;
   onClose: () => void;
   initialTab?: 'api' | 'sandbox' | 'credentials' | 'connectors' | 'skills' | 'schedule' | 'remote' | 'logs' | 'language';
 }
@@ -112,18 +111,11 @@ const SCHEDULE_MODE_OPTIONS: Array<{ value: ScheduleFormMode; label: string }> =
 
 // ==================== Main Component ====================
 
-export function SettingsPanel({ isOpen, onClose, initialTab = 'api' }: SettingsPanelProps) {
+export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProps) {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
   // Track which tabs have been viewed at least once (for lazy loading)
   const [viewedTabs, setViewedTabs] = useState<Set<TabId>>(new Set([initialTab]));
-
-  useEffect(() => {
-    if (isOpen) {
-      setActiveTab(initialTab);
-      setViewedTabs(new Set([initialTab]));
-    }
-  }, [isOpen, initialTab]);
 
   // Mark tab as viewed when it becomes active
   useEffect(() => {
@@ -131,8 +123,6 @@ export function SettingsPanel({ isOpen, onClose, initialTab = 'api' }: SettingsP
       setViewedTabs(prev => new Set([...prev, activeTab]));
     }
   }, [activeTab, viewedTabs]);
-
-  if (!isOpen) return null;
 
   const tabs = [
     { id: 'api' as TabId, label: t('settings.apiSettings'), icon: Settings, description: t('settings.apiSettingsDesc') },
@@ -147,8 +137,7 @@ export function SettingsPanel({ isOpen, onClose, initialTab = 'api' }: SettingsP
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-4xl mx-4 max-h-[85vh] overflow-hidden border border-border flex">
+      <div className="flex h-full w-full overflow-hidden">
         {/* Sidebar */}
         <div className="w-72 bg-surface-hover border-r border-border flex flex-col flex-shrink-0">
           <div className="p-4 border-b border-border">
@@ -161,7 +150,7 @@ export function SettingsPanel({ isOpen, onClose, initialTab = 'api' }: SettingsP
                 onClick={() => setActiveTab(tab.id)}
                 className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors active:scale-[0.98] ${
                   activeTab === tab.id
-                    ? 'bg-accent/10 text-accent'
+                    ? 'bg-surface-active text-text-primary font-medium'
                     : 'hover:bg-surface-active text-text-secondary hover:text-text-primary'
                 }`}
               >
@@ -229,7 +218,6 @@ export function SettingsPanel({ isOpen, onClose, initialTab = 'api' }: SettingsP
           </div>
         </div>
       </div>
-    </div>
   );
 }
 
