@@ -711,12 +711,13 @@ async function cleanupSandboxResources(): Promise<void> {
 
 // Handle app quit - window-all-closed (primary for Windows/Linux)
 app.on('window-all-closed', async () => {
-  skillsManager?.stopStorageMonitoring();
-  await cleanupSandboxResources();
-
   if (process.platform !== 'darwin') {
+    // On Windows/Linux, closing all windows means quit
+    skillsManager?.stopStorageMonitoring();
+    await cleanupSandboxResources();
     app.quit();
   }
+  // On macOS, keep app alive — cleanup happens in before-quit
 });
 
 // Handle app quit - before-quit (for macOS Cmd+Q and other quit methods)
