@@ -327,13 +327,6 @@ export class ClaudeAgentRunner {
   }
 
   /**
-   * Get MCP tools prompt for system instructions
-   */
-  private getMCPToolsPrompt(): string {
-    return buildMcpToolsPrompt(this.mcpManager);
-  }
-
-  /**
    * Get saved credentials prompt for system instructions
    * Credentials are provided directly to the agent for automated login
    */
