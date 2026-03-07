@@ -26,7 +26,6 @@ import { SandboxSync } from '../sandbox/sandbox-sync';
 import { extractArtifactsFromText, buildArtifactTraceSteps } from '../utils/artifact-parser';
 import { PluginRuntimeService } from '../skills/plugin-runtime-service';
 import { configStore } from '../config/config-store';
-// import { PathGuard } from '../sandbox/path-guard';
 
 // Virtual workspace path shown to the model (hides real sandbox path)
 const VIRTUAL_WORKSPACE_PATH = '/workspace';

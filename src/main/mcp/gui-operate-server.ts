@@ -363,12 +363,6 @@ async function getAllVisitedApps(): Promise<string[]> {
     for (const entry of entries) {
       if (entry.isDirectory()) {
         try {
-          // const clickHistoryPath = path.join(GUI_APPS_DIR, entry.name, 'click_history.json');
-          // const data = await fs.readFile(clickHistoryPath, 'utf-8');
-          // const appHistory: AppClickHistory = JSON.parse(data);
-          // if (appHistory.appName) {
-          //   actualAppNames.push(appHistory.appName);
-          // }
           actualAppNames.push(entry.name);
           writeMCPLog(`[getAllVisitedApps] Found app: ${entry.name}`, 'App List');
         } catch (error) {
@@ -3348,22 +3342,6 @@ async function takeScreenshotForDisplay(
   await takeScreenshot(tempPath, displayIndex, region);
 
   let finalPath = tempPath;
-  // let clickHistoryInfo: string | undefined;
-
-  // // Annotate with click history if requested
-  // if (annotateClicks && currentAppName) {
-  //   try {
-  //     const annotateResult = await annotateScreenshotWithClickHistory(
-  //       tempPath,
-  //       displayIndex ?? 0
-  //     );
-  //     finalPath = annotateResult.annotatedPath;
-  //     clickHistoryInfo = annotateResult.clickHistoryInfo;
-  //   } catch (error) {
-  //     writeMCPLog(`[takeScreenshotForDisplay] Failed to annotate screenshot: ${error}`, 'Screenshot');
-  //     // Continue with un-annotated screenshot
-  //   }
-  // }
 
   // Read the screenshot file and convert to base64
   const imageBuffer = await fs.readFile(finalPath);
@@ -3412,10 +3390,6 @@ async function takeScreenshotForDisplay(
       ],
     };
   }
-
-  // if (clickHistoryInfo) {
-  //   metadata.clickHistoryInfo = clickHistoryInfo;
-  // }
 
   updateScreenshotCache({
     displayIndex: normalizedDisplayIndex,
@@ -5438,24 +5412,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['duration'],
         },
       },
-      // {
-      //   name: 'gui_plan_action',
-      //   description: 'Plan GUI actions based on a natural language task description. Analyzes the current screen and breaks down the task into step-by-step GUI operations. Returns a plan with specific actions and element descriptions.',
-      //   inputSchema: {
-      //     type: 'object',
-      //     properties: {
-      //       task_description: {
-      //         type: 'string',
-      //         description: 'Natural language description of the task to accomplish (e.g., "create a new file named a.py in Cursor", "click the Save button and enter filename")',
-      //       },
-      //       display_index: {
-      //         type: 'number',
-      //         description: 'Display index to analyze. If not provided, uses main display.',
-      //       },
-      //     },
-      //     required: ['task_description'],
-      //   },
-      // },
       {
         name: 'gui_locate_element',
         description: 'Locate a GUI element on screen using AI vision. Returns the coordinates and confidence level for the element. You may need to re-call this function if you find previously found positions are not accurate (indicated by unsuccessful following operations).',
@@ -5474,24 +5430,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['element_description'],
         },
       },
-      // {
-      //   name: 'gui_interact_vision',
-      //   description: 'Execute a GUI task using natural language description. Automatically plans the task into steps, locates elements, and executes actions. Example: "create a new file named a.py in Cursor" will automatically find the new file button, click it, locate the filename input, and type "a.py".',
-      //   inputSchema: {
-      //     type: 'object',
-      //     properties: {
-      //       task_description: {
-      //         type: 'string',
-      //         description: 'Natural language description of the complete task to accomplish (e.g., "create a new file named a.py", "click the Save button and enter filename test.txt", "open the File menu and select New")',
-      //       },
-      //       display_index: {
-      //         type: 'number',
-      //         description: 'Display index to operate on. If not provided, uses main display.',
-      //       },
-      //     },
-      //     required: ['task_description'],
-      //   },
-      // },
       {
         name: 'gui_verify_vision',
         description: 'Verify GUI state using AI vision. Ask questions about what is visible on screen and get intelligent answers (e.g., "Is the game board visible?", "What is the current player shown?", "Are there any error messages?"). This tool is used to verify the state of the GUI after some operation to ensure the operation was successful (e.g., whether the click was successful, whether the text was typed, etc.).',
