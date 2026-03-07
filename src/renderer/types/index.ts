@@ -437,7 +437,6 @@ export interface ProviderProfile {
   apiKey: string;
   baseUrl?: string;
   model: string;
-  openaiMode?: 'responses' | 'chat';
 }
 
 export interface ApiConfigSet {
@@ -464,7 +463,6 @@ export interface AppConfig {
   baseUrl?: string;
   customProtocol?: CustomProtocolType;
   model: string;
-  openaiMode?: 'responses' | 'chat';
   activeProfileKey: ProviderProfileKey;
   profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
   activeConfigSetId: ConfigSetId;

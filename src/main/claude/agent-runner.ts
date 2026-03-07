@@ -4,8 +4,10 @@ import {
   SettingsManager as PiSettingsManager,
   createCodingTools,
   type AgentSession as PiAgentSession,
+  type ToolDefinition,
 } from '@mariozechner/pi-coding-agent';
 import { getModel, type Model } from '@mariozechner/pi-ai';
+import { Type, type TSchema } from '@sinclair/typebox';
 import { getSharedAuthStorage, ModelRegistry } from './shared-auth';
 import type { Session, Message, TraceStep, ServerEvent, ContentBlock } from '../../renderer/types';
 import { v4 as uuidv4 } from 'uuid';
@@ -63,10 +65,10 @@ function getBundledNodePaths(): { node: string; npx: string } | null {
 function inferApi(protocol: string): string {
   switch (protocol) {
     case 'anthropic': return 'anthropic-messages';
-    case 'openai': return 'openai-completions';
+    case 'openai': return 'openai-completions'; // default for synthetic models; registry models keep their native api
     case 'gemini':
     case 'google': return 'google-generative-ai';
-    default: return 'openai-completions'; // safest default for proxies
+    default: return 'openai-completions'; // safest default for unknown protocols
   }
 }
 
@@ -75,7 +77,7 @@ function inferApi(protocol: string): string {
  * Allows custom/private models behind proxies to work.
  */
 function buildSyntheticModel(modelId: string, provider: string, protocol: string, baseUrl?: string): Model<any> {
-  const api = baseUrl ? 'openai-completions' : inferApi(protocol);
+  const api = inferApi(protocol);
   return {
     id: modelId,
     name: modelId,
@@ -88,6 +90,50 @@ function buildSyntheticModel(modelId: string, provider: string, protocol: string
     contextWindow: 128000,
     maxTokens: 16384,
   } as Model<any>;
+}
+
+/**
+ * Bridge MCP tools from MCPManager into pi-coding-agent ToolDefinition[] format.
+ * Each MCP tool becomes a customTool whose execute() delegates to mcpManager.callTool().
+ */
+function buildMcpCustomTools(mcpManager: MCPManager): ToolDefinition[] {
+  const mcpTools = mcpManager.getTools();
+  return mcpTools.map((mcpTool) => {
+    // Wrap the raw JSON Schema inputSchema as a TypeBox TSchema
+    const parameters = Type.Unsafe<Record<string, any>>(mcpTool.inputSchema as any);
+
+    const toolDef: ToolDefinition<TSchema, unknown> = {
+      name: mcpTool.name,
+      label: mcpTool.name.replace(/^mcp__/, '').replace(/__/g, ' → '),
+      description: mcpTool.description || `MCP tool from ${mcpTool.serverName}`,
+      parameters,
+      async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+        try {
+          const result = await mcpManager.callTool(mcpTool.name, params as Record<string, any>);
+          // MCP callTool returns { content: [...] } — extract text
+          const textParts: string[] = [];
+          if (result?.content) {
+            for (const part of result.content) {
+              if (part.type === 'text') textParts.push(part.text);
+              else textParts.push(JSON.stringify(part));
+            }
+          } else {
+            textParts.push(typeof result === 'string' ? result : JSON.stringify(result));
+          }
+          return {
+            content: [{ type: 'text' as const, text: textParts.join('\n') }],
+            details: undefined as unknown,
+          };
+        } catch (err: any) {
+          return {
+            content: [{ type: 'text' as const, text: `MCP tool error: ${err.message || err}` }],
+            details: undefined as unknown,
+          };
+        }
+      },
+    };
+    return toolDef;
+  });
 }
 
 /**
@@ -152,10 +198,7 @@ function resolvePiModel(modelString: string, configProvider?: string, customBase
   const isCustomProvider = (rawProvider === 'custom' || configProvider === 'custom');
   const modelHasBaseUrl = Boolean(model.baseUrl);
   if (customBaseUrl && (isCustomProvider || !modelHasBaseUrl)) {
-    // When using a custom base URL, force openai-completions API
-    // Most proxies don't support the newer openai-responses API
-    const api = model.api === 'openai-responses' ? 'openai-completions' : model.api;
-    model = { ...model, baseUrl: customBaseUrl, api } as typeof model;
+    model = { ...model, baseUrl: customBaseUrl } as typeof model;
   }
 
   // Aggregator providers (openrouter etc.) always use openai-completions API
@@ -1368,12 +1411,21 @@ Tool routing:
       await resourceLoader.reload();
 
       const modelRegistry = new ModelRegistry(authStorage);
+
+      // Bridge MCP tools as customTools for pi-coding-agent.
+      // Re-read every query so newly added/removed MCP servers take effect immediately.
+      const mcpCustomTools = this.mcpManager ? buildMcpCustomTools(this.mcpManager) : [];
+      if (mcpCustomTools.length > 0) {
+        log(`[ClaudeAgentRunner] Registered ${mcpCustomTools.length} MCP tools as customTools:`, mcpCustomTools.map(t => t.name).join(', '));
+      }
+
       const { session: piSession } = await createAgentSession({
         model: piModel,
         thinkingLevel,
         authStorage,
         modelRegistry,
         tools: createCodingTools(effectiveCwd),
+        customTools: mcpCustomTools,
         sessionManager: PiSessionManager.inMemory(),
         settingsManager: PiSettingsManager.inMemory({
           compaction: { enabled: true },

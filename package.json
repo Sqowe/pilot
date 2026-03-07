@@ -23,10 +23,11 @@
     "rebuild": "node -e \"const {execSync}=require('node:child_process'); const v=require('electron/package.json').version; execSync('npm rebuild better-sqlite3 --runtime=electron --target='+v+' --disturl=https://electronjs.org/headers',{stdio:'inherit'})\""
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.77",
     "@anthropic-ai/claude-code": "^2.1.7",
     "@anthropic-ai/sdk": "^0.39.0",
     "@larksuiteoapi/node-sdk": "^1.58.0",
+    "@mariozechner/pi-ai": "^0.56.3",
+    "@mariozechner/pi-coding-agent": "^0.56.3",
     "@modelcontextprotocol/sdk": "^1.25.2",
     "@types/ws": "^8.18.1",
     "archiver": "^7.0.1",

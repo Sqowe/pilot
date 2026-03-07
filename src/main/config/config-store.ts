@@ -1,7 +1,5 @@
-import fs from 'node:fs';
 import Store from 'electron-store';
-import { log } from '../utils/logger';
-import { isKnownInvalidClaudeCodePath } from '../claude/claude-code-path';
+import { log, logWarn } from '../utils/logger';
 import {
   isOpenAIProvider,
   normalizeAnthropicBaseUrl,
@@ -37,7 +35,6 @@ export interface ProviderProfile {
   apiKey: string;
   baseUrl?: string;
   model: string;
-  openaiMode?: 'responses' | 'chat';
 }
 
 export interface ApiConfigSet {
@@ -63,9 +60,6 @@ export interface AppConfig {
 
   // Model selection
   model: string;
-
-  // OpenAI API mode
-  openaiMode: 'responses' | 'chat';
 
   // Active profile
   activeProfileKey: ProviderProfileKey;
@@ -104,45 +98,38 @@ const LOCAL_ANTHROPIC_PLACEHOLDER_KEY = 'sk-ant-local-proxy';
 const defaultProfiles: Record<ProviderProfileKey, ProviderProfile> = {
   openrouter: {
     apiKey: '',
-    baseUrl: 'https://openrouter.ai/api',
+    baseUrl: 'https://openrouter.ai/api/v1',
     model: 'anthropic/claude-sonnet-4.5',
-    openaiMode: 'responses',
   },
   anthropic: {
     apiKey: '',
     baseUrl: 'https://api.anthropic.com',
     model: 'claude-sonnet-4-5',
-    openaiMode: 'responses',
   },
   openai: {
     apiKey: '',
     baseUrl: 'https://api.openai.com/v1',
     model: 'gpt-5.2',
-    openaiMode: 'responses',
   },
   gemini: {
     apiKey: '',
     baseUrl: 'https://generativelanguage.googleapis.com',
-    model: 'gemini/gemini-2.5-flash',
-    openaiMode: 'responses',
+    model: 'gemini-2.5-flash',
   },
   'custom:anthropic': {
     apiKey: '',
     baseUrl: 'https://open.bigmodel.cn/api/anthropic',
     model: 'glm-4.7',
-    openaiMode: 'responses',
   },
   'custom:openai': {
     apiKey: '',
     baseUrl: 'https://api.openai.com/v1',
     model: 'gpt-5.2',
-    openaiMode: 'responses',
   },
   'custom:gemini': {
     apiKey: '',
     baseUrl: 'https://generativelanguage.googleapis.com',
-    model: 'gemini/gemini-2.5-flash',
-    openaiMode: 'responses',
+    model: 'gemini-2.5-flash',
   },
 };
 
@@ -164,7 +151,6 @@ const defaultConfig: AppConfig = {
   baseUrl: defaultProfiles.openrouter.baseUrl,
   customProtocol: defaultConfigSet.customProtocol,
   model: defaultProfiles.openrouter.model,
-  openaiMode: defaultProfiles.openrouter.openaiMode || 'responses',
   activeProfileKey: defaultConfigSet.activeProfileKey,
   profiles: defaultProfiles,
   activeConfigSetId: DEFAULT_CONFIG_SET_ID,
@@ -182,12 +168,13 @@ const defaultConfig: AppConfig = {
 export const PROVIDER_PRESETS = {
   openrouter: {
     name: 'OpenRouter',
-    baseUrl: 'https://openrouter.ai/api',
+    baseUrl: 'https://openrouter.ai/api/v1',
     models: [
       { id: 'anthropic/claude-sonnet-4.5', name: 'Claude Sonnet 4.5' },
-      { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4' },
-      { id: 'moonshotai/kimi-k2-0905', name: 'Kimi K2' },
-      { id: 'z-ai/glm-4.7', name: 'GLM-4.7' },
+      { id: 'anthropic/claude-sonnet-4.6', name: 'Claude Sonnet 4.6' },
+      { id: 'anthropic/claude-opus-4.5', name: 'Claude Opus 4.5' },
+      { id: 'openai/gpt-5.2', name: 'GPT-5.2' },
+      { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
     ],
     keyPlaceholder: 'sk-or-v1-...',
     keyHint: '从 openrouter.ai/keys 获取',
@@ -196,9 +183,10 @@ export const PROVIDER_PRESETS = {
     name: 'Anthropic',
     baseUrl: 'https://api.anthropic.com',
     models: [
-      { id: 'claude-sonnet-4-5', name: 'claude-sonnet-4-5' },
-      { id: 'claude-opus-4-5', name: 'claude-opus-4-5' },
-      { id: 'claude-haiku-4-5', name: 'claude-haiku-4-5' },
+      { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+      { id: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
+      { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
     ],
     keyPlaceholder: 'sk-ant-...',
     keyHint: '从 console.anthropic.com 获取',
@@ -207,9 +195,10 @@ export const PROVIDER_PRESETS = {
     name: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
     models: [
-      { id: 'gpt-5.2', name: 'gpt-5.2' },
-      { id: 'gpt-5.2-codex', name: 'gpt-5.2-codex' },
-      { id: 'gpt-5.2-mini', name: 'gpt-5.2-mini' },
+      { id: 'gpt-5.2', name: 'GPT-5.2' },
+      { id: 'gpt-5.2-codex', name: 'GPT-5.2 Codex' },
+      { id: 'gpt-5-mini', name: 'GPT-5 Mini' },
+      { id: 'o4-mini', name: 'o4-mini' },
     ],
     keyPlaceholder: 'sk-...',
     keyHint: '从 platform.openai.com 获取',
@@ -218,9 +207,9 @@ export const PROVIDER_PRESETS = {
     name: 'Gemini',
     baseUrl: 'https://generativelanguage.googleapis.com',
     models: [
-      { id: 'gemini/gemini-2.5-flash', name: 'gemini-2.5-flash' },
-      { id: 'gemini/gemini-2.5-pro', name: 'gemini-2.5-pro' },
-      { id: 'gemini/gemini-2.0-flash', name: 'gemini-2.0-flash' },
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
     ],
     keyPlaceholder: 'AIza...',
     keyHint: '从 Google AI Studio 或 Gemini API 获取',
@@ -237,6 +226,73 @@ export const PROVIDER_PRESETS = {
     keyHint: '输入你的 API Key',
   },
 };
+
+// Curated model IDs per provider — shown when pi-ai registry is available.
+const PI_AI_CURATED: Record<string, { piProvider: string; pick: string[] }> = {
+  openrouter: {
+    piProvider: 'openrouter',
+    pick: [
+      'anthropic/claude-sonnet-4.5', 'anthropic/claude-sonnet-4.6', 'anthropic/claude-opus-4.5',
+      'openai/gpt-5.2', 'google/gemini-2.5-flash', 'google/gemini-2.5-pro',
+    ],
+  },
+  anthropic: {
+    piProvider: 'anthropic',
+    pick: ['claude-sonnet-4-5', 'claude-sonnet-4-6', 'claude-opus-4-5', 'claude-opus-4-6', 'claude-haiku-4-5'],
+  },
+  openai: {
+    piProvider: 'openai',
+    pick: ['gpt-5.2', 'gpt-5.2-codex', 'gpt-5-mini', 'o4-mini', 'o3'],
+  },
+  gemini: {
+    piProvider: 'google',
+    pick: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-3-flash-preview'],
+  },
+};
+
+// Cached dynamic presets — populated once by async import.
+let cachedDynamicPresets: typeof PROVIDER_PRESETS | null = null;
+
+/**
+ * Build model presets dynamically from pi-ai registry.
+ * Returns PROVIDER_PRESETS with models arrays replaced by registry data where available.
+ * Uses async import() because pi-ai is ESM-only.
+ */
+export async function getPiAiModelPresets(): Promise<typeof PROVIDER_PRESETS> {
+  if (cachedDynamicPresets) return cachedDynamicPresets;
+
+  try {
+    const { getModels } = await import('@mariozechner/pi-ai') as { getModels: (provider: string) => Array<{ id: string; name: string }> | undefined };
+
+    const result = { ...PROVIDER_PRESETS } as Record<string, typeof PROVIDER_PRESETS[keyof typeof PROVIDER_PRESETS]>;
+
+    for (const [providerKey, curated] of Object.entries(PI_AI_CURATED)) {
+      const preset = PROVIDER_PRESETS[providerKey as keyof typeof PROVIDER_PRESETS];
+      if (!preset) continue;
+
+      const registryModels = getModels(curated.piProvider as any);
+      if (!registryModels || registryModels.length === 0) continue;
+
+      const registryIds = new Set(registryModels.map(m => m.id));
+      const picked = curated.pick
+        .filter(id => registryIds.has(id))
+        .map(id => {
+          const reg = registryModels.find(m => m.id === id);
+          return { id, name: reg?.name || id };
+        });
+
+      if (picked.length > 0) {
+        result[providerKey] = { ...preset, models: picked };
+      }
+    }
+
+    cachedDynamicPresets = result as typeof PROVIDER_PRESETS;
+    return cachedDynamicPresets;
+  } catch (err) {
+    logWarn('[ConfigStore] Failed to load pi-ai model presets, using hardcoded fallback:', err);
+    return PROVIDER_PRESETS;
+  }
+}
 
 const PROFILE_KEYS: ProviderProfileKey[] = [
   'openrouter',
@@ -338,7 +394,44 @@ export class ConfigStore {
 
   private ensureNormalized(): void {
     const normalized = this.normalizeConfig(this.store.store as Partial<AppConfig>);
+    this.normalizeModelIds(normalized);
     this.store.set(normalized);
+  }
+
+  /**
+   * Auto-fix model IDs that don't match pi-ai registry format.
+   * Non-destructive: only applies known safe transformations at read time.
+   */
+  private normalizeModelIds(config: AppConfig): void {
+    // Fix legacy "gemini/gemini-*" → "gemini-*" for gemini profiles
+    // (pi-ai google provider uses bare model IDs, not prefixed)
+    for (const key of ['gemini', 'custom:gemini'] as const) {
+      const profile = config.profiles?.[key];
+      if (profile?.model?.startsWith('gemini/')) {
+        profile.model = profile.model.slice('gemini/'.length);
+      }
+    }
+    // Fix openrouter baseUrl: /api → /api/v1
+    const orProfile = config.profiles?.openrouter;
+    if (orProfile?.baseUrl === 'https://openrouter.ai/api') {
+      orProfile.baseUrl = 'https://openrouter.ai/api/v1';
+    }
+    // Fix openrouter model IDs: dashes → dots for claude models
+    // Registry uses "anthropic/claude-sonnet-4.5", old config had "anthropic/claude-sonnet-4-5"
+    if (orProfile?.model) {
+      orProfile.model = orProfile.model.replace(
+        /^(anthropic\/claude-(?:sonnet|opus|haiku)-\d+)-(\d+)/,
+        '$1.$2',
+      );
+    }
+    // Also fix the flat model field (legacy compat)
+    if (config.model?.startsWith('gemini/')) {
+      config.model = config.model.slice('gemini/'.length);
+    }
+    // Fix flat baseUrl for openrouter
+    if (config.baseUrl === 'https://openrouter.ai/api' && config.provider === 'openrouter') {
+      config.baseUrl = 'https://openrouter.ai/api/v1';
+    }
   }
 
   private getDefaultProfile(profileKey: ProviderProfileKey): ProviderProfile {
@@ -347,7 +440,6 @@ export class ConfigStore {
       apiKey: fallback.apiKey,
       baseUrl: fallback.baseUrl,
       model: fallback.model,
-      openaiMode: fallback.openaiMode || 'responses',
     };
   }
 
@@ -363,7 +455,6 @@ export class ConfigStore {
       apiKey: typeof profile?.apiKey === 'string' ? profile.apiKey : '',
       baseUrl,
       model,
-      openaiMode: profile?.openaiMode === 'chat' ? 'chat' : 'responses',
     };
   }
 
@@ -404,7 +495,7 @@ export class ConfigStore {
       if (typeof rawProfile.model === 'string' && rawProfile.model.trim() && rawProfile.model.trim() !== fallback.model) {
         return true;
       }
-      return rawProfile.openaiMode === 'chat';
+      return false;
     });
     const shouldUseLegacyProjection = !hasAnyRawProfiles || !hasProfileUserData;
 
@@ -423,7 +514,6 @@ export class ConfigStore {
         apiKey: typeof raw.apiKey === 'string' ? raw.apiKey : '',
         baseUrl: typeof raw.baseUrl === 'string' ? raw.baseUrl : undefined,
         model: typeof raw.model === 'string' ? raw.model : undefined,
-        openaiMode: raw.openaiMode,
       });
       activeProfileKey = derivedProfileKey;
     }
@@ -449,7 +539,6 @@ export class ConfigStore {
     apiKey: string;
     baseUrl?: string;
     model: string;
-    openaiMode: 'responses' | 'chat';
     enableThinking: boolean;
   } {
     const profiles = this.cloneProfiles(configSet.profiles);
@@ -466,7 +555,6 @@ export class ConfigStore {
       apiKey: activeProfile.apiKey,
       baseUrl: activeProfile.baseUrl,
       model: activeProfile.model,
-      openaiMode: activeProfile.openaiMode === 'chat' ? 'chat' : 'responses',
       enableThinking: toBoolean(configSet.enableThinking, false),
     };
   }
@@ -621,8 +709,7 @@ export class ConfigStore {
     return Boolean(
       activeProfile.apiKey.trim() ||
       (activeProfile.baseUrl || '') !== (fallbackActive.baseUrl || '') ||
-      activeProfile.model !== fallbackActive.model ||
-      (activeProfile.openaiMode === 'chat')
+      activeProfile.model !== fallbackActive.model
     );
   }
 
@@ -657,8 +744,7 @@ export class ConfigStore {
       projected.enableThinking === legacy.enableThinking &&
       projected.apiKey === legacyActive.apiKey &&
       (projected.baseUrl || '') === (legacyActive.baseUrl || '') &&
-      projected.model === legacyActive.model &&
-      projected.openaiMode === (legacyActive.openaiMode === 'chat' ? 'chat' : 'responses')
+      projected.model === legacyActive.model
     );
   }
 
@@ -684,7 +770,6 @@ export class ConfigStore {
       apiKey: projected.apiKey,
       baseUrl: projected.baseUrl,
       model: projected.model,
-      openaiMode: projected.openaiMode,
       activeProfileKey: projected.activeProfileKey,
       profiles: projected.profiles,
       activeConfigSetId,
@@ -726,7 +811,6 @@ export class ConfigStore {
       apiKey: projected.apiKey,
       baseUrl: projected.baseUrl,
       model: projected.model,
-      openaiMode: projected.openaiMode,
       activeProfileKey: projected.activeProfileKey,
       profiles: projected.profiles,
       enableThinking: projected.enableThinking,
@@ -784,7 +868,6 @@ export class ConfigStore {
       apiKey: '',
       baseUrl: defaultProfile.baseUrl,
       model: defaultProfile.model,
-      openaiMode: 'responses',
     });
 
     return {
@@ -976,7 +1059,6 @@ export class ConfigStore {
       updates.apiKey !== undefined ||
       updates.baseUrl !== undefined ||
       updates.model !== undefined ||
-      updates.openaiMode !== undefined ||
       updates.enableThinking !== undefined;
 
     if (mutatesActiveSet) {
@@ -1019,9 +1101,6 @@ export class ConfigStore {
       if (updates.model !== undefined) {
         const model = updates.model?.trim();
         nextActiveProfile.model = model || this.getDefaultProfile(nextActiveProfileKey).model;
-      }
-      if (updates.openaiMode !== undefined) {
-        nextActiveProfile.openaiMode = updates.openaiMode === 'chat' ? 'chat' : 'responses';
       }
       nextProfiles[nextActiveProfileKey] = this.normalizeProfile(nextActiveProfileKey, nextActiveProfile);
 
@@ -1138,14 +1217,12 @@ export class ConfigStore {
       apiKey: config.apiKey,
       baseUrl: config.baseUrl,
       model: config.model,
-      openaiMode: config.openaiMode,
     };
     const projectedConfig: AppConfig = {
       ...config,
       apiKey: activeProfile.apiKey || '',
       baseUrl: activeProfile.baseUrl,
       model: activeProfile.model || '',
-      openaiMode: activeProfile.openaiMode === 'chat' ? 'chat' : 'responses',
     };
 
     // Clear all API-related env vars first to ensure clean state when switching providers
@@ -1159,7 +1236,6 @@ export class ConfigStore {
     delete process.env.OPENAI_MODEL;
     delete process.env.OPENAI_API_MODE;
     delete process.env.OPENAI_ACCOUNT_ID;
-    delete process.env.OPENAI_CODEX_OAUTH;
     delete process.env.GEMINI_API_KEY;
     delete process.env.GEMINI_BASE_URL;
     delete process.env.CLAUDE_CODE_PATH;
@@ -1184,11 +1260,9 @@ export class ConfigStore {
       if (resolvedOpenAI?.accountId) {
         process.env.OPENAI_ACCOUNT_ID = resolvedOpenAI.accountId;
       }
-      process.env.OPENAI_CODEX_OAUTH = resolvedOpenAI?.useCodexOAuth ? '1' : '0';
       if (projectedConfig.model) {
         process.env.OPENAI_MODEL = projectedConfig.model;
       }
-      process.env.OPENAI_API_MODE = projectedConfig.openaiMode === 'chat' ? 'chat' : 'responses';
     } else if (useGemini) {
       const trimmedApiKey = projectedConfig.apiKey?.trim();
       if (trimmedApiKey) {
@@ -1244,19 +1318,7 @@ export class ConfigStore {
       }
     }
 
-    // Only set CLAUDE_CODE_PATH if the configured path actually exists
-    // This allows auto-detection to work when the configured path is invalid
-    if (projectedConfig.claudeCodePath) {
-      if (isKnownInvalidClaudeCodePath(projectedConfig.claudeCodePath)) {
-        log('[Config] Ignoring invalid Claude Code path pattern, will use auto-detection:', projectedConfig.claudeCodePath);
-      } else if (fs.existsSync(projectedConfig.claudeCodePath)) {
-        process.env.CLAUDE_CODE_PATH = projectedConfig.claudeCodePath;
-        log('[Config] Using configured Claude Code path:', projectedConfig.claudeCodePath);
-      } else {
-        log('[Config] Configured Claude Code path not found, will use auto-detection:', projectedConfig.claudeCodePath);
-        // Don't set the env var, let auto-detection find it
-      }
-    }
+    // claudeCodePath is no longer used (pi-coding-agent handles model routing natively)
 
     if (projectedConfig.defaultWorkdir) {
       process.env.COWORK_WORKDIR = projectedConfig.defaultWorkdir;
@@ -1271,7 +1333,6 @@ export class ConfigStore {
       OPENAI_MODEL: process.env.OPENAI_MODEL || '(not set)',
       OPENAI_API_MODE: process.env.OPENAI_API_MODE || '(default)',
       OPENAI_ACCOUNT_ID: process.env.OPENAI_ACCOUNT_ID || '(not set)',
-      OPENAI_CODEX_OAUTH: process.env.OPENAI_CODEX_OAUTH || '(not set)',
       GEMINI_API_KEY: process.env.GEMINI_API_KEY ? '✓ Set' : '(empty/unset)',
       GEMINI_BASE_URL: process.env.GEMINI_BASE_URL || '(default)',
     });

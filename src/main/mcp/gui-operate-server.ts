@@ -56,7 +56,6 @@ const GUI_OPERATE_DIR = path.join(OPEN_COWORK_DATA_DIR, 'gui_operate');
 const SCREENSHOTS_DIR = path.join(GUI_OPERATE_DIR, 'screenshots');
 const SCREENSHOT_REUSE_WINDOW_MS = 5 * 60_000;
 const OPENAI_PLATFORM_BASE_URL = 'https://api.openai.com/v1';
-const OPENAI_ACCOUNT_ID_RE = /^[-_a-zA-Z0-9]{6,}$/;
 
 type ScreenshotCacheEntry = {
   displayIndex: number;
@@ -3659,7 +3658,6 @@ function buildVisionRuntimeSummary(
   baseUrl: string | undefined,
   model: string,
   isOpenAICompatible: boolean,
-  isCodexBackend: boolean,
   compatibilityMode: boolean
 ): Record<string, unknown> {
   return {
@@ -3670,33 +3668,18 @@ function buildVisionRuntimeSummary(
     baseUrlHost: getBaseUrlHost(baseUrl),
     model,
     isOpenAICompatible,
-    isCodexBackend,
     compatibilityMode,
   };
 }
 
-function sanitizeOpenAIAccountIdForHeader(raw: string | undefined): string | undefined {
-  const value = raw?.trim();
-  if (!value || value.includes('@')) {
-    return undefined;
-  }
-  if (!OPENAI_ACCOUNT_ID_RE.test(value)) {
-    return undefined;
-  }
-  return value;
-}
-
 function pickVisionApiKey(
-  selectedRoute: 'openai-chat-completions-compat' | 'codex-responses' | 'openai-chat-completions' | 'anthropic-messages',
+  selectedRoute: 'openai-chat-completions' | 'anthropic-messages',
   anthropicApiKey: string | undefined,
   openAIApiKey: string | undefined,
   isOpenRouter: boolean
 ): string | undefined {
   if (selectedRoute === 'anthropic-messages') {
     return anthropicApiKey;
-  }
-  if (selectedRoute === 'codex-responses' || selectedRoute === 'openai-chat-completions-compat') {
-    return openAIApiKey;
   }
   // OpenRouter historically reuses Anthropic-style key env vars.
   if (isOpenRouter) {
@@ -3744,13 +3727,6 @@ async function callVisionAPIWithTimeout(
     isOpenRouter ||
     (baseUrl ? baseUrl.includes('api.openai.com') : false);
 
-  const isCodexBackend = Boolean(baseUrl && baseUrl.includes('chatgpt.com/backend-api/codex'));
-  const useCompatibilityOpenAIRoute = Boolean(
-    compatibilityMode &&
-    isCodexBackend &&
-    openAIApiKey &&
-    openAIApiKey.trim().startsWith('sk-')
-  );
   const runtimeSummary = buildVisionRuntimeSummary(
     functionName,
     anthropicApiKey,
@@ -3758,17 +3734,12 @@ async function callVisionAPIWithTimeout(
     baseUrl,
     model,
     isOpenAICompatible,
-    isCodexBackend,
     compatibilityMode
   );
   writeMCPLog(JSON.stringify(runtimeSummary), 'Vision Runtime');
 
   const selectedRoute = isOpenAICompatible
-    ? (
-      useCompatibilityOpenAIRoute
-        ? 'openai-chat-completions-compat'
-        : (isCodexBackend ? 'codex-responses' : 'openai-chat-completions')
-    )
+    ? 'openai-chat-completions'
     : 'anthropic-messages';
   writeMCPLog(
     `[Vision Routing] function=${functionName || '(unknown)'} route=${selectedRoute} host=${getBaseUrlHost(baseUrl)} model=${model}${previousErrorMessage ? ` previousError=${previousErrorMessage}` : ''}`,
@@ -3782,25 +3753,10 @@ async function callVisionAPIWithTimeout(
     }
     throw new Error('OpenAI API key not configured for vision route. Please set OPENAI_API_KEY.');
   }
-  
-  if (isOpenAICompatible) {
-    if (isCodexBackend && !useCompatibilityOpenAIRoute) {
-      return await callCodexVisionResponses(
-        base64Image,
-        prompt,
-        model,
-        baseUrl!,
-        selectedApiKey,
-        sanitizeOpenAIAccountIdForHeader(process.env.OPENAI_ACCOUNT_ID),
-        timeoutMs,
-        compatibilityMode
-      );
-    }
 
+  if (isOpenAICompatible) {
     // Use OpenAI-compatible API format (for Gemini, GPT, etc. via OpenRouter)
-    const openAIBaseUrl = useCompatibilityOpenAIRoute
-      ? OPENAI_PLATFORM_BASE_URL
-      : (baseUrl || OPENAI_PLATFORM_BASE_URL);
+    const openAIBaseUrl = baseUrl || OPENAI_PLATFORM_BASE_URL;
     const openAIUrl = openAIBaseUrl.endsWith('/v1') 
       ? `${openAIBaseUrl}/chat/completions`
       : `${openAIBaseUrl}/v1/chat/completions`;
@@ -3982,98 +3938,6 @@ async function callVisionAPIWithTimeout(
       }
       throw error;
     }
-  }
-}
-
-async function callCodexVisionResponses(
-  base64Image: string,
-  prompt: string,
-  model: string,
-  baseUrl: string,
-  apiKey: string,
-  accountId: string | undefined,
-  timeoutMs: number,
-  compatibilityMode: boolean = false
-): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const endpoint = `${baseUrl.replace(/\/+$/, '')}/responses`;
-    const instructions =
-      'You are a GUI vision assistant. Analyze the provided screenshot and answer the user question accurately and concisely. Use Chinese unless the user explicitly requests another language.';
-    const question = (prompt || '').trim() || 'Please describe what is visible in the screenshot.';
-    const requestPayload: Record<string, unknown> = compatibilityMode
-      ? {
-          model,
-          stream: true,
-          instructions,
-          input: [
-            {
-              role: 'user',
-              content: [
-                { type: 'input_text', text: question },
-                { type: 'input_image', image_url: `data:image/png;base64,${base64Image}` },
-              ],
-            },
-          ],
-        }
-      : {
-          model,
-          store: false,
-          stream: true,
-          instructions,
-          input: [
-            {
-              role: 'user',
-              content: [
-                { type: 'input_text', text: question },
-                { type: 'input_image', image_url: `data:image/png;base64,${base64Image}` },
-              ],
-            },
-          ],
-        };
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-        'User-Agent': 'CodexBar',
-        ...(accountId ? { 'ChatGPT-Account-Id': accountId } : {}),
-      },
-      body: JSON.stringify(requestPayload),
-      signal: controller.signal,
-    });
-
-    const bodyText = await response.text();
-    if (!response.ok) {
-      throw new Error(`API request failed: ${response.status} ${response.statusText} - ${bodyText}`);
-    }
-
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType.includes('text/event-stream') || bodyText.includes('event:') || bodyText.includes('data:')) {
-      const streamedText = extractTextFromResponsesSSE(bodyText);
-      if (streamedText.trim()) {
-        return streamedText;
-      }
-      throw new Error('Vision SSE response did not contain output text');
-    }
-
-    let parsed: any;
-    try {
-      parsed = JSON.parse(bodyText);
-    } catch (error: any) {
-      throw new Error(`Failed to parse API response: ${error.message}`);
-    }
-
-    const directText = extractOutputTextFromResponsesPayload(parsed);
-    if (directText.trim()) {
-      return directText;
-    }
-
-    throw new Error('Vision response did not contain output text');
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -5221,293 +5085,6 @@ function getReusableScreenshot(displayIndex: number, regionKey: string): Screens
 
 function updateScreenshotCache(entry: ScreenshotCacheEntry): void {
   lastScreenshotCache = entry;
-}
-
-function extractTextFromResponsesSSE(sseText: string): string {
-  const channelText = new Map<string, string>();
-  const channelOrder: string[] = [];
-  let completedSnapshot = '';
-  const blocks = sseText.split(/\r?\n\r?\n/);
-
-  for (const block of blocks) {
-    if (!block.trim()) continue;
-    const lines = block.split(/\r?\n/);
-    let eventType = '';
-    const dataLines: string[] = [];
-
-    for (const line of lines) {
-      if (line.startsWith('event:')) {
-        eventType = line.slice(6).trim();
-      } else if (line.startsWith('data:')) {
-        dataLines.push(line.slice(5).trim());
-      }
-    }
-
-    if (dataLines.length === 0) {
-      continue;
-    }
-
-    const payload = dataLines.join('\n').trim();
-    if (!payload || payload === '[DONE]') {
-      continue;
-    }
-
-    try {
-      const parsed = JSON.parse(payload);
-      const parsedType = typeof parsed?.type === 'string' ? parsed.type : '';
-      const effectiveType = eventType || parsedType;
-
-      // Prefer true streaming deltas. Some backends send cumulative delta snapshots,
-      // so we merge per-channel instead of naive append.
-      const delta = extractResponsesDeltaText(parsed);
-      if (delta && (effectiveType.includes('output_text.delta') || effectiveType === '' || parsedType === 'response.output_text.delta')) {
-        const channel = deriveResponsesDeltaChannelKey(parsed);
-        if (!channelOrder.includes(channel)) {
-          channelOrder.push(channel);
-        }
-        const merged = mergeResponsesDelta(channelText.get(channel) || '', delta);
-        channelText.set(channel, merged);
-      }
-
-      if (
-        effectiveType.includes('response.completed') ||
-        parsedType === 'response.completed'
-      ) {
-        const snapshot = extractOutputTextFromResponsesPayload(parsed?.response || parsed);
-        if (snapshot) {
-          completedSnapshot = snapshot;
-        }
-      }
-    } catch {
-      // Ignore non-JSON SSE chunks
-    }
-  }
-
-  const streamed = chooseBestStreamedText(channelText, channelOrder);
-  if (streamed.trim()) {
-    return cleanupRepeatedVisionOutput(streamed);
-  }
-  if (completedSnapshot.trim()) {
-    return cleanupRepeatedVisionOutput(completedSnapshot);
-  }
-  return '';
-}
-
-function extractOutputTextFromResponsesPayload(payload: any): string {
-  if (!payload || typeof payload !== 'object') {
-    return '';
-  }
-  if (typeof payload.output_text === 'string') {
-    return payload.output_text;
-  }
-  if (typeof payload.delta === 'string') {
-    return payload.delta;
-  }
-  if (typeof payload.text === 'string') {
-    return payload.text;
-  }
-  if (payload.response) {
-    const nested = extractOutputTextFromResponsesPayload(payload.response);
-    if (nested) {
-      return nested;
-    }
-  }
-  if (Array.isArray(payload.output)) {
-    const parts: string[] = [];
-    for (const item of payload.output) {
-      if (item?.type === 'message' && Array.isArray(item.content)) {
-        for (const block of item.content) {
-          if (block?.type === 'output_text' && typeof block.text === 'string') {
-            parts.push(block.text);
-          }
-        }
-      }
-    }
-    if (parts.length > 0) {
-      return parts.join('\n');
-    }
-  }
-  return '';
-}
-
-function extractResponsesDeltaText(payload: any): string {
-  if (!payload || typeof payload !== 'object') {
-    return '';
-  }
-  if (typeof payload.delta === 'string') {
-    return payload.delta;
-  }
-  if (payload.item && typeof payload.item === 'object' && typeof payload.item.delta === 'string') {
-    return payload.item.delta;
-  }
-  return '';
-}
-
-function deriveResponsesDeltaChannelKey(payload: any): string {
-  if (!payload || typeof payload !== 'object') {
-    return 'default';
-  }
-  const p = payload as Record<string, unknown>;
-  const outputIndex = typeof p.output_index === 'number' ? p.output_index : null;
-  const contentIndex = typeof p.content_index === 'number' ? p.content_index : null;
-  const itemId = typeof p.item_id === 'string' ? p.item_id : '';
-  if (itemId) {
-    return `item:${itemId}`;
-  }
-  if (outputIndex !== null || contentIndex !== null) {
-    return `idx:${outputIndex ?? -1}:${contentIndex ?? -1}`;
-  }
-  return 'default';
-}
-
-function mergeResponsesDelta(existing: string, delta: string): string {
-  if (!existing) {
-    return delta;
-  }
-
-  // Cumulative snapshot mode: new delta includes previous text.
-  if (delta.startsWith(existing)) {
-    return delta;
-  }
-
-  // Exact repeat or stale chunk.
-  if (existing.endsWith(delta) || existing === delta || existing.startsWith(delta)) {
-    return existing;
-  }
-
-  // Incremental mode with overlap.
-  const overlap = findSuffixPrefixOverlap(existing, delta);
-  if (overlap > 0) {
-    return existing + delta.slice(overlap);
-  }
-
-  return existing + delta;
-}
-
-function findSuffixPrefixOverlap(left: string, right: string): number {
-  const max = Math.min(left.length, right.length);
-  for (let size = max; size > 0; size--) {
-    if (left.slice(-size) === right.slice(0, size)) {
-      return size;
-    }
-  }
-  return 0;
-}
-
-function chooseBestStreamedText(channelText: Map<string, string>, order: string[]): string {
-  const collected = order
-    .map((key) => (channelText.get(key) || '').trim())
-    .filter((text) => text.length > 0);
-  if (collected.length === 0) {
-    return '';
-  }
-  if (collected.length === 1) {
-    return collected[0];
-  }
-
-  // Prefer the longest channel text; most duplicated channels are equivalent snapshots.
-  const sorted = [...new Set(collected)].sort((a, b) => b.length - a.length);
-  const longest = sorted[0];
-  const othersAllContained = sorted.slice(1).every((item) => longest.includes(item));
-  if (othersAllContained) {
-    return longest;
-  }
-
-  return sorted.join('\n');
-}
-
-function cleanupRepeatedVisionOutput(text: string): string {
-  const normalized = collapseLikelyEchoDoubles(text.replace(/\r\n/g, '\n').trim());
-  if (!normalized) {
-    return normalized;
-  }
-
-  const stripped = stripRepeatedScreenReportSections(normalized);
-  const paragraphDeduped = dedupeConsecutiveDuplicateParagraphs(stripped);
-  const fullDup = findLongestConsecutiveDuplicateBlock(paragraphDeduped, 200);
-  if (fullDup) {
-    return fullDup;
-  }
-
-  return paragraphDeduped;
-}
-
-function collapseLikelyEchoDoubles(text: string): string {
-  if (!text) {
-    return text;
-  }
-  const cjkChars = text.match(/[\u4e00-\u9fff]/g) || [];
-  if (cjkChars.length < 60) {
-    return text;
-  }
-  const doubled = text.match(/([\u4e00-\u9fff])\1/g) || [];
-  const ratio = doubled.length / cjkChars.length;
-  // Only normalize when duplication is widespread (likely stream echo artifact).
-  if (ratio < 0.18) {
-    return text;
-  }
-  return text.replace(/([\u4e00-\u9fff])\1/g, '$1');
-}
-
-function findLongestConsecutiveDuplicateBlock(text: string, minLen: number): string {
-  // If output is "A + A + A", keep one clean copy.
-  for (let len = Math.floor(text.length / 2); len >= minLen; len--) {
-    const head = text.slice(0, len).trim();
-    if (!head) continue;
-    const repeatedTwice = `${head}${head}`;
-    if (text.replace(/\s+/g, '') === repeatedTwice.replace(/\s+/g, '')) {
-      return head;
-    }
-    const repeatedThrice = `${head}${head}${head}`;
-    if (text.replace(/\s+/g, '') === repeatedThrice.replace(/\s+/g, '')) {
-      return head;
-    }
-  }
-  return '';
-}
-
-function stripRepeatedScreenReportSections(text: string): string {
-  const intros = ['下面是对当前截图', '下面是基于截图', '以下是我基于截图', '以下是基于截图'];
-  for (const intro of intros) {
-    const first = text.indexOf(intro);
-    if (first < 0) continue;
-    const second = text.indexOf(intro, first + intro.length);
-    if (second > first + 20) {
-      return text.slice(0, second).trim();
-    }
-  }
-
-  const headingRegex = /###\s*1[).]/g;
-  const matches = [...text.matchAll(headingRegex)];
-  if (matches.length >= 2) {
-    const firstIndex = matches[0].index ?? -1;
-    const secondIndex = matches[1].index ?? -1;
-    if (firstIndex >= 0 && secondIndex > firstIndex + 120) {
-      return text.slice(0, secondIndex).trim();
-    }
-  }
-  return text;
-}
-
-function dedupeConsecutiveDuplicateParagraphs(text: string): string {
-  const blocks = text.split(/\n{2,}/).map((item) => item.trim()).filter(Boolean);
-  if (blocks.length <= 1) {
-    return text;
-  }
-
-  const kept: string[] = [];
-  for (const block of blocks) {
-    const previous = kept[kept.length - 1] || '';
-    if (normalizeForDedup(previous) === normalizeForDedup(block)) {
-      continue;
-    }
-    kept.push(block);
-  }
-  return kept.join('\n\n').trim();
-}
-
-function normalizeForDedup(text: string): string {
-  return text.replace(/\s+/g, '').trim();
 }
 
 /**

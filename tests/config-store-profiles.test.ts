@@ -55,7 +55,6 @@ describe('ConfigStore provider profiles', () => {
       apiKey: 'sk-legacy-openai',
       baseUrl: 'https://api.openai.com/v1',
       model: 'gpt-5.2-mini',
-      openaiMode: 'responses',
       enableDevLogs: true,
       sandboxEnabled: false,
       enableThinking: false,
@@ -82,31 +81,31 @@ describe('ConfigStore provider profiles', () => {
           apiKey: 'sk-openai',
           baseUrl: 'https://api.openai.com/v1',
           model: 'gpt-5.2',
-          openaiMode: 'responses',
+
         },
         openrouter: {
           apiKey: 'sk-openrouter',
           baseUrl: 'https://openrouter.ai/api',
           model: 'anthropic/claude-sonnet-4.5',
-          openaiMode: 'responses',
+
         },
         anthropic: {
           apiKey: 'sk-ant',
           baseUrl: 'https://api.anthropic.com',
           model: 'claude-sonnet-4-5',
-          openaiMode: 'responses',
+
         },
         'custom:anthropic': {
           apiKey: 'sk-custom-ant',
           baseUrl: 'https://custom.example/anthropic',
           model: 'glm-4.7',
-          openaiMode: 'responses',
+
         },
         'custom:openai': {
           apiKey: 'sk-custom-openai',
           baseUrl: 'https://custom.example/openai/v1',
           model: 'gpt-5.2',
-          openaiMode: 'responses',
+
         },
       },
       enableDevLogs: true,

@@ -102,24 +102,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   auth: {
-    getStatus: (): Promise<Array<{
-      provider: 'codex';
-      available: boolean;
-      path: string;
-      profile?: string;
-      account?: string;
-      expiresAt?: string;
-      updatedAt?: string;
-    }>> => ipcRenderer.invoke('auth.getStatus'),
-    importToken: (provider: 'codex'): Promise<{
-      provider: 'codex';
-      token: string;
-      path: string;
-      profile?: string;
-      account?: string;
-      expiresAt?: string;
-      updatedAt?: string;
-    } | null> => ipcRenderer.invoke('auth.importToken', provider),
+    getStatus: (): Promise<Array<Record<string, unknown>>> => ipcRenderer.invoke('auth.getStatus'),
+    importToken: (provider: string): Promise<Record<string, unknown> | null> => ipcRenderer.invoke('auth.importToken', provider),
   },
 
   // Window control methods
@@ -367,24 +351,8 @@ declare global {
         test: (config: ApiTestInput) => Promise<ApiTestResult>;
       };
       auth: {
-        getStatus: () => Promise<Array<{
-          provider: 'codex';
-          available: boolean;
-          path: string;
-          profile?: string;
-          account?: string;
-          expiresAt?: string;
-          updatedAt?: string;
-        }>>;
-        importToken: (provider: 'codex') => Promise<{
-          provider: 'codex';
-          token: string;
-          path: string;
-          profile?: string;
-          account?: string;
-          expiresAt?: string;
-          updatedAt?: string;
-        } | null>;
+        getStatus: () => Promise<Array<Record<string, unknown>>>;
+        importToken: (provider: string) => Promise<Record<string, unknown> | null>;
       };
       window: {
         minimize: () => void;

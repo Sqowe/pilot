@@ -760,11 +760,6 @@ async function callVisionAPI(
     throw new Error('API key not configured. Please configure it in Settings.');
   }
 
-  // Codex backend URL is not a standard chat-completions endpoint; switch to platform endpoint for vision.
-  if (baseUrl && baseUrl.includes('chatgpt.com/backend-api/codex')) {
-    baseUrl = 'https://api.openai.com/v1';
-  }
-  
   // console.error(`[Vision] Using model: ${model} (baseURL: ${baseUrl || 'default'}), enableThinking: ${enableThinking}`);
   
   // Log the prompt

@@ -55,7 +55,6 @@ describe('ConfigStore config sets', () => {
       apiKey: 'sk-legacy-openai',
       baseUrl: 'https://api.openai.com/v1',
       model: 'gpt-5.2-mini',
-      openaiMode: 'responses',
       enableThinking: true,
       isConfigured: true,
     };
@@ -79,7 +78,6 @@ describe('ConfigStore config sets', () => {
       apiKey: 'sk-openrouter-origin',
       baseUrl: 'https://openrouter.ai/api',
       model: 'anthropic/claude-sonnet-4.5',
-      openaiMode: 'responses',
       enableThinking: false,
       isConfigured: true,
     };
@@ -128,7 +126,6 @@ describe('ConfigStore config sets', () => {
       apiKey: 'sk-existing',
       baseUrl: 'https://example.com/v1',
       model: 'custom-model',
-      openaiMode: 'chat',
       enableThinking: true,
       isConfigured: true,
     };
@@ -163,7 +160,6 @@ describe('ConfigStore config sets', () => {
       apiKey: 'AIza-existing',
       baseUrl: 'https://generativelanguage.googleapis.com',
       model: 'gemini/gemini-2.5-pro',
-      openaiMode: 'responses',
       enableThinking: false,
       isConfigured: true,
     };
@@ -175,6 +171,6 @@ describe('ConfigStore config sets', () => {
     expect(blankSet?.provider).toBe('gemini');
     expect(blankSet?.profiles.gemini?.apiKey).toBe('');
     expect(blankSet?.profiles.gemini?.baseUrl).toBe('https://generativelanguage.googleapis.com');
-    expect(blankSet?.profiles.gemini?.model).toBe('gemini/gemini-2.5-flash');
+    expect(blankSet?.profiles.gemini?.model).toBe('gemini-2.5-flash');
   });
 });

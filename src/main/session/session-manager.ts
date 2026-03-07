@@ -1,33 +1,17 @@
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs';
 import * as path from 'path';
-import OpenAI from 'openai';
-import { Anthropic } from '@anthropic-ai/sdk';
 import type { Session, Message, ServerEvent, PermissionResult, ContentBlock, TextContent, TraceStep, FileAttachmentContent } from '../../renderer/types';
 import type { DatabaseInstance, TraceStepRow } from '../db/database';
 import { PathResolver } from '../sandbox/path-resolver';
 import { SandboxAdapter, getSandboxAdapter, initializeSandbox, reinitializeSandbox } from '../sandbox/sandbox-adapter';
 import { SandboxSync } from '../sandbox/sandbox-sync';
 import { ClaudeAgentRunner } from '../claude/agent-runner';
-import { importLocalAuthToken } from '../auth/local-auth';
-import { CodexCliRunner, type CodexFailureContext } from '../openai/codex-cli-runner';
-import { OpenAIResponsesRunner } from '../openai/responses-runner';
 import { configStore } from '../config/config-store';
-import {
-  buildOpenAICodexHeaders,
-  resolveOpenAICredentials,
-  shouldAllowEmptyAnthropicApiKey,
-  shouldUseAnthropicAuthToken,
-} from '../config/auth-utils';
 import { MCPManager } from '../mcp/mcp-manager';
 import { mcpConfigStore } from '../mcp/mcp-config-store';
 import { PluginRuntimeService } from '../skills/plugin-runtime-service';
 import { log, logError, logWarn } from '../utils/logger';
-import {
-  selectOpenAIBackendRoute,
-  type OpenAIBackendRoute,
-} from './openai-backend-routing';
-import { decideOpenAIFailoverFromCodex } from './openai-failover-policy';
 import { maybeGenerateSessionTitle } from './session-title-flow';
 import {
   buildTitlePrompt,
@@ -35,7 +19,6 @@ import {
   normalizeGeneratedTitle,
 } from './session-title-utils';
 import { generateTitleWithClaudeSdk } from '../claude/claude-sdk-one-shot';
-import { getClaudeUnifiedModeState, shouldUseUnifiedClaudeSdk } from './claude-unified-mode';
 import { buildScheduledTaskTitle } from '../../shared/schedule/task-title';
 
 interface AgentRunner {
@@ -45,11 +28,6 @@ interface AgentRunner {
   clearSdkSession?(sessionId: string): void;
 }
 
-type CodexRunnerErrorLike = {
-  codexFailureContext?: CodexFailureContext;
-};
-
-const LOCAL_ANTHROPIC_PLACEHOLDER_KEY = 'sk-ant-local-proxy';
 const WORKSPACE_MOUNT_VIRTUAL_PATH = '/mnt/workspace';
 const TITLE_GENERATION_TIMEOUT_MS = 20000;
 
@@ -67,8 +45,6 @@ export class SessionManager {
   private sandboxInitPromises: Map<string, Promise<void>> = new Map();
   private sessionTitleAttempts: Set<string> = new Set();
   private titleGenerationTokens: Map<string, symbol> = new Map();
-  private openaiBackendRoute: OpenAIBackendRoute | null = null;
-  private responsesFallbackRunnerBySession: Map<string, OpenAIResponsesRunner> = new Map();
 
   constructor(
     db: DatabaseInstance,
@@ -104,47 +80,8 @@ export class SessionManager {
    * Can be called to recreate runner when config changes
    */
   private createAgentRunner(): void {
-    const config = configStore.getAll();
-    const provider = config.provider;
-    const customProtocol = config.customProtocol;
-    const useOpenAI = provider === 'openai' || (provider === 'custom' && customProtocol === 'openai');
-    const unifiedMode = getClaudeUnifiedModeState();
-    this.openaiBackendRoute = null;
-    if (shouldUseUnifiedClaudeSdk(config)) {
-      this.openaiBackendRoute = null;
-      this.agentRunner = this.createClaudeAgentRunner();
-      log('[SessionManager] Using Claude Agent runner (unified mode)', {
-        useOpenAI,
-        reason: unifiedMode.reason,
-        legacy_force_flag: unifiedMode.legacyForceFlag,
-      });
-      return;
-    }
-    if (useOpenAI) {
-      const hasLocalCodexLogin = Boolean(importLocalAuthToken('codex')?.token?.trim());
-      const openaiBackend = selectOpenAIBackendRoute({
-        hasLocalCodexLogin,
-        apiKey: configStore.get('apiKey'),
-        forceResponsesFallback: this.shouldForceResponsesFallback(),
-      });
-      this.openaiBackendRoute = openaiBackend;
-
-      if (openaiBackend === 'responses-fallback') {
-        this.agentRunner = this.createOpenAIResponsesRunner();
-      } else {
-        this.agentRunner = this.createCodexCliRunner();
-      }
-
-      log('[SessionManager] Using OpenAI runner', { openai_backend: openaiBackend });
-    } else {
-      this.openaiBackendRoute = null;
-      this.agentRunner = this.createClaudeAgentRunner();
-      log('[SessionManager] Using Claude Agent runner');
-    }
-  }
-
-  private shouldForceResponsesFallback(): boolean {
-    return process.env.COWORK_FORCE_OPENAI_RESPONSES === '1';
+    this.agentRunner = this.createClaudeAgentRunner();
+    log('[SessionManager] Using pi-coding-agent runner');
   }
 
   private createClaudeAgentRunner(): ClaudeAgentRunner {
@@ -157,32 +94,6 @@ export class SessionManager {
       this.mcpManager,
       this.pluginRuntimeService
     );
-  }
-
-  private createOpenAIResponsesRunner(): OpenAIResponsesRunner {
-    return new OpenAIResponsesRunner({
-      sendToRenderer: this.sendToRenderer,
-      saveMessage: (message: Message) => this.saveMessage(message),
-      pathResolver: this.pathResolver,
-      mcpManager: this.mcpManager,
-      requestPermission: (sessionId, toolUseId, toolName, input) =>
-        this.requestPermission(sessionId, toolUseId, toolName, input),
-    });
-  }
-
-  private createCodexCliRunner(): CodexCliRunner {
-    return new CodexCliRunner({
-      sendToRenderer: this.sendToRenderer,
-      saveMessage: (message: Message) => this.saveMessage(message),
-      mcpManager: this.mcpManager,
-      getPersistedThreadId: (sessionId: string) => {
-        const row = this.db.sessions.get(sessionId);
-        return row?.openai_thread_id || undefined;
-      },
-      persistThreadId: (sessionId: string, threadId?: string) => {
-        this.db.sessions.update(sessionId, { openai_thread_id: threadId || null });
-      },
-    });
   }
 
   /**
@@ -579,21 +490,8 @@ export class SessionManager {
       // Get existing messages for context (including the one we just saved)
       const existingMessages = this.getMessages(session.id);
 
-      // Run the agent - this handles everything including sending messages
-      // Use enhanced prompt that includes file information
-      try {
-        await this.agentRunner.run(session, enhancedPrompt, existingMessages);
-      } catch (runnerError) {
-        const failedOver = await this.tryRunOpenAIResponsesFallback(
-          session,
-          enhancedPrompt,
-          existingMessages,
-          runnerError
-        );
-        if (!failedOver) {
-          throw runnerError;
-        }
-      }
+      // Run the agent
+      await this.agentRunner.run(session, enhancedPrompt, existingMessages);
 
       // 标题生成不再与首轮对话并发，避免与主请求竞争同一上游配额/通道导致体感变慢。
       void this.runSessionTitleGeneration(session, prompt, existingMessages);
@@ -624,84 +522,6 @@ export class SessionManager {
         payload: { message: errorText },
       });
     }
-  }
-
-  private async tryRunOpenAIResponsesFallback(
-    session: Session,
-    prompt: string,
-    existingMessages: Message[],
-    runnerError: unknown
-  ): Promise<boolean> {
-    const provider = configStore.get('provider');
-    const customProtocol = configStore.get('customProtocol');
-    const apiKey = configStore.get('apiKey');
-    const baseUrl = configStore.get('baseUrl');
-    const useOpenAI = provider === 'openai' || (provider === 'custom' && customProtocol === 'openai');
-    if (!useOpenAI) {
-      return false;
-    }
-
-    if (this.openaiBackendRoute !== 'codex-cli') {
-      return false;
-    }
-
-    if (!(this.agentRunner instanceof CodexCliRunner)) {
-      return false;
-    }
-
-    const codexFailureContext = this.extractCodexFailureContext(runnerError);
-    const hasOpenAICredentials = Boolean(resolveOpenAICredentials({
-      provider,
-      customProtocol,
-      apiKey,
-      baseUrl,
-    })?.apiKey);
-    const decision = decideOpenAIFailoverFromCodex({
-      error: runnerError,
-      hasOpenAICredentials,
-      alreadyUsingResponsesFallback: false,
-      hasTurnOutput: codexFailureContext.hasTurnOutput,
-      hasTurnSideEffects: codexFailureContext.hasTurnSideEffects,
-    });
-
-    log('[SessionManager] OpenAI failover decision', {
-      openai_backend: this.openaiBackendRoute,
-      failover_applied: decision.shouldFailover,
-      has_turn_output: codexFailureContext.hasTurnOutput,
-      has_turn_side_effects: codexFailureContext.hasTurnSideEffects,
-      failover_blocked_by_turn_state: decision.category === 'turn-already-executed',
-      category: decision.category,
-      reason: decision.reason,
-    });
-
-    if (!decision.shouldFailover) {
-      return false;
-    }
-
-    const fallbackRunner = this.createOpenAIResponsesRunner();
-    this.responsesFallbackRunnerBySession.set(session.id, fallbackRunner);
-    try {
-      await fallbackRunner.run(session, prompt, existingMessages);
-      log('[SessionManager] OpenAI failover completed', {
-        sessionId: session.id,
-        openai_backend: 'responses-fallback',
-        failover_applied: true,
-      });
-      return true;
-    } finally {
-      this.responsesFallbackRunnerBySession.delete(session.id);
-    }
-  }
-
-  private extractCodexFailureContext(error: unknown): CodexFailureContext {
-    const raw = (error as CodexRunnerErrorLike | undefined)?.codexFailureContext;
-    if (!raw) {
-      return { hasTurnOutput: false, hasTurnSideEffects: false };
-    }
-    return {
-      hasTurnOutput: Boolean(raw.hasTurnOutput),
-      hasTurnSideEffects: Boolean(raw.hasTurnSideEffects),
-    };
   }
 
   private async runSessionTitleGeneration(session: Session, prompt: string, existingMessages: Message[]): Promise<void> {
@@ -776,106 +596,8 @@ export class SessionManager {
   }
 
   private async generateTitleWithConfig(titlePrompt: string, cwd?: string): Promise<string | null> {
-    if (shouldUseUnifiedClaudeSdk(configStore.getAll())) {
-      return normalizeGeneratedTitle(await generateTitleWithClaudeSdk(titlePrompt, configStore.getAll(), cwd));
-    }
-
-    const provider = configStore.get('provider');
-    const customProtocol = configStore.get('customProtocol');
-    const apiKey = configStore.get('apiKey');
-    const baseUrl = configStore.get('baseUrl');
-    const model = configStore.get('model');
-    const useOpenAI = provider === 'openai' || (provider === 'custom' && customProtocol === 'openai');
-
-    if (!model) {
-      log('[SessionTitle] Missing model, skip generation');
-      return null;
-    }
-
-    if (useOpenAI) {
-      const resolvedOpenAI = resolveOpenAICredentials({ provider, customProtocol, apiKey, baseUrl });
-      if (!resolvedOpenAI?.apiKey) {
-        log('[SessionTitle] Missing OpenAI credentials, skip generation');
-        return null;
-      }
-
-      const client = new OpenAI({
-        apiKey: resolvedOpenAI.apiKey,
-        baseURL: resolvedOpenAI.baseUrl || baseUrl || undefined,
-        ...(resolvedOpenAI.useCodexOAuth
-          ? { defaultHeaders: buildOpenAICodexHeaders(resolvedOpenAI.accountId) }
-          : {}),
-      });
-
-      if (resolvedOpenAI.useCodexOAuth) {
-        const stream = client.responses.stream({
-          model,
-          instructions: 'Return only a short concise session title.',
-          store: false,
-          input: [{ role: 'user', content: [{ type: 'input_text', text: titlePrompt }] }],
-        });
-        for await (const _event of stream) {
-          // drain stream
-        }
-        const response = await stream.finalResponse();
-        const output = Array.isArray(response?.output) ? response.output : [];
-        for (const item of output) {
-          const content = Array.isArray((item as { content?: unknown[] }).content)
-            ? ((item as { content?: unknown[] }).content as unknown[])
-            : [];
-          for (const block of content) {
-            if (
-              block &&
-              typeof block === 'object' &&
-              (block as { type?: string }).type === 'output_text' &&
-              typeof (block as { text?: string }).text === 'string'
-            ) {
-              return normalizeGeneratedTitle((block as { text: string }).text);
-            }
-          }
-        }
-        return null;
-      }
-
-      const response = await client.chat.completions.create({
-        model,
-        messages: [{ role: 'user', content: titlePrompt }],
-        temperature: 0.2,
-        max_tokens: 64,
-      });
-      return normalizeGeneratedTitle(response.choices[0]?.message?.content);
-    }
-
-    const trimmedApiKey = apiKey?.trim();
-    const effectiveAnthropicApiKey = trimmedApiKey || (
-      shouldAllowEmptyAnthropicApiKey({
-        provider,
-        customProtocol,
-        baseUrl,
-      })
-        ? LOCAL_ANTHROPIC_PLACEHOLDER_KEY
-        : ''
-    );
-    if (!effectiveAnthropicApiKey) {
-      log('[SessionTitle] Missing API key, skip generation');
-      return null;
-    }
-
-    const useAuthTokenHeader = shouldUseAnthropicAuthToken({
-      provider,
-      customProtocol,
-      apiKey: effectiveAnthropicApiKey,
-    });
-    const client = useAuthTokenHeader
-      ? new Anthropic({ authToken: effectiveAnthropicApiKey, baseURL: baseUrl || undefined })
-      : new Anthropic({ apiKey: effectiveAnthropicApiKey, baseURL: baseUrl || undefined });
-    const response = await client.messages.create({
-      model,
-      max_tokens: 64,
-      messages: [{ role: 'user', content: titlePrompt }],
-    });
-    const text = response.content.find((item) => item.type === 'text')?.text;
-    return normalizeGeneratedTitle(text);
+    // Always use pi-ai SDK for title generation
+    return normalizeGeneratedTitle(await generateTitleWithClaudeSdk(titlePrompt, configStore.getAll(), cwd));
   }
 
   private enqueuePrompt(session: Session, prompt: string, content?: ContentBlock[]): void {
@@ -940,10 +662,6 @@ export class SessionManager {
     log('[SessionManager] Stopping session:', sessionId);
     this.titleGenerationTokens.delete(sessionId);
     this.agentRunner.cancel(sessionId);
-    const fallbackRunner = this.responsesFallbackRunnerBySession.get(sessionId);
-    if (fallbackRunner) {
-      fallbackRunner.cancel(sessionId);
-    }
     // Also abort any pending controller we tracked
     const controller = this.activeSessions.get(sessionId);
     if (controller) {
@@ -1113,9 +831,6 @@ export class SessionManager {
 
   // Handle user's response to AskUserQuestion
   handleQuestionResponse(questionId: string, answer: string): void {
-    for (const runner of this.responsesFallbackRunnerBySession.values()) {
-      runner.handleQuestionResponse(questionId, answer);
-    }
     this.agentRunner.handleQuestionResponse(questionId, answer);
   }
 

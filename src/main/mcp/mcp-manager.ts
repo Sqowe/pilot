@@ -3,8 +3,6 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { app } from 'electron';
 import path from 'path';
-import { importLocalAuthToken } from '../auth/local-auth';
-import { OPENAI_CODEX_BACKEND_BASE_URL, sanitizeOpenAIAccountId } from '../config/auth-utils';
 import { log, logError, logWarn } from '../utils/logger';
 
 /**
@@ -248,24 +246,6 @@ export class MCPManager {
 
     // Merge with config env (config env takes precedence)
     const merged = { ...env, ...configEnv };
-
-    // Fallback: if OpenAI key is still missing, hydrate from local Codex login.
-    // Restrict hydration to OpenAI-leaning contexts so Anthropic/OpenRouter paths are not polluted.
-    if (!merged.OPENAI_API_KEY && shouldHydrateOpenAIFromLocalCodex(merged)) {
-      const localCodex = importLocalAuthToken('codex');
-      const localToken = localCodex?.token?.trim();
-      if (localToken) {
-        merged.OPENAI_API_KEY = localToken;
-        if (!merged.OPENAI_BASE_URL) {
-          merged.OPENAI_BASE_URL = OPENAI_CODEX_BACKEND_BASE_URL;
-        }
-        const sanitizedAccountId = sanitizeOpenAIAccountId(localCodex?.account);
-        if (!merged.OPENAI_ACCOUNT_ID && sanitizedAccountId) {
-          merged.OPENAI_ACCOUNT_ID = sanitizedAccountId;
-        }
-        log('[MCPManager] Hydrated OPENAI_API_KEY from local Codex auth for MCP subprocess');
-      }
-    }
 
     return merged;
   }
@@ -1244,15 +1224,6 @@ export function mergeShellEnvForMcp(
     }
   }
   return merged;
-}
-
-export function shouldHydrateOpenAIFromLocalCodex(env: NodeJS.ProcessEnv): boolean {
-  return (
-    hasNonEmptyEnvValue(env.OPENAI_BASE_URL) ||
-    hasNonEmptyEnvValue(env.OPENAI_MODEL) ||
-    hasNonEmptyEnvValue(env.OPENAI_API_MODE) ||
-    env.OPENAI_CODEX_OAUTH === '1'
-  );
 }
 
 function extractStructuredToolErrorMessage(result: any): string {

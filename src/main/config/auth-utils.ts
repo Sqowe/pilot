@@ -1,5 +1,4 @@
 import type { AppConfig } from './config-store';
-import { importLocalAuthToken } from '../auth/local-auth';
 import { isLoopbackBaseUrl as sharedIsLoopbackBaseUrl } from '../../shared/network/loopback';
 
 const API_KEY_PREFIX_RE = /^sk-/i;
@@ -7,7 +6,6 @@ const CHATGPT_ACCOUNT_ID_RE = /^[-_a-zA-Z0-9]{6,}$/;
 const OFFICIAL_OPENAI_HOSTS = new Set(['api.openai.com', 'chatgpt.com']);
 
 export const OPENAI_PLATFORM_BASE_URL = 'https://api.openai.com/v1';
-export const OPENAI_CODEX_BACKEND_BASE_URL = 'https://chatgpt.com/backend-api/codex';
 
 type OpenAIConfigLike = Pick<AppConfig, 'provider' | 'customProtocol' | 'apiKey' | 'baseUrl'>;
 
@@ -15,12 +13,6 @@ export interface ResolvedOpenAICredentials {
   apiKey: string;
   baseUrl?: string;
   accountId?: string;
-  useCodexOAuth: boolean;
-  source: 'apiKey' | 'localCodex';
-}
-
-export interface ResolveOpenAICredentialsOptions {
-  allowLocalCodexFallback?: boolean;
 }
 
 export function isLikelyOAuthAccessToken(token: string | undefined | null): boolean {
@@ -126,9 +118,6 @@ export function getUnifiedUnsupportedCustomOpenAIBaseUrl(
     return null;
   }
   const resolved = resolveOpenAICredentials(config);
-  if (resolved?.useCodexOAuth) {
-    return null;
-  }
   const baseUrl = resolved?.baseUrl || config.baseUrl;
   if (!isOfficialOpenAIBaseUrl(baseUrl)) {
     return null;
@@ -147,76 +136,18 @@ export function normalizeAnthropicBaseUrl(baseUrl: string | undefined): string |
   return value;
 }
 
-function shouldUseCodexOAuthForProvidedToken(config: OpenAIConfigLike, token: string): boolean {
-  if (!isLikelyOAuthAccessToken(token)) {
-    return false;
-  }
-
-  // OpenAI 官方 provider 下，非 sk- token 视为 Codex OAuth token
-  if (config.provider === 'openai') {
-    return true;
-  }
-
-  // 自定义 OpenAI 协议仅在明确使用 Codex backend 时按 OAuth 处理
-  const normalizedBaseUrl = normalizeBaseUrl(config.baseUrl);
-  return config.provider === 'custom'
-    && config.customProtocol === 'openai'
-    && normalizedBaseUrl === OPENAI_CODEX_BACKEND_BASE_URL;
-}
-
 export function resolveOpenAICredentials(
-  config: OpenAIConfigLike,
-  options: ResolveOpenAICredentialsOptions = {}
+  config: OpenAIConfigLike
 ): ResolvedOpenAICredentials | null {
-  const allowLocalCodexFallback = options.allowLocalCodexFallback !== false;
   const trimmedApiKey = config.apiKey?.trim();
   if (trimmedApiKey) {
-    if (shouldUseCodexOAuthForProvidedToken(config, trimmedApiKey)) {
-      const localCodex = importLocalAuthToken('codex');
-      return {
-        apiKey: trimmedApiKey,
-        baseUrl: OPENAI_CODEX_BACKEND_BASE_URL,
-        accountId: sanitizeOpenAIAccountId(localCodex?.account),
-        useCodexOAuth: true,
-        source: 'apiKey',
-      };
-    }
-
     return {
       apiKey: trimmedApiKey,
       baseUrl: normalizeOpenAICompatibleBaseUrl(config.baseUrl),
-      useCodexOAuth: false,
-      source: 'apiKey',
     };
   }
 
-  if (!isOpenAIProvider(config)) {
-    return null;
-  }
-  if (!allowLocalCodexFallback) {
-    return null;
-  }
-
-  const localCodex = importLocalAuthToken('codex');
-  const localToken = localCodex?.token?.trim();
-  if (!localToken) {
-    return null;
-  }
-
-  return {
-    apiKey: localToken,
-    baseUrl: OPENAI_CODEX_BACKEND_BASE_URL,
-    accountId: sanitizeOpenAIAccountId(localCodex?.account),
-    useCodexOAuth: true,
-    source: 'localCodex',
-  };
-}
-
-export function buildOpenAICodexHeaders(accountId?: string): Record<string, string> {
-  return {
-    'User-Agent': 'CodexBar',
-    ...(accountId ? { 'ChatGPT-Account-Id': accountId } : {}),
-  };
+  return null;
 }
 
 export function isLoopbackBaseUrl(baseUrl: string | undefined): boolean {

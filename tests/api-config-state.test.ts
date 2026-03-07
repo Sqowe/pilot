@@ -32,19 +32,16 @@ describe('api config state helpers', () => {
       apiKey: 'sk-active',
       baseUrl: 'https://custom-openai.example/v1',
       model: 'gpt-5.2-codex',
-      openaiMode: 'responses',
       profiles: {
         'custom:openai': {
           apiKey: 'sk-custom-openai',
           baseUrl: 'https://custom-openai.example/v1',
           model: 'gpt-5.2-codex',
-          openaiMode: 'responses',
         },
         'custom:anthropic': {
           apiKey: 'sk-custom-anthropic',
           baseUrl: 'https://custom-anthropic.example',
           model: 'glm-4.7',
-          openaiMode: 'responses',
         },
       },
       isConfigured: true,
@@ -65,13 +62,11 @@ describe('api config state helpers', () => {
       apiKey: 'sk-openai',
       baseUrl: 'https://api.openai.com/v1',
       model: 'gpt-5.2',
-      openaiMode: 'responses',
       profiles: {
         openai: {
           apiKey: 'sk-openai',
           baseUrl: 'https://api.openai.com/v1',
           model: 'gpt-5.2',
-          openaiMode: 'responses',
         },
       },
       isConfigured: true,
@@ -107,19 +102,16 @@ describe('api config state helpers', () => {
       apiKey: 'AIza-relay',
       baseUrl: 'https://gemini-proxy.example/v1',
       model: 'gemini/gemini-2.5-pro',
-      openaiMode: 'responses',
       profiles: {
         gemini: {
           apiKey: 'AIza-official',
           baseUrl: 'https://generativelanguage.googleapis.com',
           model: 'gemini/gemini-2.5-flash',
-          openaiMode: 'responses',
         },
         'custom:gemini': {
           apiKey: 'AIza-relay',
           baseUrl: 'https://gemini-proxy.example/v1',
           model: 'gemini/gemini-2.5-pro',
-          openaiMode: 'responses',
         },
       },
       isConfigured: true,

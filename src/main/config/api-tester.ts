@@ -2,14 +2,11 @@ import OpenAI from 'openai';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { PROVIDER_PRESETS } from './config-store';
 import {
-  buildOpenAICodexHeaders,
   normalizeAnthropicBaseUrl,
-  OPENAI_CODEX_BACKEND_BASE_URL,
   resolveOpenAICredentials,
   shouldAllowEmptyAnthropicApiKey,
   shouldUseAnthropicAuthToken,
 } from './auth-utils';
-import { importLocalAuthToken } from '../auth/local-auth';
 import type { ApiTestInput, ApiTestResult } from '../../renderer/types';
 import { log, logWarn } from '../utils/logger';
 
@@ -22,10 +19,7 @@ const NETWORK_ERROR_CODES = new Set([
 ]);
 
 const REQUEST_TIMEOUT_MS = 30000;
-const CODEX_USAGE_ENDPOINT = 'https://chatgpt.com/backend-api/wham/usage';
 const LOCAL_ANTHROPIC_PLACEHOLDER_KEY = 'sk-ant-local-proxy';
-
-type ApiTestError = Error & { status?: number };
 
 function normalizeApiTestError(error: unknown): ApiTestResult {
   const err = error as {
@@ -78,58 +72,9 @@ function resolveBaseUrl(input: ApiTestInput): string | undefined {
   return undefined;
 }
 
-function withStatusError(status: number, message: string): ApiTestError {
-  const error = new Error(message) as ApiTestError;
-  error.status = status;
-  return error;
-}
-
-async function testCodexUsageEndpoint(apiKey: string, accountId?: string): Promise<void> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(CODEX_USAGE_ENDPOINT, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        ...buildOpenAICodexHeaders(accountId),
-      },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      const bodyText = await response.text();
-      logWarn('[Config][ApiTest] Codex usage probe failed', {
-        status: response.status,
-        hasAccountId: Boolean(accountId),
-        bodyPreview: bodyText.slice(0, 300),
-      });
-      throw withStatusError(response.status, bodyText);
-    }
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function testCodexLiveRequest(client: OpenAI, model: string): Promise<void> {
-  const stream = client.responses.stream({
-    model,
-    instructions: 'You are a connectivity probe. Reply with a single short word.',
-    store: false,
-    input: [{ role: 'user', content: [{ type: 'input_text', text: 'ping' }] }],
-  });
-
-  for await (const _event of stream) {
-    // drain stream
-  }
-  await stream.finalResponse();
-}
-
 interface OpenAITestCredentials {
   apiKey: string;
   baseUrl?: string;
-  accountId?: string;
-  useCodexOAuth: boolean;
-  source: 'localCodex' | 'apiKey';
 }
 
 async function testOpenAICredentials(
@@ -140,22 +85,11 @@ async function testOpenAICredentials(
   const client = new OpenAI({
     apiKey: credentials.apiKey,
     baseURL: credentials.baseUrl,
-    ...(credentials.useCodexOAuth ? { defaultHeaders: buildOpenAICodexHeaders(credentials.accountId) } : {}),
     timeout: REQUEST_TIMEOUT_MS,
   });
 
-  if (credentials.useCodexOAuth && !useLiveRequest) {
-    await testCodexUsageEndpoint(credentials.apiKey, credentials.accountId);
-    return;
-  }
-
   if (useLiveRequest) {
-    const model = modelInput || (credentials.useCodexOAuth ? 'gpt-5.3-codex' : 'gpt-4o-mini');
-    if (credentials.useCodexOAuth) {
-      await testCodexLiveRequest(client, model);
-      return;
-    }
-
+    const model = modelInput || 'gpt-4o-mini';
     try {
       await client.responses.create({
         model,
@@ -185,9 +119,6 @@ export async function testApiConnection(input: ApiTestInput): Promise<ApiTestRes
     customProtocol: input.customProtocol,
     baseUrl: resolvedBaseUrl,
   });
-  const localCodex = useOpenAI ? importLocalAuthToken('codex') : null;
-  const localCodexToken = localCodex?.token?.trim() || '';
-  const hasLocalCodex = useOpenAI && Boolean(localCodexToken);
   const resolvedOpenAI = useOpenAI
     ? resolveOpenAICredentials({
         provider: input.provider,
@@ -203,29 +134,22 @@ export async function testApiConnection(input: ApiTestInput): Promise<ApiTestRes
     apiKey: effectiveApiKey,
   });
   const useLiveRequest = Boolean(input.useLiveRequest);
-  const useCodexOAuth = hasLocalCodex || Boolean(resolvedOpenAI?.useCodexOAuth);
-  const candidateOrder = apiKey
-    ? 'apiKey-first'
-    : (hasLocalCodex ? 'local-only' : 'none');
   log('[Config][ApiTest] Start', {
     provider: input.provider,
     customProtocol: input.customProtocol || undefined,
     useOpenAI,
-    useCodexOAuth,
-    source: candidateOrder,
     hasApiKey: Boolean(apiKey),
-    hasLocalCodex,
-    baseUrl: useOpenAI ? (resolvedOpenAI?.baseUrl || OPENAI_CODEX_BACKEND_BASE_URL || '(default)') : (resolvedBaseUrl || '(default)'),
+    baseUrl: useOpenAI ? (resolvedOpenAI?.baseUrl || '(default)') : (resolvedBaseUrl || '(default)'),
     model: input.model || undefined,
     live: useLiveRequest,
   });
 
-  if (useOpenAI && !hasLocalCodex && !apiKey) {
+  if (useOpenAI && !apiKey) {
     logWarn('[Config][ApiTest] Missing credentials for test');
     return {
       ok: false,
       errorType: 'missing_key',
-      details: 'No API key or local Codex login found. Please run: codex auth login',
+      details: 'No API key provided.',
     };
   }
 
@@ -246,45 +170,14 @@ export async function testApiConnection(input: ApiTestInput): Promise<ApiTestRes
 
   try {
     if (useOpenAI) {
-      const candidates: OpenAITestCredentials[] = [];
-      if (apiKey) {
-        candidates.push({
+      await testOpenAICredentials(
+        {
           apiKey,
           baseUrl: resolvedOpenAI?.baseUrl || resolvedBaseUrl,
-          accountId: resolvedOpenAI?.accountId,
-          useCodexOAuth: Boolean(resolvedOpenAI?.useCodexOAuth),
-          source: 'apiKey',
-        });
-      }
-      if (hasLocalCodex) {
-        candidates.push({
-          apiKey: localCodexToken,
-          baseUrl: OPENAI_CODEX_BACKEND_BASE_URL,
-          accountId: localCodex?.account,
-          useCodexOAuth: true,
-          source: 'localCodex',
-        });
-      }
-
-      let lastError: unknown = null;
-      for (const candidate of candidates) {
-        try {
-          await testOpenAICredentials(candidate, input.model, useLiveRequest);
-          lastError = null;
-          break;
-        } catch (error) {
-          lastError = error;
-          logWarn('[Config][ApiTest] OpenAI candidate failed', {
-            source: candidate.source,
-            useCodexOAuth: candidate.useCodexOAuth,
-            details: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-
-      if (lastError) {
-        throw lastError;
-      }
+        },
+        input.model,
+        useLiveRequest
+      );
     } else {
       // Save and clear environment variables to prevent SDK from reading them
       // SDK checks env vars if apiKey/authToken not explicitly provided
@@ -292,7 +185,7 @@ export async function testApiConnection(input: ApiTestInput): Promise<ApiTestRes
       const savedAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
       delete process.env.ANTHROPIC_API_KEY;
       delete process.env.ANTHROPIC_AUTH_TOKEN;
-      
+
       try {
         // Build client with explicit credentials
         const client = useAuthTokenHeader
@@ -336,7 +229,6 @@ export async function testApiConnection(input: ApiTestInput): Promise<ApiTestRes
     log('[Config][ApiTest] Success', {
       provider: input.provider,
       useOpenAI,
-      useCodexOAuth,
       latencyMs: result.latencyMs,
     });
     return result;
@@ -345,7 +237,6 @@ export async function testApiConnection(input: ApiTestInput): Promise<ApiTestRes
     logWarn('[Config][ApiTest] Failed', {
       provider: input.provider,
       useOpenAI,
-      useCodexOAuth,
       status: normalized.status,
       errorType: normalized.errorType,
       details: normalized.details?.slice(0, 300),

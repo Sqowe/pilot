@@ -110,7 +110,13 @@ async function runPiAiOneShot(
 
   // Resolution order: key provider with full string (aggregator), parsed provider, fallbacks
   let piModel: ReturnType<typeof getModel> = undefined as any;
-  if (keyProvider !== provider && parts.length >= 2) {
+  const rawOneShotProvider = config.provider || 'anthropic';
+
+  // For aggregators like openrouter, try with the raw provider first
+  if (rawOneShotProvider === 'openrouter' && parts.length >= 2) {
+    piModel = getModel('openrouter' as any, modelString);
+  }
+  if (!piModel && keyProvider !== provider && parts.length >= 2) {
     piModel = getModel(keyProvider as any, modelString);
   }
   if (!piModel) {
@@ -147,11 +153,16 @@ async function runPiAiOneShot(
 
   // Override baseUrl for custom endpoints
   if (config.baseUrl?.trim()) {
-    const api = resolvedModel.api === 'openai-responses' ? 'openai-completions' : resolvedModel.api;
-    Object.assign(resolvedModel, { baseUrl: config.baseUrl.trim(), api });
+    Object.assign(resolvedModel, { baseUrl: config.baseUrl.trim() });
   }
 
-  // Set API key via AuthStorage (same pattern as agent-runner)
+  // Aggregator providers (openrouter) always use openai-completions API
+  const rawProvider = config.provider || 'anthropic';
+  if (rawProvider === 'openrouter' && resolvedModel.api !== 'openai-completions') {
+    Object.assign(resolvedModel, { api: 'openai-completions' });
+  }
+
+  // Set API key via AuthStorage (for agent sessions) AND env vars (for pi-ai completeSimple)
   const apiKey = config.apiKey?.trim();
   if (apiKey) {
     const authStorage = getSharedAuthStorage();
@@ -166,11 +177,12 @@ async function runPiAiOneShot(
   const start = Date.now();
 
   // Use pi-ai's completeSimple for a one-shot call
+  // Pass apiKey directly in options — completeSimple uses options.apiKey || env var
   const userMsg: PiUserMessage = { role: 'user', content: prompt, timestamp: Date.now() };
   const response = await completeSimple(resolvedModel, {
     systemPrompt,
     messages: [userMsg],
-  });
+  }, { apiKey: apiKey || undefined });
 
   // Extract text from response
   const textBlocks = response.content.filter(b => b.type === 'text');
