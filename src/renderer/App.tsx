@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from './store';
 import { useIPC } from './hooks/useIPC';
+import { useWindowSize } from './hooks/useWindowSize';
 import { Sidebar } from './components/Sidebar';
 import { ChatView } from './components/ChatView';
 import { WelcomeView } from './components/WelcomeView';
@@ -37,8 +38,11 @@ function App() {
     clearGlobalNotice,
     setSandboxSetupComplete,
     setShowSettings,
+    setSidebarCollapsed,
+    setContextPanelCollapsed,
   } = useAppStore();
   const { listSessions, isElectron } = useIPC();
+  const { width } = useWindowSize();
   const initialized = useRef(false);
 
   useEffect(() => {
@@ -59,6 +63,12 @@ function App() {
       document.documentElement.classList.remove('light');
     }
   }, [settings.theme]);
+
+  // Auto-collapse panels based on window width
+  useEffect(() => {
+    setContextPanelCollapsed(width < 1100);
+    setSidebarCollapsed(width < 800);
+  }, [width, setContextPanelCollapsed, setSidebarCollapsed]);
 
   // Handle config save
   const handleConfigSave = useCallback(async (newConfig: Partial<AppConfig>) => {

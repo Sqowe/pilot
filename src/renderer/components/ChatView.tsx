@@ -564,10 +564,10 @@ export function ChatView() {
       {/* Header */}
       <div
         ref={headerRef}
-        className="relative h-14 border-b border-border grid grid-cols-[1fr_auto_1fr] items-center px-6 bg-surface/80 backdrop-blur-sm"
+        className="relative h-14 border-b border-border grid grid-cols-[1fr_auto_1fr] items-center px-3 lg:px-6 bg-surface/80 backdrop-blur-sm"
       >
         <div />
-        <h2 ref={titleRef} className="font-medium text-text-primary text-center truncate max-w-lg">
+        <h2 ref={titleRef} className="font-medium text-text-primary text-center truncate max-w-[40vw] lg:max-w-lg">
           {activeSession.title}
         </h2>
         {activeConnectors.length > 0 && (
@@ -600,7 +600,7 @@ export function ChatView() {
 
       {/* Messages */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
-        <div ref={messagesContainerRef} className="w-full max-w-[1180px] mx-auto py-6 px-4 lg:px-6 space-y-4">
+        <div ref={messagesContainerRef} className="w-full max-w-[1180px] mx-auto py-6 px-3 md:px-4 lg:px-6 space-y-4">
           {displayedMessages.length === 0 ? (
             <div className="text-center py-12 text-text-muted">
               <p>{t('chat.startConversation')}</p>
@@ -642,7 +642,7 @@ export function ChatView() {
           >
             {/* Image previews */}
             {pastedImages.length > 0 && (
-              <div className="grid grid-cols-5 gap-2 mb-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 mb-3">
                 {pastedImages.map((img, index) => (
                   <div key={index} className="relative group">
                     <img

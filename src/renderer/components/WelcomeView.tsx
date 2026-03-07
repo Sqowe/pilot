@@ -388,7 +388,7 @@ export function WelcomeView() {
   ];
 
   return (
-    <div className="flex-1 flex items-center justify-center p-8">
+    <div className="flex-1 flex items-center justify-center p-4 md:p-8">
       <div className="max-w-2xl w-full space-y-6 animate-fade-in">
         {/* Quick Action Tags */}
         <div className="flex flex-wrap gap-2 justify-center">
@@ -430,7 +430,7 @@ export function WelcomeView() {
         >
           {/* Image previews */}
           {pastedImages.length > 0 && (
-            <div className="grid grid-cols-5 gap-2 pb-2 border-b border-border w-full">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 pb-2 border-b border-border w-full">
               {pastedImages.map((img, index) => (
                 <div key={index} className="relative group">
                   <img

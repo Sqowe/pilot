@@ -125,17 +125,13 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
   // Track which tabs have been viewed at least once (for lazy loading)
   const [viewedTabs, setViewedTabs] = useState<Set<TabId>>(new Set([resolvedInitial]));
 
-  // Consume the store signal after reading it
-  useEffect(() => {
-    if (storeTab) setSettingsTab(null);
-  }, [storeTab, setSettingsTab]);
-
-  // Support external tab driving while already mounted
+  // Consume the store signal and apply tab in one effect
   useEffect(() => {
     if (storeTab && VALID_TABS.has(storeTab as TabId)) {
       setActiveTab(storeTab as TabId);
+      setSettingsTab(null);
     }
-  }, [storeTab]);
+  }, [storeTab, setSettingsTab]);
 
   // Mark tab as viewed when it becomes active
   useEffect(() => {
@@ -159,7 +155,7 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
   return (
       <div className="flex h-full w-full overflow-hidden">
         {/* Sidebar */}
-        <div className="w-72 bg-surface-hover border-r border-border flex flex-col flex-shrink-0">
+        <div className="w-48 lg:w-72 bg-surface-hover border-r border-border flex flex-col flex-shrink-0">
           <div className="p-4 border-b border-border">
             <h2 className="text-lg font-semibold text-text-primary">{t('settings.title')}</h2>
           </div>
@@ -177,7 +173,7 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
                 <tab.icon className="w-5 h-5 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{tab.label}</p>
-                  <p className="text-xs text-text-muted truncate">{tab.description}</p>
+                  <p className="text-xs text-text-muted truncate hidden lg:block">{tab.description}</p>
                 </div>
                 {activeTab === tab.id && <ChevronRight className="w-4 h-4 flex-shrink-0" />}
               </button>
@@ -195,7 +191,7 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
 
         {/* Content */}
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
+          <div className="flex items-center justify-between px-3 lg:px-6 py-4 border-b border-border flex-shrink-0">
             <h3 className="text-lg font-semibold text-text-primary">
               {tabs.find(t => t.id === activeTab)?.label}
             </h3>
@@ -206,7 +202,7 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
               <X className="w-5 h-5 text-text-secondary" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex-1 overflow-y-auto p-3 lg:p-6">
             {/* Lazy load tabs - only mount when first viewed, then keep mounted */}
             <div className={activeTab === 'api' ? '' : 'hidden'}>
               {viewedTabs.has('api') && <APISettingsTab />}
@@ -335,7 +331,7 @@ function APISettingsTab() {
           <Server className="w-4 h-4" />
           {t('api.provider')}
         </label>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2">
           {(['openrouter', 'anthropic', 'openai', 'gemini', 'custom'] as const).map((p) => (
             <button
               key={p}
@@ -396,7 +392,7 @@ function APISettingsTab() {
             <Server className="w-4 h-4" />
             {t('api.protocol')}
           </label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {([
               { id: 'anthropic', label: 'Anthropic' },
               { id: 'openai', label: 'OpenAI' },
@@ -1941,14 +1937,14 @@ function ServerCard({
                 {server.type.toUpperCase()}
               </span>
             </div>
-            <div className="text-sm text-text-muted space-y-1 ml-6">
+            <div className="text-sm text-text-muted space-y-1 ml-6 min-w-0">
               {server.type === 'stdio' && (
-                <div className="font-mono text-xs">
+                <div className="font-mono text-xs truncate" title={`${server.command} ${server.args?.join(' ') || ''}`}>
                   {server.command} {server.args?.join(' ') || ''}
                 </div>
               )}
               {server.type === 'sse' && (
-                <div className="font-mono text-xs">{server.url}</div>
+                <div className="font-mono text-xs truncate" title={server.url}>{server.url}</div>
               )}
               {/* Chrome hint */}
               {server.name.toLowerCase().includes('chrome') && (
@@ -3029,7 +3025,7 @@ function SkillCard({ skill, onToggleEnabled, onDelete, isLoading }: {
             </span>
           </div>
           {skill.description && (
-            <p className="text-sm text-text-muted ml-6">{skill.description}</p>
+            <p className="text-sm text-text-muted ml-6 line-clamp-2">{skill.description}</p>
           )}
         </div>
         <div className="flex items-center gap-2">

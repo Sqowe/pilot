@@ -276,7 +276,7 @@ export function ContextPanel() {
               <div className="space-y-1">
                 {currentWorkingDir ? (
                   <div 
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors min-w-0 ${
                       copiedPath ? 'bg-success/10' : 'bg-surface-muted hover:bg-surface-active'
                     }`}
                     title={copiedPath ? t('context.copied') : `${currentWorkingDir}\nClick to copy`}
@@ -287,7 +287,7 @@ export function ContextPanel() {
                     ) : (
                       <FolderOpen className="w-4 h-4 text-accent flex-shrink-0" />
                     )}
-                    <span className={`text-sm break-all leading-relaxed ${copiedPath ? 'text-success' : 'text-text-primary'}`}>
+                    <span className={`text-sm truncate ${copiedPath ? 'text-success' : 'text-text-primary'}`}>
                       {copiedPath ? t('context.copied') : formatPath(currentWorkingDir)}
                     </span>
                   </div>

@@ -217,8 +217,8 @@ export function Sidebar() {
 
         <div className="space-y-1">
           {sidebarCollapsed ? (
-            <div className="text-center py-6 text-text-muted text-xs">
-              <p>{t('sidebar.expandToView')}</p>
+            <div className="flex justify-center py-6 text-text-muted">
+              <ChevronRight className="w-4 h-4 opacity-40" />
             </div>
           ) : sessions.length === 0 ? (
             <div className="text-center py-6 text-text-muted text-sm">
