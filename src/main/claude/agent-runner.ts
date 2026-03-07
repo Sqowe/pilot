@@ -282,12 +282,6 @@ interface AgentRunnerOptions {
  *   ANTHROPIC_AUTH_TOKEN=your_openrouter_api_key
  *   ANTHROPIC_API_KEY="" (must be empty)
  */
-// Pending question resolver type
-interface PendingQuestion {
-  questionId: string;
-  resolve: (answer: string) => void;
-}
-
 export class ClaudeAgentRunner {
   private sendToRenderer: (event: ServerEvent) => void;
   private saveMessage?: (message: Message) => void;
@@ -297,7 +291,6 @@ export class ClaudeAgentRunner {
   private _pluginRuntimeService?: PluginRuntimeService;
   private activeControllers: Map<string, AbortController> = new Map();
   private piSessions: Map<string, PiAgentSession> = new Map(); // sessionId -> pi AgentSession
-  private pendingQuestions: Map<string, PendingQuestion> = new Map(); // questionId -> resolver
 
   // Per-instance caches — invalidated when the underlying config changes.
   private _mcpServersCache: { fingerprint: string; servers: Record<string, unknown> } | null = null;
@@ -570,20 +563,6 @@ ${sections.join('\n\n')}
     log('[ClaudeAgentRunner] Current model:', model);
     log('[ClaudeAgentRunner] Model source:', routeModel ? 'runtimeRoute.model' : configuredModel ? 'configStore.model' : 'default');
     return model;
-  }
-
-  // Handle user's answer to AskUserQuestion
-  handleQuestionResponse(questionId: string, answer: string): boolean {
-    const pending = this.pendingQuestions.get(questionId);
-    if (pending) {
-      log(`[ClaudeAgentRunner] Question ${questionId} answered:`, answer);
-      pending.resolve(answer);
-      this.pendingQuestions.delete(questionId);
-      return true;
-    } else {
-      logWarn(`[ClaudeAgentRunner] No pending question found for ID: ${questionId}`);
-      return false;
-    }
   }
 
   async run(session: Session, prompt: string, existingMessages: Message[]): Promise<void> {

@@ -101,11 +101,6 @@ export function useIPC() {
           store.setPendingPermission(event.payload);
           break;
 
-        case 'question.request':
-          console.log('[useIPC] question.request received:', event.payload);
-          store.setPendingQuestion(event.payload);
-          break;
-
         case 'config.status':
           console.log('[useIPC] config.status received:', event.payload.isConfigured);
           const isInitialConfigStatus = !store.hasSeenInitialConfigStatus;
@@ -187,7 +182,6 @@ export function useIPC() {
     addMessage,
     setLoading,
     setPendingPermission,
-    setPendingQuestion,
     clearActiveTurn,
     activateNextTurn,
     clearPendingTurns,
@@ -242,9 +236,6 @@ export function useIPC() {
             cwd: cwd || '',
             mountedPaths: [],
             allowedTools: [
-              'askuserquestion',
-              'todowrite',
-              'todoread',
               'webfetch',
               'websearch',
               'read',
@@ -480,18 +471,6 @@ export function useIPC() {
     [send, setPendingPermission]
   );
 
-  const respondToQuestion = useCallback(
-    (questionId: string, answer: string) => {
-      console.log('[useIPC] Responding to question:', questionId, 'with:', answer);
-      send({
-        type: 'question.response',
-        payload: { questionId, answer },
-      });
-      setPendingQuestion(null);
-    },
-    [send, setPendingQuestion]
-  );
-
   const selectFolder = useCallback(async (): Promise<string | null> => {
     if (!isElectron) {
       return '/mock/folder/path';
@@ -532,7 +511,6 @@ export function useIPC() {
     getSessionMessages,
     getSessionTraceSteps,
     respondToPermission,
-    respondToQuestion,
     selectFolder,
     getWorkingDir,
     changeWorkingDir,

@@ -296,9 +296,9 @@ export function RemoteControlPanel() {
         </div>
       )}
       {success && (
-        <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-xl flex items-center gap-3">
-          <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
-          <span className="text-green-500">{success}</span>
+        <div className="p-4 bg-success/10 border border-success/30 rounded-xl flex items-center gap-3">
+          <CheckCircle2 className="w-5 h-5 text-success flex-shrink-0" />
+          <span className="text-success">{success}</span>
         </div>
       )}
 
@@ -308,8 +308,8 @@ export function RemoteControlPanel() {
         <div className="relative p-6">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-4">
-              <div className={`p-3 rounded-2xl ${status?.running ? 'bg-green-500/10' : 'bg-surface-active'}`}>
-                <Smartphone className={`w-8 h-8 ${status?.running ? 'text-green-500' : 'text-text-muted'}`} />
+              <div className={`p-3 rounded-2xl ${status?.running ? 'bg-success/10' : 'bg-surface-active'}`}>
+                <Smartphone className={`w-8 h-8 ${status?.running ? 'text-success' : 'text-text-muted'}`} />
               </div>
               <div>
                 <h2 className="text-xl font-semibold text-text-primary">远程控制</h2>
@@ -345,7 +345,7 @@ export function RemoteControlPanel() {
                 <div className="text-xs text-text-muted mt-1">活跃会话</div>
               </div>
               <div className="text-center p-3 rounded-xl bg-surface/50">
-                <div className="text-2xl font-bold text-green-500">{pairedUsers.length}</div>
+                <div className="text-2xl font-bold text-success">{pairedUsers.length}</div>
                 <div className="text-xs text-text-muted mt-1">已授权用户</div>
               </div>
               <div className="text-center p-3 rounded-xl bg-surface/50">
@@ -381,7 +381,7 @@ export function RemoteControlPanel() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => approvePairing(request)}
-                    className="p-2 rounded-lg bg-green-500/10 hover:bg-green-500/20 text-green-500 transition-colors"
+                    className="p-2 rounded-lg bg-success/10 hover:bg-success/20 text-success transition-colors"
                     title="批准"
                   >
                     <Check className="w-5 h-5" />
@@ -410,7 +410,7 @@ export function RemoteControlPanel() {
             }`}
           >
             {step.done && activeStep !== step.id ? (
-              <CheckCircle2 className="w-4 h-4 text-green-500" />
+              <CheckCircle2 className="w-4 h-4 text-success" />
             ) : (
               <step.icon className="w-4 h-4" />
             )}
@@ -512,18 +512,18 @@ export function RemoteControlPanel() {
               onClick={() => setUseLongConnection(true)}
               className={`p-5 rounded-xl border-2 cursor-pointer transition-all ${
                 useLongConnection
-                  ? 'border-green-500 bg-green-500/5'
-                  : 'border-border hover:border-green-500/50'
+                  ? 'border-success bg-success/5'
+                  : 'border-border hover:border-success/50'
               }`}
             >
               <div className="flex items-start gap-4">
-                <div className={`p-2 rounded-lg ${useLongConnection ? 'bg-green-500/10' : 'bg-surface-active'}`}>
-                  <Zap className={`w-6 h-6 ${useLongConnection ? 'text-green-500' : 'text-text-muted'}`} />
+                <div className={`p-2 rounded-lg ${useLongConnection ? 'bg-success/10' : 'bg-surface-active'}`}>
+                  <Zap className={`w-6 h-6 ${useLongConnection ? 'text-success' : 'text-text-muted'}`} />
                 </div>
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-text-primary">长连接模式</span>
-                    <span className="px-2 py-0.5 text-xs rounded-full bg-green-500/10 text-green-500 font-medium">
+                    <span className="px-2 py-0.5 text-xs rounded-full bg-success/10 text-success font-medium">
                       推荐
                     </span>
                   </div>
@@ -532,18 +532,18 @@ export function RemoteControlPanel() {
                   </p>
                   <div className="flex items-center gap-4 mt-3 text-xs text-text-muted">
                     <span className="flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> 无需公网
+                      <CheckCircle2 className="w-3.5 h-3.5 text-success" /> 无需公网
                     </span>
                     <span className="flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> 开箱即用
+                      <CheckCircle2 className="w-3.5 h-3.5 text-success" /> 开箱即用
                     </span>
                     <span className="flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> 稳定可靠
+                      <CheckCircle2 className="w-3.5 h-3.5 text-success" /> 稳定可靠
                     </span>
                   </div>
                 </div>
                 <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                  useLongConnection ? 'border-green-500 bg-green-500' : 'border-border'
+                  useLongConnection ? 'border-success bg-success' : 'border-border'
                 }`}>
                   {useLongConnection && <Check className="w-3 h-3 text-white" />}
                 </div>
@@ -633,8 +633,8 @@ export function RemoteControlPanel() {
                     )}
                     
                     {tunnelStatus?.connected && webhookUrl && (
-                      <div className="mt-3 p-2 rounded-lg bg-green-500/10">
-                        <div className="flex items-center gap-2 text-green-500 text-sm">
+                      <div className="mt-3 p-2 rounded-lg bg-success/10">
+                        <div className="flex items-center gap-2 text-success text-sm">
                           <CheckCircle2 className="w-4 h-4" />
                           <span>隧道已连接</span>
                         </div>
@@ -649,8 +649,8 @@ export function RemoteControlPanel() {
             </div>
             
             {useLongConnection && (
-              <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
-                <p className="text-sm text-blue-600 dark:text-blue-400">
+              <div className="p-4 rounded-xl bg-accent-muted border border-accent/20">
+                <p className="text-sm text-accent">
                   <strong>配置提示：</strong>在飞书开放平台 → 事件与回调 → 事件配置 中，将订阅方式改为"使用长连接接收事件"
                 </p>
               </div>

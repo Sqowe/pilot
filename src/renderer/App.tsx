@@ -172,8 +172,6 @@ function App() {
         onDismiss={clearGlobalNotice}
         onAction={handleGlobalNoticeAction}
       />
-      
-      {/* AskUserQuestion is now rendered inline in MessageCard */}
     </div>
   );
 }

@@ -19,6 +19,7 @@
   },
   "welcome": {
     "title": "How can I help you today?",
+    "placeholder": "Describe what you'd like to do...",
     "createFile": "Create a file",
     "crunchData": "Crunch data",
     "organizeFiles": "Organize files",
@@ -378,8 +379,6 @@
       "bash": "Execute shell commands",
       "webFetch": "Fetch data from the web",
       "webSearch": "Search the web",
-      "TodoRead": "Read the current todo list",
-      "TodoWrite": "Update the current todo list",
       "read_file": "Read files in the workspace",
       "write_file": "Write files in the workspace",
       "edit_file": "Edit files in the workspace",

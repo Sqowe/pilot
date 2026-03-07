@@ -471,24 +471,7 @@ function sendToRenderer(event: ServerEvent) {
         });
       }
     }
-    
-    // 拦截 question.request
-    if (event.type === 'question.request' && payload.questionId && payload.questions) {
-      log('[Remote] Intercepting question for remote session:', sessionId);
-      remoteManager.handleQuestionRequest(
-        sessionId,
-        payload.questionId,
-        payload.questions
-      ).then((answer) => {
-        if (answer !== null && sessionManager) {
-          sessionManager.handleQuestionResponse(payload.questionId!, answer);
-        }
-      }).catch((err) => {
-        logError('[Remote] Failed to handle question request:', err);
-      });
-      return; // 不发送到本地 UI
-    }
-    
+
     // 拦截 permission.request
     if (event.type === 'permission.request' && payload.toolUseId && payload.toolName) {
       log('[Remote] Intercepting permission for remote session:', sessionId);
@@ -2033,12 +2016,6 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
       return sessionManager.handlePermissionResponse(
         event.payload.toolUseId,
         event.payload.result
-      );
-
-    case 'question.response':
-      return sessionManager.handleQuestionResponse(
-        event.payload.questionId,
-        event.payload.answer
       );
 
     case 'folder.select': {

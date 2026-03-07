@@ -19,6 +19,7 @@
   },
   "welcome": {
     "title": "今天我能为您做些什么？",
+    "placeholder": "描述你想做的事情...",
     "createFile": "创建文件",
     "crunchData": "处理数据",
     "organizeFiles": "整理文件",
@@ -377,8 +378,6 @@
       "bash": "执行 shell 命令",
       "webFetch": "从网络获取数据",
       "webSearch": "搜索网络",
-      "TodoRead": "读取当前待办事项列表",
-      "TodoWrite": "更新当前待办事项列表",
       "read_file": "读取工作区中的文件",
       "write_file": "写入工作区中的文件",
       "edit_file": "编辑工作区中的文件",

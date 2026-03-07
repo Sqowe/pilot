@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, Message, TraceStep, PermissionRequest, UserQuestionRequest, Settings, AppConfig, SandboxSetupProgress, SandboxSyncStatus, SkillsStorageChangeEvent } from '../types';
+import type { Session, Message, TraceStep, PermissionRequest, Settings, AppConfig, SandboxSetupProgress, SandboxSyncStatus, SkillsStorageChangeEvent } from '../types';
 import { applySessionUpdate } from '../utils/session-update';
 
 export type GlobalNoticeType = 'info' | 'warning' | 'error' | 'success';
@@ -36,9 +36,6 @@ interface AppState {
   
   // Permission
   pendingPermission: PermissionRequest | null;
-  
-  // User Question (AskUserQuestion)
-  pendingQuestion: UserQuestionRequest | null;
   
   // Settings
   settings: Settings;
@@ -93,8 +90,7 @@ interface AppState {
   setSettingsTab: (tab: string | null) => void;
 
   setPendingPermission: (permission: PermissionRequest | null) => void;
-  setPendingQuestion: (question: UserQuestionRequest | null) => void;
-  
+
   updateSettings: (updates: Partial<Settings>) => void;
   
   // Config actions
@@ -161,7 +157,6 @@ export const useAppStore = create<AppState>((set) => ({
   showSettings: false,
   settingsTab: null,
   pendingPermission: null,
-  pendingQuestion: null,
   settings: defaultSettings,
   appConfig: null,
   isConfigured: false,
@@ -435,10 +430,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   // Permission actions
   setPendingPermission: (permission) => set({ pendingPermission: permission }),
-  
-  // Question actions (AskUserQuestion)
-  setPendingQuestion: (question) => set({ pendingQuestion: question }),
-  
+
   // Settings actions
   updateSettings: (updates) =>
     set((state) => ({

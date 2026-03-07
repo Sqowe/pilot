@@ -148,7 +148,7 @@ export function CredentialsModal({ isOpen, onClose }: CredentialsModalProps) {
           )}
 
           {/* Info Banner */}
-          <div className="px-4 py-3 rounded-xl bg-blue-500/10 text-blue-600 text-sm">
+          <div className="px-4 py-3 rounded-xl bg-accent-muted text-accent text-sm">
             <p className="font-medium mb-1">🔐 Securely Encrypted</p>
             <p className="text-xs opacity-80">
               All credentials are encrypted locally. The agent can use these credentials to automatically log in to your accounts.
@@ -186,8 +186,8 @@ export function CredentialsModal({ isOpen, onClose }: CredentialsModalProps) {
                     <div className="flex items-start justify-between">
                       <div className="flex items-start gap-3">
                         <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                          cred.type === 'email' ? 'bg-blue-500/10 text-blue-500' :
-                          cred.type === 'website' ? 'bg-green-500/10 text-green-500' :
+                          cred.type === 'email' ? 'bg-accent/10 text-accent' :
+                          cred.type === 'website' ? 'bg-success/10 text-success' :
                           cred.type === 'api' ? 'bg-mcp/10 text-mcp' :
                           'bg-gray-500/10 text-gray-500'
                         }`}>

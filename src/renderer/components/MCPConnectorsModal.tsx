@@ -499,7 +499,7 @@ function ServerCard({
                     ? 'bg-success/10 text-success' 
                     : server.enabled
                       ? 'bg-amber-500/10 text-amber-600'
-                      : 'bg-blue-500/10 text-blue-600'
+                      : 'bg-accent/10 text-accent'
                 }`}>
                   {isConnected 
                     ? '✓ Connected to Chrome debug port (9222)' 

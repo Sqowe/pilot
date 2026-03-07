@@ -24,7 +24,6 @@ import { buildScheduledTaskTitle } from '../../shared/schedule/task-title';
 interface AgentRunner {
   run(session: Session, prompt: string, existingMessages: Message[]): Promise<void>;
   cancel(sessionId: string): void;
-  handleQuestionResponse(questionId: string, answer: string): void;
   clearSdkSession?(sessionId: string): void;
 }
 
@@ -828,11 +827,6 @@ export class SessionManager {
       resolver(result);
       this.pendingPermissions.delete(toolUseId);
     }
-  }
-
-  // Handle user's response to AskUserQuestion
-  handleQuestionResponse(questionId: string, answer: string): void {
-    this.agentRunner.handleQuestionResponse(questionId, answer);
   }
 
   // Request permission for a tool

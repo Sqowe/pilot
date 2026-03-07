@@ -390,6 +390,11 @@ export function WelcomeView() {
   return (
     <div className="flex-1 flex items-center justify-center p-4 md:p-8">
       <div className="max-w-2xl w-full space-y-6 animate-fade-in">
+        {/* Welcome Heading */}
+        <h1 className="text-2xl md:text-3xl font-semibold text-text-primary text-center">
+          {t('welcome.title')}
+        </h1>
+
         {/* Quick Action Tags */}
         <div className="flex flex-wrap gap-2 justify-center overflow-x-auto max-h-28 scrollbar-hide">
           {quickTags.map((tag) => (
@@ -488,7 +493,7 @@ export function WelcomeView() {
               isComposingRef.current = false;
             }}
             onPaste={handlePaste}
-            placeholder={t('welcome.title')}
+            placeholder={t('welcome.placeholder')}
             rows={1}
             style={{ minHeight: '72px', maxHeight: '200px' }}
             className="w-full resize-none bg-transparent border-none outline-none text-text-primary placeholder:text-text-muted text-base leading-relaxed overflow-hidden"

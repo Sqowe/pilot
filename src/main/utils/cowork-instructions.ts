@@ -57,16 +57,6 @@ export function buildOpenAICoworkInstructions(session: Session, mcpManager?: MCP
   }
 
   sections.push(`<tool_behavior>
-AskUserQuestion:
-- Use AskUserQuestion for missing requirements before starting multi-step work.
-- Do not ask clarification questions directly in assistant text when AskUserQuestion is available.
-- If details are not blocking, make a reasonable assumption and proceed.
-
-TodoWrite:
-- Use TodoWrite for non-trivial tasks that involve tool calls.
-- Keep one item marked as in_progress when actively executing.
-- Include a final verification step before completion.
-
 Tool routing:
 - If user explicitly asks to use Chrome/browser/web navigation, prioritize Chrome MCP tools (\`mcp__Chrome__*\`) over generic WebSearch/WebFetch.
 - Use WebSearch/WebFetch only when Chrome MCP is unavailable or the user explicitly asks for generic web search.

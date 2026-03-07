@@ -3,7 +3,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
 import rehypeKatex from 'rehype-katex';
-import { useIPC } from '../hooks/useIPC';
 import { useAppStore } from '../store';
 import {
   splitTextByFileMentions,
@@ -20,7 +19,6 @@ import {
   Check,
   CheckCircle2,
   HelpCircle,
-  Send,
   ListTodo,
   Loader2,
   XCircle,
@@ -720,8 +718,8 @@ function TodoWriteBlock({ block }: { block: ToolUseContent }) {
         onClick={() => setExpanded(!expanded)}
         className="w-full px-4 py-3 flex items-center gap-3 bg-surface-muted hover:bg-surface-active transition-colors"
       >
-        <div className="w-6 h-6 rounded-lg bg-blue-500/10 flex items-center justify-center">
-          <ListTodo className="w-3.5 h-3.5 text-blue-500" />
+        <div className="w-6 h-6 rounded-lg bg-accent/10 flex items-center justify-center">
+          <ListTodo className="w-3.5 h-3.5 text-accent" />
         </div>
         <div className="flex-1 text-left">
           <span className="font-medium text-sm text-text-primary">Task Progress</span>
@@ -744,7 +742,7 @@ function TodoWriteBlock({ block }: { block: ToolUseContent }) {
       {/* Progress bar */}
       <div className="h-0.5 bg-surface-muted">
         <div 
-          className="h-full bg-gradient-to-r from-blue-500 to-accent transition-all duration-500"
+          className="h-full bg-gradient-to-r from-accent to-accent-hover transition-all duration-500"
           style={{ width: `${progress}%` }}
         />
       </div>
@@ -773,53 +771,10 @@ function TodoWriteBlock({ block }: { block: ToolUseContent }) {
   );
 }
 
-// Inline AskUserQuestion component - displayed in message flow
+// Inline AskUserQuestion component - read-only display for historical messages
 function AskUserQuestionBlock({ block }: { block: ToolUseContent }) {
-  const { respondToQuestion } = useIPC();
-  const { pendingQuestion } = useAppStore();
-  const [selections, setSelections] = useState<Record<number, string[]>>({});
-  const [submitted, setSubmitted] = useState(false);
-
   // Parse questions from input
   const questions: QuestionItem[] = (block.input as any)?.questions || [];
-  
-  // Check if this question is the pending one (waiting for response)
-  const isPending = pendingQuestion?.toolUseId === block.id;
-  const isAnswered = submitted;
-  const isReadOnly = submitted || !isPending;
-
-  const handleOptionToggle = (questionIdx: number, label: string, multiSelect: boolean) => {
-    if (isReadOnly) return; // Only allow changes while this question is pending
-    
-    setSelections(prev => {
-      const current = prev[questionIdx] || [];
-      if (multiSelect) {
-        if (current.includes(label)) {
-          return { ...prev, [questionIdx]: current.filter(l => l !== label) };
-        } else {
-          return { ...prev, [questionIdx]: [...current, label] };
-        }
-      } else {
-        return { ...prev, [questionIdx]: [label] };
-      }
-    });
-  };
-
-  const handleSubmit = () => {
-    if (!pendingQuestion || submitted) return;
-    
-    const answersJson = JSON.stringify(selections);
-    console.log('[AskUserQuestionBlock] Submitting answer:', answersJson);
-    respondToQuestion(pendingQuestion.questionId, answersJson);
-    setSubmitted(true);
-  };
-
-  const canSubmit = isPending && !submitted && questions.every((q, idx) => {
-    if (q.options && q.options.length > 0) {
-      return (selections[idx] || []).length > 0;
-    }
-    return true;
-  });
 
   const getOptionLetter = (index: number) => String.fromCharCode(65 + index);
 
@@ -839,96 +794,47 @@ function AskUserQuestionBlock({ block }: { block: ToolUseContent }) {
           <HelpCircle className="w-4 h-4 text-accent" />
         </div>
         <div>
-          <span className="font-medium text-sm text-text-primary">
-            {isAnswered ? 'Questions answered' : isPending ? 'Please answer to continue' : 'Question closed'}
-          </span>
+          <span className="font-medium text-sm text-text-primary">Question</span>
         </div>
-        {isAnswered && (
-          <CheckCircle2 className="w-5 h-5 text-success ml-auto" />
-        )}
       </div>
 
-      {/* Questions */}
+      {/* Questions (read-only) */}
       <div className="p-4 space-y-5">
         {questions.map((q, qIdx) => (
           <div key={qIdx} className="space-y-2">
-            {/* Question header */}
             {q.header && (
               <span className="inline-block px-2 py-0.5 bg-accent/10 text-accent text-xs font-semibold rounded uppercase tracking-wide">
                 {q.header}
               </span>
             )}
-            
-            {/* Question text */}
             <p className="text-text-primary font-medium text-sm">
               {q.question}
             </p>
-            
-            {/* Options */}
             {q.options && q.options.length > 0 && (
               <div className="space-y-1.5 mt-2">
-                {q.options.map((option, optIdx) => {
-                  const isSelected = (selections[qIdx] || []).includes(option.label);
-                  const letter = getOptionLetter(optIdx);
-                  
-                  return (
-                    <button
-                      key={optIdx}
-                      onClick={() => handleOptionToggle(qIdx, option.label, q.multiSelect || false)}
-                      disabled={isReadOnly}
-                      className={`w-full p-3 rounded-lg border text-left transition-all ${
-                        isReadOnly
-                          ? isSelected
-                            ? 'border-accent/50 bg-accent/10 cursor-default'
-                            : 'border-border-subtle bg-surface-muted cursor-default opacity-60'
-                          : isSelected
-                            ? 'border-accent bg-accent/10 hover:bg-accent/15'
-                            : 'border-border-subtle bg-surface hover:border-border-default hover:bg-surface-muted'
-                      }`}
-                    >
-                      <div className="flex items-start gap-2.5">
-                        <div className={`w-6 h-6 rounded flex items-center justify-center flex-shrink-0 text-xs font-semibold ${
-                          isSelected
-                            ? 'bg-accent text-white'
-                            : 'bg-border-subtle text-text-secondary'
-                        }`}>
-                          {isSelected ? <Check className="w-3.5 h-3.5" /> : letter}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <span className={`text-sm ${isSelected ? 'text-accent font-medium' : 'text-text-primary'}`}>
-                            {option.label}
-                          </span>
-                          {option.description && (
-                            <p className="text-xs text-text-muted mt-0.5">{option.description}</p>
-                          )}
-                        </div>
+                {q.options.map((option, optIdx) => (
+                  <div
+                    key={optIdx}
+                    className="w-full p-3 rounded-lg border border-border-subtle bg-surface-muted text-left"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <div className="w-6 h-6 rounded flex items-center justify-center flex-shrink-0 text-xs font-semibold bg-border-subtle text-text-secondary">
+                        {getOptionLetter(optIdx)}
                       </div>
-                    </button>
-                  );
-                })}
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm text-text-primary">{option.label}</span>
+                        {option.description && (
+                          <p className="text-xs text-text-muted mt-0.5">{option.description}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
         ))}
       </div>
-
-      {/* Submit button - only show if pending */}
-      {isPending && !submitted && (
-        <div className="px-4 pb-4">
-          <button
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-            className={`w-full py-2.5 rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-all ${
-              canSubmit
-                ? 'bg-accent text-white hover:bg-accent-hover'
-                : 'bg-surface-muted text-text-muted cursor-not-allowed'
-            }`}
-          >
-            <Send className="w-4 h-4" />
-            Submit Answers
-          </button>
-        </div>
-      )}
     </div>
   );
 }

@@ -896,7 +896,7 @@ function SandboxTab() {
   return (
     <div className="space-y-4">
       {/* Info Banner */}
-      <div className="px-4 py-3 rounded-xl bg-blue-500/10 text-blue-600 text-sm">
+      <div className="px-4 py-3 rounded-xl bg-accent-muted text-accent text-sm">
         <p className="font-medium mb-1">🛡️ {t('sandbox.title')}</p>
         <p className="text-xs opacity-80">
           {isWindows ? t('sandbox.wslDesc') : isMac ? t('sandbox.limaDesc') : t('sandbox.nativeDesc')}
@@ -921,12 +921,12 @@ function SandboxTab() {
       <div className="p-4 rounded-xl bg-surface border-2 border-border opacity-60">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 bg-gray-200 dark:bg-gray-700 text-gray-500">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 bg-surface-muted text-text-muted">
               <Shield className="w-6 h-6" />
             </div>
             <div className="flex-1 min-w-0">
               <h3 className="text-base font-semibold text-text-primary">{t('sandbox.enableSandbox')}</h3>
-              <p className="text-sm text-amber-500 mt-0.5">
+              <p className="text-sm text-warning mt-0.5">
                 🚧 功能调试中，暂时不支持
               </p>
             </div>
@@ -1021,7 +1021,7 @@ function SandboxTab() {
               </div>
               
               {!status?.wsl?.available && (
-                <div className="mt-3 p-3 rounded-lg bg-amber-500/10 text-amber-600 text-xs">
+                <div className="mt-3 p-3 rounded-lg bg-warning/10 text-warning text-xs">
                   <p className="font-medium mb-1">{t('sandbox.wslNotInstalled')}</p>
                   <p className="opacity-80">{t('sandbox.wslInstallHint')}</p>
                   <code className="block mt-2 p-2 rounded bg-background font-mono text-xs">
@@ -1086,7 +1086,7 @@ function SandboxTab() {
               </div>
 
               {!status?.lima?.available && (
-                <div className="mt-3 p-3 rounded-lg bg-amber-500/10 text-amber-600 text-xs">
+                <div className="mt-3 p-3 rounded-lg bg-warning/10 text-warning text-xs">
                   <p className="font-medium mb-1">{t('sandbox.limaNotInstalled')}</p>
                   <p className="opacity-80">{t('sandbox.limaInstallHint')}</p>
                   <code className="block mt-2 p-2 rounded bg-background font-mono text-xs">
@@ -1269,7 +1269,7 @@ function CredentialsTab() {
   return (
     <div className="space-y-4">
       {/* Info */}
-      <div className="px-4 py-3 rounded-xl bg-blue-500/10 text-blue-600 text-sm">
+      <div className="px-4 py-3 rounded-xl bg-accent-muted text-accent text-sm">
         <p className="font-medium mb-1">{t('credentials.encrypted')}</p>
         <p className="text-xs opacity-80">
           {t('credentials.encryptedDesc')}
@@ -1308,10 +1308,10 @@ function CredentialsTab() {
                 <div className="flex items-start justify-between">
                   <div className="flex items-start gap-3">
                     <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                      cred.type === 'email' ? 'bg-blue-500/10 text-blue-500' :
-                      cred.type === 'website' ? 'bg-green-500/10 text-green-500' :
+                      cred.type === 'email' ? 'bg-accent/10 text-accent' :
+                      cred.type === 'website' ? 'bg-success/10 text-success' :
                       cred.type === 'api' ? 'bg-mcp/10 text-mcp' :
-                      'bg-gray-500/10 text-gray-500'
+                      'bg-surface-muted text-text-muted'
                     }`}>
                       {getTypeIcon(cred.type)}
                     </div>
@@ -1835,7 +1835,7 @@ function ConnectorsTab() {
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-sm text-text-primary">{preset.name}</span>
                         {requiresConfig && !isAdded && (
-                          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-warning/10 text-warning border border-warning/20">
                             {t('mcp.requiresToken')}
                           </span>
                         )}
@@ -1939,8 +1939,8 @@ function ServerCard({
                   isConnected 
                     ? 'bg-success/10 text-success' 
                     : server.enabled
-                      ? 'bg-amber-500/10 text-amber-600'
-                      : 'bg-blue-500/10 text-blue-600'
+                      ? 'bg-warning/10 text-warning'
+                      : 'bg-accent/10 text-accent'
                 }`}>
                   {isConnected 
                     ? `✓ ${t('mcp.connected')} to Chrome debug port (9222)` 
@@ -3003,10 +3003,10 @@ function SkillCard({ skill, onToggleEnabled, onDelete, isLoading }: {
             <h3 className="font-medium text-text-primary">{skill.name}</h3>
             <span className={`px-2 py-0.5 text-xs rounded ${
               isBuiltin
-                ? 'bg-blue-500/10 text-blue-500'
+                ? 'bg-accent/10 text-accent'
                 : skill.type === 'mcp'
                   ? 'bg-mcp/10 text-mcp'
-                  : 'bg-green-500/10 text-green-500'
+                  : 'bg-success/10 text-success'
             }`}>
               {skill.type.toUpperCase()}
             </span>
@@ -4086,7 +4086,7 @@ function LanguageTab() {
   return (
     <div className="space-y-4">
       {/* Info Banner */}
-      <div className="px-4 py-3 rounded-xl bg-blue-500/10 text-blue-600 text-sm">
+      <div className="px-4 py-3 rounded-xl bg-accent-muted text-accent text-sm">
         <p className="font-medium mb-1">🌐 {t('language.selectLanguage')}</p>
         <p className="text-xs opacity-80">
           {t('language.currentLanguage')}: {currentLang === 'zh' ? t('language.chinese') : t('language.english')}
@@ -4259,7 +4259,7 @@ function LogsTab() {
   return (
     <div className="space-y-4">
       {/* Info Banner */}
-      <div className="px-4 py-3 rounded-xl bg-blue-500/10 text-blue-600 text-sm">
+      <div className="px-4 py-3 rounded-xl bg-accent-muted text-accent text-sm">
         <p className="font-medium mb-1">📋 {t('logs.title')}</p>
         <p className="text-xs opacity-80">
           {t('logs.description')}

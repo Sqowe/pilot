@@ -285,7 +285,7 @@ export interface PermissionRequest {
 
 export type PermissionResult = 'allow' | 'deny' | 'allow_always';
 
-// AskUserQuestion types - matches Claude SDK format
+// AskUserQuestion display types - kept for rendering historical messages
 export interface QuestionOption {
   label: string;
   description?: string;
@@ -296,18 +296,6 @@ export interface QuestionItem {
   header?: string;
   options?: QuestionOption[];
   multiSelect?: boolean;
-}
-
-export interface UserQuestionRequest {
-  questionId: string;
-  sessionId: string;
-  toolUseId: string;
-  questions: QuestionItem[];
-}
-
-export interface UserQuestionResponse {
-  questionId: string;
-  answer: string;  // JSON string of Record<number, string[]> (questionIndex -> selected labels)
 }
 
 export interface PermissionRule {
@@ -326,7 +314,6 @@ export type ClientEvent =
   | { type: 'session.getMessages'; payload: { sessionId: string } }
   | { type: 'session.getTraceSteps'; payload: { sessionId: string } }
   | { type: 'permission.response'; payload: { toolUseId: string; result: PermissionResult } }
-  | { type: 'question.response'; payload: UserQuestionResponse }
   | { type: 'settings.update'; payload: Record<string, unknown> }
   | { type: 'folder.select'; payload: Record<string, never> }
   | { type: 'workdir.get'; payload: Record<string, never> }
@@ -378,7 +365,6 @@ export type ServerEvent =
   | { type: 'session.update'; payload: { sessionId: string; updates: Partial<Session> } }
   | { type: 'session.list'; payload: { sessions: Session[] } }
   | { type: 'permission.request'; payload: PermissionRequest }
-  | { type: 'question.request'; payload: UserQuestionRequest }
   | { type: 'trace.step'; payload: { sessionId: string; step: TraceStep } }
   | { type: 'trace.update'; payload: { sessionId: string; stepId: string; updates: Partial<TraceStep> } }
   | { type: 'folder.selected'; payload: { path: string } }
