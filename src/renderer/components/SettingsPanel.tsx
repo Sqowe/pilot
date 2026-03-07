@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Key, Plug, Settings, ChevronRight, AlertCircle, Eye, EyeOff, Plus, Trash2, Edit3, Save, Mail, Globe, Lock, Server, Cpu, Loader2, Power, PowerOff, CheckCircle, Check, ChevronDown, Package, Languages, Shield, Wifi, FolderOpen, RefreshCw, Clock3 } from 'lucide-react';
+import { useWindowSize } from '../hooks/useWindowSize';
 import type {
   Skill,
   PluginCatalogItemV2,
@@ -115,6 +116,8 @@ const VALID_TABS = new Set<TabId>(['api', 'sandbox', 'credentials', 'connectors'
 
 export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProps) {
   const { t } = useTranslation();
+  const { width } = useWindowSize();
+  const compactSidebar = width < 900;
   // Read settingsTab from store at mount time so external navigation (nav-server)
   // takes effect even before this component mounts.
   const storeTab = useAppStore((s) => s.settingsTab);
@@ -155,36 +158,42 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
   return (
       <div className="flex h-full w-full overflow-hidden">
         {/* Sidebar */}
-        <div className="w-48 lg:w-72 bg-surface-hover border-r border-border flex flex-col flex-shrink-0">
-          <div className="p-4 border-b border-border">
-            <h2 className="text-lg font-semibold text-text-primary">{t('settings.title')}</h2>
-          </div>
-          <div className="flex-1 p-2 space-y-1">
+        <div className={`${compactSidebar ? 'w-14' : 'w-48 lg:w-72'} bg-surface-hover border-r border-border flex flex-col flex-shrink-0`}>
+          {!compactSidebar && (
+            <div className="p-4 border-b border-border">
+              <h2 className="text-lg font-semibold text-text-primary">{t('settings.title')}</h2>
+            </div>
+          )}
+          <div className={`flex-1 ${compactSidebar ? 'p-1 space-y-0.5' : 'p-2 space-y-1'}`}>
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors active:scale-[0.98] ${
+                title={compactSidebar ? tab.label : undefined}
+                className={`w-full flex items-center ${compactSidebar ? 'justify-center p-2.5' : 'gap-3 px-3 py-3'} rounded-xl text-left transition-colors active:scale-[0.98] ${
                   activeTab === tab.id
                     ? 'bg-surface-active text-text-primary font-medium'
                     : 'hover:bg-surface-active text-text-secondary hover:text-text-primary'
                 }`}
               >
                 <tab.icon className="w-5 h-5 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{tab.label}</p>
-                  <p className="text-xs text-text-muted truncate hidden lg:block">{tab.description}</p>
-                </div>
-                {activeTab === tab.id && <ChevronRight className="w-4 h-4 flex-shrink-0" />}
+                {!compactSidebar && (
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{tab.label}</p>
+                    <p className="text-xs text-text-muted truncate hidden lg:block">{tab.description}</p>
+                  </div>
+                )}
+                {!compactSidebar && activeTab === tab.id && <ChevronRight className="w-4 h-4 flex-shrink-0" />}
               </button>
             ))}
           </div>
-          <div className="p-4 border-t border-border">
+          <div className={`${compactSidebar ? 'p-1' : 'p-4'} border-t border-border`}>
             <button
               onClick={onClose}
-              className="w-full py-2 px-4 rounded-lg bg-surface hover:bg-surface-active transition-colors text-text-secondary text-sm"
+              className={`w-full py-2 ${compactSidebar ? 'px-2' : 'px-4'} rounded-lg bg-surface hover:bg-surface-active transition-colors text-text-secondary text-sm`}
+              title={compactSidebar ? t('common.close') : undefined}
             >
-              {t('common.close')}
+              {compactSidebar ? <X className="w-4 h-4 mx-auto" /> : t('common.close')}
             </button>
           </div>
         </div>

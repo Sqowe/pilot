@@ -20,12 +20,13 @@ import type { GlobalNoticeAction } from './store';
 const isElectronEnv = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
 function App() {
-  const { 
+  const {
     activeSessionId,
     pendingPermission,
     settings,
     showConfigModal,
     showSettings,
+    sidebarCollapsed,
     isConfigured,
     appConfig,
     globalNotice,
@@ -44,6 +45,7 @@ function App() {
   const { listSessions, isElectron } = useIPC();
   const { width } = useWindowSize();
   const initialized = useRef(false);
+  const sidebarBeforeSettings = useRef(false);
 
   useEffect(() => {
     // Only run once on mount
@@ -69,6 +71,18 @@ function App() {
     setContextPanelCollapsed(width < 1100);
     setSidebarCollapsed(width < 800);
   }, [width, setContextPanelCollapsed, setSidebarCollapsed]);
+
+  // Auto-collapse sidebar when Settings is open, restore on close
+  useEffect(() => {
+    if (showSettings) {
+      sidebarBeforeSettings.current = !sidebarCollapsed;
+      setSidebarCollapsed(true);
+    } else if (sidebarBeforeSettings.current) {
+      setSidebarCollapsed(false);
+      sidebarBeforeSettings.current = false;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSettings]);
 
   // Handle config save
   const handleConfigSave = useCallback(async (newConfig: Partial<AppConfig>) => {

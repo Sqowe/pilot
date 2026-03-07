@@ -391,7 +391,7 @@ export function WelcomeView() {
     <div className="flex-1 flex items-center justify-center p-4 md:p-8">
       <div className="max-w-2xl w-full space-y-6 animate-fade-in">
         {/* Quick Action Tags */}
-        <div className="flex flex-wrap gap-2 justify-center">
+        <div className="flex flex-wrap gap-2 justify-center overflow-x-auto max-h-28 scrollbar-hide">
           {quickTags.map((tag) => (
             <button
               key={tag.id}

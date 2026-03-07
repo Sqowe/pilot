@@ -124,7 +124,7 @@
 
   /* Tag/Chip styles - like the quick action buttons */
   .tag {
-    @apply inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-surface border border-border;
+    @apply inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-surface border border-border;
     @apply text-sm font-medium text-text-primary;
     @apply hover:bg-surface-hover hover:shadow-soft cursor-pointer transition-all duration-150;
   }
