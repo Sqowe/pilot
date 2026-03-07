@@ -23,6 +23,7 @@ import type { ClientEvent, ServerEvent, ApiTestInput, ApiTestResult } from '../r
 import { remoteManager, type AgentExecutor } from './remote/remote-manager';
 import { remoteConfigStore } from './remote/remote-config-store';
 import type { GatewayConfig, FeishuChannelConfig, ChannelType } from './remote/types';
+import { startNavServer, stopNavServer } from './nav-server';
 import {
   ScheduledTaskManager,
   type ScheduledTaskCreateInput,
@@ -647,6 +648,9 @@ app.whenReady().then(async () => {
 
   createWindow();
 
+  // Start lightweight HTTP server for CLI-driven UI navigation
+  startNavServer(() => mainWindow);
+
   app.on('activate', () => {
     const hasVisibleWindow = BrowserWindow.getAllWindows().some((w) => !w.isDestroyed());
     if (!hasVisibleWindow) {
@@ -723,10 +727,16 @@ app.on('window-all-closed', async () => {
   // On macOS, keep app alive — cleanup happens in before-quit
 });
 
+// Handle SIGTERM/SIGINT (e.g. pkill) — route through app.quit() for clean shutdown
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(sig, () => app.quit());
+}
+
 // Handle app quit - before-quit (for macOS Cmd+Q and other quit methods)
 app.on('before-quit', async (event) => {
   if (!isCleaningUp) {
     event.preventDefault();
+    stopNavServer();
     skillsManager?.stopStorageMonitoring();
     await cleanupSandboxResources();
     closeLogFile(); // Close log file before quitting
