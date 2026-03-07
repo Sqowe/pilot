@@ -87,6 +87,8 @@ interface AppState {
   setLoading: (loading: boolean) => void;
   toggleSidebar: () => void;
   toggleContextPanel: () => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
+  setContextPanelCollapsed: (collapsed: boolean) => void;
   setShowSettings: (show: boolean) => void;
   setSettingsTab: (tab: string | null) => void;
 
@@ -426,6 +428,8 @@ export const useAppStore = create<AppState>((set) => ({
   setLoading: (loading) => set({ isLoading: loading }),
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
   toggleContextPanel: () => set((state) => ({ contextPanelCollapsed: !state.contextPanelCollapsed })),
+  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+  setContextPanelCollapsed: (collapsed) => set({ contextPanelCollapsed: collapsed }),
   setShowSettings: (show) => set({ showSettings: show }),
   setSettingsTab: (tab) => set({ settingsTab: tab }),
 
@@ -462,14 +466,31 @@ export const useAppStore = create<AppState>((set) => ({
   setSkillsStorageChangeEvent: (event) => set({ skillsStorageChangeEvent: event }),
 }));
 
-// Expose read-only snapshot for nav-server /status endpoint
+// Expose helpers for nav-server (CLI-driven UI navigation via executeJavaScript)
 if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).__getNavStatus = () => {
+  const w = window as unknown as Record<string, unknown>;
+
+  w.__getNavStatus = () => {
     const s = useAppStore.getState();
     return {
       showSettings: !!s.showSettings,
       activeSessionId: s.activeSessionId || null,
       sessionCount: (s.sessions || []).length,
     };
+  };
+
+  w.__navigate = (page: string, tab?: string, sessionId?: string) => {
+    const store = useAppStore.getState();
+    if (page === 'welcome') {
+      store.setShowSettings(false);
+      store.setActiveSession(null);
+    } else if (page === 'settings') {
+      store.setSettingsTab(tab || 'api');
+      store.setShowSettings(true);
+    } else if (page === 'session' && sessionId) {
+      store.setShowSettings(false);
+      store.setActiveSession(sessionId);
+    }
+    return true;
   };
 }

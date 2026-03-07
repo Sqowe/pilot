@@ -155,22 +155,6 @@ export function useIPC() {
           }
           break;
 
-        case 'navigate.to': {
-          const { page, tab, sessionId: navSessionId } = event.payload;
-          console.log('[useIPC] navigate.to received:', page, tab, navSessionId);
-          if (page === 'welcome') {
-            store.setShowSettings(false);
-            store.setActiveSession(null);
-          } else if (page === 'settings') {
-            store.setSettingsTab(tab || 'api');
-            store.setShowSettings(true);
-          } else if (page === 'session' && navSessionId) {
-            store.setShowSettings(false);
-            store.setActiveSession(navSessionId);
-          }
-          break;
-        }
-
         case 'error':
           console.error('[useIPC] Server error:', event.payload.message);
           store.setLoading(false);
