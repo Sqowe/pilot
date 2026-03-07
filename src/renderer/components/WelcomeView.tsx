@@ -403,13 +403,13 @@ export function WelcomeView() {
               <tag.icon className={`w-4 h-4 ${selectedTag === tag.id ? 'text-accent' : 'text-text-muted'}`} />
               <span>{tag.label}</span>
               {'requiresChrome' in tag && tag.requiresChrome && (
-                <span className="flex items-center gap-1 ml-1.5 px-2 py-0.5 text-[10px] font-medium rounded-full bg-blue-500/10 text-blue-600 border border-blue-500/20">
+                <span className="flex items-center gap-1 ml-1.5 px-2 py-0.5 text-[10px] font-medium rounded-full bg-accent-muted text-accent border border-accent/20">
                   <Chrome className="w-3 h-3" />
                   <span>{t('welcome.chromeRequired')}</span>
                 </span>
               )}
               {'requiresNotion' in tag && tag.requiresNotion && (
-                <span className="flex items-center gap-1 ml-1.5 px-2 py-0.5 text-[10px] font-medium rounded-full bg-gray-800/10 text-gray-700 border border-gray-800/20">
+                <span className="flex items-center gap-1 ml-1.5 px-2 py-0.5 text-[10px] font-medium rounded-full bg-surface-muted text-text-secondary border border-border">
                   <span className="text-sm">📝</span>
                   <span>{t('welcome.notionRequired')}</span>
                 </span>

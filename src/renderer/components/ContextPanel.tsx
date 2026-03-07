@@ -636,26 +636,26 @@ function formatPath(path: string): string {
 function getToolIcon(toolName: string) {
   switch (toolName) {
     case 'read_file':
-      return <Eye className="w-4 h-4 text-blue-500" />;
+      return <Eye className="w-4 h-4 text-accent" />;
     case 'write_file':
-      return <Edit className="w-4 h-4 text-green-500" />;
+      return <Edit className="w-4 h-4 text-success" />;
     case 'edit_file':
-      return <Edit className="w-4 h-4 text-orange-500" />;
+      return <Edit className="w-4 h-4 text-accent" />;
     case 'list_directory':
-      return <FolderOpen className="w-4 h-4 text-yellow-500" />;
+      return <FolderOpen className="w-4 h-4 text-warning" />;
     case 'execute_command':
       return <Terminal className="w-4 h-4 text-mcp" />;
     case 'glob':
-      return <Search className="w-4 h-4 text-orange-500" />;
+      return <Search className="w-4 h-4 text-accent" />;
     case 'grep':
-      return <Search className="w-4 h-4 text-orange-500" />;
+      return <Search className="w-4 h-4 text-accent" />;
     case 'search_files':
-      return <Search className="w-4 h-4 text-orange-500" />;
+      return <Search className="w-4 h-4 text-accent" />;
     case 'WebFetch':
     case 'webFetch':
     case 'WebSearch':
     case 'webSearch':
-      return <Globe className="w-4 h-4 text-blue-500" />;
+      return <Globe className="w-4 h-4 text-accent" />;
     default:
       return <File className="w-4 h-4 text-text-muted" />;
   }

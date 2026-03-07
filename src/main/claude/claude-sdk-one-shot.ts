@@ -2,7 +2,7 @@ import { getModel, completeSimple, type UserMessage as PiUserMessage } from '@ma
 import type { ApiTestInput, ApiTestResult } from '../../renderer/types';
 import { PROVIDER_PRESETS, type AppConfig, type CustomProtocolType } from '../config/config-store';
 import { normalizeAnthropicBaseUrl } from '../config/auth-utils';
-import { logWarn } from '../utils/logger';
+import { log, logWarn } from '../utils/logger';
 import { normalizeGeneratedTitle } from '../session/session-title-utils';
 import { getSharedAuthStorage } from './shared-auth';
 
@@ -105,7 +105,7 @@ async function runPiAiOneShot(
   const modelString = resolvePiModelString(config);
   const keyProvider = config.customProtocol || config.provider || 'anthropic';
   const parts = modelString.split('/');
-  const provider = parts.length >= 2 ? parts[0] : keyProvider;
+  const provider = parts.length >= 2 ? parts[0] : (keyProvider || 'anthropic');
   const modelId = parts.length >= 2 ? parts.slice(1).join('/') : parts[0];
 
   // Resolution order: key provider with full string (aggregator), parsed provider, fallbacks
@@ -151,8 +151,9 @@ async function runPiAiOneShot(
   // piModel is guaranteed non-undefined after synthetic fallback
   const resolvedModel = piModel!;
 
-  // Override baseUrl for custom endpoints
-  if (config.baseUrl?.trim()) {
+  // Override baseUrl only for custom endpoints — don't overwrite registry baseUrl with preset
+  const isCustom = (config.provider === 'custom');
+  if (config.baseUrl?.trim() && (isCustom || !resolvedModel.baseUrl)) {
     Object.assign(resolvedModel, { baseUrl: config.baseUrl.trim() });
   }
 
@@ -179,6 +180,7 @@ async function runPiAiOneShot(
   // Use pi-ai's completeSimple for a one-shot call
   // Pass apiKey directly in options — completeSimple uses options.apiKey || env var
   const userMsg: PiUserMessage = { role: 'user', content: prompt, timestamp: Date.now() };
+  log('[OneShot] Calling completeSimple:', resolvedModel.provider, resolvedModel.id, 'baseUrl:', resolvedModel.baseUrl, 'api:', resolvedModel.api);
   const response = await completeSimple(resolvedModel, {
     systemPrompt,
     messages: [userMsg],
@@ -187,6 +189,7 @@ async function runPiAiOneShot(
   // Extract text from response
   const textBlocks = response.content.filter(b => b.type === 'text');
   const text = textBlocks.map(b => (b as { text: string }).text).join('').trim();
+  log('[OneShot] Response:', text ? text.substring(0, 200) : '(empty)', 'blocks:', response.content.length, 'textBlocks:', textBlocks.length);
   return { text, durationMs: Date.now() - start };
 }
 

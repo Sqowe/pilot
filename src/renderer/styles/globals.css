@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -7,46 +7,46 @@
 @layer base {
   /* Define CSS variables for theming */
   :root {
-    /* Dark theme (default) */
-    --color-background: #0a0a0a;
-    --color-background-secondary: #141414;
-    --color-surface: #191919;
-    --color-surface-hover: #222222;
-    --color-surface-active: #2c2c2c;
-    --color-surface-muted: #111111;
-    --color-border: #262626;
-    --color-border-muted: #1e1e1e;
-    --color-border-subtle: rgba(255, 255, 255, 0.07);
+    /* Dark theme (default) — Claude warm palette */
+    --color-background: #131314;
+    --color-background-secondary: #1a1a1b;
+    --color-surface: #1e1e1f;
+    --color-surface-hover: #272728;
+    --color-surface-active: #303031;
+    --color-surface-muted: #171718;
+    --color-border: #2a2a2b;
+    --color-border-muted: #222223;
+    --color-border-subtle: rgba(255, 255, 255, 0.06);
     --color-mcp: #a855f7;
     --shadow-soft: 0 1px 4px rgba(0, 0, 0, 0.3);
     --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03);
     --shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
-    --color-accent: #f97316;
-    --color-accent-hover: #ea580c;
-    --color-accent-muted: rgba(249, 115, 22, 0.1);
+    --color-accent: #d97757;
+    --color-accent-hover: #c46849;
+    --color-accent-muted: rgba(217, 119, 87, 0.1);
     --color-text-primary: #ececec;
     --color-text-secondary: #a0a0a0;
     --color-text-muted: #6b6b6b;
   }
 
-  /* Light theme override */
+  /* Light theme override — Claude warm cream */
   .light {
-    --color-background: #f5f3ee;
-    --color-background-secondary: #faf9f6;
-    --color-surface: #ffffff;
-    --color-surface-hover: #faf9f6;
-    --color-surface-active: #f0eeea;
-    --color-surface-muted: #f7f6f3;
-    --color-border: #e5e3de;
-    --color-border-muted: #ebe9e4;
-    --color-border-subtle: rgba(0, 0, 0, 0.06);
+    --color-background: #f5f3ed;
+    --color-background-secondary: #f0eee8;
+    --color-surface: #faf9f4;
+    --color-surface-hover: #f5f3ed;
+    --color-surface-active: #eceae4;
+    --color-surface-muted: #f2f0eb;
+    --color-border: #e2dfd9;
+    --color-border-muted: #e8e6e0;
+    --color-border-subtle: rgba(0, 0, 0, 0.05);
     --color-mcp: #9333ea;
     --shadow-soft: 0 1px 4px rgba(0, 0, 0, 0.04);
     --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
     --shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.1);
-    --color-accent: #f97316;
-    --color-accent-hover: #ea580c;
-    --color-accent-muted: #fff7ed;
+    --color-accent: #d97757;
+    --color-accent-hover: #c46849;
+    --color-accent-muted: #fef3ee;
     --color-text-primary: #1a1a1a;
     --color-text-secondary: #5c5c5c;
     --color-text-muted: #8c8c8c;
@@ -215,8 +215,9 @@
     margin-left: auto;
   }
 
+  /* Assistant messages — no bubble, direct content (Claude style) */
   .message-assistant {
-    @apply bg-surface rounded-2xl border border-border-subtle;
+    /* No background, no border — content renders directly in conversation column */
   }
 
   /* Prose styling for assistant messages - elegant serif font */
@@ -354,5 +355,14 @@
     word-break: break-all;
     overflow-wrap: anywhere;
     hyphens: auto;
+  }
+}
+
+/* Respect reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

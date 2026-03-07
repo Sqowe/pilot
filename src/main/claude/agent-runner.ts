@@ -24,7 +24,6 @@ import { getSandboxAdapter } from '../sandbox/sandbox-adapter';
 import { pathConverter } from '../sandbox/wsl-bridge';
 import { SandboxSync } from '../sandbox/sandbox-sync';
 import { extractArtifactsFromText, buildArtifactTraceSteps } from '../utils/artifact-parser';
-import { buildMcpToolsPrompt } from '../utils/cowork-instructions';
 import { PluginRuntimeService } from '../skills/plugin-runtime-service';
 import { configStore } from '../config/config-store';
 // import { PathGuard } from '../sandbox/path-guard';
@@ -125,8 +124,10 @@ function buildMcpCustomTools(mcpManager: MCPManager): ToolDefinition[] {
             details: undefined as unknown,
           };
         } catch (err: any) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          logError(`[ClaudeAgentRunner] MCP tool ${mcpTool.name} failed:`, err);
           return {
-            content: [{ type: 'text' as const, text: `MCP tool error: ${err.message || err}` }],
+            content: [{ type: 'text' as const, text: `MCP tool error: ${errMsg}` }],
             details: undefined as unknown,
           };
         }
@@ -301,7 +302,6 @@ export class ClaudeAgentRunner {
   // Per-instance caches — invalidated when the underlying config changes.
   private _mcpServersCache: { fingerprint: string; servers: Record<string, unknown> } | null = null;
   private _skillsSetupDone = false;
-  private _skillsPromptCache: { workingDir: string; prompt: string } | null = null;
 
   /**
    * Clear SDK session cache for a session
@@ -319,7 +319,6 @@ export class ClaudeAgentRunner {
   /** Call after the user installs / removes a skill so the next query re-links everything. */
   invalidateSkillsSetup(): void {
     this._skillsSetupDone = false;
-    this._skillsPromptCache = null;
   }
 
   /** Call after the user changes MCP server config so the next query rebuilds mcpServers. */
@@ -545,158 +544,6 @@ ${sections.join('\n\n')}
         fs.copyFileSync(sourcePath, targetPath);
       }
     }
-  }
-
-  /**
-   * Scan for available skills and return formatted list for system prompt
-   */
-  private getAvailableSkillsPrompt(workingDir?: string): string {
-    const skills: { name: string; description: string; skillMdPath: string }[] = [];
-    
-    // 1. Check built-in skills (highest priority for reading)
-    const builtinSkillsPath = this.getBuiltinSkillsPath();
-    if (builtinSkillsPath && fs.existsSync(builtinSkillsPath)) {
-      try {
-        const dirs = fs.readdirSync(builtinSkillsPath, { withFileTypes: true });
-        for (const dir of dirs) {
-          if (dir.isDirectory()) {
-            const skillMdPath = path.join(builtinSkillsPath, dir.name, 'SKILL.md');
-            if (fs.existsSync(skillMdPath)) {
-              // Try to read description from SKILL.md frontmatter
-              let description = `Skill for ${dir.name} file operations`;
-              try {
-                const content = fs.readFileSync(skillMdPath, 'utf-8');
-                const descMatch = content.match(/description:\s*["']?([^"'\n]+)["']?/);
-                if (descMatch) {
-                  description = descMatch[1];
-                }
-              } catch (e) { /* ignore */ }
-              
-              skills.push({
-                name: dir.name,
-                description,
-                skillMdPath,
-              });
-            }
-          }
-        }
-      } catch (e) {
-        logError('[ClaudeAgentRunner] Error scanning built-in skills:', e);
-      }
-    }
-    
-    // 2. Check global skills (configured skills directory)
-    const globalSkillsPath = this.getConfiguredGlobalSkillsDir();
-    if (fs.existsSync(globalSkillsPath)) {
-      try {
-        const dirs = fs.readdirSync(globalSkillsPath, { withFileTypes: true });
-        for (const dir of dirs) {
-          if (dir.isDirectory()) {
-            const skillMdPath = path.join(globalSkillsPath, dir.name, 'SKILL.md');
-            if (fs.existsSync(skillMdPath)) {
-              // Global skills can override built-in but not project-level
-              const existingIdx = skills.findIndex(s => s.name === dir.name);
-              let description = `User skill for ${dir.name}`;
-              try {
-                const content = fs.readFileSync(skillMdPath, 'utf-8');
-                const descMatch = content.match(/description:\s*["']?([^"'\n]+)["']?/);
-                if (descMatch) {
-                  description = descMatch[1];
-                }
-              } catch (e) { /* ignore */ }
-
-              const skill = { name: dir.name, description, skillMdPath };
-              if (existingIdx >= 0) {
-                skills[existingIdx] = skill;
-              } else {
-                skills.push(skill);
-              }
-            }
-          }
-        }
-      } catch (e) {
-        logError('[ClaudeAgentRunner] Error scanning global skills:', e);
-      }
-    }
-
-    // 3. Check project-level skills (in working directory)
-    if (workingDir) {
-      const projectSkillsPaths = [
-        path.join(workingDir, '.claude', 'skills'),
-        path.join(workingDir, '.skills'),
-        path.join(workingDir, 'skills'),
-      ];
-
-      for (const skillsDir of projectSkillsPaths) {
-        if (fs.existsSync(skillsDir)) {
-          try {
-            const dirs = fs.readdirSync(skillsDir, { withFileTypes: true });
-            for (const dir of dirs) {
-              if (dir.isDirectory()) {
-                const skillMdPath = path.join(skillsDir, dir.name, 'SKILL.md');
-                if (fs.existsSync(skillMdPath)) {
-                  // Project skills can override built-in and global
-                  const existingIdx = skills.findIndex(s => s.name === dir.name);
-                  let description = `Project skill for ${dir.name}`;
-                  try {
-                    const content = fs.readFileSync(skillMdPath, 'utf-8');
-                    const descMatch = content.match(/description:\s*["']?([^"'\n]+)["']?/);
-                    if (descMatch) {
-                      description = descMatch[1];
-                    }
-                  } catch (e) { /* ignore */ }
-
-                  const skill = { name: dir.name, description, skillMdPath };
-                  if (existingIdx >= 0) {
-                    skills[existingIdx] = skill;
-                  } else {
-                    skills.push(skill);
-                  }
-                }
-              }
-            }
-          } catch (e) { /* ignore */ }
-        }
-      }
-    }
-    
-    if (skills.length === 0) {
-      return '<available_skills>\nNo skills available.\n</available_skills>';
-    }
-    
-    // Format the skills list – include both SKILL.md path and skill base directory
-    // so the model can resolve relative script references.
-    const skillsList = skills.map(s => {
-      const skillDir = path.dirname(s.skillMdPath);
-      return `- **${s.name}**: ${s.description}\n  SKILL.md path: ${s.skillMdPath}\n  Skill directory: ${skillDir}`;
-    }).join('\n');
-
-    return `<available_skills>
-The following skills are available. **CRITICAL**: Before starting any task that involves creating or editing files of these types, you MUST first read the corresponding SKILL.md file using the Read tool:
-
-${skillsList}
-
-**How to use skills:**
-1. Identify which skill is relevant to your task (e.g., "pptx" for PowerPoint, "docx" for Word, "pdf" for PDF)
-2. Use the Read tool to read the SKILL.md file at the path shown above
-3. Follow the instructions in the SKILL.md file exactly
-4. The skills contain proven workflows that produce high-quality results
-
-**CRITICAL – Resolving script and resource paths inside skills:**
-Skills reference helper scripts and resources using **relative paths** (e.g. \`python scripts/rearrange.py\`, \`tar -xzf html2pptx.tgz\`). These paths are relative to the **Skill directory** shown above, NOT the current working directory.
-When you encounter a relative path in a SKILL.md, you MUST resolve it against that skill's directory. For example:
-- SKILL.md says: \`python scripts/rearrange.py template.pptx out.pptx 0,1,2\`
-- Skill directory is: /path/to/.claude/skills/pptx
-- You should run: \`python /path/to/.claude/skills/pptx/scripts/rearrange.py template.pptx out.pptx 0,1,2\`
-
-Similarly, for \`python3\` / \`python\` / \`node\` commands, always use the full command name available on this system. If a command is not found, try common alternatives (python3 instead of python, node instead of nodejs, etc.).
-
-**Example**: If the user asks to create a PowerPoint presentation:
-\`\`\`
-Read the file: ${skills.find(s => s.name === 'pptx')?.skillMdPath || '[pptx skill path]'}
-\`\`\`
-Then follow the workflow described in that file, resolving all script paths against the skill directory.
-</available_skills>`;
   }
 
   constructor(
@@ -1114,6 +961,8 @@ Then follow the workflow described in that file, resolving all script paths agai
           log('[ClaudeAgentRunner] Set runtime API key for model provider:', piModel.provider);
         }
         log('[ClaudeAgentRunner] Set runtime API key for config provider:', piProvider);
+      } else {
+        logWarn('[ClaudeAgentRunner] No API key configured for provider:', provider);
       }
 
       // baseUrl is now embedded in the model object via resolvePiModel()
@@ -1172,15 +1021,8 @@ Then follow the workflow described in that file, resolving all script paths agai
         this._skillsSetupDone = true;
       }
 
-      // Build available skills section dynamically (cached per workingDir)
-      const cacheKey = workingDir ?? '';
-      const availableSkillsPrompt = (this._skillsPromptCache?.workingDir === cacheKey)
-        ? this._skillsPromptCache.prompt
-        : (() => {
-          const prompt = this.getAvailableSkillsPrompt(workingDir);
-          this._skillsPromptCache = { workingDir: cacheKey, prompt };
-          return prompt;
-        })();
+      // Build available skills section dynamically — now handled by pi's DefaultResourceLoader
+      // via additionalSkillPaths. No custom prompt building needed.
 
       log('[ClaudeAgentRunner] App claude dir:', userClaudeDir);
       log('[ClaudeAgentRunner] User working directory:', workingDir);
@@ -1230,8 +1072,8 @@ Then follow the workflow described in that file, resolving all script paths agai
           allConfigs = mcpConfigStore.getEnabledServers();
           log('[ClaudeAgentRunner] Enabled MCP configs:', allConfigs.map((c) => c.name));
         } catch (error) {
-          logError(
-            '[ClaudeAgentRunner] Failed to read enabled MCP configs; continuing without MCP overrides',
+          logWarn(
+            '[ClaudeAgentRunner] Failed to read enabled MCP configs; MCP tools will be unavailable this query',
             error
           );
           allConfigs = [];
@@ -1365,9 +1207,10 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
           ? `<workspace_info>Your current workspace is: ${workingDir}</workspace_info>`
           : '';
 
-      const includeVerboseMcpPrompt = process.env.COWORK_INCLUDE_MCP_TOOLS_PROMPT !== '0';
       const includeCredentialsPrompt = /login|sign[\s-]?in|credential|password|gmail|邮箱|登录|账号|密码/i.test(prompt);
-      const systemPromptSections = [
+      // Cowork-specific rules appended to pi's native system prompt.
+      // Skills and tool descriptions are handled by pi's DefaultResourceLoader.
+      const coworkAppendPrompt = [
         'You are an Open Cowork assistant. Be concise, accurate, and tool-capable.',
         `CRITICAL BEHAVIORAL RULES:
 1. CHAT FIRST: By default, respond to the user in plain text within the conversation. Do NOT create, write, or edit files unless the user explicitly asks you to (e.g., "create a file", "write this to...", "edit the code", "save as...", mentions a specific file path, or describes code changes they want applied). For questions, summaries, explanations, analysis, and general conversation — always reply directly in chat text.
@@ -1376,12 +1219,6 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
 4. For bracketed placeholders like [Agent], [Topic], etc., treat the word inside brackets as the literal search keyword unless the user says otherwise.
 5. When given a task, START DOING IT. Do not restate the task, do not list what you will do, do not ask for confirmation. Just execute.`,
         workspaceInfoPrompt,
-        availableSkillsPrompt,
-        includeVerboseMcpPrompt
-          ? this.getMCPToolsPrompt()
-          : `<mcp_tools>
-MCP tools are available at runtime. Use tool names exactly as exposed by the init system message (mcp__<ServerName>__<toolName>).
-</mcp_tools>`,
         `<citation_requirements>
 If your answer uses linkable content from MCP tools, include a "Sources:" section and otherwise use standard Markdown links: [Title](https://claude.ai/chat/URL).
 </citation_requirements>`,
@@ -1391,8 +1228,7 @@ Tool routing:
 - Use WebSearch/WebFetch only when Chrome MCP is unavailable or the user explicitly asks for generic web search.
 </tool_behavior>`,
         includeCredentialsPrompt ? this.getCredentialsPrompt() : '',
-      ].filter((section): section is string => Boolean(section && section.trim()));
-      const systemPromptText = systemPromptSections.join('\n\n');
+      ].filter((section): section is string => Boolean(section && section.trim())).join('\n\n');
 
       logTiming('before pi-coding-agent session creation');
 
@@ -1403,10 +1239,23 @@ Tool routing:
       // Create or reuse pi-coding-agent session
       const effectiveCwd = (useSandboxIsolation && sandboxPath) ? sandboxPath : (workingDir || process.cwd());
 
+      // Collect skill directories for pi's native skill discovery
+      const skillPaths: string[] = [];
+      const builtinSkillsPath = this.getBuiltinSkillsPath();
+      if (builtinSkillsPath && fs.existsSync(builtinSkillsPath)) {
+        skillPaths.push(builtinSkillsPath);
+      }
+      const globalSkillsPath = this.getConfiguredGlobalSkillsDir();
+      if (globalSkillsPath && fs.existsSync(globalSkillsPath)) {
+        skillPaths.push(globalSkillsPath);
+      }
+      log('[ClaudeAgentRunner] Skill paths for pi ResourceLoader:', skillPaths);
+
       const { DefaultResourceLoader } = await import('@mariozechner/pi-coding-agent');
       const resourceLoader = new DefaultResourceLoader({
         cwd: effectiveCwd,
-        systemPromptOverride: () => systemPromptText,
+        additionalSkillPaths: skillPaths,
+        appendSystemPrompt: coworkAppendPrompt,
       });
       await resourceLoader.reload();
 
@@ -1458,6 +1307,7 @@ Tool routing:
 
         switch (event.type) {
           case 'message_update': {
+            if (controller.signal.aborted) break;
             const ame = event.assistantMessageEvent;
             if (ame.type === 'text_delta') {
               this.sendPartial(session.id, ame.delta);
@@ -1492,6 +1342,7 @@ Tool routing:
           case 'message_end': {
             // Unified handler: send the final assistant message to the renderer.
             // Works for all providers (some emit 'done' via message_update, others don't).
+            if (controller.signal.aborted) break;
             const msg = event.message;
             if (msg && msg.role === 'assistant') {
               const contentBlocks: ContentBlock[] = [];
@@ -1513,14 +1364,19 @@ Tool routing:
                     name: block.name,
                     input: block.arguments,
                   });
+                } else {
+                  // Unknown block type — pass through as text so content isn't silently lost
+                  log(`[ClaudeAgentRunner] Unknown content block type: ${block.type}`);
+                  const text = block.text || JSON.stringify(block);
+                  if (text) contentBlocks.push({ type: 'text', text });
                 }
               }
+              // Always clear partial text; send message even if only artifacts were extracted
+              this.sendToRenderer({
+                type: 'stream.partial',
+                payload: { sessionId: session.id, delta: '' },
+              });
               if (contentBlocks.length > 0) {
-                // Clear any partial text
-                this.sendToRenderer({
-                  type: 'stream.partial',
-                  payload: { sessionId: session.id, delta: '' },
-                });
                 const assistantMsg: Message = {
                   id: uuidv4(),
                   sessionId: session.id,
@@ -1544,6 +1400,7 @@ Tool routing:
           }
 
           case 'tool_execution_end': {
+            if (controller.signal.aborted) break;
             const toolCallId = event.toolCallId;
             const isError = event.isError;
             const outputText = typeof event.result === 'string'
@@ -1579,12 +1436,21 @@ Tool routing:
         }
       });
 
-      // Execute the prompt
+      // Execute the prompt with timeout
       try {
-        const promptResult = await piSession.prompt(contextualPrompt);
-        log('[ClaudeAgentRunner] prompt() returned:', JSON.stringify(promptResult ?? 'void').substring(0, 1000));
+        const PROMPT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+        const timeoutId = setTimeout(() => {
+          logWarn('[ClaudeAgentRunner] Prompt timed out, aborting');
+          controller.abort();
+        }, PROMPT_TIMEOUT_MS);
+        try {
+          const promptResult = await piSession.prompt(contextualPrompt);
+          log('[ClaudeAgentRunner] prompt() returned:', JSON.stringify(promptResult ?? 'void').substring(0, 1000));
+        } finally {
+          clearTimeout(timeoutId);
+        }
       } finally {
-        unsubscribe();
+        try { unsubscribe(); } catch (e) { logWarn('[ClaudeAgentRunner] unsubscribe error:', e); }
       }
 
       logTiming('pi-coding-agent prompt completed');
@@ -1618,6 +1484,11 @@ Tool routing:
           title: 'Error occurred',
           timestamp: Date.now(),
         });
+
+        // Mark so session-manager doesn't report again
+        if (error instanceof Error) {
+          (error as any).alreadyReportedToUser = true;
+        }
       }
     } finally {
       this.activeControllers.delete(session.id);

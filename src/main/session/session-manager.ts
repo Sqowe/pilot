@@ -113,7 +113,7 @@ export class SessionManager {
     this.createAgentRunner();
 
     // Reinitialize MCP servers so subprocess env picks up latest credentials/base URLs
-    void this.initializeMCP();
+    this.initializeMCP().catch(err => logError('[SessionManager] MCP reinit failed after config reload:', err));
 
     // Reinitialize sandbox adapter to pick up sandboxEnabled changes
     this.reinitializeSandboxAsync();
@@ -494,7 +494,8 @@ export class SessionManager {
       await this.agentRunner.run(session, enhancedPrompt, existingMessages);
 
       // 标题生成不再与首轮对话并发，避免与主请求竞争同一上游配额/通道导致体感变慢。
-      void this.runSessionTitleGeneration(session, prompt, existingMessages);
+      this.runSessionTitleGeneration(session, prompt, existingMessages)
+        .catch(err => logError('[SessionManager] Title generation failed:', err));
     } catch (error) {
       logError('[SessionManager] Error processing prompt:', error);
       const errorText = error instanceof Error ? error.message : 'Unknown error';

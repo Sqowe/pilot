@@ -38,10 +38,12 @@ export function Sidebar() {
 
   // Handle session click - load messages if needed
   const handleSessionClick = useCallback(async (sessionId: string) => {
+    // Always close settings when clicking a session
+    setShowSettings(false);
+
     if (activeSessionId === sessionId) return;
 
     setActiveSession(sessionId);
-    setShowSettings(false);
     
     // Check if we already have messages loaded for this session
     const existingMessages = messagesBySession[sessionId];

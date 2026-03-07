@@ -1,4 +1,4 @@
-import { useState, isValidElement, cloneElement, memo } from 'react';
+import { useState, isValidElement, cloneElement, memo, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
@@ -18,7 +18,6 @@ import {
   ChevronRight,
   Copy,
   Check,
-  AlertCircle,
   CheckCircle2,
   HelpCircle,
   Send,
@@ -29,6 +28,13 @@ import {
   CheckSquare,
   Clock,
   FileText,
+  Brain,
+  Terminal,
+  FileCode,
+  Pencil,
+  Search,
+  Globe,
+  FolderSearch,
 } from 'lucide-react';
 
 interface MessageCardProps {
@@ -45,6 +51,22 @@ export const MessageCard = memo(function MessageCard({ message, isStreaming }: M
     ? (rawContent as ContentBlock[])
     : [{ type: 'text', text: String(rawContent ?? '') } as ContentBlock];
   const [copied, setCopied] = useState(false);
+
+  // Build a set of tool_result IDs that have a matching tool_use (for merging)
+  const mergedResultIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const b of contentBlocks) {
+      if (b.type === 'tool_use') {
+        const tu = b as ToolUseContent;
+        // Find matching result
+        const result = contentBlocks.find(
+          r => r.type === 'tool_result' && (r as ToolResultContent).toolUseId === tu.id
+        );
+        if (result) ids.add((result as ToolResultContent).toolUseId);
+      }
+    }
+    return ids;
+  }, [contentBlocks]);
 
   // Extract text content for copying
   const getTextContent = () => {
@@ -111,18 +133,24 @@ export const MessageCard = memo(function MessageCard({ message, isStreaming }: M
           </button>
         </div>
       ) : (
-        // Assistant message
+        // Assistant message — no bubble, direct content (Claude style)
         <div className="space-y-3">
-          {contentBlocks.map((block, index) => (
-            <ContentBlockView
-              key={index}
-              block={block}
-              isUser={isUser}
-              isStreaming={isStreaming}
-              allBlocks={message.content}
-              message={message}
-            />
-          ))}
+          {contentBlocks.map((block, index) => {
+            // Skip tool_result blocks that are merged into their tool_use card
+            if (block.type === 'tool_result' && mergedResultIds.has((block as ToolResultContent).toolUseId)) {
+              return null;
+            }
+            return (
+              <ContentBlockView
+                key={index}
+                block={block}
+                isUser={isUser}
+                isStreaming={isStreaming}
+                allBlocks={contentBlocks}
+                message={message}
+              />
+            );
+          })}
         </div>
       )}
     </div>
@@ -396,24 +424,35 @@ function ContentBlockView({ block, isUser, isStreaming, allBlocks, message }: Co
     }
 
     case 'tool_use':
-      return <ToolUseBlock block={block} />;
+      return <ToolUseBlock block={block} allBlocks={allBlocks} message={message} />;
 
     case 'tool_result':
       return <ToolResultBlock block={block} allBlocks={allBlocks} message={message} />;
 
     case 'thinking':
-      return (
-        <div className="text-sm text-text-muted italic">
-          {block.thinking}
-        </div>
-      );
+      return <ThinkingBlock block={block} />;
 
     default:
       return null;
   }
 }
 
-function ToolUseBlock({ block }: { block: ToolUseContent }) {
+/** Get an icon for a tool by name */
+function getToolIcon(name: string) {
+  const n = name.toLowerCase();
+  if (n === 'bash' || n === 'execute_command') return <Terminal className="w-3.5 h-3.5" />;
+  if (n === 'read' || n === 'read_file') return <FileCode className="w-3.5 h-3.5" />;
+  if (n === 'write' || n === 'write_file') return <FileText className="w-3.5 h-3.5" />;
+  if (n === 'edit' || n === 'edit_file') return <Pencil className="w-3.5 h-3.5" />;
+  if (n === 'grep') return <Search className="w-3.5 h-3.5" />;
+  if (n === 'glob') return <FolderSearch className="w-3.5 h-3.5" />;
+  if (n === 'websearch') return <Globe className="w-3.5 h-3.5" />;
+  if (n === 'webfetch') return <Globe className="w-3.5 h-3.5" />;
+  return <Terminal className="w-3.5 h-3.5" />;
+}
+
+function ToolUseBlock({ block, allBlocks, message }: { block: ToolUseContent; allBlocks?: ContentBlock[]; message?: Message }) {
+  const { traceStepsBySession } = useAppStore();
   const [expanded, setExpanded] = useState(false);
 
   // Check if this is AskUserQuestion - render inline question UI
@@ -426,79 +465,152 @@ function ToolUseBlock({ block }: { block: ToolUseContent }) {
     return <TodoWriteBlock block={block} />;
   }
 
-  // Get compact label: tool action + key argument
-  const getToolLabel = (name: string, input: any): string => {
-    const inp = input || {};
-    // MCP tools
-    if (name.startsWith('mcp__')) {
-      const match = name.match(/^mcp__(.+?)__(.+)$/);
-      const toolName = match?.[2] || name;
-      return toolName;
-    }
+  // Find matching tool_result in allBlocks
+  const toolResult = allBlocks?.find(
+    b => b.type === 'tool_result' && (b as ToolResultContent).toolUseId === block.id
+  ) as ToolResultContent | undefined;
 
-    const nameLower = name.toLowerCase();
-    // File tools — show path
-    if (nameLower === 'read' || nameLower === 'read_file') {
-      const p = inp.file_path || inp.path || '';
-      return p ? `Read ${shortenPath(p)}` : 'Read file';
-    }
-    if (nameLower === 'write' || nameLower === 'write_file') {
-      const p = inp.file_path || inp.path || '';
-      return p ? `Write ${shortenPath(p)}` : 'Write file';
-    }
-    if (nameLower === 'edit' || nameLower === 'edit_file') {
-      const p = inp.file_path || inp.path || '';
-      return p ? `Edit ${shortenPath(p)}` : 'Edit file';
-    }
-    // Bash — show command snippet
-    if (nameLower === 'bash' || nameLower === 'execute_command') {
-      const cmd = inp.command || inp.cmd || '';
-      if (cmd) {
-        const short = cmd.length > 60 ? cmd.substring(0, 57) + '...' : cmd;
-        return `$ ${short}`;
-      }
-      return 'Run command';
-    }
-    // Search tools
-    if (nameLower === 'glob') return inp.pattern ? `Glob ${inp.pattern}` : 'Glob';
-    if (nameLower === 'grep') return inp.pattern ? `Grep "${inp.pattern}"` : 'Grep';
-    if (nameLower === 'websearch') return inp.query ? `Search "${inp.query}"` : 'Web search';
-    if (nameLower === 'webfetch') {
-      const url = inp.url || '';
-      return url ? `Fetch ${url.length > 50 ? url.substring(0, 47) + '...' : url}` : 'Fetch URL';
-    }
-    return name;
-  };
+  // Determine state: running / success / error
+  const isRunning = !toolResult;
+  const isError = toolResult?.isError === true;
+  const isSuccess = toolResult && !isError;
 
+  // Get compact label
+  const label = getToolLabel(block.name, block.input);
   const isMCPTool = block.name.startsWith('mcp__');
   const mcpServerName = isMCPTool ? block.name.match(/^mcp__(.+?)__/)?.[1] : null;
-  const label = getToolLabel(block.name, block.input);
+
+  // Result summary
+  const getSummary = (): string => {
+    if (!toolResult) return '';
+    if (toolResult.isError) {
+      const firstLine = toolResult.content.split('\n')[0];
+      return firstLine.length > 60 ? firstLine.substring(0, 57) + '...' : firstLine;
+    }
+    const toolName = block.name;
+    if (shouldUseScreenshotSummary(toolName, toolResult.content)) return 'Screenshot captured';
+    if (toolResult.content.length < 60) return toolResult.content.trim();
+    const lines = toolResult.content.trim().split('\n');
+    return `${lines.length} lines`;
+  };
+
+  const hasImages = toolResult?.images && toolResult.images.length > 0;
+  const summary = getSummary();
+
+  // Duration from trace steps
+  let duration: number | undefined;
+  if (message?.sessionId) {
+    const steps = traceStepsBySession[message.sessionId] || [];
+    const resultStep = steps.find(s => s.id === block.id && s.type === 'tool_result');
+    duration = resultStep?.duration;
+  }
 
   return (
-    <div className="group">
+    <div
+      className={`rounded-xl border overflow-hidden transition-colors ${
+        isError
+          ? 'border-error/30 bg-error/5'
+          : isRunning
+            ? 'border-accent/20 bg-accent/5'
+            : 'border-border bg-surface-muted/50'
+      }`}
+    >
+      {/* Header — always visible */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-text-muted hover:bg-surface-muted transition-colors max-w-full"
+        className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-surface-hover/50 transition-colors"
       >
-        <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
-        <span className="truncate font-mono">{label}</span>
+        {/* Status icon */}
+        <div className={`flex-shrink-0 ${
+          isError ? 'text-error' : isRunning ? 'text-accent' : 'text-text-muted'
+        }`}>
+          {isRunning ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : isError ? (
+            <XCircle className="w-3.5 h-3.5" />
+          ) : (
+            <CheckCircle2 className="w-3.5 h-3.5 text-success" />
+          )}
+        </div>
+
+        {/* Tool icon */}
+        <div className="flex-shrink-0 text-text-muted">
+          {getToolIcon(block.name)}
+        </div>
+
+        {/* Label */}
+        <span className="text-xs font-mono text-text-secondary truncate flex-1 min-w-0">
+          {label}
+        </span>
+
+        {/* MCP badge */}
         {isMCPTool && mcpServerName && (
-          <span className="px-1 py-0.5 text-[10px] rounded bg-mcp/15 text-mcp flex-shrink-0">
+          <span className="px-1.5 py-0.5 text-[10px] rounded-md bg-mcp/15 text-mcp flex-shrink-0 font-medium">
             {mcpServerName}
           </span>
         )}
+
+        {/* Summary / duration */}
+        {isSuccess && summary && !expanded && (
+          <span className="text-[11px] text-text-muted truncate max-w-[180px] flex-shrink-0">
+            {summary}
+          </span>
+        )}
+        {duration !== undefined && (
+          <span className="text-[10px] text-text-muted flex-shrink-0 tabular-nums">
+            {duration < 1000 ? `${duration}ms` : `${(duration / 1000).toFixed(1)}s`}
+          </span>
+        )}
+
+        {/* Chevron */}
         {expanded ? (
-          <ChevronDown className="w-3 h-3 flex-shrink-0" />
+          <ChevronDown className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
         ) : (
-          <ChevronRight className="w-3 h-3 flex-shrink-0 opacity-0 group-hover:opacity-100" />
+          <ChevronRight className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
         )}
       </button>
 
+      {/* Expanded content */}
       {expanded && (
-        <div className="ml-5 mt-1 mb-2">
-          <pre className="code-block text-xs p-3 rounded-lg">
-            {JSON.stringify(block.input, null, 2)}
-          </pre>
+        <div className="border-t border-border/50 animate-fade-in">
+          {/* Input section */}
+          <div className="px-3 py-2">
+            <div className="text-[10px] uppercase tracking-wider text-text-muted font-medium mb-1">Input</div>
+            <pre className="text-xs font-mono text-text-secondary whitespace-pre-wrap break-all bg-surface-muted rounded-lg p-2.5 border border-border-subtle">
+              {JSON.stringify(block.input, null, 2)}
+            </pre>
+          </div>
+
+          {/* Output section */}
+          {toolResult && (
+            <div className="px-3 py-2 border-t border-border/50">
+              <div className="text-[10px] uppercase tracking-wider text-text-muted font-medium mb-1">
+                Output
+                {toolResult.content && (
+                  <span className="ml-2 normal-case tracking-normal">
+                    {toolResult.content.trim().split('\n').length}L
+                  </span>
+                )}
+              </div>
+              <pre className={`text-xs font-mono whitespace-pre-wrap break-all rounded-lg p-2.5 border border-border-subtle max-h-[300px] overflow-y-auto ${
+                isError ? 'text-error bg-error/5' : 'text-text-secondary bg-surface-muted'
+              }`}>
+                {toolResult.content}
+              </pre>
+
+              {/* Images */}
+              {hasImages && toolResult.images!.map((image, index) => (
+                <div key={index} className="mt-2 border border-border rounded-lg overflow-hidden">
+                  <img
+                    src={`data:${image.mimeType};base64,${image.data}`}
+                    alt={`Output ${index + 1}`}
+                    className="w-full h-auto"
+                    style={{ maxHeight: '400px', objectFit: 'contain' }}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -510,6 +622,46 @@ function shortenPath(p: string): string {
   const segments = p.replace(/\\/g, '/').split('/').filter(Boolean);
   if (segments.length <= 2) return segments.join('/');
   return segments.slice(-2).join('/');
+}
+
+/** Get compact label: tool action + key argument */
+function getToolLabel(name: string, input: any): string {
+  const inp = input || {};
+  // MCP tools
+  if (name.startsWith('mcp__')) {
+    const match = name.match(/^mcp__(.+?)__(.+)$/);
+    return match?.[2] || name;
+  }
+
+  const nameLower = name.toLowerCase();
+  if (nameLower === 'read' || nameLower === 'read_file') {
+    const p = inp.file_path || inp.path || '';
+    return p ? `Read ${shortenPath(p)}` : 'Read file';
+  }
+  if (nameLower === 'write' || nameLower === 'write_file') {
+    const p = inp.file_path || inp.path || '';
+    return p ? `Write ${shortenPath(p)}` : 'Write file';
+  }
+  if (nameLower === 'edit' || nameLower === 'edit_file') {
+    const p = inp.file_path || inp.path || '';
+    return p ? `Edit ${shortenPath(p)}` : 'Edit file';
+  }
+  if (nameLower === 'bash' || nameLower === 'execute_command') {
+    const cmd = inp.command || inp.cmd || '';
+    if (cmd) {
+      const short = cmd.length > 60 ? cmd.substring(0, 57) + '...' : cmd;
+      return `$ ${short}`;
+    }
+    return 'Run command';
+  }
+  if (nameLower === 'glob') return inp.pattern ? `Glob ${inp.pattern}` : 'Glob';
+  if (nameLower === 'grep') return inp.pattern ? `Grep "${inp.pattern}"` : 'Grep';
+  if (nameLower === 'websearch') return inp.query ? `Search "${inp.query}"` : 'Web search';
+  if (nameLower === 'webfetch') {
+    const url = inp.url || '';
+    return url ? `Fetch ${url.length > 50 ? url.substring(0, 47) + '...' : url}` : 'Fetch URL';
+  }
+  return name;
 }
 
 // Todo item interface
@@ -781,22 +933,18 @@ function AskUserQuestionBlock({ block }: { block: ToolUseContent }) {
   );
 }
 
+// Fallback ToolResultBlock — only renders for orphan results (no matching tool_use in same message)
 function ToolResultBlock({ block, allBlocks, message }: { block: ToolResultContent; allBlocks?: ContentBlock[]; message?: Message }) {
   const { traceStepsBySession } = useAppStore();
   const [expanded, setExpanded] = useState(false);
 
   // Try to find the tool name from trace steps
   let toolName: string | undefined;
-
   if (message?.sessionId) {
     const steps = traceStepsBySession[message.sessionId] || [];
     const toolCallStep = steps.find((s) => s.id === block.toolUseId && s.type === 'tool_call');
-    if (toolCallStep) {
-      toolName = toolCallStep.toolName;
-    }
+    if (toolCallStep) toolName = toolCallStep.toolName;
   }
-
-  // Fallback: try to find in allBlocks
   if (!toolName) {
     const toolUseBlock = allBlocks?.find(
       (b) => b.type === 'tool_use' && (b as ToolUseContent).id === block.toolUseId
@@ -805,65 +953,59 @@ function ToolResultBlock({ block, allBlocks, message }: { block: ToolResultConte
   }
 
   const isMCPTool = toolName?.startsWith('mcp__') || false;
+  const displayName = isMCPTool
+    ? (toolName || '').match(/^mcp__(.+?)__(.+)$/)?.[2] || toolName || 'tool'
+    : toolName || 'tool';
 
-  // Compact summary
   const getSummary = (): string => {
     if (block.isError) {
       const firstLine = block.content.split('\n')[0];
-      return firstLine.length > 80 ? firstLine.substring(0, 77) + '...' : firstLine;
+      return firstLine.length > 60 ? firstLine.substring(0, 57) + '...' : firstLine;
     }
     if (shouldUseScreenshotSummary(toolName, block.content)) return 'Screenshot captured';
-    if (block.content.length < 80) return block.content.trim();
+    if (block.content.length < 60) return block.content.trim();
     const lines = block.content.trim().split('\n');
     return `${lines.length} lines`;
   };
 
-  // Compact tool display name
-  const getToolDisplayName = (): string => {
-    if (isMCPTool) {
-      const match = (toolName || '').match(/^mcp__(.+?)__(.+)$/);
-      return match?.[2] || toolName || 'tool';
-    }
-    return toolName || 'tool';
-  };
-
   const hasImages = block.images && block.images.length > 0;
-  const summary = getSummary();
-  const displayName = getToolDisplayName();
 
   return (
-    <div className="group">
+    <div className={`rounded-xl border overflow-hidden ${
+      block.isError ? 'border-error/30 bg-error/5' : 'border-border bg-surface-muted/50'
+    }`}>
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs hover:bg-surface-muted transition-colors max-w-full"
+        className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-surface-hover/50 transition-colors"
       >
         {block.isError ? (
-          <AlertCircle className="w-3 h-3 text-error flex-shrink-0" />
+          <XCircle className="w-3.5 h-3.5 text-error flex-shrink-0" />
         ) : (
-          <CheckCircle2 className="w-3 h-3 text-success flex-shrink-0" />
+          <CheckCircle2 className="w-3.5 h-3.5 text-success flex-shrink-0" />
         )}
-        <span className={`font-mono flex-shrink-0 ${block.isError ? 'text-error' : 'text-text-muted'}`}>
+        <span className={`text-xs font-mono flex-shrink-0 ${block.isError ? 'text-error' : 'text-text-muted'}`}>
           {displayName}
         </span>
-        <span className="text-text-muted truncate opacity-60">{summary}</span>
+        <span className="text-[11px] text-text-muted truncate flex-1">{getSummary()}</span>
         {hasImages && (
-          <span className="text-text-muted flex-shrink-0">+{block.images!.length} img</span>
+          <span className="text-[11px] text-text-muted flex-shrink-0">+{block.images!.length} img</span>
         )}
         {expanded ? (
-          <ChevronDown className="w-3 h-3 text-text-muted flex-shrink-0" />
+          <ChevronDown className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
         ) : (
-          <ChevronRight className="w-3 h-3 flex-shrink-0 opacity-0 group-hover:opacity-100 text-text-muted" />
+          <ChevronRight className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
         )}
       </button>
 
       {expanded && (
-        <div className="ml-5 mt-1 mb-2 space-y-2">
-          <pre className="code-block text-xs p-3 rounded-lg whitespace-pre-wrap font-mono">
+        <div className="border-t border-border/50 px-3 py-2 animate-fade-in">
+          <pre className={`text-xs font-mono whitespace-pre-wrap break-all rounded-lg p-2.5 border border-border-subtle max-h-[300px] overflow-y-auto ${
+            block.isError ? 'text-error bg-error/5' : 'text-text-secondary bg-surface-muted'
+          }`}>
             {block.content}
           </pre>
-
           {block.images && block.images.length > 0 && (
-            <div className="space-y-2">
+            <div className="mt-2 space-y-2">
               {block.images.map((image, index) => (
                 <div key={index} className="border border-border rounded-lg overflow-hidden">
                   <img
@@ -881,6 +1023,46 @@ function ToolResultBlock({ block, allBlocks, message }: { block: ToolResultConte
     </div>
   );
 }
+// Thinking block — collapsible card (Claude style)
+function ThinkingBlock({ block }: { block: { type: 'thinking'; thinking: string } }) {
+  const [expanded, setExpanded] = useState(false);
+  const text = block.thinking || '';
+  if (!text) return null;
+
+  // Preview: first ~80 chars
+  const preview = text.length > 80 ? text.substring(0, 77) + '...' : text;
+
+  return (
+    <div className="rounded-xl border border-border bg-surface-muted/30 overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-surface-hover/50 transition-colors"
+      >
+        <Brain className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
+        <span className="text-xs font-medium text-text-muted flex-shrink-0">Thinking</span>
+        {!expanded && (
+          <span className="text-[11px] text-text-muted/60 truncate flex-1 min-w-0 italic">
+            {preview}
+          </span>
+        )}
+        {expanded ? (
+          <ChevronDown className="w-3.5 h-3.5 text-text-muted flex-shrink-0 ml-auto" />
+        ) : (
+          <ChevronRight className="w-3.5 h-3.5 text-text-muted flex-shrink-0 ml-auto" />
+        )}
+      </button>
+
+      {expanded && (
+        <div className="border-t border-border/50 px-4 py-3 animate-fade-in">
+          <div className="text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">
+            {text}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CodeBlock({ language, children }: { language: string; children: string }) {
   const [copied, setCopied] = useState(false);
 

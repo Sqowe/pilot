@@ -564,7 +564,7 @@ export function ChatView() {
       {/* Header */}
       <div
         ref={headerRef}
-        className="relative h-14 border-b border-border grid grid-cols-[1fr_auto_1fr] items-center px-3 lg:px-6 bg-surface/80 backdrop-blur-sm"
+        className="relative h-14 border-b border-border grid grid-cols-[1fr_auto_1fr] items-center px-4 lg:px-6 bg-surface/80 backdrop-blur-sm"
       >
         <div />
         <h2 ref={titleRef} className="font-medium text-text-primary text-center truncate max-w-[40vw] lg:max-w-lg">
@@ -600,7 +600,7 @@ export function ChatView() {
 
       {/* Messages */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
-        <div ref={messagesContainerRef} className="w-full max-w-[1180px] mx-auto py-6 px-3 md:px-4 lg:px-6 space-y-4">
+        <div ref={messagesContainerRef} className="w-full max-w-[1180px] mx-auto py-6 px-4 lg:px-6 space-y-4">
           {displayedMessages.length === 0 ? (
             <div className="text-center py-12 text-text-muted">
               <p>{t('chat.startConversation')}</p>
@@ -632,7 +632,7 @@ export function ChatView() {
 
       {/* Input */}
       <div className="border-t border-border bg-surface/80 backdrop-blur-sm">
-        <div className="px-4 py-4">
+        <div className="max-w-[1180px] mx-auto px-4 lg:px-6 py-4">
           <form
             onSubmit={handleSubmit}
             onDragOver={handleDragOver}
@@ -744,7 +744,7 @@ export function ChatView() {
                   <button
                     type="submit"
                   disabled={(!prompt.trim() && !textareaRef.current?.value.trim() && pastedImages.length === 0 && attachedFiles.length === 0) || isSubmitting}
-                    className="w-8 h-8 rounded-lg flex items-center justify-center bg-accent text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent-hover transition-colors"
+                    className="w-8 h-8 rounded-lg flex items-center justify-center bg-accent text-background disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent-hover transition-colors"
                   >
                     <Send className="w-4 h-4" />
                   </button>
