@@ -8,9 +8,8 @@ import { SessionManager } from './session/session-manager';
 import { SkillsManager } from './skills/skills-manager';
 import { PluginCatalogService } from './skills/plugin-catalog-service';
 import { PluginRuntimeService } from './skills/plugin-runtime-service';
-import { configStore, PROVIDER_PRESETS, type AppConfig, type CreateConfigSetPayload } from './config/config-store';
+import { configStore, getPiAiModelPresets, type AppConfig, type CreateConfigSetPayload } from './config/config-store';
 import { runConfigApiTest } from './config/config-test-routing';
-import { getLocalAuthStatuses, importLocalAuthToken, type LocalAuthProvider } from './auth/local-auth';
 import { mcpConfigStore } from './mcp/mcp-config-store';
 import { credentialsStore, type UserCredential } from './credentials/credentials-store';
 import { getSandboxAdapter, shutdownSandbox } from './sandbox/sandbox-adapter';
@@ -23,14 +22,13 @@ import type { ClientEvent, ServerEvent, ApiTestInput, ApiTestResult } from '../r
 import { remoteManager, type AgentExecutor } from './remote/remote-manager';
 import { remoteConfigStore } from './remote/remote-config-store';
 import type { GatewayConfig, FeishuChannelConfig, ChannelType } from './remote/types';
+import { startNavServer, stopNavServer } from './nav-server';
 import {
   ScheduledTaskManager,
   type ScheduledTaskCreateInput,
   type ScheduledTaskUpdateInput,
 } from './schedule/scheduled-task-manager';
 import { createScheduledTaskStore } from './schedule/scheduled-task-store';
-import { getClaudeUnifiedModeState, shouldUseUnifiedClaudeProxy, shouldUseUnifiedClaudeSdk } from './session/claude-unified-mode';
-import { claudeProxyManager } from './proxy/claude-proxy-manager';
 import {
   buildScheduledTaskFallbackTitle,
   buildScheduledTaskTitle,
@@ -46,6 +44,7 @@ import {
   setDevLogsEnabled,
   isDevLogsEnabled,
 } from './utils/logger';
+import { listRecentWorkspaceFiles } from './utils/recent-workspace-files';
 
 // Current working directory (persisted between sessions)
 let currentWorkingDir: string | null = null;
@@ -118,12 +117,14 @@ async function waitForDevServer(url: string, maxAttempts = 30, intervalMs = 500)
   return false;
 }
 
-// Ensure a single app instance in dev/prod to avoid duplicate windows on hot restart.
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+// Single-instance lock: skip in dev mode so vite-plugin-electron can restart freely
+// without the old process blocking the new one during async cleanup.
+const isDev = !!process.env.VITE_DEV_SERVER_URL;
+const hasSingleInstanceLock = isDev || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   logWarn('[App] Another instance is already running, quitting this instance');
   app.quit();
-} else {
+} else if (!isDev) {
   app.on('second-instance', () => {
     const existingWindow = mainWindow && !mainWindow.isDestroyed()
       ? mainWindow
@@ -473,24 +474,7 @@ function sendToRenderer(event: ServerEvent) {
         });
       }
     }
-    
-    // 拦截 question.request
-    if (event.type === 'question.request' && payload.questionId && payload.questions) {
-      log('[Remote] Intercepting question for remote session:', sessionId);
-      remoteManager.handleQuestionRequest(
-        sessionId,
-        payload.questionId,
-        payload.questions
-      ).then((answer) => {
-        if (answer !== null && sessionManager) {
-          sessionManager.handleQuestionResponse(payload.questionId!, answer);
-        }
-      }).catch((err) => {
-        logError('[Remote] Failed to handle question request:', err);
-      });
-      return; // 不发送到本地 UI
-    }
-    
+
     // 拦截 permission.request
     if (event.type === 'permission.request' && payload.toolUseId && payload.toolName) {
       log('[Remote] Intercepting permission for remote session:', sessionId);
@@ -536,11 +520,7 @@ app.whenReady().then(async () => {
   log('=== Open Cowork Starting ===');
   log('Config file:', configStore.getPath());
   log('Is configured:', configStore.isConfigured());
-  const unifiedModeState = getClaudeUnifiedModeState();
-  log('[ClaudeUnified] Mode:', unifiedModeState.enabled ? 'enabled' : 'disabled', {
-    reason: unifiedModeState.reason,
-    legacy_force_flag: unifiedModeState.legacyForceFlag,
-  });
+  log('[Runtime] Using pi-coding-agent SDK for all providers');
   log('Developer logs:', enableDevLogs ? 'Enabled' : 'Disabled');
   log('Environment Variables:');
   log('  ANTHROPIC_AUTH_TOKEN:', process.env.ANTHROPIC_AUTH_TOKEN ? '✓ Set' : '✗ Not set');
@@ -562,6 +542,10 @@ app.whenReady().then(async () => {
   // Initialize database
   const db = initDatabase();
 
+  // Show window early — heavy backend init proceeds in parallel below
+  createWindow();
+  startNavServer(() => mainWindow);
+
   // Initialize skills manager
   skillsManager = new SkillsManager(db, {
     getConfiguredGlobalSkillsPath: () => configStore.get('globalSkillsPath') || '',
@@ -580,15 +564,7 @@ app.whenReady().then(async () => {
 
   // Initialize session manager
   sessionManager = new SessionManager(db, sendToRenderer, pluginRuntimeService);
-  if (shouldUseUnifiedClaudeProxy(configStore.getAll())) {
-    void claudeProxyManager.warmupForConfig(configStore.getAll())
-      .then(() => {
-        log('[ClaudeProxy] Warmup complete during app startup');
-      })
-      .catch((error) => {
-        logWarn('[ClaudeProxy] Startup warmup failed; it will retry on demand', error);
-      });
-  }
+  // pi-ai handles model routing natively — no proxy warmup needed
 
   const scheduledTaskStore = createScheduledTaskStore(db);
   scheduledTaskManager = new ScheduledTaskManager({
@@ -642,10 +618,9 @@ app.whenReady().then(async () => {
     });
   }
 
-  createWindow();
-
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    const hasVisibleWindow = BrowserWindow.getAllWindows().some((w) => !w.isDestroyed());
+    if (!hasVisibleWindow) {
       createWindow();
     }
   });
@@ -700,28 +675,38 @@ async function cleanupSandboxResources(): Promise<void> {
     logError('[App] Error shutting down sandbox:', error);
   }
 
-  try {
-    await claudeProxyManager.stop();
-    log('[App] Claude proxy shutdown complete');
-  } catch (error) {
-    logError('[App] Error shutting down Claude proxy:', error);
-  }
+  // pi-ai doesn't need proxy shutdown
 }
 
 // Handle app quit - window-all-closed (primary for Windows/Linux)
 app.on('window-all-closed', async () => {
-  skillsManager?.stopStorageMonitoring();
-  await cleanupSandboxResources();
-
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' || process.env.VITE_DEV_SERVER_URL) {
+    // On Windows/Linux, closing all windows means quit.
+    // On macOS dev mode, also quit — so vite-plugin-electron can restart cleanly
+    // without the old process holding the single-instance lock.
+    skillsManager?.stopStorageMonitoring();
+    await cleanupSandboxResources();
     app.quit();
   }
+  // On macOS production, keep app alive — cleanup happens in before-quit
 });
+
+// Handle SIGTERM/SIGINT (e.g. pkill) — route through app.quit() for clean shutdown
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(sig, () => app.quit());
+}
 
 // Handle app quit - before-quit (for macOS Cmd+Q and other quit methods)
 app.on('before-quit', async (event) => {
   if (!isCleaningUp) {
+    // In dev mode, exit quickly — no need for async sandbox cleanup
+    if (process.env.VITE_DEV_SERVER_URL) {
+      stopNavServer();
+      closeLogFile();
+      return;
+    }
     event.preventDefault();
+    stopNavServer();
     skillsManager?.stopStorageMonitoring();
     await cleanupSandboxResources();
     closeLogFile(); // Close log file before quitting
@@ -911,6 +896,16 @@ ipcMain.handle('shell.showItemInFolder', async (_event, filePath: string, cwd?: 
   }
 });
 
+ipcMain.handle(
+  'artifacts.listRecentFiles',
+  async (_event, cwd: string, sinceMs: number, limit: number = 50) => {
+    if (!cwd || !isAbsolute(cwd)) {
+      return [];
+    }
+    return listRecentWorkspaceFiles(cwd, sinceMs, limit);
+  }
+);
+
 ipcMain.handle('dialog.selectFiles', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile', 'multiSelections'],
@@ -930,7 +925,7 @@ ipcMain.handle('config.get', () => {
 });
 
 ipcMain.handle('config.getPresets', () => {
-  return PROVIDER_PRESETS;
+  return getPiAiModelPresets();
 });
 
 const syncConfigAfterMutation = async () => {
@@ -943,13 +938,10 @@ const syncConfigAfterMutation = async () => {
   // Reload config in session manager (safer than recreating it)
   if (sessionManager) {
     sessionManager.reloadConfig();
+    // MCP fingerprint check will skip reinit if servers haven't changed
+    await sessionManager.reloadMCP().catch((err) => logError('[Config] MCP reload failed:', err));
+    await sessionManager.reloadSandbox().catch((err) => logError('[Config] Sandbox reload failed:', err));
     log('[Config] Session manager config reloaded');
-  }
-
-  if (shouldUseUnifiedClaudeProxy(configStore.getAll())) {
-    void claudeProxyManager.warmupForConfig(configStore.getAll()).catch((error) => {
-      logWarn('[ClaudeProxy] Warmup after config mutation failed', error);
-    });
   }
 
   // Notify renderer of config update
@@ -1010,7 +1002,7 @@ ipcMain.handle('config.isConfigured', () => {
 
 ipcMain.handle('config.test', async (_event, payload: ApiTestInput): Promise<ApiTestResult> => {
   try {
-    return await runConfigApiTest(payload, configStore.getAll(), shouldUseUnifiedClaudeSdk(payload));
+    return await runConfigApiTest(payload, configStore.getAll());
   } catch (error) {
     logError('[Config] API test failed:', error);
     return {
@@ -1022,14 +1014,11 @@ ipcMain.handle('config.test', async (_event, payload: ApiTestInput): Promise<Api
 });
 
 ipcMain.handle('auth.getStatus', () => {
-  return getLocalAuthStatuses();
+  return [];
 });
 
-ipcMain.handle('auth.importToken', (_event, provider: LocalAuthProvider) => {
-  if (provider !== 'codex') {
-    throw new Error(`Unsupported auth provider: ${provider}`);
-  }
-  return importLocalAuthToken(provider);
+ipcMain.handle('auth.importToken', () => {
+  return null;
 });
 
 // MCP Server IPC handlers
@@ -2050,12 +2039,6 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
       return sessionManager.handlePermissionResponse(
         event.payload.toolUseId,
         event.payload.result
-      );
-
-    case 'question.response':
-      return sessionManager.handleQuestionResponse(
-        event.payload.questionId,
-        event.payload.answer
       );
 
     case 'folder.select': {

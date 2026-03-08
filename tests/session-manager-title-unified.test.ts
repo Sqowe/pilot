@@ -58,14 +58,6 @@ vi.mock('../src/main/mcp/mcp-config-store', () => ({
   },
 }));
 
-vi.mock('../src/main/auth/local-auth', () => ({
-  importLocalAuthToken: vi.fn(() => ({
-    provider: 'codex',
-    token: 'oauth-local-token',
-    path: '/tmp/codex-auth.json',
-  })),
-}));
-
 vi.mock('../src/main/claude/claude-sdk-one-shot', () => ({
   generateTitleWithClaudeSdk: vi.fn(async () => 'Unified Title'),
 }));

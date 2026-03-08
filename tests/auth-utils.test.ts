@@ -1,15 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-const mocks = vi.hoisted(() => ({
-  importLocalAuthToken: vi.fn(),
-}));
-
-vi.mock('../src/main/auth/local-auth', () => ({
-  importLocalAuthToken: mocks.importLocalAuthToken,
-}));
+import { describe, expect, it } from 'vitest';
 
 import {
-  buildOpenAICodexHeaders,
   getUnifiedUnsupportedCustomOpenAIBaseUrl,
   isOfficialOpenAIBaseUrl,
   isLoopbackBaseUrl,
@@ -23,10 +14,6 @@ import {
 } from '../src/main/config/auth-utils';
 
 describe('auth-utils', () => {
-  beforeEach(() => {
-    mocks.importLocalAuthToken.mockReset();
-  });
-
   it('detects oauth-style tokens', () => {
     expect(isLikelyOAuthAccessToken('oauth-access-token')).toBe(true);
     expect(isLikelyOAuthAccessToken('sk-ant-123')).toBe(false);
@@ -63,14 +50,21 @@ describe('auth-utils', () => {
     ).toBe(true);
   });
 
-  it('resolves local codex oauth when openai key is empty', () => {
-    mocks.importLocalAuthToken.mockReturnValue({
-      provider: 'codex',
-      token: 'oauth-local-token',
-      path: '/tmp/auth.json',
-      account: 'user_123456',
+  it('resolves openai credentials when api key is provided', () => {
+    const resolved = resolveOpenAICredentials({
+      provider: 'openai',
+      customProtocol: 'openai',
+      apiKey: 'sk-test-123',
+      baseUrl: 'https://api.openai.com/v1',
     });
 
+    expect(resolved).toEqual({
+      apiKey: 'sk-test-123',
+      baseUrl: 'https://api.openai.com/v1',
+    });
+  });
+
+  it('returns null when openai api key is empty', () => {
     const resolved = resolveOpenAICredentials({
       provider: 'openai',
       customProtocol: 'openai',
@@ -78,47 +72,7 @@ describe('auth-utils', () => {
       baseUrl: 'https://api.openai.com/v1',
     });
 
-    expect(resolved).toEqual({
-      apiKey: 'oauth-local-token',
-      baseUrl: 'https://chatgpt.com/backend-api/codex',
-      accountId: 'user_123456',
-      useCodexOAuth: true,
-      source: 'localCodex',
-    });
-  });
-
-  it('treats non-sk token on openai provider as codex oauth backend', () => {
-    mocks.importLocalAuthToken.mockReturnValue({
-      provider: 'codex',
-      token: 'oauth-local-token',
-      path: '/tmp/auth.json',
-      account: 'acct_from_local',
-    });
-
-    const resolved = resolveOpenAICredentials({
-      provider: 'openai',
-      customProtocol: 'openai',
-      apiKey: 'oauth-token-from-import',
-      baseUrl: 'https://api.openai.com/v1',
-    });
-
-    expect(resolved).toEqual({
-      apiKey: 'oauth-token-from-import',
-      baseUrl: 'https://chatgpt.com/backend-api/codex',
-      accountId: 'acct_from_local',
-      useCodexOAuth: true,
-      source: 'apiKey',
-    });
-  });
-
-  it('builds codex headers with optional account id', () => {
-    expect(buildOpenAICodexHeaders()).toEqual({
-      'User-Agent': 'CodexBar',
-    });
-    expect(buildOpenAICodexHeaders('acct_abc')).toEqual({
-      'User-Agent': 'CodexBar',
-      'ChatGPT-Account-Id': 'acct_abc',
-    });
+    expect(resolved).toBeNull();
   });
 
   it('sanitizes invalid OpenAI account id values', () => {

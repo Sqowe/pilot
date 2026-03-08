@@ -83,7 +83,7 @@ export function SandboxSetupDialog({ progress, onComplete }: Props) {
     <div 
       className={`fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm transition-opacity duration-500 ${fadeOut ? 'opacity-0' : 'opacity-100'}`}
     >
-      <div className="bg-surface border border-border rounded-3xl shadow-xl max-w-md w-full mx-4 overflow-hidden">
+      <div className="bg-surface border border-border rounded-2xl shadow-elevated max-w-md w-full mx-4 overflow-hidden">
         {/* Header */}
         <div className="bg-accent-muted px-6 py-5 border-b border-border">
           <div className="flex items-center gap-3">
@@ -104,16 +104,16 @@ export function SandboxSetupDialog({ progress, onComplete }: Props) {
           {/* Status Message */}
           <div className="flex items-start gap-3 mb-4">
             <div className={`text-xl ${
-              isComplete ? 'text-green-500' :
-              isError ? 'text-red-500' :
+              isComplete ? 'text-success' :
+              isError ? 'text-error' :
               'text-accent'
             }`}>
               {config.icon}
             </div>
             <div className="flex-1">
               <p className={`font-medium ${
-                isComplete ? 'text-green-500' :
-                isError ? 'text-red-500' :
+                isComplete ? 'text-success' :
+                isError ? 'text-error' :
                 'text-accent'
               }`}>
                 {progress.message}
@@ -133,7 +133,7 @@ export function SandboxSetupDialog({ progress, onComplete }: Props) {
                 <div 
                   className={`h-full transition-all duration-500 ease-out rounded-full ${
                     isComplete 
-                      ? 'bg-green-500' 
+                      ? 'bg-success' 
                       : 'bg-accent'
                   }`}
                   style={{ width: `${progress.progress}%` }}
@@ -148,8 +148,8 @@ export function SandboxSetupDialog({ progress, onComplete }: Props) {
 
           {/* Error Display */}
           {isError && progress.error && (
-            <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-xl">
-              <p className="text-sm text-red-500">
+            <div className="mt-4 p-3 bg-error/10 border border-error/30 rounded-xl">
+              <p className="text-sm text-error">
                 {progress.error}
               </p>
               <p className="text-xs text-text-muted mt-2">
@@ -185,8 +185,8 @@ export function SandboxSetupDialog({ progress, onComplete }: Props) {
 
           {/* Completion Message */}
           {isComplete && (
-            <div className="mt-4 p-3 bg-green-500/10 border border-green-500/30 rounded-xl">
-              <p className="text-sm text-green-600 dark:text-green-400">
+            <div className="mt-4 p-3 bg-success/10 border border-green-500/30 rounded-xl">
+              <p className="text-sm text-success">
                 {progress.phase === 'ready' 
                   ? 'Sandbox configured. Code can now be executed safely.' 
                   : 'Using native system environment for command execution.'}

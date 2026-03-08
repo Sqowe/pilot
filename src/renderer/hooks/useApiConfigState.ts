@@ -11,8 +11,8 @@ import type {
   ProviderType,
 } from '../types';
 import { isLoopbackBaseUrl } from '../../shared/network/loopback';
-
-type LocalAuthProvider = 'codex';
+import { API_PROVIDER_PRESETS, getModelInputGuidance } from '../../shared/api-model-presets';
+export { getModelInputGuidance } from '../../shared/api-model-presets';
 
 interface UseApiConfigStateOptions {
   enabled?: boolean;
@@ -26,7 +26,6 @@ interface UIProviderProfile {
   model: string;
   customModel: string;
   useCustomModel: boolean;
-  openaiMode: 'responses' | 'chat';
 }
 
 interface ConfigStateSnapshot {
@@ -45,64 +44,7 @@ const CONFIG_SET_LIMIT = 20;
 const DEFAULT_CONFIG_SET_ID = 'default';
 const DEFAULT_CONFIG_SET_NAME_ZH = '默认方案';
 
-export const FALLBACK_PROVIDER_PRESETS: ProviderPresets = {
-  openrouter: {
-    name: 'OpenRouter',
-    baseUrl: 'https://openrouter.ai/api',
-    models: [
-      { id: 'anthropic/claude-sonnet-4.5', name: 'Claude Sonnet 4.5' },
-      { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4' },
-      { id: 'moonshotai/kimi-k2-0905', name: 'Kimi K2' },
-      { id: 'z-ai/glm-4.7', name: 'GLM-4.7' },
-    ],
-    keyPlaceholder: 'sk-or-v1-...',
-    keyHint: 'Get from openrouter.ai/keys',
-  },
-  anthropic: {
-    name: 'Anthropic',
-    baseUrl: 'https://api.anthropic.com',
-    models: [
-      { id: 'claude-sonnet-4-5', name: 'claude-sonnet-4-5' },
-      { id: 'claude-opus-4-5', name: 'claude-opus-4-5' },
-      { id: 'claude-haiku-4-5', name: 'claude-haiku-4-5' },
-    ],
-    keyPlaceholder: 'sk-ant-...',
-    keyHint: 'Get from console.anthropic.com',
-  },
-  openai: {
-    name: 'OpenAI',
-    baseUrl: 'https://api.openai.com/v1',
-    models: [
-      { id: 'gpt-5.2', name: 'gpt-5.2' },
-      { id: 'gpt-5.2-codex', name: 'gpt-5.2-codex' },
-      { id: 'gpt-5.2-mini', name: 'gpt-5.2-mini' },
-    ],
-    keyPlaceholder: 'sk-...',
-    keyHint: 'Get from platform.openai.com',
-  },
-  gemini: {
-    name: 'Gemini',
-    baseUrl: 'https://generativelanguage.googleapis.com',
-    models: [
-      { id: 'gemini/gemini-2.5-flash', name: 'gemini-2.5-flash' },
-      { id: 'gemini/gemini-2.5-pro', name: 'gemini-2.5-pro' },
-      { id: 'gemini/gemini-2.0-flash', name: 'gemini-2.0-flash' },
-    ],
-    keyPlaceholder: 'AIza...',
-    keyHint: 'Get from Google AI Studio or Gemini API',
-  },
-  custom: {
-    name: 'More Models',
-    baseUrl: 'https://open.bigmodel.cn/api/anthropic',
-    models: [
-      { id: 'glm-4.7', name: 'GLM-4.7' },
-      { id: 'glm-4-plus', name: 'GLM-4-Plus' },
-      { id: 'glm-4-air', name: 'GLM-4-Air' },
-    ],
-    keyPlaceholder: 'sk-xxx',
-    keyHint: 'Enter your API Key',
-  },
-};
+export const FALLBACK_PROVIDER_PRESETS: ProviderPresets = API_PROVIDER_PRESETS;
 
 const PROFILE_KEYS: ProviderProfileKey[] = [
   'openrouter',
@@ -187,14 +129,30 @@ function modelPresetForProfile(profileKey: ProviderProfileKey, presets: Provider
 
 function defaultProfileForKey(profileKey: ProviderProfileKey, presets: ProviderPresets): UIProviderProfile {
   const preset = modelPresetForProfile(profileKey, presets);
+  const prefersCustomInput = profileKey.startsWith('custom:');
   return {
     apiKey: '',
     baseUrl: preset.baseUrl,
     model: preset.models[0]?.id || '',
     customModel: '',
-    useCustomModel: false,
-    openaiMode: 'responses',
+    useCustomModel: prefersCustomInput,
   };
+}
+
+function isPristineCustomProfile(
+  profileKey: ProviderProfileKey,
+  profile: Partial<ProviderProfile> | undefined,
+  fallback: UIProviderProfile
+): boolean {
+  if (!profileKey.startsWith('custom:') || !profile) {
+    return false;
+  }
+
+  const apiKey = profile.apiKey?.trim() || '';
+  const baseUrl = profile.baseUrl?.trim() || fallback.baseUrl;
+  const model = profile.model?.trim() || fallback.model;
+
+  return apiKey === '' && baseUrl === fallback.baseUrl && model === fallback.model;
 }
 
 function normalizeProfile(
@@ -203,6 +161,20 @@ function normalizeProfile(
   presets: ProviderPresets
 ): UIProviderProfile {
   const fallback = defaultProfileForKey(profileKey, presets);
+  if (!profile) {
+    return fallback;
+  }
+
+  if (isPristineCustomProfile(profileKey, profile, fallback)) {
+    return {
+      ...fallback,
+      apiKey: '',
+      baseUrl: fallback.baseUrl,
+      customModel: '',
+      useCustomModel: true,
+    };
+  }
+
   const modelValue = profile?.model?.trim() || fallback.model;
   const hasPresetModel = modelPresetForProfile(profileKey, presets).models.some((item) => item.id === modelValue);
   return {
@@ -211,7 +183,6 @@ function normalizeProfile(
     model: hasPresetModel ? modelValue : fallback.model,
     customModel: hasPresetModel ? '' : modelValue,
     useCustomModel: !hasPresetModel,
-    openaiMode: profile?.openaiMode === 'chat' ? 'chat' : 'responses',
   };
 }
 
@@ -238,7 +209,6 @@ export function buildApiConfigSnapshot(config: AppConfig | null | undefined, pre
         apiKey: config?.apiKey || '',
         baseUrl: config?.baseUrl,
         model: config?.model,
-        openaiMode: config?.openaiMode,
       },
       presets
     );
@@ -264,7 +234,6 @@ function toPersistedProfiles(
       apiKey: profile.apiKey,
       baseUrl: profile.baseUrl.trim() || undefined,
       model: finalModel,
-      openaiMode: profile.openaiMode,
     };
   }
   return persisted;
@@ -284,7 +253,6 @@ export function buildApiConfigDraftSignature(
       apiKey: persisted[key]?.apiKey || '',
       baseUrl: persisted[key]?.baseUrl || '',
       model: persisted[key]?.model || '',
-      openaiMode: persisted[key]?.openaiMode || 'responses',
     })),
   });
 }
@@ -306,7 +274,6 @@ export function buildApiConfigSets(config: AppConfig | null | undefined, presets
           apiKey: uiProfile.apiKey,
           baseUrl: uiProfile.baseUrl,
           model: uiProfile.useCustomModel ? (uiProfile.customModel.trim() || uiProfile.model) : uiProfile.model,
-          openaiMode: uiProfile.openaiMode,
         };
       }
 
@@ -384,7 +351,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   const [successMessage, setSuccessMessage] = useState('');
   const [testResult, setTestResult] = useState<ApiTestResult | null>(null);
   const [useLiveTest, setUseLiveTest] = useState(false);
-  const [isImportingAuth, setIsImportingAuth] = useState<LocalAuthProvider | null>(null);
 
   const providerMeta = useMemo(() => profileKeyToProvider(activeProfileKey), [activeProfileKey]);
   const provider = providerMeta.provider;
@@ -393,6 +359,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   const modelPreset = modelPresetForProfile(activeProfileKey, presets);
   const currentPreset = modelPreset;
   const modelOptions = modelPreset.models;
+  const modelInputGuidance = getModelInputGuidance(provider, customProtocol);
 
   const currentConfigSet = useMemo(
     () => configSets.find((set) => set.id === activeConfigSetId) || null,
@@ -410,7 +377,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   const model = currentProfile.model;
   const customModel = currentProfile.customModel;
   const useCustomModel = currentProfile.useCustomModel;
-  const openaiMode = currentProfile.openaiMode;
 
   const isOpenAIMode = provider === 'openai' || (provider === 'custom' && customProtocol === 'openai');
   const allowEmptyApiKey = provider === 'custom' && (
@@ -510,10 +476,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     });
   }, [updateActiveProfile]);
 
-  const setOpenaiMode = useCallback((value: 'responses' | 'chat') => {
-    updateActiveProfile((prev) => ({ ...prev, openaiMode: value }));
-  }, [updateActiveProfile]);
-
   useEffect(() => {
     if (!enabled) {
       return;
@@ -553,49 +515,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     setError('');
     setTestResult(null);
   }, [activeConfigSetId, activeProfileKey, apiKey, baseUrl, model, customModel, useCustomModel]);
-
-  useEffect(() => {
-    if (isOpenAIMode) {
-      setOpenaiMode('responses');
-    }
-  }, [isOpenAIMode, setOpenaiMode]);
-
-  const resolveLocalAuthProvider = useCallback((): LocalAuthProvider | null => {
-    if (isOpenAIMode) {
-      return 'codex';
-    }
-    return null;
-  }, [isOpenAIMode]);
-
-  const handleImportLocalAuth = useCallback(async () => {
-    if (!window.electronAPI?.auth) {
-      setError('Current environment does not support local auth import');
-      return;
-    }
-
-    const authProvider = resolveLocalAuthProvider();
-    if (!authProvider) {
-      setError('Current provider does not support Codex local auth import');
-      return;
-    }
-
-    setIsImportingAuth(authProvider);
-    setError('');
-    try {
-      const imported = await window.electronAPI.auth.importToken(authProvider);
-      if (!imported?.token) {
-        setError('No local Codex login found. Please run: codex auth login');
-        return;
-      }
-      setApiKey(imported.token);
-      setSuccessMessage('Imported token from local Codex login');
-      setTimeout(() => setSuccessMessage(''), 2500);
-    } catch (importError) {
-      setError(importError instanceof Error ? importError.message : 'Failed to import local auth token');
-    } finally {
-      setIsImportingAuth(null);
-    }
-  }, [resolveLocalAuthProvider, setApiKey]);
 
   const handleTest = useCallback(async () => {
     if (requiresApiKey && !apiKey.trim()) {
@@ -672,7 +591,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       const resolvedBaseUrl = provider === 'custom'
         ? baseUrl.trim()
         : (currentPreset.baseUrl || baseUrl).trim();
-      const resolvedOpenaiMode = isOpenAIMode ? 'responses' : openaiMode;
       const persistedProfiles = toPersistedProfiles(profiles);
 
       const payload: Partial<AppConfig> = {
@@ -681,7 +599,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
         baseUrl: resolvedBaseUrl || undefined,
         customProtocol,
         model: finalModel,
-        openaiMode: resolvedOpenaiMode,
         activeProfileKey,
         profiles: persistedProfiles,
         activeConfigSetId,
@@ -718,10 +635,8 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     customModel,
     customProtocol,
     enableThinking,
-    isOpenAIMode,
     model,
     onSave,
-    openaiMode,
     presets,
     profiles,
     provider,
@@ -909,7 +824,8 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     model,
     customModel,
     useCustomModel,
-    openaiMode,
+    modelInputPlaceholder: modelInputGuidance.placeholder,
+    modelInputHint: modelInputGuidance.hint,
     enableThinking,
     isSaving,
     isTesting,
@@ -917,8 +833,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     successMessage,
     testResult,
     useLiveTest,
-    isImportingAuth,
-    isOpenAIMode,
     requiresApiKey,
     showsCompatibilityProbeHint,
     configSets,
@@ -949,8 +863,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     deleteConfigSet,
     handleSave,
     handleTest,
-    handleImportLocalAuth,
-    resolveLocalAuthProvider,
     setError,
     setSuccessMessage,
   };

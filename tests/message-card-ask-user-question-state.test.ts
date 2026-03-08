@@ -5,15 +5,18 @@ import path from 'node:path';
 const messageCardPath = path.resolve(process.cwd(), 'src/renderer/components/MessageCard.tsx');
 const messageCardContent = fs.readFileSync(messageCardPath, 'utf8');
 
-describe('AskUserQuestion UI state rendering', () => {
-  it('does not mark non-pending questions as answered by default', () => {
-    expect(messageCardContent).toContain("const isAnswered = submitted;");
-    expect(messageCardContent).toContain("const isReadOnly = submitted || !isPending;");
-    expect(messageCardContent).not.toContain('const isAnswered = submitted || !isPending;');
+describe('AskUserQuestion UI rendering', () => {
+  it('renders AskUserQuestionBlock as read-only for historical messages', () => {
+    expect(messageCardContent).toContain('function AskUserQuestionBlock');
+    expect(messageCardContent).toContain('read-only display for historical messages');
+    // No interactive state — no submit, no selections, no pending check
+    expect(messageCardContent).not.toContain('respondToQuestion');
+    expect(messageCardContent).not.toContain('pendingQuestion');
+    expect(messageCardContent).not.toContain('handleSubmit');
   });
 
-  it('shows a neutral closed state when question is no longer pending', () => {
-    expect(messageCardContent).toContain("isAnswered ? 'Questions answered' : isPending ? 'Please answer to continue' : 'Question closed'");
-    expect(messageCardContent).toContain('disabled={isReadOnly}');
+  it('still renders question options for display', () => {
+    expect(messageCardContent).toContain('getOptionLetter');
+    expect(messageCardContent).toContain('QuestionItem');
   });
 });

@@ -31,6 +31,8 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
     model,
     customModel,
     useCustomModel,
+    modelInputPlaceholder,
+    modelInputHint,
     presets,
     currentPreset,
     modelOptions,
@@ -40,8 +42,6 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
     isTesting,
     testResult,
     useLiveTest,
-    isImportingAuth,
-    isOpenAIMode,
     requiresApiKey,
     showsCompatibilityProbeHint,
     configSets,
@@ -69,8 +69,6 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
     deleteConfigSet,
     handleSave,
     handleTest,
-    handleImportLocalAuth,
-    resolveLocalAuthProvider,
   } = useApiConfigState({
     enabled: isOpen,
     initialConfig,
@@ -120,7 +118,7 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[88vh] overflow-hidden border border-border flex flex-col">
+      <div className="bg-surface rounded-2xl shadow-elevated w-full max-w-2xl mx-4 max-h-[88vh] overflow-hidden border border-border flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <div className="flex items-center gap-3">
@@ -205,26 +203,6 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
             />
             {currentPreset?.keyHint && (
               <p className="text-xs text-text-muted">{currentPreset.keyHint}</p>
-            )}
-            {isOpenAIMode && (
-              <p className="text-xs text-text-muted">
-                OpenAI 默认走 Codex CLI（自动执行、无审批弹窗）；优先使用手填 API Key，本地 Codex 登录作为回退链路。
-              </p>
-            )}
-            {resolveLocalAuthProvider() && (
-              <button
-                type="button"
-                onClick={handleImportLocalAuth}
-                disabled={isImportingAuth !== null}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-surface-hover text-text-secondary text-xs hover:bg-surface-active disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-              >
-                {isImportingAuth ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Key className="w-3.5 h-3.5" />}
-                {isImportingAuth
-                  ? 'Importing local auth...'
-                  : resolveLocalAuthProvider() === 'codex'
-                    ? 'Import from local Codex login'
-                    : 'Import from local Claude Code login'}
-              </button>
             )}
           </div>
 
@@ -313,15 +291,7 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
                 type="text"
                 value={customModel}
                 onChange={(e) => setCustomModel(e.target.value)}
-                placeholder={
-                  provider === 'openrouter'
-                    ? 'openai/gpt-4o or other model ID'
-                    : provider === 'openai' || (provider === 'custom' && customProtocol === 'openai')
-                      ? 'gpt-4o'
-                      : provider === 'gemini' || (provider === 'custom' && customProtocol === 'gemini')
-                        ? 'gemini/gemini-2.5-flash'
-                      : 'claude-sonnet-4'
-                }
+                placeholder={modelInputPlaceholder}
                 className="w-full px-4 py-3 rounded-xl bg-background border border-border text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all"
               />
             ) : (
@@ -345,7 +315,7 @@ export function ConfigModal({ isOpen, onClose, onSave, initialConfig, isFirstRun
             )}
             {useCustomModel && (
               <p className="text-xs text-text-muted">
-                {t('api.enterModelId')}
+                {modelInputHint}
               </p>
             )}
           </div>

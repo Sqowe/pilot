@@ -22,10 +22,6 @@ vi.mock('../src/main/mcp/mcp-config-store', () => ({
   },
 }));
 
-vi.mock('../src/main/auth/local-auth', () => ({
-  importLocalAuthToken: vi.fn(() => null),
-}));
-
 import { SessionManager } from '../src/main/session/session-manager';
 import { buildTitlePrompt, getDefaultTitleFromPrompt } from '../src/main/session/session-title-utils';
 import { buildScheduledTaskTitle } from '../src/shared/schedule/task-title';

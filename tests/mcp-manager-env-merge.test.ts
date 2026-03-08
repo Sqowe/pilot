@@ -8,9 +8,9 @@ vi.mock('electron', () => ({
   },
 }));
 
-import { mergeShellEnvForMcp, shouldHydrateOpenAIFromLocalCodex } from '../src/main/mcp/mcp-manager';
+import { mergeShellEnvForMcp } from '../src/main/mcp/mcp-manager';
 
-describe('mcp-manager env merge and hydration guards', () => {
+describe('mcp-manager env merge', () => {
   it('keeps app-configured auth env over shell env', () => {
     const merged = mergeShellEnvForMcp(
       {
@@ -42,39 +42,5 @@ describe('mcp-manager env merge and hydration guards', () => {
     );
 
     expect(merged.PATH).toBe('/app/path');
-  });
-
-  it('hydrates local codex auth only for explicit OpenAI context', () => {
-    expect(
-      shouldHydrateOpenAIFromLocalCodex({
-        OPENAI_MODEL: 'gpt-5.3-codex',
-      })
-    ).toBe(true);
-
-    expect(
-      shouldHydrateOpenAIFromLocalCodex({
-        OPENAI_BASE_URL: 'https://chatgpt.com/backend-api/codex',
-      })
-    ).toBe(true);
-
-    expect(
-      shouldHydrateOpenAIFromLocalCodex({
-        OPENAI_API_MODE: 'responses',
-      })
-    ).toBe(true);
-
-    expect(
-      shouldHydrateOpenAIFromLocalCodex({
-        OPENAI_CODEX_OAUTH: '1',
-      })
-    ).toBe(true);
-
-    expect(
-      shouldHydrateOpenAIFromLocalCodex({
-        ANTHROPIC_API_KEY: 'sk-ant-xxx',
-      })
-    ).toBe(false);
-
-    expect(shouldHydrateOpenAIFromLocalCodex({})).toBe(false);
   });
 });

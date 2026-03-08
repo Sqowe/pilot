@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, Message, TraceStep, PermissionRequest, UserQuestionRequest, Settings, AppConfig, SandboxSetupProgress, SandboxSyncStatus, SkillsStorageChangeEvent } from '../types';
+import type { Session, Message, TraceStep, PermissionRequest, Settings, AppConfig, SandboxSetupProgress, SandboxSyncStatus, SkillsStorageChangeEvent } from '../types';
 import { applySessionUpdate } from '../utils/session-update';
 
 export type GlobalNoticeType = 'info' | 'warning' | 'error' | 'success';
@@ -31,12 +31,11 @@ interface AppState {
   isLoading: boolean;
   sidebarCollapsed: boolean;
   contextPanelCollapsed: boolean;
+  showSettings: boolean;
+  settingsTab: string | null;
   
   // Permission
   pendingPermission: PermissionRequest | null;
-  
-  // User Question (AskUserQuestion)
-  pendingQuestion: UserQuestionRequest | null;
   
   // Settings
   settings: Settings;
@@ -85,10 +84,13 @@ interface AppState {
   setLoading: (loading: boolean) => void;
   toggleSidebar: () => void;
   toggleContextPanel: () => void;
-  
+  setSidebarCollapsed: (collapsed: boolean) => void;
+  setContextPanelCollapsed: (collapsed: boolean) => void;
+  setShowSettings: (show: boolean) => void;
+  setSettingsTab: (tab: string | null) => void;
+
   setPendingPermission: (permission: PermissionRequest | null) => void;
-  setPendingQuestion: (question: UserQuestionRequest | null) => void;
-  
+
   updateSettings: (updates: Partial<Settings>) => void;
   
   // Config actions
@@ -152,8 +154,9 @@ export const useAppStore = create<AppState>((set) => ({
   isLoading: false,
   sidebarCollapsed: false,
   contextPanelCollapsed: false,
+  showSettings: false,
+  settingsTab: null,
   pendingPermission: null,
-  pendingQuestion: null,
   settings: defaultSettings,
   appConfig: null,
   isConfigured: false,
@@ -420,13 +423,14 @@ export const useAppStore = create<AppState>((set) => ({
   setLoading: (loading) => set({ isLoading: loading }),
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
   toggleContextPanel: () => set((state) => ({ contextPanelCollapsed: !state.contextPanelCollapsed })),
-  
+  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+  setContextPanelCollapsed: (collapsed) => set({ contextPanelCollapsed: collapsed }),
+  setShowSettings: (show) => set({ showSettings: show }),
+  setSettingsTab: (tab) => set({ settingsTab: tab }),
+
   // Permission actions
   setPendingPermission: (permission) => set({ pendingPermission: permission }),
-  
-  // Question actions (AskUserQuestion)
-  setPendingQuestion: (question) => set({ pendingQuestion: question }),
-  
+
   // Settings actions
   updateSettings: (updates) =>
     set((state) => ({
@@ -453,3 +457,32 @@ export const useAppStore = create<AppState>((set) => ({
   setSkillsStorageChangedAt: (timestamp) => set({ skillsStorageChangedAt: timestamp }),
   setSkillsStorageChangeEvent: (event) => set({ skillsStorageChangeEvent: event }),
 }));
+
+// Expose helpers for nav-server (CLI-driven UI navigation via executeJavaScript)
+if (typeof window !== 'undefined') {
+  const w = window as unknown as Record<string, unknown>;
+
+  w.__getNavStatus = () => {
+    const s = useAppStore.getState();
+    return {
+      showSettings: !!s.showSettings,
+      activeSessionId: s.activeSessionId || null,
+      sessionCount: (s.sessions || []).length,
+    };
+  };
+
+  w.__navigate = (page: string, tab?: string, sessionId?: string) => {
+    const store = useAppStore.getState();
+    if (page === 'welcome') {
+      store.setShowSettings(false);
+      store.setActiveSession(null);
+    } else if (page === 'settings') {
+      store.setSettingsTab(tab || 'api');
+      store.setShowSettings(true);
+    } else if (page === 'session' && sessionId) {
+      store.setShowSettings(false);
+      store.setActiveSession(sessionId);
+    }
+    return true;
+  };
+}

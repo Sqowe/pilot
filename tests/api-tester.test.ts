@@ -27,7 +27,6 @@ const mocks = vi.hoisted(() => {
     anthropicCtor,
     anthropicModelsList,
     anthropicMessagesCreate,
-    importLocalAuthToken: vi.fn(),
   };
 });
 
@@ -37,10 +36,6 @@ vi.mock('openai', () => ({
 
 vi.mock('@anthropic-ai/sdk', () => ({
   Anthropic: mocks.anthropicCtor,
-}));
-
-vi.mock('../src/main/auth/local-auth', () => ({
-  importLocalAuthToken: mocks.importLocalAuthToken,
 }));
 
 vi.mock('../src/main/config/config-store', () => ({
@@ -72,7 +67,6 @@ describe('testApiConnection', () => {
     mocks.openaiChatCompletionsCreate.mockReset();
     mocks.anthropicModelsList.mockReset();
     mocks.anthropicMessagesCreate.mockReset();
-    mocks.importLocalAuthToken.mockReset();
 
     mocks.openaiModelsList.mockResolvedValue({});
     mocks.openaiResponsesCreate.mockResolvedValue({});
@@ -85,7 +79,6 @@ describe('testApiConnection', () => {
     mocks.openaiChatCompletionsCreate.mockResolvedValue({});
     mocks.anthropicModelsList.mockResolvedValue({});
     mocks.anthropicMessagesCreate.mockResolvedValue({});
-    mocks.importLocalAuthToken.mockReturnValue(null);
   });
 
   it('uses messages.create for custom anthropic-compatible provider', async () => {
@@ -204,116 +197,5 @@ describe('testApiConnection', () => {
     expect(result.ok).toBe(false);
     expect(result.errorType).toBe('network_error');
     expect(result.details).toMatch(/timed out/i);
-  });
-
-  it('uses local codex oauth when openai api key is empty', async () => {
-    const finalResponse = vi.fn().mockResolvedValue({});
-    mocks.openaiResponsesStream.mockReturnValue({
-      async *[Symbol.asyncIterator]() {
-        yield { type: 'response.created' };
-      },
-      finalResponse,
-    });
-    mocks.importLocalAuthToken.mockReturnValue({
-      provider: 'codex',
-      token: 'oauth-local-token',
-      path: '/tmp/auth.json',
-      account: 'acct_123456',
-    });
-
-    const result = await testApiConnection({
-      provider: 'openai',
-      apiKey: '',
-      model: 'gpt-5.3-codex',
-      useLiveRequest: true,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(mocks.openaiCtor).toHaveBeenCalledWith(
-      expect.objectContaining({
-        apiKey: 'oauth-local-token',
-        baseURL: 'https://chatgpt.com/backend-api/codex',
-        timeout: 30000,
-        defaultHeaders: expect.objectContaining({
-          'User-Agent': 'CodexBar',
-          'ChatGPT-Account-Id': 'acct_123456',
-        }),
-      }),
-    );
-    expect(mocks.openaiResponsesStream).toHaveBeenCalledWith(
-      expect.objectContaining({
-        model: 'gpt-5.3-codex',
-        store: false,
-      }),
-    );
-    expect(finalResponse).toHaveBeenCalledTimes(1);
-  });
-
-  it('uses codex oauth backend when openai api key is oauth token', async () => {
-    const finalResponse = vi.fn().mockResolvedValue({});
-    mocks.openaiResponsesStream.mockReturnValue({
-      async *[Symbol.asyncIterator]() {
-        yield { type: 'response.created' };
-      },
-      finalResponse,
-    });
-    mocks.importLocalAuthToken.mockReturnValue(null);
-
-    const result = await testApiConnection({
-      provider: 'openai',
-      apiKey: 'oauth-token-from-import',
-      model: 'gpt-5.3-codex',
-      useLiveRequest: true,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(mocks.openaiCtor).toHaveBeenCalledWith(
-      expect.objectContaining({
-        apiKey: 'oauth-token-from-import',
-        baseURL: 'https://chatgpt.com/backend-api/codex',
-      }),
-    );
-    expect(mocks.openaiResponsesStream).toHaveBeenCalled();
-    expect(finalResponse).toHaveBeenCalledTimes(1);
-  });
-
-  it('falls back to local codex when api key candidate fails', async () => {
-    const finalResponse = vi.fn().mockResolvedValue({});
-    mocks.importLocalAuthToken.mockReturnValue({
-      provider: 'codex',
-      token: 'oauth-local-token',
-      path: '/tmp/auth.json',
-      account: 'acct_local',
-    });
-    mocks.openaiResponsesStream
-      .mockImplementationOnce(() => ({
-        async *[Symbol.asyncIterator]() {
-          yield { type: 'response.created' };
-        },
-        finalResponse: vi.fn().mockRejectedValue(new Error('api key failed')),
-      }))
-      .mockImplementationOnce(() => ({
-        async *[Symbol.asyncIterator]() {
-          yield { type: 'response.created' };
-        },
-        finalResponse,
-      }));
-
-    const result = await testApiConnection({
-      provider: 'openai',
-      apiKey: 'oauth-token-from-import',
-      model: 'gpt-5.3-codex',
-      useLiveRequest: true,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(mocks.openaiCtor).toHaveBeenCalledTimes(2);
-    expect(mocks.openaiCtor).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        apiKey: 'oauth-local-token',
-      }),
-    );
-    expect(finalResponse).toHaveBeenCalledTimes(1);
   });
 });

@@ -19,6 +19,7 @@
   },
   "welcome": {
     "title": "今天我能为您做些什么？",
+    "placeholder": "描述你想做的事情...",
     "createFile": "创建文件",
     "crunchData": "处理数据",
     "organizeFiles": "整理文件",
@@ -48,8 +49,16 @@
     "scheduleDesc": "闹钟式自动执行 Prompt",
     "logs": "日志",
     "logsDesc": "查看和导出应用日志",
-    "language": "语言",
-    "languageDesc": "选择您喜欢的语言"
+    "general": "通用",
+    "generalDesc": "外观、语言等通用偏好"
+  },
+  "general": {
+    "appearance": "外观",
+    "theme": "主题",
+    "themeLight": "浅色",
+    "themeDark": "深色",
+    "themeSystem": "跟随系统",
+    "language": "语言"
   },
   "language": {
     "english": "English",
@@ -95,12 +104,13 @@
     "selectProtocol": "选择服务的兼容协议",
     "enterOpenAIUrl": "输入 OpenAI 兼容的服务 URL",
     "enterAnthropicUrl": "输入 Anthropic 兼容的服务 URL",
-    "enterModelId": "输入模型 ID，例如：moonshotai/kimi-k2-0905, openai/gpt-4o",
+    "enterModelId": "输入模型 ID，例如：deepseek-chat、kimi-thinking-preview、gpt-5.2",
     "selectModelRequired": "请选择模型",
     "saveFailed": "保存失败，请稍后重试",
     "getStarted": "开始使用",
     "saveSettings": "保存设置",
     "openSettingsAction": "打开 API 设置",
+    "proxyWarming": "正在初始化服务，首次启动可能需要几秒...",
     "testConnection": "测试连接",
     "testingConnection": "测试中...",
     "liveTest": "真实请求验证",
@@ -153,6 +163,7 @@
     "limaDesc": "在 Lima 虚拟机中运行命令，在 macOS 上提供更好的隔离和安全性。",
     "nativeDesc": "命令直接在系统上运行（Linux 原生模式）。",
     "enableSandbox": "启用沙盒模式",
+    "comingSoon": "功能开发中，敬请期待",
     "readyStatus": "沙盒已就绪并运行中",
     "notReadyStatus": "沙盒已启用但未完全配置",
     "disabledStatus": "沙盒已禁用 - 命令直接在系统上运行",
@@ -320,6 +331,7 @@
     "recents": "最近",
     "expandToView": "展开查看任务",
     "noTasks": "暂无任务",
+    "search": "搜索对话...",
     "deleteAll": "删除所有对话",
     "localTasks": "这些任务在本地运行，不会在设备间同步。",
     "apiConfigured": "API 已配置",
@@ -356,7 +368,13 @@
     "fileCreated": "文件已创建",
     "callNumber": "调用 #{{number}}",
     "input": "输入：",
-    "output": "输出："
+    "output": "输出：",
+    "tokenUsage": "Token 用量",
+    "inputTokens": "输入",
+    "outputTokens": "输出",
+    "totalTokens": "总计",
+    "changeDir": "更改目录",
+    "copyPath": "复制路径"
   },
   "messageCard": {
     "request": "请求"
@@ -376,8 +394,6 @@
       "bash": "执行 shell 命令",
       "webFetch": "从网络获取数据",
       "webSearch": "搜索网络",
-      "TodoRead": "读取当前待办事项列表",
-      "TodoWrite": "更新当前待办事项列表",
       "read_file": "读取工作区中的文件",
       "write_file": "写入工作区中的文件",
       "edit_file": "编辑工作区中的文件",

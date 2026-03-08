@@ -52,6 +52,52 @@ describe('getArtifactSteps', () => {
     expect(displayArtifactSteps).toHaveLength(1);
   });
 
+  it('uses wrapped write tool output from runtime traces', () => {
+    const steps: TraceStep[] = [
+      {
+        id: 'call_write_wrapped',
+        type: 'tool_call',
+        status: 'completed',
+        title: 'write',
+        toolName: 'write',
+        toolOutput: JSON.stringify({
+          content: [
+            {
+              type: 'text',
+              text: 'Successfully wrote 2986 bytes to agent_papers_summary.html',
+            },
+          ],
+        }),
+        timestamp: Date.now(),
+      },
+    ];
+
+    const { fileSteps, displayArtifactSteps } = getArtifactSteps(steps);
+    expect(fileSteps).toHaveLength(1);
+    expect(displayArtifactSteps).toHaveLength(1);
+    expect(displayArtifactSteps[0].toolName).toBe('write');
+  });
+
+  it('includes completed Edit tool calls as file steps when no artifacts exist', () => {
+    const steps: TraceStep[] = [
+      {
+        id: 'call_edit',
+        type: 'tool_call',
+        status: 'completed',
+        title: 'Edit',
+        toolName: 'Edit',
+        toolInput: { path: '/tmp/notes.md', old_string: 'old', new_string: 'new' },
+        toolOutput: 'File edited: /tmp/notes.md',
+        timestamp: Date.now(),
+      },
+    ];
+
+    const { fileSteps, displayArtifactSteps } = getArtifactSteps(steps);
+    expect(fileSteps).toHaveLength(1);
+    expect(displayArtifactSteps).toHaveLength(1);
+    expect(displayArtifactSteps[0].toolName).toBe('Edit');
+  });
+
   it('filters out file steps without any resolvable file path', () => {
     const steps: TraceStep[] = [
       {
@@ -98,7 +144,7 @@ describe('getArtifactSteps', () => {
     expect(displayArtifactSteps).toHaveLength(1);
   });
 
-  it('prefers explicit artifact steps over file steps', () => {
+  it('prefers concrete file operations over explicit artifact summaries', () => {
     const steps: TraceStep[] = [
       {
         id: 'artifact_1',
@@ -124,7 +170,108 @@ describe('getArtifactSteps', () => {
 
     expect(artifactSteps).toHaveLength(1);
     expect(fileSteps).toHaveLength(1);
-    expect(displayArtifactSteps).toEqual(artifactSteps);
+    expect(displayArtifactSteps).toHaveLength(1);
+    expect(displayArtifactSteps[0].toolName).toBe('Write');
+  });
+
+  it('shows completed edit steps even when artifact summaries also exist', () => {
+    const steps: TraceStep[] = [
+      {
+        id: 'artifact_1',
+        type: 'tool_result',
+        status: 'completed',
+        title: 'artifact',
+        toolName: 'artifact',
+        toolOutput: '{"path":"/tmp/report.xlsx"}',
+        timestamp: Date.now(),
+      },
+      {
+        id: 'call_edit',
+        type: 'tool_call',
+        status: 'completed',
+        title: 'Edit',
+        toolName: 'Edit',
+        toolInput: { path: '/tmp/notes.md', old_string: 'old', new_string: 'new' },
+        toolOutput: 'File edited: /tmp/notes.md',
+        timestamp: Date.now(),
+      },
+    ];
+
+    const { artifactSteps, fileSteps, displayArtifactSteps } = getArtifactSteps(steps);
+
+    expect(artifactSteps).toHaveLength(1);
+    expect(fileSteps).toHaveLength(1);
+    expect(displayArtifactSteps).toHaveLength(1);
+    expect(displayArtifactSteps[0].toolName).toBe('Edit');
+  });
+
+  it('ignores explicit artifact summaries when a write step already covers the same path', () => {
+    const steps: TraceStep[] = [
+      {
+        id: 'artifact_1',
+        type: 'tool_result',
+        status: 'completed',
+        title: 'artifact',
+        toolName: 'artifact',
+        toolOutput: '{"path":"/tmp/report.xlsx"}',
+        timestamp: Date.now(),
+      },
+      {
+        id: 'call_write',
+        type: 'tool_call',
+        status: 'completed',
+        title: 'Write',
+        toolName: 'Write',
+        toolInput: { path: '/tmp/report.xlsx', content: 'hello' },
+        toolOutput: 'File written: /tmp/report.xlsx',
+        timestamp: Date.now(),
+      },
+    ];
+
+    const { displayArtifactSteps } = getArtifactSteps(steps);
+
+    expect(displayArtifactSteps).toHaveLength(1);
+    expect(displayArtifactSteps[0].toolName).toBe('Write');
+  });
+
+  it('includes screenshot tools when they return a concrete output path', () => {
+    const steps: TraceStep[] = [
+      {
+        id: 'shot_1',
+        type: 'tool_result',
+        status: 'completed',
+        title: 'screenshot',
+        toolName: 'screenshot',
+        toolOutput: JSON.stringify({ path: '/tmp/screenshot_1.png', size: 12345 }),
+        timestamp: Date.now(),
+      },
+    ];
+
+    const { fileSteps, displayArtifactSteps } = getArtifactSteps(steps);
+
+    expect(fileSteps).toHaveLength(1);
+    expect(displayArtifactSteps).toHaveLength(1);
+    expect(displayArtifactSteps[0].toolName).toBe('screenshot');
+  });
+
+  it('does not show artifact summaries by themselves in the artifacts panel list', () => {
+    const steps: TraceStep[] = [
+      {
+        id: 'artifact_only',
+        type: 'tool_result',
+        status: 'completed',
+        title: 'artifact',
+        toolName: 'artifact',
+        toolOutput: '{"path":"/tmp/report.xlsx"}',
+        timestamp: Date.now(),
+      },
+    ];
+
+    const { artifactSteps, fileSteps, displayArtifactSteps } = getArtifactSteps(steps);
+
+    expect(artifactSteps).toHaveLength(1);
+    expect(fileSteps).toHaveLength(0);
+    expect(displayArtifactSteps).toHaveLength(0);
   });
 
   it('formats label from full path', () => {

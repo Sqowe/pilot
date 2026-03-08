@@ -19,6 +19,7 @@
   },
   "welcome": {
     "title": "How can I help you today?",
+    "placeholder": "Describe what you'd like to do...",
     "createFile": "Create a file",
     "crunchData": "Crunch data",
     "organizeFiles": "Organize files",
@@ -48,8 +49,16 @@
     "scheduleDesc": "Alarm-style prompt automation",
     "logs": "Logs",
     "logsDesc": "View and export application logs",
-    "language": "Language",
-    "languageDesc": "Choose your preferred language"
+    "general": "General",
+    "generalDesc": "Appearance, language & preferences"
+  },
+  "general": {
+    "appearance": "Appearance",
+    "theme": "Theme",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeSystem": "System",
+    "language": "Language"
   },
   "language": {
     "english": "English",
@@ -95,12 +104,13 @@
     "selectProtocol": "Select the compatible protocol for the service",
     "enterOpenAIUrl": "Enter OpenAI-compatible service URL",
     "enterAnthropicUrl": "Enter Anthropic-compatible service URL",
-    "enterModelId": "Enter model ID, e.g., moonshotai/kimi-k2-0905, openai/gpt-4o",
+    "enterModelId": "Enter model ID, e.g., deepseek-chat, kimi-thinking-preview, gpt-5.2",
     "selectModelRequired": "Please select a model",
     "saveFailed": "Failed to save settings. Please try again.",
     "getStarted": "Get Started",
     "saveSettings": "Save Settings",
     "openSettingsAction": "Open API Settings",
+    "proxyWarming": "Initializing service, first launch may take a moment...",
     "testConnection": "Test Connection",
     "testingConnection": "Testing...",
     "liveTest": "Live request verification",
@@ -153,6 +163,7 @@
     "limaDesc": "Run commands in Lima VM for better isolation and security on macOS.",
     "nativeDesc": "Commands run directly on your system (Linux native mode).",
     "enableSandbox": "Enable Sandbox Mode",
+    "comingSoon": "Coming soon — under development",
     "readyStatus": "Sandbox ready and running",
     "notReadyStatus": "Sandbox enabled but not fully configured",
     "disabledStatus": "Sandbox disabled - commands run directly on system",
@@ -320,6 +331,7 @@
     "recents": "Recents",
     "expandToView": "Expand to view tasks",
     "noTasks": "No tasks yet",
+    "search": "Search conversations...",
     "deleteAll": "Delete all conversations",
     "localTasks": "These tasks run locally and aren't synced across devices.",
     "apiConfigured": "API Configured",
@@ -357,7 +369,13 @@
     "fileCreated": "File created",
     "callNumber": "Call #{{number}}",
     "input": "Input:",
-    "output": "Output:"
+    "output": "Output:",
+    "tokenUsage": "Token Usage",
+    "inputTokens": "Input",
+    "outputTokens": "Output",
+    "totalTokens": "Total",
+    "changeDir": "Change directory",
+    "copyPath": "Copy path"
   },
   "messageCard": {
     "request": "Request"
@@ -377,8 +395,6 @@
       "bash": "Execute shell commands",
       "webFetch": "Fetch data from the web",
       "webSearch": "Search the web",
-      "TodoRead": "Read the current todo list",
-      "TodoWrite": "Update the current todo list",
       "read_file": "Read files in the workspace",
       "write_file": "Write files in the workspace",
       "edit_file": "Edit files in the workspace",

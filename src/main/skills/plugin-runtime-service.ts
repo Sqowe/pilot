@@ -301,6 +301,25 @@ export class PluginRuntimeService {
         }).trim();
         if (shellOutput) env.PATH = shellOutput;
       } catch { /* use process.env.PATH */ }
+    } else if (process.platform === 'win32') {
+      try {
+        const { execSync } = require('child_process');
+        const winPath = execSync(
+          'powershell.exe -NoProfile -Command "[Environment]::GetEnvironmentVariable(\'Path\', \'User\') + \';\' + [Environment]::GetEnvironmentVariable(\'Path\', \'Machine\')"',
+          { encoding: 'utf-8', timeout: 5000 }
+        ).trim();
+        if (winPath) {
+          const winPaths = winPath.split(';').filter((p: string) => p.trim());
+          const currentPaths = (env.PATH || '').split(';').filter((p: string) => p.trim());
+          const allPaths = [...winPaths];
+          for (const p of currentPaths) {
+            if (!allPaths.some(ep => ep.toLowerCase() === p.toLowerCase())) {
+              allPaths.push(p);
+            }
+          }
+          env.PATH = allPaths.join(';');
+        }
+      } catch { /* use process.env.PATH */ }
     }
     const result = await execFileAsync(command, args, {
       env,

@@ -9,7 +9,6 @@ import {
   FolderOpen,
   ArrowRight,
   Mail,
-  Chrome,
   X,
   Paperclip,
   BookOpen,
@@ -388,10 +387,15 @@ export function WelcomeView() {
   ];
 
   return (
-    <div className="flex-1 flex items-center justify-center p-8">
+    <div className="flex-1 flex flex-col items-center justify-center p-4 md:p-8 pb-[15%]">
       <div className="max-w-2xl w-full space-y-6 animate-fade-in">
+        {/* Welcome Heading */}
+        <h1 className="heading-serif text-2xl md:text-3xl font-semibold text-text-primary text-center">
+          {t('welcome.title')}
+        </h1>
+
         {/* Quick Action Tags */}
-        <div className="flex flex-wrap gap-2 justify-center">
+        <div className="flex flex-wrap gap-2 justify-center px-2">
           {quickTags.map((tag) => (
             <button
               key={tag.id}
@@ -403,15 +407,13 @@ export function WelcomeView() {
               <tag.icon className={`w-4 h-4 ${selectedTag === tag.id ? 'text-accent' : 'text-text-muted'}`} />
               <span>{tag.label}</span>
               {'requiresChrome' in tag && tag.requiresChrome && (
-                <span className="flex items-center gap-1 ml-1.5 px-2 py-0.5 text-[10px] font-medium rounded-full bg-blue-500/10 text-blue-600 border border-blue-500/20">
-                  <Chrome className="w-3 h-3" />
-                  <span>{t('welcome.chromeRequired')}</span>
+                <span className="ml-1 px-1.5 py-px text-[9px] rounded bg-surface-active text-text-muted">
+                  {t('welcome.chromeRequired')}
                 </span>
               )}
               {'requiresNotion' in tag && tag.requiresNotion && (
-                <span className="flex items-center gap-1 ml-1.5 px-2 py-0.5 text-[10px] font-medium rounded-full bg-gray-800/10 text-gray-700 border border-gray-800/20">
-                  <span className="text-sm">📝</span>
-                  <span>{t('welcome.notionRequired')}</span>
+                <span className="ml-1 px-1.5 py-px text-[9px] rounded bg-surface-active text-text-muted">
+                  {t('welcome.notionRequired')}
                 </span>
               )}
             </button>
@@ -430,7 +432,7 @@ export function WelcomeView() {
         >
           {/* Image previews */}
           {pastedImages.length > 0 && (
-            <div className="grid grid-cols-5 gap-2 pb-2 border-b border-border w-full">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 pb-2 border-b border-border w-full">
               {pastedImages.map((img, index) => (
                 <div key={index} className="relative group">
                   <img
@@ -488,7 +490,7 @@ export function WelcomeView() {
               isComposingRef.current = false;
             }}
             onPaste={handlePaste}
-            placeholder={t('welcome.title')}
+            placeholder={t('welcome.placeholder')}
             rows={1}
             style={{ minHeight: '72px', maxHeight: '200px' }}
             className="w-full resize-none bg-transparent border-none outline-none text-text-primary placeholder:text-text-muted text-base leading-relaxed overflow-hidden"

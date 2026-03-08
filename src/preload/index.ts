@@ -82,6 +82,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Select files using native dialog
   selectFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog.selectFiles'),
 
+  artifacts: {
+    listRecentFiles: (
+      cwd: string,
+      sinceMs: number,
+      limit = 50
+    ): Promise<Array<{ path: string; modifiedAt: number; size: number }>> =>
+      ipcRenderer.invoke('artifacts.listRecentFiles', cwd, sinceMs, limit),
+  },
+
   // Config methods
   config: {
     get: (): Promise<AppConfig> => ipcRenderer.invoke('config.get'),
@@ -102,24 +111,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   auth: {
-    getStatus: (): Promise<Array<{
-      provider: 'codex';
-      available: boolean;
-      path: string;
-      profile?: string;
-      account?: string;
-      expiresAt?: string;
-      updatedAt?: string;
-    }>> => ipcRenderer.invoke('auth.getStatus'),
-    importToken: (provider: 'codex'): Promise<{
-      provider: 'codex';
-      token: string;
-      path: string;
-      profile?: string;
-      account?: string;
-      expiresAt?: string;
-      updatedAt?: string;
-    } | null> => ipcRenderer.invoke('auth.importToken', provider),
+    getStatus: (): Promise<Array<Record<string, unknown>>> => ipcRenderer.invoke('auth.getStatus'),
+    importToken: (provider: string): Promise<Record<string, unknown> | null> => ipcRenderer.invoke('auth.importToken', provider),
   },
 
   // Window control methods
@@ -172,7 +165,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ): Promise<{ success: boolean; path: string; migratedCount: number; skippedCount: number; error?: string }> =>
       ipcRenderer.invoke('skills.setStoragePath', targetPath, migrate),
     openStoragePath: (): Promise<{ success: boolean; path: string; error?: string }> =>
-      ipcRenderer.invoke('skills.openStoragePath'),: (installableOnly = false): Promise<PluginCatalogItem[]> =>
+      ipcRenderer.invoke('skills.openStoragePath'),
+    listPlugins: (installableOnly = false): Promise<PluginCatalogItem[]> =>
       ipcRenderer.invoke('skills.listPlugins', installableOnly),
     installPlugin: (pluginName: string): Promise<PluginInstallResult> =>
       ipcRenderer.invoke('skills.installPlugin', pluginName),
@@ -354,6 +348,13 @@ declare global {
       openExternal: (url: string) => Promise<boolean>;
       showItemInFolder: (filePath: string, cwd?: string) => Promise<boolean>;
       selectFiles: () => Promise<string[]>;
+      artifacts: {
+        listRecentFiles: (
+          cwd: string,
+          sinceMs: number,
+          limit?: number
+        ) => Promise<Array<{ path: string; modifiedAt: number; size: number }>>;
+      };
       config: {
         get: () => Promise<AppConfig>;
         getPresets: () => Promise<ProviderPresets>;
@@ -366,24 +367,8 @@ declare global {
         test: (config: ApiTestInput) => Promise<ApiTestResult>;
       };
       auth: {
-        getStatus: () => Promise<Array<{
-          provider: 'codex';
-          available: boolean;
-          path: string;
-          profile?: string;
-          account?: string;
-          expiresAt?: string;
-          updatedAt?: string;
-        }>>;
-        importToken: (provider: 'codex') => Promise<{
-          provider: 'codex';
-          token: string;
-          path: string;
-          profile?: string;
-          account?: string;
-          expiresAt?: string;
-          updatedAt?: string;
-        } | null>;
+        getStatus: () => Promise<Array<Record<string, unknown>>>;
+        importToken: (provider: string) => Promise<Record<string, unknown> | null>;
       };
       window: {
         minimize: () => void;
