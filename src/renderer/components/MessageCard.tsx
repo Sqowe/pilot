@@ -450,7 +450,7 @@ function getToolIcon(name: string) {
 }
 
 function ToolUseBlock({ block, allBlocks, message }: { block: ToolUseContent; allBlocks?: ContentBlock[]; message?: Message }) {
-  const { traceStepsBySession } = useAppStore();
+  const { traceStepsBySession, messagesBySession, activeTurnsBySession } = useAppStore();
   const [expanded, setExpanded] = useState(false);
 
   // Check if this is AskUserQuestion - render inline question UI
@@ -463,13 +463,31 @@ function ToolUseBlock({ block, allBlocks, message }: { block: ToolUseContent; al
     return <TodoWriteBlock block={block} />;
   }
 
-  // Find matching tool_result in allBlocks
-  const toolResult = allBlocks?.find(
+  // Find matching tool_result: first in same message, then across all session messages
+  let toolResult = allBlocks?.find(
     b => b.type === 'tool_result' && (b as ToolResultContent).toolUseId === block.id
   ) as ToolResultContent | undefined;
 
+  if (!toolResult && message?.sessionId) {
+    const allMessages = messagesBySession[message.sessionId] || [];
+    for (const msg of allMessages) {
+      if (!Array.isArray(msg.content)) continue;
+      const found = (msg.content as ContentBlock[]).find(
+        b => b.type === 'tool_result' && (b as ToolResultContent).toolUseId === block.id
+      );
+      if (found) {
+        toolResult = found as ToolResultContent;
+        break;
+      }
+    }
+  }
+
   // Determine state: running / success / error
-  const isRunning = !toolResult;
+  // Only show spinner if session still has an active turn; otherwise treat as done
+  const hasActiveTurn = message?.sessionId
+    ? Boolean(activeTurnsBySession[message.sessionId])
+    : false;
+  const isRunning = !toolResult && hasActiveTurn;
   const isError = toolResult?.isError === true;
   const isSuccess = toolResult && !isError;
 
@@ -839,10 +857,22 @@ function AskUserQuestionBlock({ block }: { block: ToolUseContent }) {
   );
 }
 
-// Fallback ToolResultBlock — only renders for orphan results (no matching tool_use in same message)
+// Fallback ToolResultBlock — only renders for truly orphan results (no matching tool_use anywhere)
 function ToolResultBlock({ block, allBlocks, message }: { block: ToolResultContent; allBlocks?: ContentBlock[]; message?: Message }) {
-  const { traceStepsBySession } = useAppStore();
+  const { traceStepsBySession, messagesBySession } = useAppStore();
   const [expanded, setExpanded] = useState(false);
+
+  // If a ToolUseBlock in any message already merges this result, hide this block
+  if (message?.sessionId) {
+    const allMessages = messagesBySession[message.sessionId] || [];
+    for (const msg of allMessages) {
+      if (!Array.isArray(msg.content)) continue;
+      const hasMatchingToolUse = (msg.content as ContentBlock[]).some(
+        b => b.type === 'tool_use' && (b as ToolUseContent).id === block.toolUseId
+      );
+      if (hasMatchingToolUse) return null;
+    }
+  }
 
   // Try to find the tool name from trace steps
   let toolName: string | undefined;
