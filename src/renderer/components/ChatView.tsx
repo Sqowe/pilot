@@ -567,7 +567,7 @@ export function ChatView() {
         className="relative h-14 border-b border-border grid grid-cols-[1fr_auto_1fr] items-center px-4 lg:px-6 bg-surface/80 backdrop-blur-sm"
       >
         <div />
-        <h2 ref={titleRef} className="font-medium text-text-primary text-center truncate max-w-[40vw] lg:max-w-lg">
+        <h2 ref={titleRef} className="font-medium text-text-primary text-center truncate max-w-[40vw] lg:max-w-lg" style={{ fontFamily: "'Source Serif 4', Georgia, serif" }}>
           {activeSession.title}
         </h2>
         {activeConnectors.length > 0 && (
@@ -602,8 +602,8 @@ export function ChatView() {
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
         <div ref={messagesContainerRef} className="w-full max-w-[1180px] mx-auto py-6 px-4 lg:px-6 space-y-4">
           {displayedMessages.length === 0 ? (
-            <div className="text-center py-12 text-text-muted">
-              <p>{t('chat.startConversation')}</p>
+            <div className="text-center py-20 text-text-muted">
+              <p className="text-lg" style={{ fontFamily: "'Source Serif 4', Georgia, serif" }}>{t('chat.startConversation')}</p>
             </div>
           ) : (
             displayedMessages.map((message) => {

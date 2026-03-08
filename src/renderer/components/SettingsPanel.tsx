@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, Key, Plug, Settings, ChevronRight, AlertCircle, Eye, EyeOff, Plus, Trash2, Edit3, Save, Mail, Globe, Lock, Server, Cpu, Loader2, Power, PowerOff, CheckCircle, Check, ChevronDown, Package, Languages, Shield, Wifi, FolderOpen, RefreshCw, Clock3 } from 'lucide-react';
+import { X, Key, Plug, Settings, ChevronRight, AlertCircle, Eye, EyeOff, Plus, Trash2, Edit3, Save, Mail, Globe, Lock, Server, Cpu, Loader2, Power, PowerOff, CheckCircle, Check, ChevronDown, Package, Shield, Wifi, FolderOpen, RefreshCw, Clock3 } from 'lucide-react';
 import { useWindowSize } from '../hooks/useWindowSize';
 import type {
   Skill,
@@ -57,10 +57,10 @@ interface MCPServerStatus {
 
 interface SettingsPanelProps {
   onClose: () => void;
-  initialTab?: 'api' | 'sandbox' | 'credentials' | 'connectors' | 'skills' | 'schedule' | 'remote' | 'logs' | 'general';
+  initialTab?: 'api' | 'sandbox' | 'connectors' | 'skills' | 'schedule' | 'remote' | 'logs' | 'general';
 }
 
-type TabId = 'api' | 'sandbox' | 'credentials' | 'connectors' | 'skills' | 'schedule' | 'remote' | 'logs' | 'general';
+type TabId = 'api' | 'sandbox' | 'connectors' | 'skills' | 'schedule' | 'remote' | 'logs' | 'general';
 
 const SERVICE_OPTIONS = [
   { value: 'gmail', label: 'Gmail' },
@@ -112,7 +112,7 @@ const SCHEDULE_MODE_OPTIONS: Array<{ value: ScheduleFormMode; label: string }> =
 
 // ==================== Main Component ====================
 
-const VALID_TABS = new Set<TabId>(['api', 'sandbox', 'credentials', 'connectors', 'skills', 'schedule', 'remote', 'logs', 'general']);
+const VALID_TABS = new Set<TabId>(['api', 'sandbox', 'connectors', 'skills', 'schedule', 'remote', 'logs', 'general']);
 
 export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProps) {
   const { t } = useTranslation();
@@ -154,7 +154,6 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
   const tabs = [
     { id: 'api' as TabId, label: t('settings.apiSettings'), icon: Settings, description: t('settings.apiSettingsDesc') },
     { id: 'sandbox' as TabId, label: t('settings.sandbox'), icon: Shield, description: t('settings.sandboxDesc') },
-    { id: 'credentials' as TabId, label: t('settings.credentials'), icon: Key, description: t('settings.credentialsDesc') },
     { id: 'connectors' as TabId, label: t('settings.connectors'), icon: Plug, description: t('settings.connectorsDesc') },
     { id: 'skills' as TabId, label: t('settings.skills'), icon: Package, description: t('settings.skillsDesc') },
     { id: 'schedule' as TabId, label: t('settings.schedule'), icon: Clock3, description: t('settings.scheduleDesc') },
@@ -166,7 +165,7 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
   return (
       <div className="flex h-full w-full overflow-hidden">
         {/* Sidebar */}
-        <div className={`${compactSidebar ? 'w-14' : 'w-44 lg:w-56'} bg-surface-hover border-r border-border flex flex-col flex-shrink-0`}>
+        <div className={`${compactSidebar ? 'w-14' : 'w-40 lg:w-48'} bg-surface-hover border-r border-border flex flex-col flex-shrink-0`}>
           {!compactSidebar && (
             <div className="p-4 border-b border-border">
               <h2 className="text-lg font-semibold text-text-primary">{t('settings.title')}</h2>
@@ -178,18 +177,15 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 title={compactSidebar ? tab.label : undefined}
-                className={`w-full flex items-center ${compactSidebar ? 'justify-center p-2.5' : 'gap-3 px-3 py-3'} rounded-xl text-left transition-colors active:scale-[0.98] ${
+                className={`w-full flex items-center ${compactSidebar ? 'justify-center p-2.5' : 'gap-3 px-3 py-2.5'} rounded-xl text-left transition-colors active:scale-[0.98] ${
                   activeTab === tab.id
                     ? 'bg-surface-active text-text-primary font-medium'
                     : 'hover:bg-surface-active text-text-secondary hover:text-text-primary'
                 }`}
               >
-                <tab.icon className="w-5 h-5 flex-shrink-0" />
+                <tab.icon className="w-4.5 h-4.5 flex-shrink-0" />
                 {!compactSidebar && (
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{tab.label}</p>
-                    <p className="text-xs text-text-muted truncate hidden lg:block">{tab.description}</p>
-                  </div>
+                  <p className="text-sm font-medium truncate flex-1 min-w-0">{tab.label}</p>
                 )}
                 {!compactSidebar && activeTab === tab.id && <ChevronRight className="w-4 h-4 flex-shrink-0" />}
               </button>
@@ -222,16 +218,20 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
               <X className="w-5 h-5 text-text-secondary" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-3 lg:p-6">
-            <div className="max-w-[720px]">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 lg:p-6">
+            <div className="max-w-[720px] w-full min-w-0">
             <div className={activeTab === 'api' ? '' : 'hidden'}>
-              {viewedTabs.has('api') && <APISettingsTab />}
+              {viewedTabs.has('api') && (
+                <>
+                  <APISettingsTab />
+                  <div className="mt-8 pt-6 border-t border-border">
+                    <CredentialsTab />
+                  </div>
+                </>
+              )}
             </div>
             <div className={activeTab === 'sandbox' ? '' : 'hidden'}>
               {viewedTabs.has('sandbox') && <SandboxTab />}
-            </div>
-            <div className={activeTab === 'credentials' ? '' : 'hidden'}>
-              {viewedTabs.has('credentials') && <CredentialsTab />}
             </div>
             <div className={activeTab === 'connectors' ? '' : 'hidden'}>
               {viewedTabs.has('connectors') && <ConnectorsTab />}
@@ -907,13 +907,6 @@ function SandboxTab() {
 
   return (
     <div className="space-y-4">
-      {/* Info Banner */}
-      <div className="px-4 py-3 rounded-xl bg-accent-muted text-accent text-sm">
-        <p className="font-medium mb-1">🛡️ {t('sandbox.title')}</p>
-        <p className="text-xs opacity-80">
-          {isWindows ? t('sandbox.wslDesc') : isMac ? t('sandbox.limaDesc') : t('sandbox.nativeDesc')}
-        </p>
-      </div>
 
       {/* Error/Success Messages */}
       {error && (
@@ -944,6 +937,9 @@ function SandboxTab() {
           <span>🚧</span>
           <span>{t('sandbox.comingSoon')}</span>
         </div>
+        <p className="text-xs text-text-muted max-w-sm mx-auto">
+          {t('sandbox.helpText1')} {t('sandbox.helpText2')}
+        </p>
       </div>
 
       {/* Status Details - Hidden while sandbox is disabled for debugging */}
@@ -1128,11 +1124,7 @@ function SandboxTab() {
         </button>
       )}
 
-      {/* Help Text */}
-      <div className="text-xs text-text-muted text-center space-y-1">
-        <p>{t('sandbox.helpText1')}</p>
-        <p>{t('sandbox.helpText2')}</p>
-      </div>
+      {/* Help Text - moved into card above */}
     </div>
   );
 }
@@ -1269,13 +1261,6 @@ function CredentialsTab() {
 
   return (
     <div className="space-y-4">
-      {/* Info */}
-      <div className="px-4 py-3 rounded-xl bg-accent-muted text-accent text-sm">
-        <p className="font-medium mb-1">{t('credentials.encrypted')}</p>
-        <p className="text-xs opacity-80">
-          {t('credentials.encryptedDesc')}
-        </p>
-      </div>
 
       {error && (
         <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-error/10 text-error text-sm">
@@ -1691,13 +1676,6 @@ function ConnectorsTab() {
 
   return (
     <div className="space-y-4">
-      {/* Info */}
-      <div className="px-4 py-3 rounded-xl bg-mcp/10 text-mcp text-sm">
-        <p className="font-medium mb-1">🔌 {t('settings.connectors')}</p>
-        <p className="text-xs opacity-80">
-          {t('settings.connectorsDesc')}
-        </p>
-      </div>
 
       {error && (
         <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-error/10 text-error text-sm">
@@ -2699,13 +2677,6 @@ function SkillsTab() {
 
   return (
     <div className="space-y-4">
-      {/* Info Banner */}
-      <div className="px-4 py-3 rounded-xl bg-mcp/10 text-mcp text-sm">
-        <p className="font-medium mb-1">{t('skills.title')}</p>
-        <p className="text-xs opacity-80">
-          {t('skills.description')}
-        </p>
-      </div>
 
       {error && (
         <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-error/10 text-error text-sm">
@@ -4069,52 +4040,75 @@ function isValidTimeValue(value: string): boolean {
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(value);
 }
 
-// ==================== Language Tab ====================
+// ==================== General Tab ====================
 
-function LanguageTab() {
+function GeneralTab() {
   const { i18n, t } = useTranslation();
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
   const currentLang = i18n.language.startsWith('zh') ? 'zh' : 'en';
+  const [appVer] = useState(() => {
+    try { return window.electronAPI?.getVersion?.() || ''; } catch { return ''; }
+  });
 
   const languages = [
     { code: 'en', nativeName: 'English' },
     { code: 'zh', nativeName: '中文' },
   ];
 
-  const handleLanguageChange = (langCode: string) => {
-    i18n.changeLanguage(langCode);
-  };
+  const themeOptions = [
+    { value: 'light' as const, label: t('general.themeLight') },
+    { value: 'dark' as const, label: t('general.themeDark') },
+  ];
 
   return (
-    <div className="space-y-4">
-      {/* Info Banner */}
-      <div className="px-4 py-3 rounded-xl bg-accent-muted text-accent text-sm">
-        <p className="font-medium mb-1">🌐 {t('language.selectLanguage')}</p>
-        <p className="text-xs opacity-80">
-          {t('language.currentLanguage')}: {currentLang === 'zh' ? t('language.chinese') : t('language.english')}
-        </p>
+    <div className="space-y-6">
+      {/* Theme */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-medium text-text-primary">{t('general.appearance')}</h4>
+        <div className="flex gap-2">
+          {themeOptions.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => updateSettings({ theme: opt.value })}
+              className={`flex-1 px-4 py-2.5 rounded-xl border-2 text-sm font-medium transition-all ${
+                settings.theme === opt.value
+                  ? 'border-accent bg-accent/5 text-text-primary'
+                  : 'border-border bg-surface hover:border-accent/50 text-text-secondary'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Language Options */}
-      <div className="space-y-2">
-        {languages.map((lang) => (
-          <button
-            key={lang.code}
-            onClick={() => handleLanguageChange(lang.code)}
-            className={`w-full p-4 rounded-xl border-2 transition-all text-left ${
-              currentLang === lang.code
-                ? 'border-accent bg-accent/5'
-                : 'border-border bg-surface hover:border-accent/50'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="font-medium text-text-primary">{lang.nativeName}</div>
-              {currentLang === lang.code && (
-                <CheckCircle className="w-5 h-5 text-accent" />
-              )}
-            </div>
-          </button>
-        ))}
+      {/* Language */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-medium text-text-primary">{t('general.language')}</h4>
+        <div className="flex gap-2">
+          {languages.map((lang) => (
+            <button
+              key={lang.code}
+              onClick={() => i18n.changeLanguage(lang.code)}
+              className={`flex-1 px-4 py-2.5 rounded-xl border-2 text-sm font-medium transition-all ${
+                currentLang === lang.code
+                  ? 'border-accent bg-accent/5 text-text-primary'
+                  : 'border-border bg-surface hover:border-accent/50 text-text-secondary'
+              }`}
+            >
+              {lang.nativeName}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {/* About */}
+      {appVer && (
+        <div className="pt-4 border-t border-border">
+          <p className="text-xs text-text-muted">Open Cowork v{appVer}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -4259,13 +4253,6 @@ function LogsTab() {
 
   return (
     <div className="space-y-4">
-      {/* Info Banner */}
-      <div className="px-4 py-3 rounded-xl bg-accent-muted text-accent text-sm">
-        <p className="font-medium mb-1">📋 {t('logs.title')}</p>
-        <p className="text-xs opacity-80">
-          {t('logs.description')}
-        </p>
-      </div>
 
       {/* Error/Success Messages */}
       {error && (

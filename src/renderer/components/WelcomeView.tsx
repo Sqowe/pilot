@@ -390,7 +390,7 @@ export function WelcomeView() {
     <div className="flex-1 flex items-center justify-center p-4 md:p-8">
       <div className="max-w-2xl w-full space-y-6 animate-fade-in">
         {/* Welcome Heading */}
-        <h1 className="text-2xl md:text-3xl font-semibold text-text-primary text-center">
+        <h1 className="text-2xl md:text-3xl font-semibold text-text-primary text-center" style={{ fontFamily: "'Source Serif 4', Georgia, serif" }}>
           {t('welcome.title')}
         </h1>
 
