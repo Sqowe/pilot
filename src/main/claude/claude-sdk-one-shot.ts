@@ -1,25 +1,17 @@
-import { getModel, completeSimple, type UserMessage as PiUserMessage } from '@mariozechner/pi-ai';
+import { completeSimple, type UserMessage as PiUserMessage } from '@mariozechner/pi-ai';
 import type { ApiTestInput, ApiTestResult } from '../../renderer/types';
 import { PROVIDER_PRESETS, type AppConfig, type CustomProtocolType } from '../config/config-store';
 import { normalizeAnthropicBaseUrl } from '../config/auth-utils';
 import { log, logWarn } from '../utils/logger';
 import { normalizeGeneratedTitle } from '../session/session-title-utils';
 import { getSharedAuthStorage } from './shared-auth';
+import { buildSyntheticPiModel, resolvePiModelString, resolvePiRegistryModel } from './pi-model-resolution';
 
 const NETWORK_ERROR_RE = /enotfound|econnrefused|etimedout|eai_again|enetunreach|timed?\s*out|timeout|abort|network\s*error/i;
 const AUTH_ERROR_RE = /authentication[_\s-]?failed|unauthorized|invalid[_\s-]?api[_\s-]?key|forbidden|401|403/i;
 const RATE_LIMIT_RE = /rate[_\s-]?limit|too\s+many\s+requests|429/i;
 const SERVER_ERROR_RE = /server[_\s-]?error|internal\s+server\s+error|5\d\d/i;
 const PROBE_ACK = 'sdk_probe_ok';
-
-function inferOneShotApi(protocol: string): string {
-  switch (protocol) {
-    case 'anthropic': return 'anthropic-messages';
-    case 'openai': return 'openai-completions';
-    case 'gemini': return 'google-generative-ai';
-    default: return 'openai-completions';
-  }
-}
 
 function resolveCustomProtocol(provider: AppConfig['provider'], customProtocol?: CustomProtocolType): CustomProtocolType {
   if (provider === 'custom') {
@@ -81,20 +73,6 @@ function mapPiAiError(errorText: string, durationMs: number): ApiTestResult {
 }
 
 /**
- * Resolve provider + model from config, returning the pi-ai model ID string.
- */
-function resolvePiModelString(config: AppConfig): string {
-  const model = config.model?.trim();
-  if (!model) return 'anthropic/claude-sonnet-4';
-  // If model already has provider prefix, use as-is
-  if (model.includes('/')) return model;
-  // Map provider to prefix
-  const provider = config.provider || 'anthropic';
-  const protocol = config.customProtocol || provider;
-  return `${protocol}/${model}`;
-}
-
-/**
  * Run a simple one-shot prompt via pi-ai model directly (no agent session needed).
  */
 async function runPiAiOneShot(
@@ -107,61 +85,22 @@ async function runPiAiOneShot(
   const parts = modelString.split('/');
   const provider = parts.length >= 2 ? parts[0] : (keyProvider || 'anthropic');
   const modelId = parts.length >= 2 ? parts.slice(1).join('/') : parts[0];
-
-  // Resolution order: key provider with full string (aggregator), parsed provider, fallbacks
-  let piModel: ReturnType<typeof getModel> = undefined as any;
-  const rawOneShotProvider = config.provider || 'anthropic';
-
-  // For aggregators like openrouter, try with the raw provider first
-  if (rawOneShotProvider === 'openrouter' && parts.length >= 2) {
-    piModel = getModel('openrouter' as any, modelString);
-  }
-  if (!piModel && keyProvider !== provider && parts.length >= 2) {
-    piModel = getModel(keyProvider as any, modelString);
-  }
-  if (!piModel) {
-    piModel = getModel(provider as any, modelId);
-  }
-  if (!piModel) {
-    for (const fp of ['openai', 'anthropic', 'google'].filter(p => p !== provider && p !== keyProvider)) {
-      piModel = getModel(fp as any, modelId);
-      if (piModel) break;
-    }
-  }
+  let piModel = resolvePiRegistryModel(modelString, {
+    configProvider: keyProvider,
+    customBaseUrl: config.baseUrl?.trim() || undefined,
+    rawProvider: config.provider || 'anthropic',
+  });
 
   if (!piModel) {
     // Synthetic fallback for unknown/custom models
     const effectiveProtocol = resolveCustomProtocol(config.provider, config.customProtocol);
-    const api = config.baseUrl?.trim() ? 'openai-completions' : inferOneShotApi(effectiveProtocol);
-    piModel = {
-      id: modelId,
-      name: modelId,
-      api,
-      provider,
-      baseUrl: config.baseUrl?.trim() || '',
-      reasoning: false,
-      input: ['text', 'image'],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 128000,
-      maxTokens: 16384,
-    } as any;
+    const api = config.baseUrl?.trim() ? 'openai-completions' : undefined;
+    piModel = buildSyntheticPiModel(modelId, provider, effectiveProtocol, config.baseUrl?.trim() || '', api);
     logWarn('[OneShot] Model not in pi-ai registry, using synthetic model:', modelString, '→', api);
   }
 
   // piModel is guaranteed non-undefined after synthetic fallback
   const resolvedModel = piModel!;
-
-  // Override baseUrl only for custom endpoints — don't overwrite registry baseUrl with preset
-  const isCustom = (config.provider === 'custom');
-  if (config.baseUrl?.trim() && (isCustom || !resolvedModel.baseUrl)) {
-    Object.assign(resolvedModel, { baseUrl: config.baseUrl.trim() });
-  }
-
-  // Aggregator providers (openrouter) always use openai-completions API
-  const rawProvider = config.provider || 'anthropic';
-  if (rawProvider === 'openrouter' && resolvedModel.api !== 'openai-completions') {
-    Object.assign(resolvedModel, { api: 'openai-completions' });
-  }
 
   // Set API key via AuthStorage (for agent sessions) AND env vars (for pi-ai completeSimple)
   const apiKey = config.apiKey?.trim();

@@ -331,13 +331,21 @@
     "recents": "Recents",
     "expandToView": "Expand to view tasks",
     "noTasks": "No tasks yet",
+    "noTasksHint": "Start a new chat to begin building, researching, or editing files.",
     "search": "Search conversations...",
     "deleteAll": "Delete all conversations",
     "localTasks": "These tasks run locally and aren't synced across devices.",
     "apiConfigured": "API Configured",
     "apiNotConfigured": "API Not Configured",
     "user": "User",
-    "newTask": "New task"
+    "newTask": "New chat",
+    "newTaskHint": "Start a fresh conversation",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "previousWeek": "Previous 7 Days",
+    "older": "Older",
+    "settings": "Settings",
+    "themeToggle": "Toggle theme"
   },
   "chat": {
     "sendMessage": "Send message",
