@@ -542,7 +542,14 @@ app.whenReady().then(async () => {
   // Initialize database
   const db = initDatabase();
 
-  // Show window early — heavy backend init proceeds in parallel below
+  pluginRuntimeService = new PluginRuntimeService(new PluginCatalogService());
+
+  // Initialize session manager before creating an interactive window.
+  // This avoids session.start racing the startup path and hitting a null manager.
+  sessionManager = new SessionManager(db, sendToRenderer, pluginRuntimeService);
+  // pi-ai handles model routing natively — no proxy warmup needed
+
+  // Show window after session manager is ready so the first click can be handled.
   createWindow();
   startNavServer(() => mainWindow);
 
@@ -560,11 +567,6 @@ app.whenReady().then(async () => {
       payload: event,
     });
   });
-  pluginRuntimeService = new PluginRuntimeService(new PluginCatalogService());
-
-  // Initialize session manager
-  sessionManager = new SessionManager(db, sendToRenderer, pluginRuntimeService);
-  // pi-ai handles model routing natively — no proxy warmup needed
 
   const scheduledTaskStore = createScheduledTaskStore(db);
   scheduledTaskManager = new ScheduledTaskManager({
