@@ -115,8 +115,8 @@ export function WelcomeView() {
         }
 
         // Start with a scale factor based on size ratio
-        let scale = Math.sqrt(MAX_BLOB_SIZE / blob.size);
-        let quality = 0.9;
+        const scale = Math.sqrt(MAX_BLOB_SIZE / blob.size);
+        const quality = 0.9;
 
         const attemptCompress = (currentScale: number, currentQuality: number): Promise<Blob> => {
           canvas.width = Math.floor(img.width * currentScale);
@@ -387,20 +387,28 @@ export function WelcomeView() {
   ];
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-4 md:p-8 pb-[15%]">
-      <div className="max-w-2xl w-full space-y-6 animate-fade-in">
-        {/* Welcome Heading */}
-        <h1 className="heading-serif text-2xl md:text-3xl font-semibold text-text-primary text-center">
-          {t('welcome.title')}
-        </h1>
+    <div className="flex-1 flex flex-col items-center justify-center px-5 py-10 md:px-8 md:py-14">
+      <div className="max-w-[840px] w-full space-y-7 animate-fade-in">
+        <div className="space-y-3 text-center">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-text-muted/80">
+            Open Cowork
+          </p>
+          <h1 className="heading-serif text-[2rem] md:text-[2.5rem] font-semibold tracking-[-0.03em] text-text-primary text-center">
+            {t('welcome.title')}
+          </h1>
+        </div>
 
         {/* Quick Action Tags */}
-        <div className="flex flex-wrap gap-2 justify-center px-2">
+        <div className="flex flex-wrap gap-2 justify-center px-3">
           {quickTags.map((tag) => (
             <button
               key={tag.id}
               onClick={() => handleTagClick(tag.id, tag.prompt)}
-              className={`tag ${selectedTag === tag.id ? 'tag-active' : ''} ${
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm transition-colors ${
+                selectedTag === tag.id
+                  ? 'border-accent/30 bg-accent-muted text-accent'
+                  : 'border-border-subtle bg-background/65 text-text-secondary hover:bg-surface-hover hover:text-text-primary'
+              } ${
                 ('requiresChrome' in tag && tag.requiresChrome) || ('requiresNotion' in tag && tag.requiresNotion) ? 'relative' : ''
               }`}
             >
@@ -426,7 +434,7 @@ export function WelcomeView() {
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          className={`card p-4 space-y-4 transition-colors ${
+          className={`rounded-[1.9rem] border border-border-muted bg-background/85 shadow-soft px-5 py-5 space-y-4 transition-colors ${
             isDragging ? 'ring-2 ring-accent bg-accent/5' : ''
           }`}
         >
@@ -507,7 +515,7 @@ export function WelcomeView() {
           />
 
           {/* Bottom Actions */}
-          <div className="flex items-center justify-between pt-2 border-t border-border">
+          <div className="flex items-center justify-between pt-3 border-t border-border-muted">
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -538,7 +546,7 @@ export function WelcomeView() {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="btn btn-primary px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn btn-primary px-5 py-2.5 rounded-2xl disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <span>{isSubmitting ? t('welcome.starting') : t('welcome.letsGo')}</span>
               <ArrowRight className="w-4 h-4" />

@@ -163,38 +163,42 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
   ];
 
   return (
-      <div className="flex h-full w-full overflow-hidden">
+      <div className="flex h-full w-full overflow-hidden bg-background">
         {/* Sidebar */}
-        <div className={`${compactSidebar ? 'w-14' : 'w-40 lg:w-48'} bg-surface-hover border-r border-border flex flex-col flex-shrink-0`}>
+        <div className={`${compactSidebar ? 'w-14' : 'w-52 lg:w-60'} bg-background-secondary/88 border-r border-border-muted flex flex-col flex-shrink-0`}>
           {!compactSidebar && (
-            <div className="p-4 border-b border-border">
-              <h2 className="text-lg font-semibold text-text-primary">{t('settings.title')}</h2>
+            <div className="px-4 pt-5 pb-4 border-b border-border-muted">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-text-muted">{t('settings.title')}</p>
+              <h2 className="mt-1 text-[1.2rem] font-semibold tracking-[-0.03em] text-text-primary">Open Cowork</h2>
             </div>
           )}
-          <div className={`flex-1 ${compactSidebar ? 'p-1 space-y-0.5' : 'p-2 space-y-1'}`}>
+          <div className={`flex-1 ${compactSidebar ? 'p-1.5 space-y-1' : 'p-3 space-y-1.5'}`}>
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 title={compactSidebar ? tab.label : undefined}
-                className={`w-full flex items-center ${compactSidebar ? 'justify-center p-2.5' : 'gap-3 px-3 py-2.5'} rounded-xl text-left transition-colors active:scale-[0.98] ${
+                className={`w-full flex items-center ${compactSidebar ? 'justify-center p-2.5' : 'gap-3 px-3.5 py-3'} rounded-2xl text-left transition-colors active:scale-[0.98] ${
                   activeTab === tab.id
-                    ? 'bg-surface-active text-text-primary font-medium'
-                    : 'hover:bg-surface-active text-text-secondary hover:text-text-primary'
+                    ? 'bg-background text-text-primary border border-border-subtle'
+                    : 'hover:bg-background/70 text-text-secondary hover:text-text-primary'
                 }`}
               >
                 <tab.icon className="w-4.5 h-4.5 flex-shrink-0" />
                 {!compactSidebar && (
-                  <p className="text-sm font-medium truncate flex-1 min-w-0">{tab.label}</p>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{tab.label}</p>
+                    <p className="text-[11px] leading-4 text-text-muted line-clamp-2 mt-0.5">{tab.description}</p>
+                  </div>
                 )}
                 {!compactSidebar && activeTab === tab.id && <ChevronRight className="w-4 h-4 flex-shrink-0" />}
               </button>
             ))}
           </div>
-          <div className={`${compactSidebar ? 'p-1' : 'p-4'} border-t border-border`}>
+          <div className={`${compactSidebar ? 'p-1.5' : 'p-4'} border-t border-border-muted`}>
             <button
               onClick={onClose}
-              className={`w-full py-2 ${compactSidebar ? 'px-2' : 'px-4'} rounded-lg bg-surface hover:bg-surface-active transition-colors text-text-secondary text-sm`}
+              className={`w-full py-2 ${compactSidebar ? 'px-2' : 'px-4'} rounded-xl bg-background/70 hover:bg-background transition-colors text-text-secondary text-sm`}
               title={compactSidebar ? t('common.close') : undefined}
             >
               {compactSidebar ? <X className="w-4 h-4 mx-auto" /> : t('common.close')}
@@ -207,19 +211,22 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
 
         {/* Content */}
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          <div className="flex items-center justify-between px-3 lg:px-6 py-4 border-b border-border flex-shrink-0">
-            <h3 className="text-lg font-semibold text-text-primary">
-              {tabs.find(t => t.id === activeTab)?.label}
-            </h3>
+          <div className="flex items-center justify-between px-4 lg:px-8 py-4 border-b border-border-muted flex-shrink-0 bg-background/88 backdrop-blur-sm">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.14em] text-text-muted">{t('settings.title')}</p>
+              <h3 className="mt-1 text-[1.15rem] font-semibold tracking-[-0.02em] text-text-primary">
+                {tabs.find(t => t.id === activeTab)?.label}
+              </h3>
+            </div>
             <button
               onClick={onClose}
-              className="p-2 rounded-lg hover:bg-surface-hover transition-colors"
+              className="p-2 rounded-xl hover:bg-surface-hover transition-colors"
             >
               <X className="w-5 h-5 text-text-secondary" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 lg:p-6">
-            <div className="max-w-[720px] w-full min-w-0 mx-auto">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 lg:px-8 lg:py-7">
+            <div className="max-w-[840px] w-full min-w-0 mx-auto">
             <div className={activeTab === 'api' ? '' : 'hidden'}>
               {viewedTabs.has('api') && (
                 <>
