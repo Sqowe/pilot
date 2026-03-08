@@ -290,9 +290,9 @@ export function RemoteControlPanel() {
     <div className="space-y-6 max-w-4xl mx-auto">
       {/* 通知 */}
       {error && (
-        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-3">
-          <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0" />
-          <span className="text-red-500">{error}</span>
+        <div className="p-4 bg-error/10 border border-error/30 rounded-xl flex items-center gap-3">
+          <AlertTriangle className="w-5 h-5 text-error flex-shrink-0" />
+          <span className="text-error">{error}</span>
         </div>
       )}
       {success && (
@@ -324,7 +324,7 @@ export function RemoteControlPanel() {
               disabled={isTogglingGateway || !isFeishuConfigured}
               className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all ${
                 status?.running
-                  ? 'bg-red-500 hover:bg-red-600 text-white'
+                  ? 'bg-error hover:bg-error/90 text-white'
                   : 'bg-accent hover:bg-accent/90 text-white'
               } disabled:opacity-50 disabled:cursor-not-allowed`}
             >
@@ -349,7 +349,7 @@ export function RemoteControlPanel() {
                 <div className="text-xs text-text-muted mt-1">已授权用户</div>
               </div>
               <div className="text-center p-3 rounded-xl bg-surface/50">
-                <div className="text-2xl font-bold text-yellow-500">{pendingPairings.length}</div>
+                <div className="text-2xl font-bold text-warning">{pendingPairings.length}</div>
                 <div className="text-xs text-text-muted mt-1">待授权</div>
               </div>
             </div>
@@ -359,8 +359,8 @@ export function RemoteControlPanel() {
 
       {/* 配对请求 */}
       {pendingPairings.length > 0 && (
-        <div className="p-5 rounded-2xl border-2 border-yellow-500/30 bg-yellow-500/5">
-          <h3 className="font-medium text-yellow-600 dark:text-yellow-400 mb-4 flex items-center gap-2">
+        <div className="p-5 rounded-2xl border-2 border-warning/30 bg-warning/5">
+          <h3 className="font-medium text-warning mb-4 flex items-center gap-2">
             <Shield className="w-5 h-5" />
             待授权的配对请求
           </h3>
@@ -375,7 +375,7 @@ export function RemoteControlPanel() {
                     {request.userName || '未知用户'}
                   </div>
                   <div className="text-sm text-text-secondary mt-1">
-                    配对码: <span className="font-mono text-yellow-600 dark:text-yellow-400 font-bold">{request.code}</span>
+                    配对码: <span className="font-mono text-warning font-bold">{request.code}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -765,7 +765,7 @@ export function RemoteControlPanel() {
                 </div>
                 <button
                   onClick={() => revokePairing(user)}
-                  className="p-2 rounded-lg hover:bg-red-500/10 text-text-muted hover:text-red-500 transition-colors"
+                  className="p-2 rounded-lg hover:bg-error/10 text-text-muted hover:text-error transition-colors"
                   title="移除授权"
                 >
                   <Trash2 className="w-4 h-4" />

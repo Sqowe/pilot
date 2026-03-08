@@ -116,12 +116,14 @@ async function waitForDevServer(url: string, maxAttempts = 30, intervalMs = 500)
   return false;
 }
 
-// Ensure a single app instance in dev/prod to avoid duplicate windows on hot restart.
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+// Single-instance lock: skip in dev mode so vite-plugin-electron can restart freely
+// without the old process blocking the new one during async cleanup.
+const isDev = !!process.env.VITE_DEV_SERVER_URL;
+const hasSingleInstanceLock = isDev || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   logWarn('[App] Another instance is already running, quitting this instance');
   app.quit();
-} else {
+} else if (!isDev) {
   app.on('second-instance', () => {
     const existingWindow = mainWindow && !mainWindow.isDestroyed()
       ? mainWindow
@@ -678,13 +680,15 @@ async function cleanupSandboxResources(): Promise<void> {
 
 // Handle app quit - window-all-closed (primary for Windows/Linux)
 app.on('window-all-closed', async () => {
-  if (process.platform !== 'darwin') {
-    // On Windows/Linux, closing all windows means quit
+  if (process.platform !== 'darwin' || process.env.VITE_DEV_SERVER_URL) {
+    // On Windows/Linux, closing all windows means quit.
+    // On macOS dev mode, also quit — so vite-plugin-electron can restart cleanly
+    // without the old process holding the single-instance lock.
     skillsManager?.stopStorageMonitoring();
     await cleanupSandboxResources();
     app.quit();
   }
-  // On macOS, keep app alive — cleanup happens in before-quit
+  // On macOS production, keep app alive — cleanup happens in before-quit
 });
 
 // Handle SIGTERM/SIGINT (e.g. pkill) — route through app.quit() for clean shutdown
@@ -695,6 +699,12 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
 // Handle app quit - before-quit (for macOS Cmd+Q and other quit methods)
 app.on('before-quit', async (event) => {
   if (!isCleaningUp) {
+    // In dev mode, exit quickly — no need for async sandbox cleanup
+    if (process.env.VITE_DEV_SERVER_URL) {
+      stopNavServer();
+      closeLogFile();
+      return;
+    }
     event.preventDefault();
     stopNavServer();
     skillsManager?.stopStorageMonitoring();

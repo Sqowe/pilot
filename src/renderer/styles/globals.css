@@ -92,6 +92,11 @@
 }
 
 @layer components {
+  /* Heading serif font — for titles and headings */
+  .heading-serif {
+    font-family: 'Source Serif 4', Georgia, serif;
+  }
+
   /* Button styles */
   .btn {
     @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-medium transition-all duration-150;
@@ -119,7 +124,7 @@
   .input {
     @apply w-full px-4 py-3 rounded-xl bg-surface border border-border;
     @apply text-text-primary placeholder:text-text-muted;
-    @apply focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent focus:ring-opacity-25;
+    @apply focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent focus:ring-opacity-30;
     @apply transition-all duration-150;
   }
 

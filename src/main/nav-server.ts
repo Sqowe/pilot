@@ -6,8 +6,8 @@ const PORT = 19888;
 const HOST = '127.0.0.1';
 const EXEC_TIMEOUT_MS = 3000;
 const VALID_TABS = new Set([
-  'api', 'sandbox', 'credentials', 'connectors',
-  'skills', 'schedule', 'remote', 'logs', 'language',
+  'api', 'sandbox', 'connectors',
+  'skills', 'schedule', 'remote', 'logs', 'general',
 ]);
 
 let server: http.Server | null = null;

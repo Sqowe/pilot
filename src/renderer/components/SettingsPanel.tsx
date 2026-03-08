@@ -3525,7 +3525,7 @@ function ScheduleTab() {
               <div className="text-xs text-text-muted">
                 会话状态：{lastRunStatusLabel}
               </div>
-              <div className="text-xs text-text-muted">
+              <div className="text-xs text-text-muted truncate" title={task.cwd}>
                 目录：{task.cwd}
               </div>
               {task.lastError && (
