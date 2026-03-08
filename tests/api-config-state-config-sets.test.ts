@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AppConfig } from '../src/renderer/types';
 import {
+  buildApiConfigBootstrap,
   FALLBACK_PROVIDER_PRESETS,
   buildApiConfigDraftSignature,
   buildApiConfigSets,
@@ -108,5 +109,36 @@ describe('api config set helpers', () => {
     };
     const signatureC = buildApiConfigDraftSignature(snapshot.activeProfileKey, changedProfiles, snapshot.enableThinking);
     expect(signatureC).not.toBe(signatureA);
+  });
+
+  it('builds bootstrap state in one pass with a valid active set', () => {
+    const config = {
+      provider: 'openai',
+      customProtocol: 'openai',
+      activeProfileKey: 'openai',
+      activeConfigSetId: 'missing',
+      apiKey: 'sk-openai',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5.4',
+      configSets: [
+        {
+          id: 'default',
+          name: '默认方案',
+          isSystem: true,
+          provider: 'openrouter',
+          customProtocol: 'anthropic',
+          activeProfileKey: 'openrouter',
+          profiles: {},
+          enableThinking: false,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      isConfigured: true,
+    } as AppConfig;
+
+    const bootstrap = buildApiConfigBootstrap(config, FALLBACK_PROVIDER_PRESETS);
+    expect(bootstrap.snapshot.activeProfileKey).toBe('openai');
+    expect(bootstrap.configSets).toHaveLength(1);
+    expect(bootstrap.activeConfigSetId).toBe('default');
   });
 });

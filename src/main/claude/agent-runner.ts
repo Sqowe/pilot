@@ -6,7 +6,6 @@ import {
   type AgentSession as PiAgentSession,
   type ToolDefinition,
 } from '@mariozechner/pi-coding-agent';
-import { getModel, type Model } from '@mariozechner/pi-ai';
 import { Type, type TSchema } from '@sinclair/typebox';
 import { getSharedAuthStorage, ModelRegistry } from './shared-auth';
 import type { Session, Message, TraceStep, ServerEvent, ContentBlock } from '../../renderer/types';
@@ -27,6 +26,7 @@ import { extractArtifactsFromText, buildArtifactTraceSteps } from '../utils/arti
 import { PluginRuntimeService } from '../skills/plugin-runtime-service';
 import type { SkillsAdapter } from '../skills/skills-adapter';
 import { configStore } from '../config/config-store';
+import { buildSyntheticPiModel, resolvePiRegistryModel } from './pi-model-resolution';
 
 // Virtual workspace path shown to the model (hides real sandbox path)
 const VIRTUAL_WORKSPACE_PATH = '/workspace';
@@ -57,39 +57,6 @@ function getBundledNodePaths(): { node: string; npx: string } | null {
 }
 
 // Shared pi-ai auth storage — created once, reused across sessions.
-
-/**
- * Infer the pi-ai API type from a protocol/provider string.
- */
-function inferApi(protocol: string): string {
-  switch (protocol) {
-    case 'anthropic': return 'anthropic-messages';
-    case 'openai': return 'openai-completions'; // default for synthetic models; registry models keep their native api
-    case 'gemini':
-    case 'google': return 'google-generative-ai';
-    default: return 'openai-completions'; // safest default for unknown protocols
-  }
-}
-
-/**
- * Build a synthetic Model for model IDs not found in the pi-ai registry.
- * Allows custom/private models behind proxies to work.
- */
-function buildSyntheticModel(modelId: string, provider: string, protocol: string, baseUrl?: string): Model<any> {
-  const api = inferApi(protocol);
-  return {
-    id: modelId,
-    name: modelId,
-    api,
-    provider,
-    baseUrl: baseUrl || '',
-    reasoning: false,
-    input: ['text', 'image'] as any,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: 16384,
-  } as Model<any>;
-}
 
 /**
  * Bridge MCP tools from MCPManager into pi-coding-agent ToolDefinition[] format.
@@ -135,82 +102,6 @@ function buildMcpCustomTools(mcpManager: MCPManager): ToolDefinition[] {
     };
     return toolDef;
   });
-}
-
-/**
- * Resolve a pi-ai Model from provider/modelId string.
- * Accepts formats: "provider/model-id" or just "model-id".
- *
- * Resolution order for compound IDs like "anthropic/claude-sonnet-4":
- *   1. Try getModel(keyProvider, fullString) — works for aggregators (openrouter
- *      uses "anthropic/claude-sonnet-4" as the model ID itself).
- *   2. Try getModel(parsedProvider, parsedModelId) — works for native providers.
- *   3. Try common fallback providers.
- *
- * When no provider prefix, uses configProvider falling back to 'anthropic'.
- * If customBaseUrl is provided, overrides the model's baseUrl.
- */
-function resolvePiModel(modelString: string, configProvider?: string, customBaseUrl?: string, rawProvider?: string): Model<any> | undefined {
-  const keyProvider = configProvider === 'custom' ? 'anthropic' : (configProvider || 'anthropic');
-  const parts = modelString.split('/');
-  let model: Model<any> | undefined;
-
-  if (parts.length >= 2) {
-    const parsedProvider = parts[0];
-    const parsedModelId = parts.slice(1).join('/');
-
-    // 1. Try raw provider (e.g. openrouter) with full model string first
-    if (rawProvider && rawProvider !== keyProvider && rawProvider !== parsedProvider) {
-      model = getModel(rawProvider as any, modelString);
-    }
-
-    // 2. Try key provider (customProtocol) with full model string
-    if (!model && keyProvider !== parsedProvider) {
-      model = getModel(keyProvider as any, modelString);
-    }
-
-    // 3. Try parsed provider with parsed model ID (native lookup)
-    if (!model) {
-      model = getModel(parsedProvider as any, parsedModelId);
-    }
-
-    // 4. Fallback: try common providers
-    if (!model) {
-      for (const fp of ['openai', 'anthropic', 'google'].filter(p => p !== parsedProvider && p !== keyProvider)) {
-        model = getModel(fp as any, parsedModelId);
-        if (model) break;
-      }
-    }
-  } else {
-    // No provider prefix — try config provider, then common fallbacks
-    model = getModel(keyProvider as any, modelString);
-    if (!model) {
-      for (const fp of ['openai', 'anthropic', 'google'].filter(p => p !== keyProvider)) {
-        model = getModel(fp as any, modelString);
-        if (model) break;
-      }
-    }
-  }
-
-  if (!model) return undefined;
-
-  // Override baseUrl only when truly custom — don't overwrite a valid registry baseUrl
-  // with a preset baseUrl (e.g. openrouter's /api vs registry's /api/v1)
-  const isCustomProvider = (rawProvider === 'custom' || configProvider === 'custom');
-  const modelHasBaseUrl = Boolean(model.baseUrl);
-  if (customBaseUrl && (isCustomProvider || !modelHasBaseUrl)) {
-    model = { ...model, baseUrl: customBaseUrl } as typeof model;
-  }
-
-  // Aggregator providers (openrouter etc.) always use openai-completions API
-  // regardless of the model's native protocol — the aggregator translates internally.
-  // Check rawProvider because configProvider may be the customProtocol (e.g. "anthropic")
-  const effectiveProvider = rawProvider || configProvider;
-  if (effectiveProvider === 'openrouter' && model.api !== 'openai-completions') {
-    model = { ...model, api: 'openai-completions' } as typeof model;
-  }
-
-  return model;
 }
 
 /**
@@ -917,14 +808,18 @@ ${sections.join('\n\n')}
       const runtimeConfig = configStore.getAll();
       const modelString = this.getCurrentModelString(runtimeConfig.model);
       const configProtocol = runtimeConfig.customProtocol || runtimeConfig.provider || 'anthropic';
-      let piModel = resolvePiModel(modelString, configProtocol, runtimeConfig.baseUrl?.trim() || undefined, runtimeConfig.provider);
+      let piModel = resolvePiRegistryModel(modelString, {
+        configProvider: configProtocol,
+        customBaseUrl: runtimeConfig.baseUrl?.trim() || undefined,
+        rawProvider: runtimeConfig.provider,
+      });
 
       if (!piModel) {
         // Synthetic fallback: construct a Model for unknown/custom models
         const parts = modelString.split('/');
         const syntheticId = parts.length >= 2 ? parts.slice(1).join('/') : modelString;
         const syntheticProvider = parts.length >= 2 ? parts[0] : (configProtocol === 'custom' ? 'anthropic' : configProtocol);
-        piModel = buildSyntheticModel(syntheticId, syntheticProvider, configProtocol, runtimeConfig.baseUrl?.trim() || undefined);
+        piModel = buildSyntheticPiModel(syntheticId, syntheticProvider, configProtocol, runtimeConfig.baseUrl?.trim() || undefined);
         logWarn('[ClaudeAgentRunner] Model not in pi-ai registry, using synthetic model:', modelString, '→', piModel.api);
       }
       log('[ClaudeAgentRunner] Resolved pi-ai model:', piModel.provider, piModel.id);

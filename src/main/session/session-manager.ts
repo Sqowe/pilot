@@ -44,6 +44,7 @@ export class SessionManager {
   private sandboxInitPromises: Map<string, Promise<void>> = new Map();
   private sessionTitleAttempts: Set<string> = new Set();
   private titleGenerationTokens: Map<string, symbol> = new Map();
+  private messageCache: Map<string, Message[]> = new Map();
 
   constructor(
     db: DatabaseInstance,
@@ -483,6 +484,7 @@ export class SessionManager {
       }
 
       // Save user message to database for persistence
+      const existingMessages = this.getMessages(session.id);
       const userMessage: Message = {
         id: uuidv4(),
         sessionId: session.id,
@@ -492,9 +494,7 @@ export class SessionManager {
       };
       this.saveMessage(userMessage);
       log('[SessionManager] User message saved:', userMessage.id, 'with', messageContent.length, 'content blocks');
-
-      // Get existing messages for context (including the one we just saved)
-      const existingMessages = this.getMessages(session.id);
+      const messagesForContext = [...existingMessages, userMessage];
 
       // Update session model to match current config (may have changed since session creation)
       const currentModel = configStore.get('model');
@@ -508,7 +508,7 @@ export class SessionManager {
       }
 
       // Run the agent
-      await this.agentRunner.run(session, enhancedPrompt, existingMessages);
+      await this.agentRunner.run(session, enhancedPrompt, messagesForContext);
 
       // 标题生成不再与首轮对话并发，避免与主请求竞争同一上游配额/通道导致体感变慢。
       this.runSessionTitleGeneration(session, prompt, existingMessages)
@@ -708,6 +708,7 @@ export class SessionManager {
 
     // Delete from database (messages will be deleted automatically via CASCADE)
     this.db.sessions.delete(sessionId);
+    this.messageCache.delete(sessionId);
     this.sessionTitleAttempts.delete(sessionId);
     this.titleGenerationTokens.delete(sessionId);
     
@@ -777,15 +778,23 @@ export class SessionManager {
       timestamp: message.timestamp,
       token_usage: message.tokenUsage ? JSON.stringify(message.tokenUsage) : null,
     });
+    const cached = this.messageCache.get(message.sessionId);
+    if (cached) {
+      cached.push(message);
+    }
     
     log('[SessionManager] Message saved:', message.id, 'role:', message.role);
   }
 
   // Get messages for a session
   getMessages(sessionId: string): Message[] {
-    const rows = this.db.messages.getBySessionId(sessionId);
+    const cached = this.messageCache.get(sessionId);
+    if (cached) {
+      return [...cached];
+    }
 
-    return rows.map((row) => ({
+    const rows = this.db.messages.getBySessionId(sessionId);
+    const messages = rows.map((row) => ({
       id: row.id,
       sessionId: row.session_id,
       role: row.role as Message['role'],
@@ -793,6 +802,8 @@ export class SessionManager {
       timestamp: row.timestamp,
       tokenUsage: row.token_usage ? JSON.parse(row.token_usage) : undefined,
     }));
+    this.messageCache.set(sessionId, messages);
+    return [...messages];
   }
 
   private normalizeContent(raw: string): ContentBlock[] {

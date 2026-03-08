@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
   ApiConfigSet,
@@ -32,6 +32,12 @@ interface ConfigStateSnapshot {
   activeProfileKey: ProviderProfileKey;
   profiles: Record<ProviderProfileKey, UIProviderProfile>;
   enableThinking: boolean;
+}
+
+interface ApiConfigBootstrap {
+  snapshot: ConfigStateSnapshot;
+  configSets: ApiConfigSet[];
+  activeConfigSetId: string;
 }
 
 type CreateMode = 'blank' | 'clone';
@@ -310,27 +316,39 @@ export function buildApiConfigSets(config: AppConfig | null | undefined, presets
   }];
 }
 
+export function buildApiConfigBootstrap(
+  config: AppConfig | null | undefined,
+  presets: ProviderPresets
+): ApiConfigBootstrap {
+  const snapshot = buildApiConfigSnapshot(config, presets);
+  const configSets = buildApiConfigSets(config, presets);
+  const activeConfigSetId =
+    typeof config?.activeConfigSetId === 'string' && configSets.some((set) => set.id === config.activeConfigSetId)
+      ? config.activeConfigSetId
+      : configSets[0]?.id || DEFAULT_CONFIG_SET_ID;
+
+  return {
+    snapshot,
+    configSets,
+    activeConfigSetId,
+  };
+}
+
 export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   const { t } = useTranslation();
   const { enabled = true, initialConfig, onSave } = options;
+  const initialBootstrapRef = useRef<ApiConfigBootstrap | null>(null);
+  if (!initialBootstrapRef.current) {
+    initialBootstrapRef.current = buildApiConfigBootstrap(initialConfig, FALLBACK_PROVIDER_PRESETS);
+  }
+  const initialBootstrap = initialBootstrapRef.current;
 
   const [presets, setPresets] = useState<ProviderPresets>(FALLBACK_PROVIDER_PRESETS);
-  const [profiles, setProfiles] = useState<Record<ProviderProfileKey, UIProviderProfile>>(() => {
-    const snapshot = buildApiConfigSnapshot(initialConfig, FALLBACK_PROVIDER_PRESETS);
-    return snapshot.profiles;
-  });
-  const [activeProfileKey, setActiveProfileKey] = useState<ProviderProfileKey>(() => {
-    const snapshot = buildApiConfigSnapshot(initialConfig, FALLBACK_PROVIDER_PRESETS);
-    return snapshot.activeProfileKey;
-  });
+  const [profiles, setProfiles] = useState<Record<ProviderProfileKey, UIProviderProfile>>(() => initialBootstrap.snapshot.profiles);
+  const [activeProfileKey, setActiveProfileKey] = useState<ProviderProfileKey>(() => initialBootstrap.snapshot.activeProfileKey);
 
-  const [configSets, setConfigSets] = useState<ApiConfigSet[]>(() => buildApiConfigSets(initialConfig, FALLBACK_PROVIDER_PRESETS));
-  const [activeConfigSetId, setActiveConfigSetId] = useState<string>(() => {
-    const sets = buildApiConfigSets(initialConfig, FALLBACK_PROVIDER_PRESETS);
-    return initialConfig?.activeConfigSetId && sets.some((set) => set.id === initialConfig.activeConfigSetId)
-      ? initialConfig.activeConfigSetId
-      : sets[0]?.id || DEFAULT_CONFIG_SET_ID;
-  });
+  const [configSets, setConfigSets] = useState<ApiConfigSet[]>(() => initialBootstrap.configSets);
+  const [activeConfigSetId, setActiveConfigSetId] = useState<string>(() => initialBootstrap.activeConfigSetId);
   const [pendingConfigSetAction, setPendingConfigSetAction] = useState<PendingConfigSetAction | null>(null);
   const [isMutatingConfigSet, setIsMutatingConfigSet] = useState(false);
 
@@ -393,22 +411,17 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   const hasUnsavedChanges = savedDraftSignature !== '' && currentDraftSignature !== savedDraftSignature;
 
   const applyLoadedState = useCallback((config: AppConfig | null | undefined, loadedPresets: ProviderPresets) => {
-    const snapshot = buildApiConfigSnapshot(config, loadedPresets);
-    const sets = buildApiConfigSets(config, loadedPresets);
-    const nextActiveConfigSetId =
-      typeof config?.activeConfigSetId === 'string' && sets.some((set) => set.id === config.activeConfigSetId)
-        ? config.activeConfigSetId
-        : sets[0]?.id || DEFAULT_CONFIG_SET_ID;
+    const bootstrap = buildApiConfigBootstrap(config, loadedPresets);
 
     setPresets(loadedPresets);
-    setProfiles(snapshot.profiles);
-    setActiveProfileKey(snapshot.activeProfileKey);
-    setEnableThinking(snapshot.enableThinking);
-    setConfigSets(sets);
-    setActiveConfigSetId(nextActiveConfigSetId);
+    setProfiles(bootstrap.snapshot.profiles);
+    setActiveProfileKey(bootstrap.snapshot.activeProfileKey);
+    setEnableThinking(bootstrap.snapshot.enableThinking);
+    setConfigSets(bootstrap.configSets);
+    setActiveConfigSetId(bootstrap.activeConfigSetId);
     setPendingConfigSetAction(null);
 
-    const activeMeta = profileKeyToProvider(snapshot.activeProfileKey);
+    const activeMeta = profileKeyToProvider(bootstrap.snapshot.activeProfileKey);
     if (activeMeta.provider === 'custom') {
       setLastCustomProtocol(activeMeta.customProtocol);
     } else {
@@ -421,7 +434,11 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       );
     }
 
-    setSavedDraftSignature(buildApiConfigDraftSignature(snapshot.activeProfileKey, snapshot.profiles, snapshot.enableThinking));
+    setSavedDraftSignature(buildApiConfigDraftSignature(
+      bootstrap.snapshot.activeProfileKey,
+      bootstrap.snapshot.profiles,
+      bootstrap.snapshot.enableThinking
+    ));
   }, []);
 
   const updateActiveProfile = useCallback((updater: (prev: UIProviderProfile) => UIProviderProfile) => {
