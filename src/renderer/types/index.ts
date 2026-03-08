@@ -9,6 +9,7 @@ export interface Session {
   mountedPaths: MountedPath[];
   allowedTools: string[];
   memoryEnabled: boolean;
+  model?: string;
   createdAt: number;
   updatedAt: number;
 }

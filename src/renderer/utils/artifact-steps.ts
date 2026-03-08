@@ -12,6 +12,18 @@ const FILE_TOOL_NAMES = new Set([
   'notebook_edit',
 ]);
 
+function isReliablePathToolName(toolName: string | undefined): boolean {
+  if (!toolName) {
+    return false;
+  }
+  if (FILE_TOOL_NAMES.has(toolName)) {
+    return true;
+  }
+
+  const normalized = toolName.trim().toLowerCase();
+  return /(?:^|__|_)(?:screenshot|take_screenshot|capture_screenshot)(?:$|__|_)/.test(normalized);
+}
+
 type ArtifactStepResult = {
   artifactSteps: TraceStep[];
   fileSteps: TraceStep[];
@@ -156,7 +168,7 @@ export function getArtifactSteps(steps: TraceStep[]): ArtifactStepResult {
     if (step.status !== 'completed') {
       return false;
     }
-    if (!step.toolName || !FILE_TOOL_NAMES.has(step.toolName)) {
+    if (!isReliablePathToolName(step.toolName)) {
       return false;
     }
     const pathFromOutput = extractFilePathFromToolOutput(step.toolOutput);
@@ -186,6 +198,6 @@ export function getArtifactSteps(steps: TraceStep[]): ArtifactStepResult {
   return {
     artifactSteps,
     fileSteps,
-    displayArtifactSteps: artifactSteps.length > 0 ? artifactSteps : fileSteps,
+    displayArtifactSteps: fileSteps,
   };
 }

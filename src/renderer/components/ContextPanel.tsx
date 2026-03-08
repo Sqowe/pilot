@@ -26,7 +26,6 @@ import {
   Plug,
   Wrench,
   MessageSquare,
-  Clock,
   Cpu,
   Copy,
 } from 'lucide-react';
@@ -63,7 +62,7 @@ export function ContextPanel() {
   const steps = activeSessionId ? traceStepsBySession[activeSessionId] || [] : [];
   const activeSession = activeSessionId ? sessions.find(s => s.id === activeSessionId) : null;
   const currentWorkingDir = activeSession?.cwd || workingDir;
-  const { artifactSteps, displayArtifactSteps } = getArtifactSteps(steps);
+  const { displayArtifactSteps } = getArtifactSteps(steps);
   const canShowItemInFolder = typeof window !== 'undefined' && !!window.electronAPI?.showItemInFolder;
 
   // Session info computations
@@ -73,18 +72,7 @@ export function ContextPanel() {
   );
   const messageCount = messages.length;
   const toolCallCount = steps.filter((s) => s.type === 'tool_call').length;
-  const modelName = appConfig?.model || '—';
-
-  // Live duration timer
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    if (!activeSession?.createdAt) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [activeSession?.createdAt]);
-
-  const duration = activeSession?.createdAt ? Math.max(0, now - activeSession.createdAt) : 0;
-  const durationStr = formatDuration(duration);
+  const modelName = activeSession?.model || appConfig?.model || '—';
 
   // Token usage aggregation
   const tokenUsage = useMemo(() => {
@@ -149,10 +137,6 @@ export function ContextPanel() {
           </div>
           <div className="flex items-center gap-3 text-xs text-text-muted">
             <span className="flex items-center gap-1">
-              <Clock className="w-3 h-3" />
-              {durationStr}
-            </span>
-            <span className="flex items-center gap-1">
               <MessageSquare className="w-3 h-3" />
               {messageCount}
             </span>
@@ -166,21 +150,9 @@ export function ContextPanel() {
 
       {/* Token Usage */}
       {tokenUsage.total > 0 && (
-        <div className="px-4 py-3 border-b border-border space-y-2">
-          <p className="text-xs font-medium text-text-muted">{t('context.tokenUsage')}</p>
-          <div className="w-full h-1.5 bg-surface-muted rounded-full overflow-hidden">
-            <div
-              className="h-full bg-accent rounded-full transition-all"
-              style={{ width: `${Math.min(100, (tokenUsage.total / 200_000) * 100)}%` }}
-            />
-          </div>
-          <div className="flex items-center justify-between text-xs text-text-muted">
-            <span>{t('context.inputTokens')}: {formatTokenCount(tokenUsage.input)}</span>
-            <span>{t('context.outputTokens')}: {formatTokenCount(tokenUsage.output)}</span>
-          </div>
-          <p className="text-xs text-text-muted text-center">
-            {t('context.totalTokens')}: {formatTokenCount(tokenUsage.total)} / 200k
-          </p>
+        <div className="px-4 py-2 border-b border-border flex items-center justify-between text-xs text-text-muted">
+          <span>{t('context.inputTokens')}: {formatTokenCount(tokenUsage.input)}</span>
+          <span>{t('context.outputTokens')}: {formatTokenCount(tokenUsage.output)}</span>
         </div>
       )}
 
@@ -206,18 +178,13 @@ export function ContextPanel() {
             ) : (
               <div className="space-y-1">
                 {displayArtifactSteps.map((step, index) => {
-                const artifactInfo = parseArtifactOutput(step.toolOutput);
-                const fallbackPath = extractFilePathFromToolOutput(step.toolOutput)
-                  || extractFilePathFromToolInput(step.toolInput);
+                  const fallbackPath = extractFilePathFromToolOutput(step.toolOutput)
+                    || extractFilePathFromToolInput(step.toolInput);
                   const resolvedFallbackPath = fallbackPath
                     ? resolveArtifactPath(fallbackPath, currentWorkingDir)
                     : '';
-                  const label = artifactSteps.length > 0
-                    ? getArtifactLabel(artifactInfo?.path || '', artifactInfo?.name)
-                    : (fallbackPath ? getArtifactLabel(fallbackPath) : t('context.fileCreated'));
-                  const artifactPath = artifactSteps.length > 0
-                    ? resolveArtifactPath(artifactInfo?.path || '', currentWorkingDir)
-                    : resolvedFallbackPath;
+                  const label = fallbackPath ? getArtifactLabel(fallbackPath) : t('context.fileCreated');
+                  const artifactPath = resolvedFallbackPath;
                   const canClick = Boolean(artifactPath && canShowItemInFolder);
                   const iconComponent = getArtifactIconComponent(label);
                   const IconComponent =
@@ -435,22 +402,6 @@ function ConnectorItem({
   );
 }
 
-function parseArtifactOutput(toolOutput?: string): { path?: string; name?: string; type?: string } | null {
-  if (!toolOutput) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(toolOutput);
-    if (parsed && typeof parsed === 'object') {
-      return parsed as { path?: string; name?: string; type?: string };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-
 // Format long paths to show abbreviated version
 function formatPath(path: string): string {
   if (!path) return '';
@@ -470,15 +421,6 @@ function formatPath(path: string): string {
   }
   
   return path;
-}
-
-function formatDuration(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const h = Math.floor(m / 60);
-  if (h > 0) return `${h}h ${m % 60}m`;
-  if (m > 0) return `${m}m ${s % 60}s`;
-  return `${s}s`;
 }
 
 function formatTokenCount(n: number): string {

@@ -218,6 +218,7 @@ export class SessionManager {
         'grep',
       ],
       memoryEnabled: false,
+      model: configStore.get('model') || undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -235,6 +236,7 @@ export class SessionManager {
       mounted_paths: JSON.stringify(session.mountedPaths),
       allowed_tools: JSON.stringify(session.allowedTools),
       memory_enabled: session.memoryEnabled ? 1 : 0,
+      model: session.model || null,
       created_at: session.createdAt,
       updated_at: session.updatedAt,
     });
@@ -255,6 +257,7 @@ export class SessionManager {
       mountedPaths: JSON.parse(row.mounted_paths),
       allowedTools: JSON.parse(row.allowed_tools),
       memoryEnabled: row.memory_enabled === 1,
+      model: row.model || undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -274,6 +277,7 @@ export class SessionManager {
       mountedPaths: JSON.parse(row.mounted_paths),
       allowedTools: JSON.parse(row.allowed_tools),
       memoryEnabled: row.memory_enabled === 1,
+      model: row.model || undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -491,6 +495,17 @@ export class SessionManager {
 
       // Get existing messages for context (including the one we just saved)
       const existingMessages = this.getMessages(session.id);
+
+      // Update session model to match current config (may have changed since session creation)
+      const currentModel = configStore.get('model');
+      if (currentModel && currentModel !== session.model) {
+        session.model = currentModel;
+        this.db.sessions.update(session.id, { model: currentModel });
+        this.sendToRenderer({
+          type: 'session.update',
+          payload: { sessionId: session.id, updates: { model: currentModel } },
+        });
+      }
 
       // Run the agent
       await this.agentRunner.run(session, enhancedPrompt, existingMessages);
