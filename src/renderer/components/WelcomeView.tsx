@@ -37,6 +37,7 @@ export function WelcomeView() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { startSession, changeWorkingDir, isElectron } = useIPC();
   const workingDir = useAppStore((state) => state.workingDir);
+  const canSubmit = prompt.trim().length > 0 || pastedImages.length > 0 || attachedFiles.length > 0;
 
   const handleSelectFolder = async () => {
     await changeWorkingDir();
@@ -316,14 +317,16 @@ export function WelcomeView() {
     setIsSubmitting(true);
     try {
       const sessionTitle = currentPrompt.slice(0, 50) + (currentPrompt.length > 50 ? '...' : '');
-      await startSession(sessionTitle, contentBlocks, workingDir || undefined);
-      setPrompt('');
-      if (textareaRef.current) {
-        textareaRef.current.value = '';
+      const session = await startSession(sessionTitle, contentBlocks, workingDir || undefined);
+      if (session) {
+        setPrompt('');
+        if (textareaRef.current) {
+          textareaRef.current.value = '';
+        }
+        pastedImages.forEach(img => URL.revokeObjectURL(img.url));
+        setPastedImages([]);
+        setAttachedFiles([]);
       }
-      pastedImages.forEach(img => URL.revokeObjectURL(img.url));
-      setPastedImages([]);
-      setAttachedFiles([]);
     } finally {
       setIsSubmitting(false);
     }
@@ -556,7 +559,7 @@ export function WelcomeView() {
 
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={!canSubmit || isSubmitting}
               className="btn btn-primary px-5 py-2.5 rounded-2xl disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <span>{isSubmitting ? t('welcome.starting') : t('welcome.letsGo')}</span>
