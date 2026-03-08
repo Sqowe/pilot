@@ -1,8 +1,4 @@
-import { useState, isValidElement, cloneElement, memo, useMemo } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkMath from 'remark-math';
-import remarkGfm from 'remark-gfm';
-import rehypeKatex from 'rehype-katex';
+import { Suspense, lazy, useState, isValidElement, cloneElement, memo, useMemo } from 'react';
 import { useAppStore } from '../store';
 import {
   splitTextByFileMentions,
@@ -39,6 +35,8 @@ interface MessageCardProps {
   message: Message;
   isStreaming?: boolean;
 }
+
+const MessageMarkdown = lazy(() => import('./MessageMarkdown').then((module) => ({ default: module.MessageMarkdown })));
 
 export const MessageCard = memo(function MessageCard({ message, isStreaming }: MessageCardProps) {
   const isUser = message.role === 'user';
@@ -246,12 +244,12 @@ const ContentBlockView = memo(function ContentBlockView({ block, isUser, isStrea
       }
       
       return (
-        <div className="prose-chat max-w-none text-text-primary">
-          <ReactMarkdown
-            remarkPlugins={[remarkMath, [remarkGfm, { singleTilde: false }]]}
-            rehypePlugins={[rehypeKatex]}
+        <Suspense fallback={<div className="prose-chat max-w-none text-text-primary whitespace-pre-wrap break-words">{text}</div>}>
+          <MessageMarkdown
+            normalizedText={normalizedText}
+            isStreaming={isStreaming}
             components={{
-              a({ children, href }) {
+              a({ children, href }: { children?: React.ReactNode; href?: string }) {
                 const localFilePath = resolveLocalFilePathFromHref(href, currentWorkingDir);
                 if (localFilePath) {
                   return (
@@ -290,14 +288,14 @@ const ContentBlockView = memo(function ContentBlockView({ block, isUser, isStrea
                   </a>
                 );
               },
-              blockquote({ children }) {
+              blockquote({ children }: { children?: React.ReactNode }) {
                 return (
                   <blockquote className="border-l-2 border-accent/40 pl-4 text-text-muted">
                     {children}
                   </blockquote>
                 );
               },
-              code({ className, children, ...props }) {
+              code({ className, children, ...props }: { className?: string; children?: React.ReactNode }) {
                 const match = /language-(\w+)/.exec(className || '');
                 const isInline = !match;
 
@@ -320,21 +318,21 @@ const ContentBlockView = memo(function ContentBlockView({ block, isUser, isStrea
                   </CodeBlock>
                 );
               },
-              p({ children }) {
+              p({ children }: { children?: React.ReactNode }) {
                 return (
                   <p className="text-left">
                     {renderChildrenWithFileLinks(children, 'p')}
                   </p>
                 );
               },
-              li({ children }) {
+              li({ children }: { children?: React.ReactNode }) {
                 return (
                   <li className="text-left">
                     {renderChildrenWithFileLinks(children, 'li')}
                   </li>
                 );
               },
-              table({ children }) {
+              table({ children }: { children?: React.ReactNode }) {
                 return (
                   <div className="overflow-x-auto my-3">
                     <table className="min-w-full border-collapse">
@@ -343,21 +341,21 @@ const ContentBlockView = memo(function ContentBlockView({ block, isUser, isStrea
                   </div>
                 );
               },
-              th({ children }) {
+              th({ children }: { children?: React.ReactNode }) {
                 return (
                   <th className="border border-border px-3 py-2 text-left text-sm font-semibold text-text-primary bg-surface-muted">
                     {children}
                   </th>
                 );
               },
-              td({ children }) {
+              td({ children }: { children?: React.ReactNode }) {
                 return (
                   <td className="border border-border px-3 py-2 text-sm text-text-primary">
                     {children}
                   </td>
                 );
               },
-              input({ checked, ...props }) {
+              input({ checked, ...props }: { checked?: boolean }) {
                 return (
                   <input
                     type="checkbox"
@@ -368,14 +366,14 @@ const ContentBlockView = memo(function ContentBlockView({ block, isUser, isStrea
                   />
                 );
               },
-              strong({ children }) {
+              strong({ children }: { children?: React.ReactNode }) {
                 return (
                   <strong>
                     {renderChildrenWithFileLinks(children, 'strong')}
                   </strong>
                 );
               },
-              em({ children }) {
+              em({ children }: { children?: React.ReactNode }) {
                 return (
                   <em>
                     {renderChildrenWithFileLinks(children, 'em')}
@@ -383,13 +381,8 @@ const ContentBlockView = memo(function ContentBlockView({ block, isUser, isStrea
                 );
               },
             }}
-          >
-            {normalizedText}
-          </ReactMarkdown>
-          {isStreaming && (
-            <span className="inline-block w-2 h-4 bg-accent ml-1 animate-pulse" />
-          )}
-        </div>
+          />
+        </Suspense>
       );
     }
 
