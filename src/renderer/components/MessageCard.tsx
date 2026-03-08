@@ -602,11 +602,6 @@ function ToolUseBlock({ block, allBlocks, message }: { block: ToolUseContent; al
             <div className="px-3 py-2 border-t border-border/50">
               <div className="text-[10px] uppercase tracking-wider text-text-muted font-medium mb-1">
                 Output
-                {toolResult.content && (
-                  <span className="ml-2 normal-case tracking-normal">
-                    {toolResult.content.trim().split('\n').length}L
-                  </span>
-                )}
               </div>
               <pre className={`text-xs font-mono whitespace-pre-wrap break-all rounded-lg p-2.5 border border-border-subtle max-h-[300px] overflow-y-auto ${
                 isError ? 'text-error bg-error/5' : 'text-text-secondary bg-surface-muted'
