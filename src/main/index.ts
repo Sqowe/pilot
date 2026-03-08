@@ -44,6 +44,7 @@ import {
   setDevLogsEnabled,
   isDevLogsEnabled,
 } from './utils/logger';
+import { listRecentWorkspaceFiles } from './utils/recent-workspace-files';
 
 // Current working directory (persisted between sessions)
 let currentWorkingDir: string | null = null;
@@ -895,6 +896,16 @@ ipcMain.handle('shell.showItemInFolder', async (_event, filePath: string, cwd?: 
   }
 });
 
+ipcMain.handle(
+  'artifacts.listRecentFiles',
+  async (_event, cwd: string, sinceMs: number, limit: number = 50) => {
+    if (!cwd || !isAbsolute(cwd)) {
+      return [];
+    }
+    return listRecentWorkspaceFiles(cwd, sinceMs, limit);
+  }
+);
+
 ipcMain.handle('dialog.selectFiles', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile', 'multiSelections'],
@@ -927,6 +938,9 @@ const syncConfigAfterMutation = async () => {
   // Reload config in session manager (safer than recreating it)
   if (sessionManager) {
     sessionManager.reloadConfig();
+    // MCP fingerprint check will skip reinit if servers haven't changed
+    await sessionManager.reloadMCP().catch((err) => logError('[Config] MCP reload failed:', err));
+    await sessionManager.reloadSandbox().catch((err) => logError('[Config] Sandbox reload failed:', err));
     log('[Config] Session manager config reloaded');
   }
 

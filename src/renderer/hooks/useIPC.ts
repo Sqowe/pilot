@@ -137,6 +137,8 @@ export function useIPC() {
           }
           bufferTrace({ kind: 'update', sessionId: event.payload.sessionId, stepId: event.payload.stepId, updates: event.payload.updates });
           if (event.payload.updates.status && event.payload.updates.status !== 'running') {
+            // Flush pending traces so the store reflects any trace.step adds from this frame
+            flushTraces();
             const steps = useAppStore.getState().traceStepsBySession[event.payload.sessionId] || [];
             const step = steps.find((item) => item.id === event.payload.stepId);
             if (step?.type === 'thinking') {
