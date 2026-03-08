@@ -121,7 +121,7 @@ export function Sidebar() {
   return (
     <div
       className={`bg-surface border-r border-border flex flex-col overflow-hidden transition-all duration-200 ${
-        sidebarCollapsed ? 'w-16' : 'w-64'
+        sidebarCollapsed ? 'w-16' : 'w-72'
       }`}
     >
       {/* Header with App Title and Dark Mode Toggle */}
@@ -259,7 +259,7 @@ export function Sidebar() {
                     : 'hover:bg-surface-hover'
                 }`}
               >
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 pr-6">
                   <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
                     loadingSession === session.id ? 'bg-accent animate-pulse' :
                     (activeTurnsBySession[session.id] || (pendingTurnsBySession[session.id]?.length ?? 0) > 0) ? 'bg-accent' :
@@ -268,6 +268,9 @@ export function Sidebar() {
                   }`} />
                   <span className="text-sm text-text-primary truncate flex-1">
                     {session.title}
+                  </span>
+                  <span className="text-[11px] text-text-muted flex-shrink-0">
+                    {formatRelativeTime(session.createdAt)}
                   </span>
                 </div>
                 
@@ -329,4 +332,17 @@ export function Sidebar() {
       </div>
     </div>
   );
+}
+
+function formatRelativeTime(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const minutes = Math.floor(diff / 60_000);
+  const hours = Math.floor(diff / 3_600_000);
+  const days = Math.floor(diff / 86_400_000);
+
+  if (minutes < 1) return '<1m';
+  if (minutes < 60) return `${minutes}m`;
+  if (hours < 24) return `${hours}h`;
+  if (days < 30) return `${days}d`;
+  return new Date(timestamp).toLocaleDateString();
 }

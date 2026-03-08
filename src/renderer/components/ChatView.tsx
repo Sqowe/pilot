@@ -565,7 +565,7 @@ export function ChatView() {
         className="relative h-14 border-b border-border grid grid-cols-[1fr_auto_1fr] items-center px-4 lg:px-6 bg-surface/80 backdrop-blur-sm"
       >
         <div />
-        <h2 ref={titleRef} className="heading-serif font-medium text-text-primary text-center truncate max-w-[40vw] lg:max-w-lg">
+        <h2 ref={titleRef} className="heading-serif text-lg font-medium text-text-primary text-center truncate max-w-[40vw] lg:max-w-lg">
           {activeSession.title}
         </h2>
         {activeConnectors.length > 0 && (
