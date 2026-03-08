@@ -331,13 +331,21 @@
     "recents": "最近",
     "expandToView": "展开查看任务",
     "noTasks": "暂无任务",
+    "noTasksHint": "开始一个新对话，继续构建、调研或编辑文件。",
     "search": "搜索对话...",
     "deleteAll": "删除所有对话",
     "localTasks": "这些任务在本地运行，不会在设备间同步。",
     "apiConfigured": "API 已配置",
     "apiNotConfigured": "API 未配置",
     "user": "用户",
-    "newTask": "新任务"
+    "newTask": "新对话",
+    "newTaskHint": "开启一段全新的对话",
+    "today": "今天",
+    "yesterday": "昨天",
+    "previousWeek": "最近 7 天",
+    "older": "更早",
+    "settings": "设置",
+    "themeToggle": "切换主题"
   },
   "chat": {
     "sendMessage": "发送消息",
