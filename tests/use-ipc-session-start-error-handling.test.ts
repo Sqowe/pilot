@@ -9,7 +9,9 @@ describe('useIPC session start error handling', () => {
     const source = fs.readFileSync(useIPCPath, 'utf8');
 
     expect(source).toContain('id: `notice-session-start-${Date.now()}`');
-    expect(source).toContain("message: e instanceof Error ? e.message : '启动会话失败，请稍后重试'");
+    expect(source).toContain(
+      "message: e instanceof Error ? e.message : i18n.t('chat.startFailed')"
+    );
     expect(source).not.toContain('throw e;');
   });
 });
