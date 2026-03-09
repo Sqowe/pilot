@@ -134,6 +134,22 @@ describe('ConfigStore applyToEnv', () => {
     expect(process.env.OPENAI_BASE_URL).toBe('http://127.0.0.1:8082/v1');
   });
 
+  it('exports ollama placeholder key and normalized base url when api key is empty', () => {
+    const store = new ConfigStore();
+
+    store.update({
+      provider: 'ollama',
+      apiKey: '',
+      baseUrl: 'https://ollama.example.internal/proxy',
+      model: 'qwen3.5:0.8b',
+    });
+    store.applyToEnv();
+
+    expect(process.env.OPENAI_API_KEY).toBe('sk-ollama-local-proxy');
+    expect(process.env.OPENAI_BASE_URL).toBe('https://ollama.example.internal/proxy/v1');
+    expect(process.env.OPENAI_MODEL).toBe('qwen3.5:0.8b');
+  });
+
   it('normalizes trailing /v1 for anthropic-compatible base url when applying env', () => {
     const store = new ConfigStore();
 

@@ -10,6 +10,7 @@ import { PluginCatalogService } from './skills/plugin-catalog-service';
 import { PluginRuntimeService } from './skills/plugin-runtime-service';
 import { configStore, getPiAiModelPresets, type AppConfig, type CreateConfigSetPayload } from './config/config-store';
 import { runConfigApiTest } from './config/config-test-routing';
+import { listOllamaModels } from './config/ollama-api';
 import { mcpConfigStore } from './mcp/mcp-config-store';
 import { credentialsStore, type UserCredential } from './credentials/credentials-store';
 import { getSandboxAdapter, shutdownSandbox } from './sandbox/sandbox-adapter';
@@ -18,7 +19,7 @@ import { WSLBridge } from './sandbox/wsl-bridge';
 import { LimaBridge } from './sandbox/lima-bridge';
 import { getSandboxBootstrap } from './sandbox/sandbox-bootstrap';
 import type { MCPServerConfig } from './mcp/mcp-manager';
-import type { ClientEvent, ServerEvent, ApiTestInput, ApiTestResult } from '../renderer/types';
+import type { ClientEvent, ServerEvent, ApiTestInput, ApiTestResult, ProviderModelInfo } from '../renderer/types';
 import { remoteManager, type AgentExecutor } from './remote/remote-manager';
 import { remoteConfigStore } from './remote/remote-config-store';
 import type { GatewayConfig, FeishuChannelConfig, ChannelType } from './remote/types';
@@ -1015,6 +1016,16 @@ ipcMain.handle('config.test', async (_event, payload: ApiTestInput): Promise<Api
     };
   }
 });
+
+ipcMain.handle(
+  'config.listModels',
+  async (_event, payload: { provider: AppConfig['provider']; apiKey: string; baseUrl?: string }): Promise<ProviderModelInfo[]> => {
+    if (payload.provider !== 'ollama') {
+      return [];
+    }
+    return listOllamaModels(payload);
+  }
+);
 
 ipcMain.handle('auth.getStatus', () => {
   return [];

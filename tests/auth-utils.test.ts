@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  normalizeOllamaBaseUrl,
   getUnifiedUnsupportedCustomOpenAIBaseUrl,
   isOfficialOpenAIBaseUrl,
+  isOllamaLegacyCustomOpenAIConfig,
   isLoopbackBaseUrl,
   isLikelyOAuthAccessToken,
   normalizeAnthropicBaseUrl,
+  resolveOllamaCredentials,
   resolveOpenAICredentials,
   sanitizeOpenAIAccountId,
   shouldAllowEmptyAnthropicApiKey,
   shouldAllowEmptyOpenAIApiKey,
+  shouldAllowEmptyOllamaApiKey,
   shouldAllowEmptyGeminiApiKey,
   shouldUseAnthropicAuthToken,
 } from '../src/main/config/auth-utils';
@@ -211,6 +215,88 @@ describe('auth-utils', () => {
         provider: 'openai',
         customProtocol: 'openai',
         baseUrl: 'http://127.0.0.1:8082',
+      })
+    ).toBe(false);
+  });
+
+  it('allows empty ollama api key for any configured ollama base url', () => {
+    expect(
+      shouldAllowEmptyOllamaApiKey({
+        provider: 'ollama',
+        customProtocol: 'openai',
+        baseUrl: 'http://localhost:11434/v1',
+      })
+    ).toBe(true);
+
+    expect(
+      shouldAllowEmptyOllamaApiKey({
+        provider: 'ollama',
+        customProtocol: 'openai',
+        baseUrl: 'https://ollama.example.internal/proxy/v1',
+      })
+    ).toBe(true);
+
+    expect(
+      shouldAllowEmptyOllamaApiKey({
+        provider: 'custom',
+        customProtocol: 'openai',
+        baseUrl: 'https://ollama.example.internal/proxy/v1',
+      })
+    ).toBe(false);
+  });
+
+  it('normalizes ollama base urls to an openai-compatible /v1 endpoint', () => {
+    expect(normalizeOllamaBaseUrl('http://localhost:11434')).toBe('http://localhost:11434/v1');
+    expect(normalizeOllamaBaseUrl('http://localhost:11434/')).toBe('http://localhost:11434/v1');
+    expect(normalizeOllamaBaseUrl('http://localhost:11434/v1')).toBe('http://localhost:11434/v1');
+    expect(normalizeOllamaBaseUrl('https://ollama.example.internal/proxy')).toBe('https://ollama.example.internal/proxy/v1');
+    expect(normalizeOllamaBaseUrl(undefined)).toBeUndefined();
+  });
+
+  it('injects an internal placeholder key for ollama when api key is empty', () => {
+    const resolved = resolveOllamaCredentials({
+      provider: 'ollama',
+      customProtocol: 'openai',
+      apiKey: '',
+      baseUrl: 'http://localhost:11434',
+    });
+
+    expect(resolved).toEqual({
+      apiKey: 'sk-ollama-local-proxy',
+      baseUrl: 'http://localhost:11434/v1',
+    });
+  });
+
+  it('detects legacy custom openai localhost ollama configs conservatively', () => {
+    expect(
+      isOllamaLegacyCustomOpenAIConfig({
+        provider: 'custom',
+        customProtocol: 'openai',
+        baseUrl: 'http://localhost:11434/v1',
+      })
+    ).toBe(true);
+
+    expect(
+      isOllamaLegacyCustomOpenAIConfig({
+        provider: 'custom',
+        customProtocol: 'openai',
+        baseUrl: 'http://localhost:11434',
+      })
+    ).toBe(true);
+
+    expect(
+      isOllamaLegacyCustomOpenAIConfig({
+        provider: 'custom',
+        customProtocol: 'openai',
+        baseUrl: 'https://ollama.example.internal/v1',
+      })
+    ).toBe(false);
+
+    expect(
+      isOllamaLegacyCustomOpenAIConfig({
+        provider: 'custom',
+        customProtocol: 'openai',
+        baseUrl: 'http://localhost:8080/v1',
       })
     ).toBe(false);
   });
