@@ -889,6 +889,7 @@ ${sections.join('\n\n')}
         configProvider: configProtocol,
         customBaseUrl: runtimeConfig.baseUrl?.trim() || undefined,
         rawProvider: runtimeConfig.provider,
+        customProtocol: runtimeConfig.customProtocol,
       });
 
       if (!piModel) {
