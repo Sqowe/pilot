@@ -5,6 +5,7 @@ import type { AppConfig } from '../src/main/config/config-store';
 const mocks = vi.hoisted(() => ({
   probeWithClaudeSdk: vi.fn(),
   testOllamaConnection: vi.fn(),
+  testApiConnection: vi.fn(),
 }));
 
 vi.mock('../src/main/claude/claude-sdk-one-shot', () => ({
@@ -13,6 +14,10 @@ vi.mock('../src/main/claude/claude-sdk-one-shot', () => ({
 
 vi.mock('../src/main/config/ollama-api', () => ({
   testOllamaConnection: mocks.testOllamaConnection,
+}));
+
+vi.mock('../src/main/config/api-tester', () => ({
+  testApiConnection: mocks.testApiConnection,
 }));
 
 import { runConfigApiTest } from '../src/main/config/config-test-routing';
@@ -42,6 +47,7 @@ describe('runConfigApiTest', () => {
   beforeEach(() => {
     mocks.probeWithClaudeSdk.mockReset();
     mocks.testOllamaConnection.mockReset();
+    mocks.testApiConnection.mockReset();
   });
 
   it('routes config.test to Claude SDK probe', async () => {
@@ -113,6 +119,57 @@ describe('runConfigApiTest', () => {
 
     expect(result).toEqual(expected);
     expect(mocks.probeWithClaudeSdk).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes live config tests through direct api tester for non-ollama providers', async () => {
+    const expected: ApiTestResult = { ok: true, latencyMs: 22 };
+    mocks.testApiConnection.mockResolvedValue(expected);
+
+    const result = await runConfigApiTest(
+      {
+        provider: 'custom',
+        customProtocol: 'anthropic',
+        apiKey: 'sk-test',
+        baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+        model: 'glm-5',
+        useLiveRequest: true,
+      },
+      createConfig()
+    );
+
+    expect(result).toEqual(expected);
+    expect(mocks.testApiConnection).toHaveBeenCalledTimes(1);
+    expect(mocks.probeWithClaudeSdk).not.toHaveBeenCalled();
+    expect(mocks.testOllamaConnection).not.toHaveBeenCalled();
+  });
+
+  it('falls back to probe for gemini live tests until direct live support exists', async () => {
+    const expected: ApiTestResult = { ok: true, latencyMs: 14 };
+    mocks.probeWithClaudeSdk.mockResolvedValue(expected);
+
+    const result = await runConfigApiTest(
+      {
+        provider: 'gemini',
+        customProtocol: 'gemini',
+        apiKey: 'AIza-test',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini/gemini-2.5-flash',
+        useLiveRequest: true,
+      },
+      {
+        ...createConfig(),
+        provider: 'gemini',
+        customProtocol: 'gemini',
+        activeProfileKey: 'gemini',
+        apiKey: 'AIza-test',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini/gemini-2.5-flash',
+      }
+    );
+
+    expect(result).toEqual(expected);
+    expect(mocks.probeWithClaudeSdk).toHaveBeenCalledTimes(1);
+    expect(mocks.testApiConnection).not.toHaveBeenCalled();
   });
 
   it('returns failure when Claude Code executable is not found', async () => {

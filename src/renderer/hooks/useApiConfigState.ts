@@ -140,6 +140,10 @@ export function isCustomGeminiLoopbackGateway(baseUrl: string): boolean {
   return isLoopbackBaseUrl(baseUrl);
 }
 
+export function isCustomOpenAiLoopbackGateway(baseUrl: string): boolean {
+  return isLoopbackBaseUrl(baseUrl);
+}
+
 function isLegacyOllamaConfig(
   config: Pick<AppConfig, 'provider' | 'customProtocol' | 'baseUrl'> | null | undefined
 ): boolean {
@@ -797,8 +801,11 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     provider === 'ollama' ||
     (provider === 'custom' &&
       ((customProtocol === 'anthropic' && isCustomAnthropicLoopbackGateway(baseUrl)) ||
+        (customProtocol === 'openai' && isCustomOpenAiLoopbackGateway(baseUrl)) ||
         (customProtocol === 'gemini' && isCustomGeminiLoopbackGateway(baseUrl))));
   const requiresApiKey = !allowEmptyApiKey;
+  const supportsLiveRequestTest =
+    provider !== 'gemini' && !(provider === 'custom' && customProtocol === 'gemini');
   const showsCompatibilityProbeHint =
     provider === 'openrouter' || (provider === 'custom' && customProtocol === 'anthropic');
 
@@ -1011,6 +1018,12 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       return next;
     });
   }, [activeProfileKey, baseUrl, provider]);
+
+  useEffect(() => {
+    if (!supportsLiveRequestTest && useLiveTest) {
+      setUseLiveTest(false);
+    }
+  }, [supportsLiveRequestTest, useLiveTest]);
 
   const handleTest = useCallback(async () => {
     if (requiresApiKey && !apiKey.trim()) {
@@ -1475,6 +1488,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     testResult,
     friendlyTestDetails,
     useLiveTest,
+    supportsLiveRequestTest,
     isOllamaMode: provider === 'ollama',
     requiresApiKey,
     showsCompatibilityProbeHint,

@@ -6,6 +6,7 @@ import {
   getModelInputGuidance,
   isCustomAnthropicLoopbackGateway,
   isCustomGeminiLoopbackGateway,
+  isCustomOpenAiLoopbackGateway,
   profileKeyFromProvider,
   profileKeyToProvider,
 } from '../src/renderer/hooks/useApiConfigState';
@@ -152,6 +153,14 @@ describe('api config state helpers', () => {
     expect(isCustomGeminiLoopbackGateway('http://[::1]:8082')).toBe(true);
     expect(isCustomGeminiLoopbackGateway('http://0.0.0.0:8082')).toBe(true);
     expect(isCustomGeminiLoopbackGateway('https://proxy.example.com')).toBe(false);
+  });
+
+  it('detects local custom openai loopback gateway url', () => {
+    expect(isCustomOpenAiLoopbackGateway('http://127.0.0.1:8082/v1')).toBe(true);
+    expect(isCustomOpenAiLoopbackGateway('http://localhost:8082')).toBe(true);
+    expect(isCustomOpenAiLoopbackGateway('http://[::1]:8082')).toBe(true);
+    expect(isCustomOpenAiLoopbackGateway('http://0.0.0.0:8082')).toBe(true);
+    expect(isCustomOpenAiLoopbackGateway('https://relay.example.com/v1')).toBe(false);
   });
 
   it('loads gemini provider and custom gemini profile values without fallback drift', () => {

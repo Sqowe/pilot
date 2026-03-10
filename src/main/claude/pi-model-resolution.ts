@@ -140,6 +140,14 @@ export function applyPiModelRuntimeOverrides(
   }
 
   const effectiveProvider = options.rawProvider || options.configProvider;
+  if (
+    options.customBaseUrl &&
+    isCustomProvider &&
+    nextModel.api === 'openai-responses'
+  ) {
+    // Most custom OpenAI-compatible relays only implement chat/completions.
+    nextModel = { ...nextModel, api: 'openai-completions' } as typeof nextModel;
+  }
   if (effectiveProvider === 'openrouter' && nextModel.api !== 'openai-completions') {
     nextModel = { ...nextModel, api: 'openai-completions' } as typeof nextModel;
   }

@@ -67,6 +67,7 @@ export function ConfigModal({
     testResult,
     friendlyTestDetails,
     useLiveTest,
+    supportsLiveRequestTest,
     isOllamaMode,
     requiresApiKey,
     showsCompatibilityProbeHint,
@@ -431,20 +432,22 @@ export function ConfigModal({
               {successMessage}
             </div>
           )}
-          <div className="flex items-start gap-2 text-xs text-text-muted mb-3">
-            <input
-              type="checkbox"
-              id="api-live-test-modal"
-              checked={useLiveTest}
-              onChange={(e) => setUseLiveTest(e.target.checked)}
-              className="mt-0.5 w-4 h-4 rounded border-border text-accent focus:ring-accent"
-            />
-            <label htmlFor="api-live-test-modal" className="space-y-0.5">
-              <div className="text-text-primary">{t('api.liveTest')}</div>
-              <div>{t('api.liveTestHint')}</div>
-              {showsCompatibilityProbeHint && <div>{t('api.liveTestCompatibilityHint')}</div>}
-            </label>
-          </div>
+          {supportsLiveRequestTest && (
+            <div className="flex items-start gap-2 text-xs text-text-muted mb-3">
+              <input
+                type="checkbox"
+                id="api-live-test-modal"
+                checked={useLiveTest}
+                onChange={(e) => setUseLiveTest(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-border text-accent focus:ring-accent"
+              />
+              <label htmlFor="api-live-test-modal" className="space-y-0.5">
+                <div className="text-text-primary">{t('api.liveTest')}</div>
+                <div>{t('api.liveTestHint')}</div>
+                {showsCompatibilityProbeHint && <div>{t('api.liveTestCompatibilityHint')}</div>}
+              </label>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={handleTest}
