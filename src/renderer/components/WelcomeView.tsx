@@ -40,10 +40,29 @@ export function WelcomeView() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { startSession, changeWorkingDir, isElectron } = useIPC();
   const workingDir = useAppStore((state) => state.workingDir);
+  const setGlobalNotice = useAppStore((state) => state.setGlobalNotice);
   const canSubmit = prompt.trim().length > 0 || pastedImages.length > 0 || attachedFiles.length > 0;
 
   const handleSelectFolder = async () => {
-    await changeWorkingDir();
+    try {
+      const result = await changeWorkingDir(undefined, workingDir || undefined);
+      if (!result.success && result.error && result.error !== 'User cancelled') {
+        setGlobalNotice({
+          id: `notice-workdir-select-${Date.now()}`,
+          type: 'warning',
+          message: `${t('welcome.selectWorkingFolderFailed')}: ${result.error}`,
+        });
+      }
+    } catch (error) {
+      setGlobalNotice({
+        id: `notice-workdir-select-${Date.now()}`,
+        type: 'error',
+        message:
+          error instanceof Error && error.message
+            ? `${t('welcome.selectWorkingFolderFailed')}: ${error.message}`
+            : t('welcome.selectWorkingFolderFailed'),
+      });
+    }
   };
 
   // Handle paste event for images

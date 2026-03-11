@@ -11,10 +11,13 @@ describe('Main process startup order', () => {
 
     const createWindowIndex = startupBlock.indexOf('createWindow();');
     const sessionManagerIndex = startupBlock.indexOf('sessionManager = new SessionManager');
+    const skillsManagerIndex = startupBlock.indexOf('skillsManager = new SkillsManager');
 
     expect(sessionManagerIndex).toBeGreaterThan(-1);
+    expect(skillsManagerIndex).toBeGreaterThan(-1);
     expect(createWindowIndex).toBeGreaterThan(-1);
     expect(sessionManagerIndex).toBeLessThan(createWindowIndex);
+    expect(skillsManagerIndex).toBeLessThan(createWindowIndex);
   });
 
   it('does not force-disable sandbox mode on every startup', () => {

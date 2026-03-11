@@ -31,6 +31,7 @@
     "searchPapers": "Search & summarize papers",
     "summarizePapersToNotion": "Summarize papers to Notion",
     "selectWorkingFolder": "Select Working Folder (required)",
+    "selectWorkingFolderFailed": "Failed to select working folder",
     "attachFiles": "Attach Files",
     "letsGo": "Let's go",
     "starting": "Starting...",
@@ -570,6 +571,7 @@
     "outputTokens": "Output",
     "totalTokens": "Total",
     "changeDir": "Change directory",
+    "changeDirFailed": "Failed to change directory",
     "copyPath": "Copy path"
   },
   "messageCard": {

@@ -319,7 +319,7 @@ export type ClientEvent =
   | { type: 'folder.select'; payload: Record<string, never> }
   | { type: 'workdir.get'; payload: Record<string, never> }
   | { type: 'workdir.set'; payload: { path: string; sessionId?: string } }
-  | { type: 'workdir.select'; payload: { sessionId?: string } };
+  | { type: 'workdir.select'; payload: { sessionId?: string; currentPath?: string } };
 
 // Sandbox setup types (app startup)
 export type SandboxSetupPhase = 

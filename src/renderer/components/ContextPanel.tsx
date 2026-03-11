@@ -351,7 +351,26 @@ export function ContextPanel() {
             onClick={async () => {
               setIsChangingDir(true);
               try {
-                await changeWorkingDir(activeSessionId || undefined);
+                const result = await changeWorkingDir(
+                  activeSessionId || undefined,
+                  currentWorkingDir || undefined
+                );
+                if (!result.success && result.error && result.error !== 'User cancelled') {
+                  setGlobalNotice({
+                    id: `change-dir-failed-${Date.now()}`,
+                    type: 'warning',
+                    message: `${t('context.changeDirFailed')}: ${result.error}`,
+                  });
+                }
+              } catch (error) {
+                setGlobalNotice({
+                  id: `change-dir-failed-${Date.now()}`,
+                  type: 'error',
+                  message:
+                    error instanceof Error && error.message
+                      ? `${t('context.changeDirFailed')}: ${error.message}`
+                      : t('context.changeDirFailed'),
+                });
               } finally {
                 setIsChangingDir(false);
               }

@@ -2800,19 +2800,47 @@ function SkillsTab({ isActive }: { isActive: boolean }) {
   const loadSkills = useCallback(
     async (silent = false) => {
       try {
-        const [loaded, nextStoragePath] = await Promise.all([
+        const [skillsResult, storagePathResult] = await Promise.allSettled([
           window.electronAPI.skills.getAll(),
           window.electronAPI.skills.getStoragePath(),
         ]);
-        setSkills(loaded || []);
-        setStoragePath(nextStoragePath || '');
+        const errors: string[] = [];
+
+        if (skillsResult.status === 'fulfilled') {
+          setSkills(skillsResult.value || []);
+        } else {
+          errors.push(
+            skillsResult.reason instanceof Error
+              ? skillsResult.reason.message
+              : t('skills.failedToLoad')
+          );
+        }
+        if (storagePathResult.status === 'fulfilled') {
+          setStoragePath(storagePathResult.value || '');
+        } else {
+          errors.push(
+            storagePathResult.reason instanceof Error
+              ? storagePathResult.reason.message
+              : t('skills.storagePathUnavailable')
+          );
+        }
+
+        if (errors.length > 0) {
+          throw new Error(errors.join(' | '));
+        }
+
         if (!silent) {
           setError(null);
         }
       } catch (err) {
         console.error('Failed to load skills:', err);
         if (!silent) {
-          setError({ text: t('skills.failedToLoad') });
+          setError({
+            text:
+              err instanceof Error && err.message
+                ? `${t('skills.failedToLoad')}: ${err.message}`
+                : t('skills.failedToLoad'),
+          });
         }
       }
     },
@@ -2965,10 +2993,7 @@ function SkillsTab({ isActive }: { isActive: boolean }) {
   async function handleRefreshSkills() {
     setIsLoading(true);
     try {
-      await loadSkills(true);
-      setError(null);
-    } catch (err) {
-      setError({ text: err instanceof Error ? err.message : t('skills.failedToLoad') });
+      await loadSkills();
     } finally {
       setIsLoading(false);
     }

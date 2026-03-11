@@ -589,13 +589,16 @@ export function useIPC() {
   }, [invoke]);
 
   const changeWorkingDir = useCallback(
-    async (sessionId?: string): Promise<{ success: boolean; path: string; error?: string }> => {
+    async (
+      sessionId?: string,
+      currentPath?: string
+    ): Promise<{ success: boolean; path: string; error?: string }> => {
       if (!isElectron) {
         return { success: true, path: '/mock/working/dir' };
       }
       return invoke<{ success: boolean; path: string; error?: string }>({
         type: 'workdir.select',
-        payload: { sessionId },
+        payload: { sessionId, currentPath },
       });
     },
     [invoke]
