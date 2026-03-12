@@ -244,7 +244,38 @@
     "configSetMissing": "配置方案不存在",
     "configSetCloneSourceMissing": "找不到可复制的配置方案",
     "configSetSystemDeleteForbidden": "默认方案不可删除",
-    "configSetKeepOne": "至少需要保留一个配置方案"
+    "configSetKeepOne": "至少需要保留一个配置方案",
+    "diagnostic": {
+      "runDiagnostics": "诊断连接",
+      "running": "诊断中...",
+      "step": {
+        "dns": "DNS 解析",
+        "tcp": "TCP 连接",
+        "tls": "TLS 握手",
+        "auth": "API 认证",
+        "model": "模型验证"
+      },
+      "status": {
+        "pending": "等待中",
+        "running": "检测中...",
+        "ok": "通过",
+        "fail": "失败",
+        "skip": "跳过"
+      },
+      "overallSuccess": "所有检查通过 ({{ms}}ms)",
+      "overallFail": "诊断在 {{step}} 步骤失败",
+      "latency": "{{ms}}ms",
+      "fix": {
+        "dns_resolve_failed": "无法解析域名 {{host}}，请检查 URL 是否正确",
+        "tcp_connect_failed": "无法连接到 {{host}}，请检查网络或防火墙设置",
+        "tls_handshake_failed": "TLS 握手失败，可能是证书问题或代理干扰",
+        "missing_api_key": "API Key 缺失或无效，请检查 Key",
+        "auth_invalid_key": "API Key 无效或已过期，请检查 Key 是否正确",
+        "auth_endpoint_not_found": "API 端点不存在，请检查 Base URL 是否正确",
+        "auth_request_failed": "认证请求失败，请检查配置",
+        "model_unavailable": "模型 {{model}} 不可用，请确认模型名称是否正确"
+      }
+    }
   },
   "window": {
     "minimize": "最小化",

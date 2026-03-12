@@ -33,7 +33,7 @@ import { WSLBridge } from './sandbox/wsl-bridge';
 import { LimaBridge } from './sandbox/lima-bridge';
 import { getSandboxBootstrap } from './sandbox/sandbox-bootstrap';
 import type { MCPServerConfig } from './mcp/mcp-manager';
-import type { ClientEvent, ServerEvent, ApiTestInput, ApiTestResult, ProviderModelInfo } from '../renderer/types';
+import type { ClientEvent, ServerEvent, ApiTestInput, ApiTestResult, DiagnosticInput, ProviderModelInfo } from '../renderer/types';
 import { remoteManager, type AgentExecutor } from './remote/remote-manager';
 import { remoteConfigStore } from './remote/remote-config-store';
 import type { GatewayConfig, FeishuChannelConfig, ChannelType } from './remote/types';
@@ -1096,6 +1096,16 @@ ipcMain.handle(
     return listOllamaModels(payload);
   }
 );
+
+ipcMain.handle('config.diagnose', async (_event, payload: DiagnosticInput) => {
+  const { runDiagnostics } = await import('./config/api-diagnostics');
+  return runDiagnostics(payload);
+});
+
+ipcMain.handle('config.discover-local', async () => {
+  const { discoverLocalOllama } = await import('./config/api-diagnostics');
+  return discoverLocalOllama();
+});
 
 ipcMain.handle('auth.getStatus', () => {
   return [];

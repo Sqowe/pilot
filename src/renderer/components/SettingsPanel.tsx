@@ -49,6 +49,7 @@ import { RemoteControlPanel } from './RemoteControlPanel';
 import { useApiConfigState } from '../hooks/useApiConfigState';
 import { ApiConfigSetManager } from './ApiConfigSetManager';
 import { CommonProviderSetupsCard, GuidanceInlineHint } from './ProviderGuidance';
+import ApiDiagnosticsPanel from './ApiDiagnosticsPanel';
 import { useAppStore } from '../store';
 import { formatAppDateTime, joinAppList } from '../utils/i18n-format';
 
@@ -490,12 +491,7 @@ function APISettingsTab() {
     isLoadingConfig,
     error,
     successMessage,
-    isTesting,
     isRefreshingModels,
-    testResult,
-    friendlyTestDetails,
-    useLiveTest,
-    supportsLiveRequestTest,
     enableThinking,
     isOllamaMode,
     requiresApiKey,
@@ -516,7 +512,6 @@ function APISettingsTab() {
     setModel,
     setCustomModel,
     toggleCustomModel,
-    setUseLiveTest,
     setEnableThinking,
     applyCommonProviderSetup,
     changeProvider,
@@ -529,8 +524,10 @@ function APISettingsTab() {
     renameConfigSet,
     deleteConfigSet,
     handleSave,
-    handleTest,
     refreshModelOptions,
+    diagnosticResult,
+    isDiagnosing,
+    handleDiagnose,
   } = useApiConfigState();
 
   if (isLoadingConfig) {
@@ -779,69 +776,17 @@ function APISettingsTab() {
           {successMessage}
         </div>
       )}
-      {testResult && (
-        <div
-          className={`flex gap-2 px-4 py-3 rounded-xl text-sm ${testResult.ok ? 'bg-success/10 text-success' : 'bg-error/10 text-error'}`}
-        >
-          {testResult.ok ? (
-            <CheckCircle className="w-4 h-4 flex-shrink-0" />
-          ) : (
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          )}
-          <div className="flex-1">
-            <div>
-              {testResult.ok
-                ? t('api.testSuccess', {
-                    ms: typeof testResult.latencyMs === 'number' ? testResult.latencyMs : '--',
-                  })
-                : t(`api.testError.${testResult.errorType || 'unknown'}`)}
-            </div>
-            {!testResult.ok && friendlyTestDetails && (
-              <div className="mt-1 text-xs leading-5 text-text-primary">{friendlyTestDetails}</div>
-            )}
-            {!testResult.ok && testResult.details && (
-              <div className="mt-1 text-xs text-text-muted">{testResult.details}</div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Diagnostics Panel */}
+      <ApiDiagnosticsPanel
+        result={diagnosticResult}
+        isRunning={isDiagnosing}
+        onRunDiagnostics={handleDiagnose}
+        disabled={requiresApiKey && !apiKey.trim()}
+      />
 
       {/* Save Button */}
       <div className="space-y-3 rounded-[1.5rem] border border-border-subtle bg-background/40 px-4 py-4">
-        {supportsLiveRequestTest && (
-          <div className="flex items-start gap-2 text-xs text-text-muted">
-            <input
-              type="checkbox"
-              id="api-live-test"
-              checked={useLiveTest}
-              onChange={(e) => setUseLiveTest(e.target.checked)}
-              className="mt-0.5 w-4 h-4 rounded border-border text-accent focus:ring-accent"
-            />
-            <label htmlFor="api-live-test" className="space-y-0.5">
-              <div className="text-text-primary">{t('api.liveTest')}</div>
-              <div>{t('api.liveTestHint')}</div>
-            </label>
-          </div>
-        )}
-
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            onClick={handleTest}
-            disabled={isTesting || (requiresApiKey && !apiKey.trim())}
-            className="w-full py-3 px-4 rounded-xl border border-border bg-surface-hover text-text-primary font-medium hover:bg-surface-active disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
-          >
-            {isTesting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                {t('api.testingConnection')}
-              </>
-            ) : (
-              <>
-                <Plug className="w-4 h-4" />
-                {t('api.testConnection')}
-              </>
-            )}
-          </button>
+        <div className="grid grid-cols-1 gap-2">
           <button
             onClick={() => {
               void handleSave();
