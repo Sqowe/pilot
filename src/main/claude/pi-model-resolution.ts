@@ -2,6 +2,7 @@ import { getModel, type Api, type Model } from '@mariozechner/pi-ai';
 
 const COMMON_FALLBACK_PROVIDERS = ['openai', 'anthropic', 'google'] as const;
 const INVALID_REGISTRY_PROVIDERS = new Set(['', 'custom']);
+const REASONING_MODEL_PATTERN = /\bthinking\b|\breasoner\b|deepseek-r1|kimi-k2/i;
 type PiRegistryProvider = Parameters<typeof getModel>[0];
 
 export interface PiModelStringInput {
@@ -41,15 +42,17 @@ export function buildSyntheticPiModel(
   protocol: string,
   baseUrl?: string,
   apiOverride?: string,
+  reasoning?: boolean,
 ): Model<Api> {
   const api = apiOverride || inferPiApi(protocol);
+  const autoReasoning = reasoning ?? REASONING_MODEL_PATTERN.test(modelId);
   return {
     id: modelId,
     name: modelId,
     api,
     provider,
     baseUrl: baseUrl || '',
-    reasoning: false,
+    reasoning: autoReasoning,
     input: ['text', 'image'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128000,
