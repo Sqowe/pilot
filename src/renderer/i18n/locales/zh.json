@@ -381,6 +381,7 @@
     "type": "类型",
     "typeStdioLocal": "STDIO（本地）",
     "typeSseRemote": "SSE（远程）",
+    "typeStreamableHttp": "HTTP（Streamable）",
     "command": "命令",
     "commandPlaceholder": "npx",
     "arguments": "参数",

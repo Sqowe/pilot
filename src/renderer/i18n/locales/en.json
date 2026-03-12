@@ -381,6 +381,7 @@
     "type": "Type",
     "typeStdioLocal": "STDIO (Local)",
     "typeSseRemote": "SSE (Remote)",
+    "typeStreamableHttp": "HTTP (Streamable)",
     "command": "Command",
     "commandPlaceholder": "npx",
     "arguments": "Arguments",

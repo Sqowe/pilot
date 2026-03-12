@@ -72,7 +72,7 @@ interface UserCredential {
 interface MCPServerConfig {
   id: string;
   name: string;
-  type: 'stdio' | 'sse';
+  type: 'stdio' | 'sse' | 'streamable-http';
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -103,7 +103,7 @@ interface MCPToolInfo {
 
 interface MCPPreset {
   name: string;
-  type: 'stdio' | 'sse';
+  type: 'stdio' | 'sse' | 'streamable-http';
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -2279,6 +2279,11 @@ function ServerCard({
                   {server.url}
                 </div>
               )}
+              {server.type === 'streamable-http' && (
+                <div className="font-mono text-xs truncate" title={server.url}>
+                  {server.url}
+                </div>
+              )}
               {/* Chrome hint */}
               {server.name.toLowerCase().includes('chrome') && (
                 <div
@@ -2408,7 +2413,7 @@ function ServerForm({
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState(server?.name || '');
-  const [type, setType] = useState<'stdio' | 'sse'>(server?.type || 'stdio');
+  const [type, setType] = useState<'stdio' | 'sse' | 'streamable-http'>(server?.type || 'stdio');
   const [command, setCommand] = useState(server?.command || '');
   const [args, setArgs] = useState(server?.args?.join(' ') || '');
   const [url, setUrl] = useState(server?.url || '');
@@ -2508,7 +2513,7 @@ function ServerForm({
 
       <div>
         <label className="block text-sm font-medium text-text-primary mb-2">{t('mcp.type')}</label>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <button
             type="button"
             onClick={() => setType('stdio')}
@@ -2530,6 +2535,17 @@ function ServerForm({
             }`}
           >
             {t('mcp.typeSseRemote')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setType('streamable-http')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              type === 'streamable-http'
+                ? 'bg-accent text-white'
+                : 'bg-surface-muted text-text-secondary hover:bg-surface-active'
+            }`}
+          >
+            {t('mcp.typeStreamableHttp')}
           </button>
         </div>
       </div>

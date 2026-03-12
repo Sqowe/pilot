@@ -2090,6 +2090,9 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
   if (eventRequiresSessionManager(event) && !sessionManager) {
     throw new Error('Session manager not initialized');
   }
+  // After the guard above, sessionManager is guaranteed non-null for session.* events.
+  // Use a local alias to satisfy TypeScript's control-flow narrowing.
+  const sm = sessionManager!;
 
   switch (event.type) {
     case 'session.start':
@@ -2102,7 +2105,7 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
         });
         return null;
       }
-      return sessionManager.startSession(
+      return sm.startSession(
         event.payload.title,
         event.payload.prompt,
         event.payload.cwd,
@@ -2111,44 +2114,44 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
       );
 
     case 'session.continue':
-      return sessionManager.continueSession(
+      return sm.continueSession(
         event.payload.sessionId,
         event.payload.prompt,
         event.payload.content
       );
 
     case 'session.stop':
-      return sessionManager.stopSession(event.payload.sessionId);
+      return sm.stopSession(event.payload.sessionId);
 
     case 'session.delete':
-      return sessionManager.deleteSession(event.payload.sessionId);
+      return sm.deleteSession(event.payload.sessionId);
 
     case 'session.list': {
-      const sessions = sessionManager.listSessions();
+      const sessions = sm.listSessions();
       sendToRenderer({ type: 'session.list', payload: { sessions } });
       return sessions;
     }
 
     case 'session.getMessages':
-      return sessionManager.getMessages(event.payload.sessionId);
+      return sm.getMessages(event.payload.sessionId);
 
     case 'session.getTraceSteps':
-      return sessionManager.getTraceSteps(event.payload.sessionId);
+      return sm.getTraceSteps(event.payload.sessionId);
 
     case 'permission.response':
-      return sessionManager.handlePermissionResponse(
+      return sm.handlePermissionResponse(
         event.payload.toolUseId,
         event.payload.result
       );
 
     case 'sudo.password.response':
-      return sessionManager.handleSudoPasswordResponse(
+      return sm.handleSudoPasswordResponse(
         event.payload.toolUseId,
         event.payload.password
       );
 
     case 'folder.select': {
-      const folderResult = await dialog.showOpenDialog(mainWindow ?? undefined, {
+      const folderResult = await dialog.showOpenDialog(mainWindow!, {
         properties: ['openDirectory'],
       });
       if (!folderResult.canceled && folderResult.filePaths.length > 0) {
@@ -2172,7 +2175,7 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
         event.payload.currentPath && isAbsolute(event.payload.currentPath)
           ? event.payload.currentPath
           : currentWorkingDir || undefined;
-      const workdirResult = await dialog.showOpenDialog(mainWindow ?? undefined, {
+      const workdirResult = await dialog.showOpenDialog(mainWindow!, {
         properties: ['openDirectory'],
         title: 'Select Working Directory',
         defaultPath: dialogDefaultPath,

@@ -1223,14 +1223,17 @@ Tool routing:
       const codingTools = createCodingTools(effectiveCwd);
 
       // Wrap the bash tool to intercept sudo commands and request passwords
-      const wrappedTools = this.wrapBashToolForSudo(codingTools, session.id);
+      // Note: wrapBashToolForSudo returns ToolDefinition[] (5-param execute) but
+      // createAgentSession.tools expects Tool[] (4-param execute). The extra ctx
+      // parameter is simply not passed by the session runner — safe to cast.
+      const wrappedTools = this.wrapBashToolForSudo(codingTools as ToolDefinition[], session.id);
 
       const { session: piSession } = await createAgentSession({
         model: piModel,
         thinkingLevel,
         authStorage,
         modelRegistry,
-        tools: wrappedTools,
+        tools: wrappedTools as unknown as ReturnType<typeof createCodingTools>,
         customTools: mcpCustomTools,
         sessionManager: PiSessionManager.inMemory(),
         settingsManager: PiSettingsManager.inMemory({
@@ -1340,10 +1343,13 @@ Tool routing:
                     name: block.name,
                     input: block.arguments,
                   });
+                } else if (block.type === 'thinking') {
+                  // ThinkingContent from extended thinking — skip (internal to model)
+                  log(`[ClaudeAgentRunner] Skipping thinking block (${block.thinking.length} chars)`);
                 } else {
                   // Unknown block type — pass through as text so content isn't silently lost
-                  log(`[ClaudeAgentRunner] Unknown content block type: ${block.type}`);
-                  const text = block.text || JSON.stringify(block);
+                  log(`[ClaudeAgentRunner] Unknown content block type: ${(block as any).type}`);
+                  const text = (block as any).text || JSON.stringify(block);
                   if (text) contentBlocks.push({ type: 'text', text });
                 }
               }

@@ -1,6 +1,6 @@
-import type { AssistantMessage, TextContent, ToolCall } from '@mariozechner/pi-ai';
+import type { AssistantMessage, TextContent, ThinkingContent, ToolCall } from '@mariozechner/pi-ai';
 
-type MessageEndContentBlock = TextContent | ToolCall;
+type MessageEndContentBlock = TextContent | ThinkingContent | ToolCall;
 
 type MessageEndMessage = Pick<AssistantMessage, 'role' | 'content' | 'stopReason' | 'errorMessage'>;
 
@@ -43,7 +43,7 @@ export function resolveMessageEndPayload(
 
   const effectiveContent = Array.isArray(message?.content) && message.content.length > 0
     ? message.content
-    : (streamedText ? [{ type: 'text', text: streamedText }] : []);
+    : (streamedText ? [{ type: 'text' as const, text: streamedText }] : []);
 
   return {
     effectiveContent,
