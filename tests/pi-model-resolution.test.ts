@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyPiModelRuntimeOverrides,
   buildPiModelLookupCandidates,
   buildSyntheticPiModel,
   inferPiApi,
@@ -50,5 +51,54 @@ describe('pi model resolution helpers', () => {
     expect(model.provider).toBe('xai');
     expect(model.api).toBe('openai-completions');
     expect(model.baseUrl).toBe('https://api.x.ai/v1');
+  });
+
+  it('downgrades openai responses api to completions for custom endpoints', () => {
+    const model = applyPiModelRuntimeOverrides(
+      {
+        id: 'gpt-5.4',
+        name: 'gpt-5.4',
+        api: 'openai-responses',
+        provider: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        reasoning: false,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128000,
+        maxTokens: 16384,
+      },
+      {
+        configProvider: 'openai',
+        rawProvider: 'custom',
+        customBaseUrl: 'https://relay.example.com/v1',
+      }
+    );
+
+    expect(model.baseUrl).toBe('https://relay.example.com/v1');
+    expect(model.api).toBe('openai-completions');
+  });
+
+  it('keeps openai responses api for first-party openai endpoints', () => {
+    const model = applyPiModelRuntimeOverrides(
+      {
+        id: 'gpt-5.4',
+        name: 'gpt-5.4',
+        api: 'openai-responses',
+        provider: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        reasoning: false,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128000,
+        maxTokens: 16384,
+      },
+      {
+        configProvider: 'openai',
+        rawProvider: 'openai',
+        customBaseUrl: 'https://api.openai.com/v1',
+      }
+    );
+
+    expect(model.api).toBe('openai-responses');
   });
 });

@@ -96,11 +96,23 @@ function cleanupOldLogs(logsDir: string): void {
   try {
     const files = fs.readdirSync(logsDir)
       .filter(f => f.startsWith('app-') && f.endsWith('.log'))
-      .map(f => ({
-        name: f,
-        path: path.join(logsDir, f),
-        mtime: fs.statSync(path.join(logsDir, f)).mtime.getTime(),
-      }))
+      .flatMap((f) => {
+        const filePath = path.join(logsDir, f);
+        try {
+          return [{
+            name: f,
+            path: filePath,
+            mtime: fs.statSync(filePath).mtime.getTime(),
+          }];
+        } catch (err) {
+          const errno = err as NodeJS.ErrnoException;
+          if (errno.code === 'ENOENT') {
+            // File disappeared between readdir and stat; ignore.
+            return [];
+          }
+          throw err;
+        }
+      })
       .sort((a, b) => b.mtime - a.mtime); // Sort by modification time, newest first
 
     // Delete old files

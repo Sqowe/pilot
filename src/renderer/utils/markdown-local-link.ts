@@ -1,8 +1,12 @@
 import { resolveArtifactPath } from './artifact-path';
+import {
+  decodePathSafely,
+  isUncPath,
+  isWindowsDrivePath,
+  localPathFromFileUrl,
+} from '../../shared/local-file-path';
 
 const markdownInlineLinkPattern = /(?<!!)\[([^\]]+)\]\(\s*([\s\S]*?)\s*\)/g;
-const windowsDrivePathPattern = /^[A-Za-z]:[\\/]/;
-const uncPathPattern = /^\\\\[^\\]/;
 const unixAbsolutePathPattern = /^\//;
 const webLikeUrlPattern = /^(?:https?:\/\/|mailto:|file:\/\/|#)/i;
 const httpLikeUrlPattern = /^(?:https?:\/\/|mailto:|#)/i;
@@ -30,12 +34,12 @@ function toFileUrl(pathValue: string): string | null {
     return `file://${encodeFilePath(normalizedPathValue)}`;
   }
 
-  if (windowsDrivePathPattern.test(normalizedPathValue)) {
+  if (isWindowsDrivePath(normalizedPathValue)) {
     const normalized = normalizedPathValue.replace(/\\/g, '/');
     return `file:///${encodeFilePath(normalized)}`;
   }
 
-  if (uncPathPattern.test(normalizedPathValue)) {
+  if (isUncPath(normalizedPathValue)) {
     const normalized = normalizedPathValue.replace(/^\\\\+/, '').replace(/\\/g, '/');
     return `file://${encodeFilePath(normalized)}`;
   }
@@ -63,14 +67,6 @@ export function normalizeLocalFileMarkdownLinks(markdown: string): string {
   });
 }
 
-function decodePathSafely(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
 export function extractLocalFilePathFromHref(href?: string): string | null {
   if (!href) {
     return null;
@@ -82,25 +78,10 @@ export function extractLocalFilePathFromHref(href?: string): string | null {
   }
 
   if (trimmed.startsWith('file://')) {
-    try {
-      const url = new URL(trimmed);
-      const pathname = decodePathSafely(url.pathname || '');
-      if (!pathname) {
-        return null;
-      }
-
-      if (/^\/[A-Za-z]:\//.test(pathname)) {
-        return pathname.slice(1);
-      }
-
-      return pathname;
-    } catch {
-      const fallback = trimmed.replace(/^file:\/\//i, '');
-      return decodePathSafely(fallback) || null;
-    }
+    return localPathFromFileUrl(trimmed);
   }
 
-  if (unixAbsolutePathPattern.test(trimmed) || windowsDrivePathPattern.test(trimmed) || uncPathPattern.test(trimmed)) {
+  if (unixAbsolutePathPattern.test(trimmed) || isWindowsDrivePath(trimmed) || isUncPath(trimmed)) {
     return decodePathSafely(trimmed);
   }
 

@@ -15,4 +15,11 @@ describe('ContextPanel artifacts scroll', () => {
     expect(source).not.toContain('openExternal');
     expect(source).toContain("message: t('context.revealFailed')");
   });
+
+  it('surfaces change-directory failures to the global notice toast', () => {
+    const source = fs.readFileSync(contextPanelPath, 'utf8');
+    expect(source).toContain('currentWorkingDir || undefined');
+    expect(source).toContain("message: `${t('context.changeDirFailed')}: ${result.error}`");
+    expect(source).toContain(": t('context.changeDirFailed')");
+  });
 });

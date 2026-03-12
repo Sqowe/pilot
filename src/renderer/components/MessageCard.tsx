@@ -6,6 +6,8 @@ import {
   splitChildrenByFileMentions,
   getFileLinkButtonClassName,
 } from '../utils/file-link';
+import { isUncPath, isWindowsDrivePath } from '../../shared/local-file-path';
+import { resolvePathAgainstWorkspace } from '../../shared/workspace-path';
 import {
   normalizeLocalFileMarkdownLinks,
   resolveLocalFilePathFromHref,
@@ -195,18 +197,11 @@ const ContentBlockView = memo(function ContentBlockView({
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessions = useAppStore((s) => s.sessions);
   const workingDir = useAppStore((s) => s.workingDir);
+  const setGlobalNotice = useAppStore((s) => s.setGlobalNotice);
   const activeSession = activeSessionId ? sessions.find((s) => s.id === activeSessionId) : null;
   const currentWorkingDir = activeSession?.cwd || workingDir;
 
-  const resolveFilePath = (value: string) => {
-    if (/^(?:[A-Za-z]:\\|\\\\|\/)/.test(value)) {
-      return value;
-    }
-    if (!currentWorkingDir) {
-      return value;
-    }
-    return `${currentWorkingDir.replace(/[\\/]+$/, '')}/${value}`;
-  };
+  const resolveFilePath = (value: string) => resolvePathAgainstWorkspace(value, currentWorkingDir);
 
   const renderFileButton = (value: string, key?: string) => (
     <button
@@ -217,7 +212,26 @@ const ContentBlockView = memo(function ContentBlockView({
           return;
         }
         const resolvedPath = resolveFilePath(value);
-        await window.electronAPI.showItemInFolder(resolvedPath, currentWorkingDir ?? undefined);
+        try {
+          const revealed = await window.electronAPI.showItemInFolder(
+            resolvedPath,
+            currentWorkingDir ?? undefined
+          );
+          if (!revealed) {
+            setGlobalNotice({
+              id: `message-card-reveal-failed-${Date.now()}`,
+              type: 'warning',
+              message: t('context.revealFailed'),
+            });
+          }
+        } catch (error) {
+          setGlobalNotice({
+            id: `message-card-reveal-failed-${Date.now()}`,
+            type: 'warning',
+            message:
+              error instanceof Error && error.message ? error.message : t('context.revealFailed'),
+          });
+        }
       }}
       className={getFileLinkButtonClassName()}
       title={t('messageCard.revealInFolder')}
@@ -295,10 +309,28 @@ const ContentBlockView = memo(function ContentBlockView({
                         ) {
                           return;
                         }
-                        await window.electronAPI.showItemInFolder(
-                          localFilePath,
-                          currentWorkingDir ?? undefined
-                        );
+                        try {
+                          const revealed = await window.electronAPI.showItemInFolder(
+                            localFilePath,
+                            currentWorkingDir ?? undefined
+                          );
+                          if (!revealed) {
+                            setGlobalNotice({
+                              id: `message-card-reveal-failed-${Date.now()}`,
+                              type: 'warning',
+                              message: t('context.revealFailed'),
+                            });
+                          }
+                        } catch (error) {
+                          setGlobalNotice({
+                            id: `message-card-reveal-failed-${Date.now()}`,
+                            type: 'warning',
+                            message:
+                              error instanceof Error && error.message
+                                ? error.message
+                                : t('context.revealFailed'),
+                          });
+                        }
                       }}
                       className={getFileLinkButtonClassName()}
                       title={t('messageCard.revealInFolder')}

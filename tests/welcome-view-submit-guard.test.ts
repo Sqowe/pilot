@@ -21,4 +21,13 @@ describe('WelcomeView submit guards', () => {
     expect(source).toContain('setPastedImages([]);');
     expect(source).toContain('setAttachedFiles([]);');
   });
+
+  it('surfaces working-directory picker failures to the global notice toast', () => {
+    const source = fs.readFileSync(welcomeViewPath, 'utf8');
+
+    expect(source).toContain("const setGlobalNotice = useAppStore((state) => state.setGlobalNotice);");
+    expect(source).toContain('const result = await changeWorkingDir(undefined, workingDir || undefined);');
+    expect(source).toContain("message: `${t('welcome.selectWorkingFolderFailed')}: ${result.error}`");
+    expect(source).toContain(": t('welcome.selectWorkingFolderFailed')");
+  });
 });

@@ -67,6 +67,7 @@ export function ConfigModal({
     testResult,
     friendlyTestDetails,
     useLiveTest,
+    supportsLiveRequestTest,
     isOllamaMode,
     requiresApiKey,
     showsCompatibilityProbeHint,
@@ -135,6 +136,8 @@ export function ConfigModal({
         return t('api.testError.server_error');
       case 'network_error':
         return t('api.testError.network_error');
+      case 'ollama_not_running':
+        return t('api.testError.ollama_not_running');
       case 'proxy_boot_failed':
         return t('api.testError.proxy_boot_failed');
       case 'proxy_health_failed':
@@ -431,20 +434,22 @@ export function ConfigModal({
               {successMessage}
             </div>
           )}
-          <div className="flex items-start gap-2 text-xs text-text-muted mb-3">
-            <input
-              type="checkbox"
-              id="api-live-test-modal"
-              checked={useLiveTest}
-              onChange={(e) => setUseLiveTest(e.target.checked)}
-              className="mt-0.5 w-4 h-4 rounded border-border text-accent focus:ring-accent"
-            />
-            <label htmlFor="api-live-test-modal" className="space-y-0.5">
-              <div className="text-text-primary">{t('api.liveTest')}</div>
-              <div>{t('api.liveTestHint')}</div>
-              {showsCompatibilityProbeHint && <div>{t('api.liveTestCompatibilityHint')}</div>}
-            </label>
-          </div>
+          {supportsLiveRequestTest && (
+            <div className="flex items-start gap-2 text-xs text-text-muted mb-3">
+              <input
+                type="checkbox"
+                id="api-live-test-modal"
+                checked={useLiveTest}
+                onChange={(e) => setUseLiveTest(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-border text-accent focus:ring-accent"
+              />
+              <label htmlFor="api-live-test-modal" className="space-y-0.5">
+                <div className="text-text-primary">{t('api.liveTest')}</div>
+                <div>{t('api.liveTestHint')}</div>
+                {showsCompatibilityProbeHint && <div>{t('api.liveTestCompatibilityHint')}</div>}
+              </label>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={handleTest}

@@ -38,6 +38,11 @@ describe('extractLocalFilePathFromHref', () => {
     expect(extractLocalFilePathFromHref(href)).toBe('/Users/haoqing/Library/Application Support/open-cowork/测试.docx');
   });
 
+  it('extracts UNC paths from file URLs without dropping the host', () => {
+    const href = 'file://server/share/%E6%B5%8B%E8%AF%95.docx';
+    expect(extractLocalFilePathFromHref(href)).toBe('\\\\server\\share\\测试.docx');
+  });
+
   it('returns null for external URLs', () => {
     expect(extractLocalFilePathFromHref('https://openai.com')).toBe(null);
     expect(extractLocalFilePathFromHref('mailto:test@example.com')).toBe(null);
@@ -61,5 +66,10 @@ describe('resolveLocalFilePathFromHref', () => {
     const href = '/Users/haoqing/Library/Application\n Support/open-cowork/default_working_dir/文档.docx';
     expect(resolveLocalFilePathFromHref(href, null))
       .toBe('/Users/haoqing/Library/Application Support/open-cowork/default_working_dir/文档.docx');
+  });
+
+  it('keeps UNC paths intact after resolving file URLs', () => {
+    const href = 'file://server/share/demo.txt';
+    expect(resolveLocalFilePathFromHref(href, null)).toBe('\\\\server\\share\\demo.txt');
   });
 });

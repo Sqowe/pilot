@@ -1,7 +1,13 @@
 import { completeSimple, type UserMessage as PiUserMessage } from '@mariozechner/pi-ai';
 import type { ApiTestInput, ApiTestResult } from '../../renderer/types';
 import { PROVIDER_PRESETS, type AppConfig, type CustomProtocolType } from '../config/config-store';
-import { normalizeAnthropicBaseUrl } from '../config/auth-utils';
+import {
+  normalizeAnthropicBaseUrl,
+  resolveOllamaCredentials,
+  resolveOpenAICredentials,
+  shouldAllowEmptyAnthropicApiKey,
+  shouldAllowEmptyGeminiApiKey,
+} from '../config/auth-utils';
 import { log, logWarn } from '../utils/logger';
 import { normalizeGeneratedTitle } from '../session/session-title-utils';
 import { getSharedAuthStorage } from './shared-auth';
@@ -12,6 +18,8 @@ const AUTH_ERROR_RE = /authentication[_\s-]?failed|unauthorized|invalid[_\s-]?ap
 const RATE_LIMIT_RE = /rate[_\s-]?limit|too\s+many\s+requests|429/i;
 const SERVER_ERROR_RE = /server[_\s-]?error|internal\s+server\s+error|5\d\d/i;
 const PROBE_ACK = 'sdk_probe_ok';
+const LOCAL_ANTHROPIC_PLACEHOLDER_KEY = 'sk-ant-local-proxy';
+const LOCAL_GEMINI_PLACEHOLDER_KEY = 'sk-gemini-local-proxy';
 
 function resolveCustomProtocol(provider: AppConfig['provider'], customProtocol?: CustomProtocolType): CustomProtocolType {
   if (provider === 'custom') {
@@ -35,22 +43,81 @@ function resolveProbeBaseUrl(input: ApiTestInput): string | undefined {
   return undefined;
 }
 
+function resolveProbeApiKey(
+  input: ApiTestInput,
+  resolvedCustomProtocol: CustomProtocolType,
+  effectiveBaseUrl: string | undefined,
+  explicitApiKey: string | undefined,
+  config: AppConfig,
+): string {
+  const candidateApiKey = explicitApiKey ?? config.apiKey?.trim() ?? '';
+  if (candidateApiKey) {
+    return candidateApiKey;
+  }
+
+  if (input.provider === 'ollama') {
+    return resolveOllamaCredentials({
+      provider: input.provider,
+      customProtocol: resolvedCustomProtocol,
+      apiKey: '',
+      baseUrl: effectiveBaseUrl,
+    })?.apiKey || '';
+  }
+
+  if (input.provider === 'openai' || (input.provider === 'custom' && resolvedCustomProtocol === 'openai')) {
+    return resolveOpenAICredentials({
+      provider: input.provider,
+      customProtocol: resolvedCustomProtocol,
+      apiKey: '',
+      baseUrl: effectiveBaseUrl,
+    })?.apiKey || '';
+  }
+
+  if (
+    shouldAllowEmptyAnthropicApiKey({
+      provider: input.provider,
+      customProtocol: resolvedCustomProtocol,
+      baseUrl: effectiveBaseUrl,
+    })
+  ) {
+    return LOCAL_ANTHROPIC_PLACEHOLDER_KEY;
+  }
+
+  if (
+    shouldAllowEmptyGeminiApiKey({
+      provider: input.provider,
+      customProtocol: resolvedCustomProtocol,
+      baseUrl: effectiveBaseUrl,
+    })
+  ) {
+    return LOCAL_GEMINI_PLACEHOLDER_KEY;
+  }
+
+  return '';
+}
+
 function buildProbeConfig(input: ApiTestInput, config: AppConfig): AppConfig {
   const resolvedBaseUrl = resolveProbeBaseUrl(input);
   const normalizedInputApiKey = typeof input.apiKey === 'string' ? input.apiKey.trim() : undefined;
-  const effectiveApiKey = normalizedInputApiKey || config.apiKey?.trim() || '';
   const resolvedCustomProtocol = resolveCustomProtocol(input.provider, input.customProtocol);
   const effectiveRawBaseUrl = input.provider === 'custom' ? resolvedBaseUrl || '' : resolvedBaseUrl || config.baseUrl;
   const effectiveBaseUrl = resolvedCustomProtocol === 'openai' || resolvedCustomProtocol === 'gemini'
     ? effectiveRawBaseUrl
     : normalizeAnthropicBaseUrl(effectiveRawBaseUrl);
+  const effectiveApiKey = resolveProbeApiKey(
+    input,
+    resolvedCustomProtocol,
+    effectiveBaseUrl,
+    normalizedInputApiKey,
+    config,
+  );
   return {
     ...config,
     provider: input.provider,
     customProtocol: resolvedCustomProtocol,
     apiKey: effectiveApiKey,
     baseUrl: input.provider === 'custom' ? effectiveBaseUrl || '' : effectiveBaseUrl || config.baseUrl,
-    model: input.model?.trim() || config.model,
+    model: typeof input.model === 'string' ? input.model.trim() : config.model,
   };
 }
 

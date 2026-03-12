@@ -420,19 +420,23 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
                 {viewedTabs.has('sandbox') && <SandboxTab />}
               </div>
               <div className={activeTab === 'connectors' ? '' : 'hidden'}>
-                {viewedTabs.has('connectors') && <ConnectorsTab />}
+                {viewedTabs.has('connectors') && (
+                  <ConnectorsTab isActive={activeTab === 'connectors'} />
+                )}
               </div>
               <div className={activeTab === 'skills' ? '' : 'hidden'}>
-                {viewedTabs.has('skills') && <SkillsTab />}
+                {viewedTabs.has('skills') && <SkillsTab isActive={activeTab === 'skills'} />}
               </div>
               <div className={activeTab === 'schedule' ? '' : 'hidden'}>
-                {viewedTabs.has('schedule') && <ScheduleTab />}
+                {viewedTabs.has('schedule') && <ScheduleTab isActive={activeTab === 'schedule'} />}
               </div>
               <div className={activeTab === 'remote' ? '' : 'hidden'}>
-                {viewedTabs.has('remote') && <RemoteControlPanel />}
+                {viewedTabs.has('remote') && (
+                  <RemoteControlPanel isActive={activeTab === 'remote'} />
+                )}
               </div>
               <div className={activeTab === 'logs' ? '' : 'hidden'}>
-                {viewedTabs.has('logs') && <LogsTab />}
+                {viewedTabs.has('logs') && <LogsTab isActive={activeTab === 'logs'} />}
               </div>
               <div className={activeTab === 'general' ? '' : 'hidden'}>
                 {viewedTabs.has('general') && <GeneralTab />}
@@ -491,6 +495,7 @@ function APISettingsTab() {
     testResult,
     friendlyTestDetails,
     useLiveTest,
+    supportsLiveRequestTest,
     enableThinking,
     isOllamaMode,
     requiresApiKey,
@@ -752,6 +757,11 @@ function APISettingsTab() {
           <label htmlFor="enable-thinking" className="space-y-0.5 flex-1">
             <div className="text-text-primary font-medium">{t('api.enableThinking')}</div>
             <div>{t('api.enableThinkingHint')}</div>
+            {isOllamaMode && (
+              <div className="text-amber-500 dark:text-amber-400 text-xs mt-1">
+                {t('api.enableThinkingOllamaHint')}
+              </div>
+            )}
           </label>
         </div>
       </div>
@@ -798,19 +808,21 @@ function APISettingsTab() {
 
       {/* Save Button */}
       <div className="space-y-3 rounded-[1.5rem] border border-border-subtle bg-background/40 px-4 py-4">
-        <div className="flex items-start gap-2 text-xs text-text-muted">
-          <input
-            type="checkbox"
-            id="api-live-test"
-            checked={useLiveTest}
-            onChange={(e) => setUseLiveTest(e.target.checked)}
-            className="mt-0.5 w-4 h-4 rounded border-border text-accent focus:ring-accent"
-          />
-          <label htmlFor="api-live-test" className="space-y-0.5">
-            <div className="text-text-primary">{t('api.liveTest')}</div>
-            <div>{t('api.liveTestHint')}</div>
-          </label>
-        </div>
+        {supportsLiveRequestTest && (
+          <div className="flex items-start gap-2 text-xs text-text-muted">
+            <input
+              type="checkbox"
+              id="api-live-test"
+              checked={useLiveTest}
+              onChange={(e) => setUseLiveTest(e.target.checked)}
+              className="mt-0.5 w-4 h-4 rounded border-border text-accent focus:ring-accent"
+            />
+            <label htmlFor="api-live-test" className="space-y-0.5">
+              <div className="text-text-primary">{t('api.liveTest')}</div>
+              <div>{t('api.liveTestHint')}</div>
+            </label>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-2">
           <button
@@ -1845,7 +1857,7 @@ function CredentialForm({
 
 // ==================== Connectors Tab (Full version from MCPConnectorsModal) ====================
 
-function ConnectorsTab() {
+function ConnectorsTab({ isActive }: { isActive: boolean }) {
   const { t } = useTranslation();
   const [servers, setServers] = useState<MCPServerConfig[]>([]);
   const [statuses, setStatuses] = useState<MCPServerStatus[]>([]);
@@ -1906,7 +1918,7 @@ function ConnectorsTab() {
   }, [loadPresets, loadServers, loadStatuses, loadTools]);
 
   useEffect(() => {
-    if (!isElectron) {
+    if (!isElectron || !isActive) {
       return;
     }
     void loadAll();
@@ -1915,7 +1927,7 @@ function ConnectorsTab() {
       void loadStatuses();
     }, 3000);
     return () => clearInterval(interval);
-  }, [loadAll, loadStatuses, loadTools]);
+  }, [isActive, loadAll, loadStatuses, loadTools]);
 
   async function handleAddPreset(presetKey: string) {
     const preset = presets[presetKey];
@@ -2705,7 +2717,7 @@ function ServerForm({
 
 // ==================== Skills Tab ====================
 
-function SkillsTab() {
+function SkillsTab({ isActive }: { isActive: boolean }) {
   const { t } = useTranslation();
   const skillsStorageChangedAt = useAppStore((state) => state.skillsStorageChangedAt);
   const skillsStorageChangeEvent = useAppStore((state) => state.skillsStorageChangeEvent);
@@ -2793,19 +2805,47 @@ function SkillsTab() {
   const loadSkills = useCallback(
     async (silent = false) => {
       try {
-        const [loaded, nextStoragePath] = await Promise.all([
+        const [skillsResult, storagePathResult] = await Promise.allSettled([
           window.electronAPI.skills.getAll(),
           window.electronAPI.skills.getStoragePath(),
         ]);
-        setSkills(loaded || []);
-        setStoragePath(nextStoragePath || '');
+        const errors: string[] = [];
+
+        if (skillsResult.status === 'fulfilled') {
+          setSkills(skillsResult.value || []);
+        } else {
+          errors.push(
+            skillsResult.reason instanceof Error
+              ? skillsResult.reason.message
+              : t('skills.failedToLoad')
+          );
+        }
+        if (storagePathResult.status === 'fulfilled') {
+          setStoragePath(storagePathResult.value || '');
+        } else {
+          errors.push(
+            storagePathResult.reason instanceof Error
+              ? storagePathResult.reason.message
+              : t('skills.storagePathUnavailable')
+          );
+        }
+
+        if (errors.length > 0) {
+          throw new Error(errors.join(' | '));
+        }
+
         if (!silent) {
           setError(null);
         }
       } catch (err) {
         console.error('Failed to load skills:', err);
         if (!silent) {
-          setError({ text: t('skills.failedToLoad') });
+          setError({
+            text:
+              err instanceof Error && err.message
+                ? `${t('skills.failedToLoad')}: ${err.message}`
+                : t('skills.failedToLoad'),
+          });
         }
       }
     },
@@ -2813,32 +2853,28 @@ function SkillsTab() {
   );
 
   useEffect(() => {
-    if (isElectron) {
-      void loadSkills();
+    if (!isElectron || !isActive) {
+      return () => {
+        if (pluginToastTimerRef.current) {
+          clearTimeout(pluginToastTimerRef.current);
+        }
+      };
     }
 
-    let refreshTimer: ReturnType<typeof setInterval> | null = null;
-    if (isElectron) {
-      refreshTimer = setInterval(() => {
-        void loadSkills(true);
-      }, 5000);
-    }
+    void loadSkills();
 
     return () => {
       if (pluginToastTimerRef.current) {
         clearTimeout(pluginToastTimerRef.current);
       }
-      if (refreshTimer) {
-        clearInterval(refreshTimer);
-      }
     };
-  }, [loadSkills]);
+  }, [isActive, loadSkills]);
 
   useEffect(() => {
-    if (isElectron && skillsStorageChangedAt > 0) {
+    if (isElectron && isActive && skillsStorageChangedAt > 0) {
       void loadSkills(true);
     }
-  }, [loadSkills, skillsStorageChangedAt]);
+  }, [isActive, loadSkills, skillsStorageChangedAt]);
 
   async function loadPlugins() {
     try {
@@ -2962,10 +2998,7 @@ function SkillsTab() {
   async function handleRefreshSkills() {
     setIsLoading(true);
     try {
-      await loadSkills(true);
-      setError(null);
-    } catch (err) {
-      setError({ text: err instanceof Error ? err.message : t('skills.failedToLoad') });
+      await loadSkills();
     } finally {
       setIsLoading(false);
     }
@@ -3472,7 +3505,7 @@ function SkillCard({
   );
 }
 
-function ScheduleTab() {
+function ScheduleTab({ isActive }: { isActive: boolean }) {
   const { t } = useTranslation();
   const workingDir = useAppStore((state) => state.workingDir);
   const sessions = useAppStore((state) => state.sessions);
@@ -3547,17 +3580,17 @@ function ScheduleTab() {
   }, []);
 
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron || !isActive) return;
     void loadTasks();
-  }, [loadTasks]);
+  }, [isActive, loadTasks]);
 
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron || !isActive) return;
     const interval = setInterval(() => {
       void loadTasks({ silent: true });
     }, 5000);
     return () => clearInterval(interval);
-  }, [loadTasks]);
+  }, [isActive, loadTasks]);
 
   async function submitTask() {
     if (!isElectron) return;
@@ -4635,7 +4668,7 @@ function GeneralTab() {
 
 // ==================== Logs Tab ====================
 
-function LogsTab() {
+function LogsTab({ isActive }: { isActive: boolean }) {
   const { t } = useTranslation();
   const [logFiles, setLogFiles] = useState<
     Array<{ name: string; path: string; size: number; mtime: Date }>
@@ -4673,7 +4706,7 @@ function LogsTab() {
   }, []);
 
   useEffect(() => {
-    if (!isElectron) {
+    if (!isElectron || !isActive) {
       return;
     }
     void loadLogs();
@@ -4682,7 +4715,7 @@ function LogsTab() {
       void loadLogs();
     }, 3000);
     return () => clearInterval(interval);
-  }, [loadDevLogsStatus, loadLogs]);
+  }, [isActive, loadDevLogsStatus, loadLogs]);
 
   async function handleToggleDevLogs() {
     setIsLoading(true);
