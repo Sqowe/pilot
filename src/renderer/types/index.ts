@@ -286,6 +286,13 @@ export interface PermissionRequest {
 
 export type PermissionResult = 'allow' | 'deny' | 'allow_always';
 
+// Sudo password types
+export interface SudoPasswordRequest {
+  toolUseId: string;
+  command: string;
+  sessionId: string;
+}
+
 // AskUserQuestion display types - kept for rendering historical messages
 export interface QuestionOption {
   label: string;
@@ -315,6 +322,7 @@ export type ClientEvent =
   | { type: 'session.getMessages'; payload: { sessionId: string } }
   | { type: 'session.getTraceSteps'; payload: { sessionId: string } }
   | { type: 'permission.response'; payload: { toolUseId: string; result: PermissionResult } }
+  | { type: 'sudo.password.response'; payload: { toolUseId: string; password: string | null } }
   | { type: 'settings.update'; payload: Record<string, unknown> }
   | { type: 'folder.select'; payload: Record<string, never> }
   | { type: 'workdir.get'; payload: Record<string, never> }
@@ -366,6 +374,8 @@ export type ServerEvent =
   | { type: 'session.update'; payload: { sessionId: string; updates: Partial<Session> } }
   | { type: 'session.list'; payload: { sessions: Session[] } }
   | { type: 'permission.request'; payload: PermissionRequest }
+  | { type: 'sudo.password.request'; payload: SudoPasswordRequest }
+  | { type: 'sudo.password.dismiss'; payload: { toolUseId: string } }
   | { type: 'trace.step'; payload: { sessionId: string; step: TraceStep } }
   | { type: 'trace.update'; payload: { sessionId: string; stepId: string; updates: Partial<TraceStep> } }
   | { type: 'folder.selected'; payload: { path: string } }
@@ -506,6 +516,7 @@ export interface ApiTestResult {
     | 'rate_limited'
     | 'server_error'
     | 'network_error'
+    | 'ollama_not_running'
     | 'proxy_boot_failed'
     | 'proxy_health_failed'
     | 'proxy_upstream_auth_failed'

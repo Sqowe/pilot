@@ -143,6 +143,7 @@ function toErrorText(error: unknown): string {
 interface AgentRunnerOptions {
   sendToRenderer: (event: ServerEvent) => void;
   saveMessage?: (message: Message) => void;
+  requestSudoPassword?: (sessionId: string, toolUseId: string, command: string) => Promise<string | null>;
 }
 
 /**
@@ -156,6 +157,7 @@ interface AgentRunnerOptions {
 export class ClaudeAgentRunner {
   private sendToRenderer: (event: ServerEvent) => void;
   private saveMessage?: (message: Message) => void;
+  private requestSudoPassword?: (sessionId: string, toolUseId: string, command: string) => Promise<string | null>;
   private pathResolver: PathResolver;
   private mcpManager?: MCPManager;
   // @ts-expect-error stored for future plugin support
@@ -423,6 +425,7 @@ ${sections.join('\n\n')}
   ) {
     this.sendToRenderer = options.sendToRenderer;
     this.saveMessage = options.saveMessage;
+    this.requestSudoPassword = options.requestSudoPassword;
     this.pathResolver = pathResolver;
     this.mcpManager = mcpManager;
     this._pluginRuntimeService = pluginRuntimeService;
@@ -435,6 +438,85 @@ ${sections.join('\n\n')}
     }
   }
   
+  /**
+   * Check if a command contains sudo
+   */
+  private static isSudoCommand(command: string): boolean {
+    return /\bsudo\b/.test(command);
+  }
+
+  /**
+   * Wrap the bash tool in the coding tools array to intercept sudo commands.
+   * When a sudo command is detected, prompts the user for a password,
+   * then rewrites the command to pipe the password into sudo -S.
+   */
+  private wrapBashToolForSudo(tools: ToolDefinition[], sessionId: string): ToolDefinition[] {
+    if (!this.requestSudoPassword) return tools;
+
+    const requestSudoPassword = this.requestSudoPassword;
+
+    return tools.map((tool) => {
+      if (tool.name !== 'bash') return tool;
+
+      const originalExecute = tool.execute;
+      return {
+        ...tool,
+        execute: async (
+          toolCallId: string,
+          params: { command: string; timeout?: number },
+          signal: AbortSignal | undefined,
+          onUpdate: ((update: unknown) => void) | undefined,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ctx: any
+        ) => {
+          const command = params.command;
+
+          if (ClaudeAgentRunner.isSudoCommand(command)) {
+            log('[ClaudeAgentRunner] Sudo command detected, requesting password');
+            const password = await requestSudoPassword(sessionId, toolCallId, command);
+
+            if (!password) {
+              log('[ClaudeAgentRunner] Sudo password cancelled by user');
+              return {
+                content: [{ type: 'text' as const, text: 'Command cancelled: user denied sudo password.' }],
+                details: undefined as unknown,
+              };
+            }
+
+            // Add -S flag to sudo invocations that don't already have it
+            const rewrittenCommand = command.replace(/\bsudo\b(?!\s+-S)/g, 'sudo -S');
+
+            // Use a unique env var name per invocation to avoid race conditions
+            // when multiple sessions run sudo concurrently.
+            const envVarName = `__SUDO_PW_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+            // Pass password via env var and pipe it through printf,
+            // so the password never appears in process args (unlike echo 'pw' |).
+            // process.env is inherited by child_process.spawn synchronously.
+            const wrappedCommand = `printf '%s\\n' "$${envVarName}" | ${rewrittenCommand}`;
+            process.env[envVarName] = password;
+
+            log('[ClaudeAgentRunner] Executing sudo command with password injection (via env)');
+            try {
+              const result = await originalExecute(
+                toolCallId,
+                { ...params, command: wrappedCommand },
+                signal,
+                onUpdate,
+                ctx
+              );
+              return result;
+            } finally {
+              delete process.env[envVarName];
+            }
+          }
+
+          return originalExecute(toolCallId, params, signal, onUpdate, ctx);
+        },
+      } as ToolDefinition;
+    });
+  }
+
   /**
    * Resolve current model string from runtime config.
    */
@@ -1124,12 +1206,17 @@ Tool routing:
         log(`[ClaudeAgentRunner] Registered ${mcpCustomTools.length} MCP tools as customTools:`, mcpCustomTools.map(t => t.name).join(', '));
       }
 
+      const codingTools = createCodingTools(effectiveCwd);
+
+      // Wrap the bash tool to intercept sudo commands and request passwords
+      const wrappedTools = this.wrapBashToolForSudo(codingTools, session.id);
+
       const { session: piSession } = await createAgentSession({
         model: piModel,
         thinkingLevel,
         authStorage,
         modelRegistry,
-        tools: createCodingTools(effectiveCwd),
+        tools: wrappedTools,
         customTools: mcpCustomTools,
         sessionManager: PiSessionManager.inMemory(),
         settingsManager: PiSettingsManager.inMemory({

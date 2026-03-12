@@ -41,6 +41,7 @@ export class SessionManager {
   private activeSessions: Map<string, AbortController> = new Map();
   private promptQueues: Map<string, Array<{ prompt: string; content?: ContentBlock[] }>> = new Map();
   private pendingPermissions: Map<string, (result: PermissionResult) => void> = new Map();
+  private pendingSudoPasswords: Map<string, { sessionId: string; resolve: (password: string | null) => void }> = new Map();
   private sandboxInitPromises: Map<string, Promise<void>> = new Map();
   private sessionTitleAttempts: Set<string> = new Set();
   private titleGenerationTokens: Map<string, symbol> = new Map();
@@ -89,6 +90,8 @@ export class SessionManager {
       {
         sendToRenderer: this.sendToRenderer,
         saveMessage: (message: Message) => this.saveMessage(message),
+        requestSudoPassword: (sessionId: string, toolUseId: string, command: string) =>
+          this.requestSudoPassword(sessionId, toolUseId, command),
       },
       this.pathResolver,
       this.mcpManager,
@@ -680,6 +683,14 @@ export class SessionManager {
     log('[SessionManager] Stopping session:', sessionId);
     this.titleGenerationTokens.delete(sessionId);
     this.agentRunner.cancel(sessionId);
+    // Cancel any pending sudo password requests for this session
+    for (const [toolUseId, entry] of this.pendingSudoPasswords) {
+      if (entry.sessionId === sessionId) {
+        entry.resolve(null);
+        this.pendingSudoPasswords.delete(toolUseId);
+        this.sendToRenderer({ type: 'sudo.password.dismiss', payload: { toolUseId } });
+      }
+    }
     // Also abort any pending controller we tracked
     const controller = this.activeSessions.get(sessionId);
     if (controller) {
@@ -872,6 +883,41 @@ export class SessionManager {
         payload: { toolUseId, toolName, input, sessionId },
       });
     });
+  }
+
+  // Request sudo password from the user
+  async requestSudoPassword(
+    sessionId: string,
+    toolUseId: string,
+    command: string
+  ): Promise<string | null> {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.pendingSudoPasswords.delete(toolUseId);
+        resolve(null);
+        this.sendToRenderer({ type: 'sudo.password.dismiss', payload: { toolUseId } });
+      }, 60_000);
+      this.pendingSudoPasswords.set(toolUseId, {
+        sessionId,
+        resolve: (password: string | null) => {
+          clearTimeout(timeout);
+          resolve(password);
+        },
+      });
+      this.sendToRenderer({
+        type: 'sudo.password.request',
+        payload: { toolUseId, command, sessionId },
+      });
+    });
+  }
+
+  // Handle sudo password response from renderer
+  handleSudoPasswordResponse(toolUseId: string, password: string | null): void {
+    const entry = this.pendingSudoPasswords.get(toolUseId);
+    if (entry) {
+      entry.resolve(password);
+      this.pendingSudoPasswords.delete(toolUseId);
+    }
   }
 
   private saveTraceStep(sessionId: string, step: TraceStep): void {

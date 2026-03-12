@@ -173,6 +173,18 @@ export function useIPC() {
           store.setPendingPermission(event.payload);
           break;
 
+        case 'sudo.password.request':
+          store.setPendingSudoPassword(event.payload);
+          break;
+
+        case 'sudo.password.dismiss': {
+          const currentSudo = useAppStore.getState().pendingSudoPassword;
+          if (currentSudo?.toolUseId === event.payload.toolUseId) {
+            store.setPendingSudoPassword(null);
+          }
+          break;
+        }
+
         case 'config.status': {
           console.log('[useIPC] config.status received:', event.payload.isConfigured);
           const isInitialConfigStatus = !store.hasSeenInitialConfigStatus;
@@ -574,6 +586,19 @@ export function useIPC() {
     [send, setPendingPermission]
   );
 
+  const setPendingSudoPassword = useAppStore((s) => s.setPendingSudoPassword);
+
+  const respondToSudoPassword = useCallback(
+    (toolUseId: string, password: string | null) => {
+      send({
+        type: 'sudo.password.response',
+        payload: { toolUseId, password },
+      });
+      setPendingSudoPassword(null);
+    },
+    [send, setPendingSudoPassword]
+  );
+
   const selectFolder = useCallback(async (): Promise<string | null> => {
     if (!isElectron) {
       return '/mock/folder/path';
@@ -623,6 +648,7 @@ export function useIPC() {
     getSessionMessages,
     getSessionTraceSteps,
     respondToPermission,
+    respondToSudoPassword,
     selectFolder,
     getWorkingDir,
     changeWorkingDir,
