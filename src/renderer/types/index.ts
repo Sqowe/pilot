@@ -370,6 +370,7 @@ export interface SandboxSyncStatus {
 export type ServerEvent =
   | { type: 'stream.message'; payload: { sessionId: string; message: Message } }
   | { type: 'stream.partial'; payload: { sessionId: string; delta: string } }
+  | { type: 'stream.thinking'; payload: { sessionId: string; delta: string } }
   | { type: 'session.status'; payload: { sessionId: string; status: SessionStatus; error?: string } }
   | { type: 'session.update'; payload: { sessionId: string; updates: Partial<Session> } }
   | { type: 'session.list'; payload: { sessions: Session[] } }
@@ -523,6 +524,40 @@ export interface ApiTestResult {
     | 'proxy_upstream_not_found'
     | 'unknown';
   details?: string;
+}
+
+// API Diagnostics types
+export type DiagnosticStepName = 'dns' | 'tcp' | 'tls' | 'auth' | 'model';
+export type DiagnosticStepStatus = 'pending' | 'running' | 'ok' | 'fail' | 'skip';
+
+export interface DiagnosticStep {
+  name: DiagnosticStepName;
+  status: DiagnosticStepStatus;
+  latencyMs?: number;
+  error?: string;
+  fix?: string;
+}
+
+export interface DiagnosticResult {
+  steps: DiagnosticStep[];
+  overallOk: boolean;
+  /** Which step failed first (null if all ok) */
+  failedAt?: DiagnosticStepName;
+  totalLatencyMs: number;
+}
+
+export interface DiagnosticInput {
+  provider: AppConfig['provider'];
+  apiKey: string;
+  baseUrl?: string;
+  customProtocol?: AppConfig['customProtocol'];
+  model?: string;
+}
+
+export interface LocalServiceInfo {
+  type: 'ollama';
+  baseUrl: string;
+  models?: string[];
 }
 
 // MCP types

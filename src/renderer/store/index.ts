@@ -34,6 +34,7 @@ interface AppState {
   // Messages
   messagesBySession: Record<string, Message[]>;
   partialMessagesBySession: Record<string, string>;
+  partialThinkingBySession: Record<string, string>;
   pendingTurnsBySession: Record<string, string[]>;
   activeTurnsBySession: Record<string, { stepId: string; userMessageId: string } | null>;
 
@@ -86,6 +87,8 @@ interface AppState {
   setMessages: (sessionId: string, messages: Message[]) => void;
   setPartialMessage: (sessionId: string, partial: string) => void;
   clearPartialMessage: (sessionId: string) => void;
+  setPartialThinking: (sessionId: string, delta: string) => void;
+  clearPartialThinking: (sessionId: string) => void;
   activateNextTurn: (sessionId: string, stepId: string) => void;
   updateActiveTurnStep: (sessionId: string, stepId: string) => void;
   clearActiveTurn: (sessionId: string, stepId?: string) => void;
@@ -166,6 +169,7 @@ export const useAppStore = create<AppState>((set) => ({
   activeSessionId: null,
   messagesBySession: {},
   partialMessagesBySession: {},
+  partialThinkingBySession: {},
   pendingTurnsBySession: {},
   activeTurnsBySession: {},
   traceStepsBySession: {},
@@ -197,6 +201,7 @@ export const useAppStore = create<AppState>((set) => ({
       sessions: [session, ...state.sessions],
       messagesBySession: { ...state.messagesBySession, [session.id]: [] },
       partialMessagesBySession: { ...state.partialMessagesBySession, [session.id]: '' },
+      partialThinkingBySession: { ...state.partialThinkingBySession, [session.id]: '' },
       pendingTurnsBySession: { ...state.pendingTurnsBySession, [session.id]: [] },
       activeTurnsBySession: { ...state.activeTurnsBySession, [session.id]: null },
       traceStepsBySession: { ...state.traceStepsBySession, [session.id]: [] },
@@ -211,6 +216,8 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => {
       const { [sessionId]: _, ...restMessages } = state.messagesBySession;
       const { [sessionId]: __partials, ...restPartials } = state.partialMessagesBySession;
+      const { [sessionId]: __thinkingPartials, ...restThinkingPartials } =
+        state.partialThinkingBySession;
       const { [sessionId]: __pending, ...restPendingTurns } = state.pendingTurnsBySession;
       const { [sessionId]: __active, ...restActiveTurns } = state.activeTurnsBySession;
       const { [sessionId]: __traces, ...restTraces } = state.traceStepsBySession;
@@ -218,6 +225,7 @@ export const useAppStore = create<AppState>((set) => ({
         sessions: state.sessions.filter((s) => s.id !== sessionId),
         messagesBySession: restMessages,
         partialMessagesBySession: restPartials,
+        partialThinkingBySession: restThinkingPartials,
         pendingTurnsBySession: restPendingTurns,
         activeTurnsBySession: restActiveTurns,
         traceStepsBySession: restTraces,
@@ -277,6 +285,12 @@ export const useAppStore = create<AppState>((set) => ({
               [sessionId]: '',
             }
           : state.partialMessagesBySession,
+        partialThinkingBySession: shouldClearPartial
+          ? {
+              ...state.partialThinkingBySession,
+              [sessionId]: '',
+            }
+          : state.partialThinkingBySession,
       };
     }),
 
@@ -300,6 +314,22 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => ({
       partialMessagesBySession: {
         ...state.partialMessagesBySession,
+        [sessionId]: '',
+      },
+    })),
+
+  setPartialThinking: (sessionId, delta) =>
+    set((state) => ({
+      partialThinkingBySession: {
+        ...state.partialThinkingBySession,
+        [sessionId]: (state.partialThinkingBySession[sessionId] || '') + delta,
+      },
+    })),
+
+  clearPartialThinking: (sessionId) =>
+    set((state) => ({
+      partialThinkingBySession: {
+        ...state.partialThinkingBySession,
         [sessionId]: '',
       },
     })),

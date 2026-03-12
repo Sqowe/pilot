@@ -1228,6 +1228,11 @@ Tool routing:
       // parameter is simply not passed by the session runner — safe to cast.
       const wrappedTools = this.wrapBashToolForSudo(codingTools as ToolDefinition[], session.id);
 
+      // Diagnostic: log tools being passed to SDK (helps debug Ollama tool use)
+      log(`[ClaudeAgentRunner] Creating session with model=${piModel}, thinkingLevel=${thinkingLevel}`);
+      log(`[ClaudeAgentRunner] Built-in tools (${wrappedTools.length}): ${wrappedTools.map((t: { name?: string; type?: string }) => t.name || t.type).join(', ')}`);
+      log(`[ClaudeAgentRunner] Custom MCP tools (${mcpCustomTools.length}): ${mcpCustomTools.map(t => t.name).join(', ')}`);
+
       const { session: piSession } = await createAgentSession({
         model: piModel,
         thinkingLevel,
@@ -1276,8 +1281,11 @@ Tool routing:
               streamedText += ame.delta;
               this.sendPartial(session.id, ame.delta);
             } else if (ame.type === 'thinking_delta') {
-              // Thinking output — optionally forward to UI
-              log('[ClaudeAgentRunner] Thinking delta:', ame.delta.substring(0, 100));
+              // Forward thinking delta to renderer for real-time display
+              this.sendToRenderer({
+                type: 'stream.thinking',
+                payload: { sessionId: session.id, delta: ame.delta },
+              });
             } else if (ame.type === 'toolcall_start') {
               const partial = ame.partial;
               const toolContent = partial?.content?.[ame.contentIndex];
@@ -1344,8 +1352,11 @@ Tool routing:
                     input: block.arguments,
                   });
                 } else if (block.type === 'thinking') {
-                  // ThinkingContent from extended thinking — skip (internal to model)
-                  log(`[ClaudeAgentRunner] Skipping thinking block (${block.thinking.length} chars)`);
+                  // Include thinking blocks in the final message for UI display
+                  contentBlocks.push({
+                    type: 'thinking',
+                    thinking: block.thinking,
+                  });
                 } else {
                   // Unknown block type — pass through as text so content isn't silently lost
                   log(`[ClaudeAgentRunner] Unknown content block type: ${(block as any).type}`);

@@ -20,6 +20,7 @@ export function ChatView() {
   const sessions = useAppStore((s) => s.sessions);
   const messagesBySession = useAppStore((s) => s.messagesBySession);
   const partialMessagesBySession = useAppStore((s) => s.partialMessagesBySession);
+  const partialThinkingBySession = useAppStore((s) => s.partialThinkingBySession);
   const activeTurnsBySession = useAppStore((s) => s.activeTurnsBySession);
   const pendingTurnsBySession = useAppStore((s) => s.pendingTurnsBySession);
   const appConfig = useAppStore((s) => s.appConfig);
@@ -52,6 +53,9 @@ export function ChatView() {
   const messages = activeSessionId ? messagesBySession[activeSessionId] || [] : [];
   const pendingTurns = activeSessionId ? pendingTurnsBySession[activeSessionId] || [] : [];
   const partialMessage = activeSessionId ? partialMessagesBySession[activeSessionId] || '' : '';
+  const partialThinking = activeSessionId
+    ? partialThinkingBySession[activeSessionId] || ''
+    : '';
   const activeTurn = activeSessionId ? activeTurnsBySession[activeSessionId] : null;
   const hasActiveTurn = Boolean(activeTurn);
   const pendingCount = pendingTurns.length;
@@ -60,7 +64,9 @@ export function ChatView() {
 
   const displayedMessages = useMemo(() => {
     if (!activeSessionId) return messages;
-    if (!partialMessage || !activeTurn?.userMessageId) return messages;
+    // Show streaming message if we have partial text OR partial thinking
+    const hasStreamingContent = partialMessage || partialThinking;
+    if (!hasStreamingContent || !activeTurn?.userMessageId) return messages;
     const anchorIndex = messages.findIndex((message) => message.id === activeTurn.userMessageId);
     if (anchorIndex === -1) return messages;
 
@@ -70,16 +76,24 @@ export function ChatView() {
       insertIndex += 1;
     }
 
+    const contentBlocks: ContentBlock[] = [];
+    if (partialThinking) {
+      contentBlocks.push({ type: 'thinking', thinking: partialThinking });
+    }
+    if (partialMessage) {
+      contentBlocks.push({ type: 'text', text: partialMessage });
+    }
+
     const streamingMessage: Message = {
       id: `partial-${activeSessionId}`,
       sessionId: activeSessionId,
       role: 'assistant',
-      content: [{ type: 'text', text: partialMessage }],
+      content: contentBlocks,
       timestamp: Date.now(),
     };
 
     return [...messages.slice(0, insertIndex), streamingMessage, ...messages.slice(insertIndex)];
-  }, [activeSessionId, activeTurn?.userMessageId, messages, partialMessage]);
+  }, [activeSessionId, activeTurn?.userMessageId, messages, partialMessage, partialThinking]);
 
   // Debounced scroll function to prevent scroll conflicts
   const scrollToBottom = useRef((behavior: ScrollBehavior = 'auto', immediate: boolean = false) => {
@@ -137,7 +151,7 @@ export function ChatView() {
 
   useEffect(() => {
     const messageCount = messages.length;
-    const partialLength = partialMessage.length;
+    const partialLength = partialMessage.length + partialThinking.length;
     const hasNewMessage = messageCount !== prevMessageCountRef.current;
     const isStreamingTick = partialLength !== prevPartialLengthRef.current && !hasNewMessage;
 
@@ -161,7 +175,7 @@ export function ChatView() {
 
     prevMessageCountRef.current = messageCount;
     prevPartialLengthRef.current = partialLength;
-  }, [messages.length, partialMessage]);
+  }, [messages.length, partialMessage, partialThinking]);
 
   // Additional scroll trigger for content height changes (e.g., TodoWrite expand/collapse)
   useEffect(() => {
@@ -627,8 +641,10 @@ export function ChatView() {
             })
           )}
 
-          {/* Processing indicator - show when we have an active turn but no partial message yet */}
-          {hasActiveTurn && (!partialMessage || partialMessage.trim() === '') && (
+          {/* Processing indicator - show when we have an active turn but no streaming content yet */}
+          {hasActiveTurn &&
+            (!partialMessage || partialMessage.trim() === '') &&
+            !partialThinking && (
             <div className="flex items-center gap-3 px-4 py-3 rounded-full bg-background/80 border border-border-subtle max-w-fit">
               <Loader2 className="w-4 h-4 text-accent animate-spin" />
               <span className="text-sm text-text-secondary">{t('chat.processing')}</span>

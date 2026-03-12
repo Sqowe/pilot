@@ -37,6 +37,9 @@ export function useIPC() {
     const pendingPartials: Record<string, string[]> = {};
     let partialRafId: number | null = null;
 
+    const pendingThinking: Record<string, string[]> = {};
+    let thinkingRafId: number | null = null;
+
     const flushPartials = () => {
       partialRafId = null;
       const store = storeRef.current;
@@ -54,6 +57,26 @@ export function useIPC() {
       pendingPartials[sessionId].push(delta);
       if (partialRafId === null) {
         partialRafId = requestAnimationFrame(flushPartials);
+      }
+    };
+
+    const flushThinking = () => {
+      thinkingRafId = null;
+      const store = storeRef.current;
+      for (const sessionId in pendingThinking) {
+        const chunks = pendingThinking[sessionId];
+        if (chunks.length > 0) {
+          store.setPartialThinking(sessionId, chunks.join(''));
+          pendingThinking[sessionId] = [];
+        }
+      }
+    };
+
+    const bufferThinking = (sessionId: string, delta: string) => {
+      if (!pendingThinking[sessionId]) pendingThinking[sessionId] = [];
+      pendingThinking[sessionId].push(delta);
+      if (thinkingRafId === null) {
+        thinkingRafId = requestAnimationFrame(flushThinking);
       }
     };
 
@@ -115,11 +138,19 @@ export function useIPC() {
             'content:',
             JSON.stringify(event.payload.message.content)
           );
+          // Clear pending partial buffer to prevent RAF from appending stale chunks
+          delete pendingPartials[event.payload.sessionId];
+          // Clear thinking buffer too — final thinking is in the message content blocks
+          delete pendingThinking[event.payload.sessionId];
           store.addMessage(event.payload.sessionId, event.payload.message);
           break;
 
         case 'stream.partial':
           bufferPartial(event.payload.sessionId, event.payload.delta);
+          break;
+
+        case 'stream.thinking':
+          bufferThinking(event.payload.sessionId, event.payload.delta);
           break;
 
         case 'trace.step': {
@@ -278,6 +309,7 @@ export function useIPC() {
     return () => {
       console.log('[useIPC] Cleaning up IPC listener');
       if (partialRafId !== null) cancelAnimationFrame(partialRafId);
+      if (thinkingRafId !== null) cancelAnimationFrame(thinkingRafId);
       if (traceRafId !== null) cancelAnimationFrame(traceRafId);
       cleanup?.();
     };
