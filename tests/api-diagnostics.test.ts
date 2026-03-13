@@ -1,16 +1,18 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const dnsLookup = vi.fn();
   const tcpConnect = vi.fn();
   const tlsConnect = vi.fn();
   const openaiModelsList = vi.fn();
+  const fetch = vi.fn();
 
   return {
     dnsLookup,
     tcpConnect,
     tlsConnect,
     openaiModelsList,
+    fetch,
   };
 });
 
@@ -58,14 +60,18 @@ vi.mock('../src/main/utils/logger', () => ({
   logWarn: vi.fn(),
 }));
 
-import { runDiagnostics } from '../src/main/config/api-diagnostics';
+import { discoverLocalOllama, runDiagnostics } from '../src/main/config/api-diagnostics';
 
 describe('runDiagnostics TLS step', () => {
+  const originalFetch = global.fetch;
+
   beforeEach(() => {
     mocks.dnsLookup.mockReset();
     mocks.tcpConnect.mockReset();
     mocks.tlsConnect.mockReset();
     mocks.openaiModelsList.mockReset();
+    mocks.fetch.mockReset();
+    global.fetch = mocks.fetch;
 
     mocks.dnsLookup.mockResolvedValue({ address: '127.0.0.1', family: 4 });
     mocks.openaiModelsList.mockResolvedValue({});
@@ -102,6 +108,10 @@ describe('runDiagnostics TLS step', () => {
         return socket;
       }
     );
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
   });
 
   it('sends servername for HTTPS hostnames so SNI-enabled endpoints validate correctly', async () => {
@@ -162,5 +172,85 @@ describe('runDiagnostics TLS step', () => {
       timeout: 5000,
     });
     expect(tlsOptions.servername).toBeUndefined();
+  });
+
+  it('uses standard HTTPS port for remote Ollama endpoints without an explicit port', async () => {
+    const result = await runDiagnostics({
+      provider: 'ollama',
+      apiKey: '',
+      baseUrl: 'https://ollama.example.internal/v1',
+      model: 'qwen3.5:0.8b',
+    });
+
+    expect(result.overallOk).toBe(true);
+
+    const [tcpOptions] = mocks.tcpConnect.mock.calls[0];
+    expect(tcpOptions).toMatchObject({
+      host: 'ollama.example.internal',
+      port: 443,
+      timeout: 5000,
+    });
+
+    const [tlsOptions] = mocks.tlsConnect.mock.calls[0];
+    expect(tlsOptions).toMatchObject({
+      host: 'ollama.example.internal',
+      port: 443,
+      timeout: 5000,
+      servername: 'ollama.example.internal',
+    });
+  });
+
+  it('discovers local Ollama using the caller-provided loopback endpoint', async () => {
+    mocks.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        data: [{ id: 'qwen3.5:0.8b' }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const result = await discoverLocalOllama({
+      baseUrl: 'http://127.0.0.1:18080/api',
+    });
+
+    expect(result).toEqual({
+      available: true,
+      baseUrl: 'http://127.0.0.1:18080/v1',
+      models: ['qwen3.5:0.8b'],
+    });
+    expect(mocks.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:18080/v1/models',
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+      })
+    );
+  });
+
+  it('falls back to the default local endpoint when a remote base url is passed to local discovery', async () => {
+    mocks.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        data: [{ id: 'qwen3.5:0.8b' }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const result = await discoverLocalOllama({
+      baseUrl: 'https://ollama.example.internal/v1',
+    });
+
+    expect(result).toEqual({
+      available: true,
+      baseUrl: 'http://localhost:11434/v1',
+      models: ['qwen3.5:0.8b'],
+    });
+    expect(mocks.fetch).toHaveBeenCalledWith(
+      'http://localhost:11434/v1/models',
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+      })
+    );
   });
 });

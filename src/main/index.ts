@@ -1102,9 +1102,9 @@ ipcMain.handle('config.diagnose', async (_event, payload: DiagnosticInput) => {
   return runDiagnostics(payload);
 });
 
-ipcMain.handle('config.discover-local', async () => {
+ipcMain.handle('config.discover-local', async (_event, payload?: { baseUrl?: string }) => {
   const { discoverLocalOllama } = await import('./config/api-diagnostics');
-  return discoverLocalOllama();
+  return discoverLocalOllama(payload);
 });
 
 ipcMain.handle('auth.getStatus', () => {

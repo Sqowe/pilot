@@ -22,4 +22,15 @@ describe('SettingsPanel Claude-style layout', () => {
     expect(source).toContain('<activeTabMeta.icon className="w-5 h-5" />');
     expect(source).toContain('rounded-[1.75rem] border border-border-subtle bg-background/70');
   });
+
+  it('shows a disabled empty-state option when no provider models are available', () => {
+    const source = fs.readFileSync(settingsPanelPath, 'utf8');
+    expect(source).toContain("t('api.noModelsAvailable')");
+  });
+
+  it('surfaces the local Ollama discovery action from settings', () => {
+    const source = fs.readFileSync(settingsPanelPath, 'utf8');
+    expect(source).toContain('discoverLocalOllama');
+    expect(source).toContain("t('api.discoverLocalOllama')");
+  });
 });

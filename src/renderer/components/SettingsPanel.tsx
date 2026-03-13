@@ -492,6 +492,7 @@ function APISettingsTab() {
     error,
     successMessage,
     isRefreshingModels,
+    isDiscoveringLocalOllama,
     enableThinking,
     isOllamaMode,
     requiresApiKey,
@@ -525,6 +526,7 @@ function APISettingsTab() {
     deleteConfigSet,
     handleSave,
     refreshModelOptions,
+    discoverLocalOllama,
     diagnosticResult,
     isDiagnosing,
     handleDiagnose,
@@ -643,10 +645,27 @@ function APISettingsTab() {
 
       {(provider === 'custom' || provider === 'ollama') && (
         <div className="space-y-2 rounded-[1.5rem] border border-border-subtle bg-background/40 px-4 py-4">
-          <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
-            <Server className="w-4 h-4" />
-            {t('api.baseUrl')}
-          </label>
+          <div className="flex items-center justify-between gap-2">
+            <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
+              <Server className="w-4 h-4" />
+              {t('api.baseUrl')}
+            </label>
+            {isOllamaMode && (
+              <button
+                type="button"
+                onClick={() => {
+                  void discoverLocalOllama();
+                }}
+                disabled={isDiscoveringLocalOllama}
+                className="flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors active:scale-95 bg-accent-muted text-accent hover:bg-accent-muted/80 disabled:opacity-50"
+              >
+                <Plug className="w-3 h-3" />
+                {isDiscoveringLocalOllama
+                  ? t('api.discoveringLocalOllama')
+                  : t('api.discoverLocalOllama')}
+              </button>
+            )}
+          </div>
           <input
             type="text"
             value={baseUrl}
@@ -671,6 +690,9 @@ function APISettingsTab() {
                   ? t('api.enterGeminiUrl')
                   : t('api.enterAnthropicUrl')}
           </p>
+          {isOllamaMode && (
+            <p className="text-xs text-text-muted">{t('api.discoverLocalOllamaHint')}</p>
+          )}
           {provider === 'custom' && <GuidanceInlineHint text={baseUrlGuidanceText} />}
         </div>
       )}
@@ -720,15 +742,21 @@ function APISettingsTab() {
           />
         ) : (
           <select
-            value={model}
+            value={modelOptions.length ? model : ''}
             onChange={(e) => setModel(e.target.value)}
             className="w-full px-4 py-3 rounded-xl bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all appearance-none cursor-pointer"
           >
-            {(modelOptions as ModelOptionItem[]).map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
+            {modelOptions.length ? (
+              (modelOptions as ModelOptionItem[]).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))
+            ) : (
+              <option value="" disabled>
+                {t('api.noModelsAvailable')}
               </option>
-            ))}
+            )}
           </select>
         )}
         {useCustomModel && <p className="text-xs text-text-muted">{modelInputHint}</p>}

@@ -14,6 +14,11 @@ import type {
   ProviderType,
 } from '../types';
 import { isLoopbackBaseUrl } from '../../shared/network/loopback';
+import {
+  DEFAULT_OLLAMA_BASE_URL,
+  normalizeOllamaBaseUrl,
+  shouldAutoDiscoverLocalOllamaBaseUrl,
+} from '../../shared/ollama-base-url';
 import { API_PROVIDER_PRESETS, getModelInputGuidance } from '../../shared/api-model-presets';
 import {
   COMMON_PROVIDER_SETUPS,
@@ -60,7 +65,6 @@ const isElectron = typeof window !== 'undefined' && window.electronAPI !== undef
 const CONFIG_SET_LIMIT = 20;
 const DEFAULT_CONFIG_SET_ID = 'default';
 const DEFAULT_CONFIG_SET_NAME_ZH = '默认方案';
-
 export const FALLBACK_PROVIDER_PRESETS: ProviderPresets = API_PROVIDER_PRESETS;
 
 const PROFILE_KEYS: ProviderProfileKey[] = [
@@ -197,6 +201,13 @@ function defaultProfileForKey(
   };
 }
 
+function normalizeDiscoveredOllamaModels(models: string[] | undefined): ProviderModelInfo[] {
+  return (models || [])
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .map((id) => ({ id, name: id }));
+}
+
 function isPristineCustomProfile(
   profileKey: ProviderProfileKey,
   profile: Partial<ProviderProfile> | undefined,
@@ -234,12 +245,15 @@ function normalizeProfile(
   }
 
   const modelValue = profile?.model?.trim() || fallback.model;
+  const rawBaseUrl = profile?.baseUrl?.trim() || fallback.baseUrl;
   const hasPresetModel = modelPresetForProfile(profileKey, presets).models.some(
     (item) => item.id === modelValue
   );
   return {
     apiKey: profile?.apiKey || '',
-    baseUrl: profile?.baseUrl?.trim() || fallback.baseUrl,
+    baseUrl: profileKey === 'ollama'
+      ? (normalizeOllamaBaseUrl(rawBaseUrl) || fallback.baseUrl)
+      : rawBaseUrl,
     model: hasPresetModel ? modelValue : fallback.model,
     customModel: hasPresetModel ? '' : modelValue,
     useCustomModel: !hasPresetModel,
@@ -563,6 +577,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isRefreshingModels, setIsRefreshingModels] = useState(false);
+  const [isDiscoveringLocalOllama, setIsDiscoveringLocalOllama] = useState(false);
   const [errorText, setErrorText] = useState('');
   const [errorKey, setErrorKey] = useState<string | null>(null);
   const [errorValues, setErrorValues] = useState<Record<string, string | number> | undefined>(
@@ -578,6 +593,18 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   const [useLiveTest, setUseLiveTest] = useState(false);
   const [diagnosticResult, setDiagnosticResult] = useState<DiagnosticResult | null>(null);
   const [isDiagnosing, setIsDiagnosing] = useState(false);
+  const ollamaRefreshRequestIdRef = useRef(0);
+  const latestOllamaTargetRef = useRef<{
+    activeProfileKey: ProviderProfileKey;
+    baseUrl: string;
+    provider: ProviderType;
+  }>({
+    activeProfileKey,
+    baseUrl: '',
+    provider: 'openrouter',
+  });
+  const autoDiscoveryAttemptedRef = useRef<Set<string>>(new Set());
+  const ollamaDiscoverRequestIdRef = useRef(0);
 
   const clearError = useCallback(() => {
     setErrorText('');
@@ -625,10 +652,11 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     profiles[activeProfileKey] || defaultProfileForKey(activeProfileKey, presets);
   const modelPreset = modelPresetForProfile(activeProfileKey, presets);
   const currentPreset = modelPreset;
-  const modelOptions =
-    provider === 'ollama' && discoveredModels[activeProfileKey]?.length
-      ? discoveredModels[activeProfileKey]!
-      : modelPreset.models;
+  const hasDiscoveredOllamaModels =
+    provider === 'ollama' && Object.prototype.hasOwnProperty.call(discoveredModels, activeProfileKey);
+  const modelOptions = hasDiscoveredOllamaModels
+    ? (discoveredModels[activeProfileKey] || [])
+    : modelPreset.models;
   const modelInputGuidance = getModelInputGuidance(provider, customProtocol);
 
   const currentConfigSet = useMemo(
@@ -986,6 +1014,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   useEffect(() => {
     clearError();
     setTestResult(null);
+    setDiagnosticResult(null);
   }, [
     activeConfigSetId,
     activeProfileKey,
@@ -996,6 +1025,14 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     model,
     useCustomModel,
   ]);
+
+  useEffect(() => {
+    latestOllamaTargetRef.current = {
+      activeProfileKey,
+      baseUrl: baseUrl.trim(),
+      provider,
+    };
+  }, [activeProfileKey, baseUrl, provider]);
 
   useEffect(() => {
     if (provider !== 'ollama') {
@@ -1134,26 +1171,49 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       return [];
     }
 
+    const requestedProfileKey = activeProfileKey;
+    const requestedBaseUrl = baseUrl.trim();
+    const requestId = ++ollamaRefreshRequestIdRef.current;
+
     setIsRefreshingModels(true);
     clearError();
     try {
       const models = await window.electronAPI.config.listModels({
         provider,
         apiKey: apiKey.trim(),
-        baseUrl: baseUrl.trim() || undefined,
+        baseUrl: requestedBaseUrl || undefined,
       });
-      if (models.length > 0) {
-        setDiscoveredModels((prev) => ({
-          ...prev,
-          [activeProfileKey]: models,
-        }));
-        const currentModel = useCustomModel ? customModel.trim() : model;
-        if (!currentModel) {
-          setModel(models[0].id);
-        }
+
+      const latestTarget = latestOllamaTargetRef.current;
+      if (
+        requestId !== ollamaRefreshRequestIdRef.current
+        || latestTarget.provider !== 'ollama'
+        || latestTarget.activeProfileKey !== requestedProfileKey
+        || latestTarget.baseUrl !== requestedBaseUrl
+      ) {
+        return models;
+      }
+
+      setDiscoveredModels((prev) => ({
+        ...prev,
+        [requestedProfileKey]: models,
+      }));
+
+      const currentModel = useCustomModel ? customModel.trim() : model;
+      if (!currentModel && models[0]) {
+        setModel(models[0].id);
       }
       return models;
     } catch (refreshError) {
+      const latestTarget = latestOllamaTargetRef.current;
+      if (
+        requestId !== ollamaRefreshRequestIdRef.current
+        || latestTarget.provider !== 'ollama'
+        || latestTarget.activeProfileKey !== requestedProfileKey
+        || latestTarget.baseUrl !== requestedBaseUrl
+      ) {
+        return [];
+      }
       if (refreshError instanceof Error) {
         showErrorText(refreshError.message);
       } else {
@@ -1161,7 +1221,9 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       }
       return [];
     } finally {
-      setIsRefreshingModels(false);
+      if (requestId === ollamaRefreshRequestIdRef.current) {
+        setIsRefreshingModels(false);
+      }
     }
   }, [
     activeProfileKey,
@@ -1177,6 +1239,115 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     showErrorText,
   ]);
 
+  const applyDiscoveredOllamaState = useCallback(
+    (targetProfileKey: ProviderProfileKey, discoveredBaseUrl: string, models: ProviderModelInfo[]) => {
+      const normalizedBaseUrl =
+        normalizeOllamaBaseUrl(discoveredBaseUrl) || DEFAULT_OLLAMA_BASE_URL;
+
+      setProfiles((prev) => {
+        const current = prev[targetProfileKey] || defaultProfileForKey(targetProfileKey, presets);
+        const currentPresetModel = current.model.trim();
+        const hasPresetMatch = models.some((item) => item.id === currentPresetModel);
+        const shouldAdoptFirstPresetModel =
+          !current.useCustomModel && (!currentPresetModel || !hasPresetMatch) && Boolean(models[0]);
+
+        return {
+          ...prev,
+          [targetProfileKey]: {
+            ...current,
+            baseUrl: normalizedBaseUrl,
+            model: shouldAdoptFirstPresetModel ? models[0]!.id : current.model,
+          },
+        };
+      });
+
+      setDiscoveredModels((prev) => ({
+        ...prev,
+        [targetProfileKey]: models,
+      }));
+    },
+    [presets]
+  );
+
+  const discoverLocalOllama = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!isElectron || provider !== 'ollama') {
+        return null;
+      }
+
+      const requestedProfileKey = activeProfileKey;
+      const requestedBaseUrl = baseUrl.trim();
+      const requestId = ++ollamaDiscoverRequestIdRef.current;
+      setIsDiscoveringLocalOllama(true);
+      if (!options?.silent) {
+        clearError();
+      }
+
+      try {
+        const result = await window.electronAPI.config.discoverLocal({
+          baseUrl: requestedBaseUrl || undefined,
+        });
+        const latestTarget = latestOllamaTargetRef.current;
+        if (
+          requestId !== ollamaDiscoverRequestIdRef.current
+          || latestTarget.provider !== 'ollama'
+          || latestTarget.activeProfileKey !== requestedProfileKey
+          || latestTarget.baseUrl !== requestedBaseUrl
+        ) {
+          return result;
+        }
+        if (!result.available) {
+          if (!options?.silent) {
+            showErrorKey('api.localOllamaNotFound');
+          }
+          return result;
+        }
+
+        const models = normalizeDiscoveredOllamaModels(result.models);
+        applyDiscoveredOllamaState(requestedProfileKey, result.baseUrl, models);
+
+        if (!options?.silent) {
+          showSuccessKey('api.localOllamaDiscovered', { count: models.length });
+          setTimeout(() => clearSuccessMessage(), 2500);
+        }
+        return result;
+      } catch (discoveryError) {
+        const latestTarget = latestOllamaTargetRef.current;
+        if (
+          requestId !== ollamaDiscoverRequestIdRef.current
+          || latestTarget.provider !== 'ollama'
+          || latestTarget.activeProfileKey !== requestedProfileKey
+          || latestTarget.baseUrl !== requestedBaseUrl
+        ) {
+          return null;
+        }
+        if (!options?.silent) {
+          if (discoveryError instanceof Error) {
+            showErrorText(discoveryError.message);
+          } else {
+            showErrorKey('api.localOllamaNotFound');
+          }
+        }
+        return null;
+      } finally {
+        if (requestId === ollamaDiscoverRequestIdRef.current) {
+          setIsDiscoveringLocalOllama(false);
+        }
+      }
+    },
+    [
+      activeProfileKey,
+      applyDiscoveredOllamaState,
+      baseUrl,
+      clearError,
+      clearSuccessMessage,
+      provider,
+      showErrorKey,
+      showErrorText,
+      showSuccessKey,
+    ]
+  );
+
   // Auto-refresh model list when Ollama baseUrl changes (debounced).
   // Only fires for URLs that look plausible (start with http(s):// and have a host).
   useEffect(() => {
@@ -1189,6 +1360,25 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, baseUrl]);
+
+  useEffect(() => {
+    if (!isElectron || provider !== 'ollama') {
+      return;
+    }
+
+    const normalizedBaseUrl = normalizeOllamaBaseUrl(baseUrl) || DEFAULT_OLLAMA_BASE_URL;
+    if (!shouldAutoDiscoverLocalOllamaBaseUrl(baseUrl) || !isLoopbackBaseUrl(normalizedBaseUrl)) {
+      return;
+    }
+
+    const attemptKey = `${activeProfileKey}:${normalizedBaseUrl}`;
+    if (autoDiscoveryAttemptedRef.current.has(attemptKey)) {
+      return;
+    }
+
+    autoDiscoveryAttemptedRef.current.add(attemptKey);
+    void discoverLocalOllama({ silent: true });
+  }, [activeProfileKey, baseUrl, discoverLocalOllama, provider]);
 
   const handleSave = useCallback(
     async (options?: { silentSuccess?: boolean }) => {
@@ -1554,6 +1744,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     isSaving,
     isTesting,
     isRefreshingModels,
+    isDiscoveringLocalOllama,
     error,
     successMessage,
     lastSaveCompletedAt,
@@ -1602,6 +1793,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     handleSave,
     handleTest,
     refreshModelOptions,
+    discoverLocalOllama,
     setError: showErrorText,
     setSuccessMessage: showSuccessText,
   };

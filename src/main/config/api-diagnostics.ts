@@ -11,6 +11,8 @@ import * as tls from 'tls';
 import OpenAI from 'openai';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { PROVIDER_PRESETS } from './config-store';
+import { DEFAULT_OLLAMA_BASE_URL } from '../../shared/ollama-base-url';
+import { isLoopbackBaseUrl } from '../../shared/network/loopback';
 import {
   normalizeAnthropicBaseUrl,
   resolveOllamaCredentials,
@@ -79,8 +81,14 @@ function resolveEffectiveUrl(input: DiagnosticInput): URL {
   }
 }
 
-function defaultPort(protocol: string, provider: DiagnosticInput['provider']): number {
-  if (provider === 'ollama') return 11434;
+function defaultPort(
+  protocol: string,
+  provider: DiagnosticInput['provider'],
+  hostname: string
+): number {
+  if (provider === 'ollama' && isLoopback(hostname)) {
+    return 11434;
+  }
   return protocol === 'https:' ? 443 : 80;
 }
 
@@ -466,7 +474,7 @@ export async function runDiagnostics(input: DiagnosticInput): Promise<Diagnostic
   const url = resolveEffectiveUrl(input);
   const hostname = normalizeNetworkHostname(url.hostname);
   const isHttps = url.protocol === 'https:';
-  const port = url.port ? Number(url.port) : defaultPort(url.protocol, input.provider);
+  const port = url.port ? Number(url.port) : defaultPort(url.protocol, input.provider, hostname);
 
   // Step 1: DNS
   if (!failed) {
@@ -543,9 +551,19 @@ export async function discoverLocalOllama(): Promise<{
   available: boolean;
   baseUrl: string;
   models?: string[];
+}>;
+export async function discoverLocalOllama(input?: {
+  baseUrl?: string;
+}): Promise<{
+  available: boolean;
+  baseUrl: string;
+  models?: string[];
 }> {
-  const baseUrl = 'http://localhost:11434';
-  const modelsUrl = `${baseUrl}/v1/models`;
+  const preferredBaseUrl = input?.baseUrl?.trim();
+  const baseUrl = preferredBaseUrl && isLoopbackBaseUrl(preferredBaseUrl)
+    ? (normalizeOllamaBaseUrl(preferredBaseUrl) || DEFAULT_OLLAMA_BASE_URL)
+    : DEFAULT_OLLAMA_BASE_URL;
+  const modelsUrl = `${baseUrl}/models`;
 
   try {
     const controller = new AbortController();
