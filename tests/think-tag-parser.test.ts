@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ThinkTagStreamParser, extractThinkTags } from '../src/main/claude/think-tag-parser';
+import { ThinkTagStreamParser, extractThinkTags, splitThinkTagBlocks } from '../src/main/claude/think-tag-parser';
 
 describe('ThinkTagStreamParser', () => {
   it('should separate thinking from text in a single chunk', () => {
@@ -92,7 +92,7 @@ describe('ThinkTagStreamParser', () => {
     let thinking = '';
     let text = '';
 
-    let r = parser.push('<think>first thought</think>text1<think>second thought</think>text2');
+    const r = parser.push('<think>first thought</think>text1<think>second thought</think>text2');
     thinking += r.thinking;
     text += r.text;
 
@@ -151,19 +151,46 @@ describe('extractThinkTags', () => {
 
   it('should handle multiple think blocks', () => {
     const result = extractThinkTags('<think>a</think>x<think>b</think>y');
-    expect(result.thinking).toBe('a\nb');
-    expect(result.text).toBe('x y');
+    expect(result.thinking).toBe('ab');
+    expect(result.text).toBe('xy');
   });
 
-  it('should trim whitespace', () => {
+  it('should preserve surrounding whitespace', () => {
     const result = extractThinkTags('<think>  reasoning  </think>  answer  ');
-    expect(result.thinking).toBe('reasoning');
-    expect(result.text).toBe('answer');
+    expect(result.thinking).toBe('  reasoning  ');
+    expect(result.text).toBe('  answer  ');
   });
 
   it('should handle think tag with newlines', () => {
     const result = extractThinkTags('<think>\nstep 1\nstep 2\n</think>\nfinal answer');
-    expect(result.thinking).toBe('step 1\nstep 2');
-    expect(result.text).toBe('final answer');
+    expect(result.thinking).toBe('\nstep 1\nstep 2\n');
+    expect(result.text).toBe('\nfinal answer');
+  });
+
+  it('should preserve markdown boundaries across think blocks', () => {
+    const result = extractThinkTags('Intro\n<think>reasoning</think>\n```ts\nconst x = 1;\n```');
+    expect(result.thinking).toBe('reasoning');
+    expect(result.text).toBe('Intro\n\n```ts\nconst x = 1;\n```');
+  });
+});
+
+describe('splitThinkTagBlocks', () => {
+  it('should preserve block ordering for interleaved text and thinking', () => {
+    expect(splitThinkTagBlocks('before<think>reason</think>after')).toEqual([
+      { type: 'text', text: 'before' },
+      { type: 'thinking', thinking: 'reason' },
+      { type: 'text', text: 'after' },
+    ]);
+  });
+
+  it('should drop empty think tags without leaking raw markup', () => {
+    expect(splitThinkTagBlocks('<think></think>')).toEqual([]);
+  });
+
+  it('should treat unclosed think tags as trailing thinking blocks', () => {
+    expect(splitThinkTagBlocks('before<think>reasoning')).toEqual([
+      { type: 'text', text: 'before' },
+      { type: 'thinking', thinking: 'reasoning' },
+    ]);
   });
 });

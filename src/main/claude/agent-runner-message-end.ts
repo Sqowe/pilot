@@ -1,5 +1,5 @@
 import type { AssistantMessage, TextContent, ThinkingContent, ToolCall } from '@mariozechner/pi-ai';
-import { extractThinkTags } from './think-tag-parser';
+import { splitThinkTagBlocks } from './think-tag-parser';
 
 type MessageEndContentBlock = TextContent | ThinkingContent | ToolCall;
 
@@ -51,16 +51,13 @@ export function resolveMessageEndPayload(
   const effectiveContent: MessageEndContentBlock[] = [];
   for (const block of rawContent) {
     if (block.type === 'text') {
-      const { thinking, text } = extractThinkTags(block.text);
-      if (thinking) {
-        effectiveContent.push({ type: 'thinking', thinking } as ThinkingContent);
-      }
-      if (text) {
-        effectiveContent.push({ type: 'text', text } as TextContent);
-      }
-      // If both are empty (e.g. only whitespace), skip the block
-      if (!thinking && !text) {
-        effectiveContent.push(block);
+      const splitBlocks = splitThinkTagBlocks(block.text);
+      for (const splitBlock of splitBlocks) {
+        if (splitBlock.type === 'thinking') {
+          effectiveContent.push({ type: 'thinking', thinking: splitBlock.thinking } as ThinkingContent);
+        } else {
+          effectiveContent.push({ type: 'text', text: splitBlock.text } as TextContent);
+        }
       }
     } else {
       effectiveContent.push(block);

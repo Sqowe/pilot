@@ -12,6 +12,10 @@ interface ParseResult {
   text: string;
 }
 
+export type ThinkTagBlock =
+  | { type: 'text'; text: string }
+  | { type: 'thinking'; thinking: string };
+
 /**
  * Stateful stream parser that splits `<think>` tagged content from normal text.
  *
@@ -128,35 +132,51 @@ export class ThinkTagStreamParser {
  * Static extraction for fully-buffered text (used at message_end assembly).
  * Strips all `<think>...</think>` blocks and returns separated content.
  */
-export function extractThinkTags(input: string): ParseResult {
-  const thinkingParts: string[] = [];
-  const textParts: string[] = [];
+export function splitThinkTagBlocks(input: string): ThinkTagBlock[] {
+  const blocks: ThinkTagBlock[] = [];
   let cursor = 0;
 
   while (cursor < input.length) {
     const openIdx = input.indexOf(OPEN_TAG, cursor);
     if (openIdx === -1) {
-      textParts.push(input.slice(cursor));
+      const trailingText = input.slice(cursor);
+      if (trailingText) blocks.push({ type: 'text', text: trailingText });
       break;
     }
 
-    // Text before the tag
     const before = input.slice(cursor, openIdx);
-    if (before) textParts.push(before);
+    if (before) blocks.push({ type: 'text', text: before });
 
     const closeIdx = input.indexOf(CLOSE_TAG, openIdx + OPEN_TAG.length);
     if (closeIdx === -1) {
-      // Unclosed tag — rest is thinking
-      thinkingParts.push(input.slice(openIdx + OPEN_TAG.length));
-      cursor = input.length;
-    } else {
-      thinkingParts.push(input.slice(openIdx + OPEN_TAG.length, closeIdx));
-      cursor = closeIdx + CLOSE_TAG.length;
+      const trailingThinking = input.slice(openIdx + OPEN_TAG.length);
+      if (trailingThinking) blocks.push({ type: 'thinking', thinking: trailingThinking });
+      break;
     }
+
+    const thinking = input.slice(openIdx + OPEN_TAG.length, closeIdx);
+    if (thinking) blocks.push({ type: 'thinking', thinking });
+    cursor = closeIdx + CLOSE_TAG.length;
   }
 
+  return blocks;
+}
+
+/**
+ * Static extraction for fully-buffered text (used at message_end assembly).
+ * Strips all `<think>...</think>` blocks and returns separated content.
+ */
+export function extractThinkTags(input: string): ParseResult {
+  const blocks = splitThinkTagBlocks(input);
+
   return {
-    thinking: thinkingParts.map((s) => s.trim()).filter(Boolean).join('\n'),
-    text: textParts.map((s) => s.trim()).filter(Boolean).join(' '),
+    thinking: blocks
+      .filter((block): block is Extract<ThinkTagBlock, { type: 'thinking' }> => block.type === 'thinking')
+      .map((block) => block.thinking)
+      .join(''),
+    text: blocks
+      .filter((block): block is Extract<ThinkTagBlock, { type: 'text' }> => block.type === 'text')
+      .map((block) => block.text)
+      .join(''),
   };
 }
