@@ -42,6 +42,7 @@ import type { SkillsAdapter } from '../skills/skills-adapter';
 import { configStore } from '../config/config-store';
 import { resolveMessageEndPayload, toUserFacingErrorText } from './agent-runner-message-end';
 import { buildSyntheticPiModel, resolvePiRegistryModel } from './pi-model-resolution';
+import { ThinkTagStreamParser } from './think-tag-parser';
 
 // Virtual workspace path shown to the model (hides real sandbox path)
 const VIRTUAL_WORKSPACE_PATH = '/workspace';
@@ -1258,6 +1259,7 @@ Tool routing:
 
       // Accumulate streamed text deltas in case message_end.content is empty (pi SDK streaming behaviour)
       let streamedText = '';
+      const thinkParser = new ThinkTagStreamParser();
 
       const unsubscribe = piSession.subscribe((event) => {
         if (controller.signal.aborted) return;
@@ -1278,8 +1280,17 @@ Tool routing:
             if (controller.signal.aborted) break;
             const ame = event.assistantMessageEvent;
             if (ame.type === 'text_delta') {
-              streamedText += ame.delta;
-              this.sendPartial(session.id, ame.delta);
+              const parsed = thinkParser.push(ame.delta);
+              if (parsed.thinking) {
+                this.sendToRenderer({
+                  type: 'stream.thinking',
+                  payload: { sessionId: session.id, delta: parsed.thinking },
+                });
+              }
+              if (parsed.text) {
+                streamedText += parsed.text;
+                this.sendPartial(session.id, parsed.text);
+              }
             } else if (ame.type === 'thinking_delta') {
               // Forward thinking delta to renderer for real-time display
               this.sendToRenderer({
@@ -1315,6 +1326,20 @@ Tool routing:
             // Unified handler: send the final assistant message to the renderer.
             // Works for all providers (some emit 'done' via message_update, others don't).
             if (controller.signal.aborted) break;
+
+            // Flush any buffered content from the think-tag parser
+            const flushed = thinkParser.flush();
+            if (flushed.thinking) {
+              this.sendToRenderer({
+                type: 'stream.thinking',
+                payload: { sessionId: session.id, delta: flushed.thinking },
+              });
+            }
+            if (flushed.text) {
+              streamedText += flushed.text;
+              this.sendPartial(session.id, flushed.text);
+            }
+
             const msg = event.message;
             const resolvedPayload = resolveMessageEndPayload({
               message: msg as any,

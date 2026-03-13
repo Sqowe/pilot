@@ -1,4 +1,5 @@
 import type { AssistantMessage, TextContent, ThinkingContent, ToolCall } from '@mariozechner/pi-ai';
+import { extractThinkTags } from './think-tag-parser';
 
 type MessageEndContentBlock = TextContent | ThinkingContent | ToolCall;
 
@@ -41,9 +42,30 @@ export function resolveMessageEndPayload(
     };
   }
 
-  const effectiveContent = Array.isArray(message?.content) && message.content.length > 0
+  const rawContent = Array.isArray(message?.content) && message.content.length > 0
     ? message.content
     : (streamedText ? [{ type: 'text' as const, text: streamedText }] : []);
+
+  // Post-process: split any <think>...</think> tags in text blocks into
+  // separate thinking + text content blocks for proper UI rendering.
+  const effectiveContent: MessageEndContentBlock[] = [];
+  for (const block of rawContent) {
+    if (block.type === 'text') {
+      const { thinking, text } = extractThinkTags(block.text);
+      if (thinking) {
+        effectiveContent.push({ type: 'thinking', thinking } as ThinkingContent);
+      }
+      if (text) {
+        effectiveContent.push({ type: 'text', text } as TextContent);
+      }
+      // If both are empty (e.g. only whitespace), skip the block
+      if (!thinking && !text) {
+        effectiveContent.push(block);
+      }
+    } else {
+      effectiveContent.push(block);
+    }
+  }
 
   return {
     effectiveContent,

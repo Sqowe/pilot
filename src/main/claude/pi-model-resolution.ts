@@ -1,4 +1,5 @@
 import { getModel, type Api, type Model } from '@mariozechner/pi-ai';
+import { isOfficialOpenAIBaseUrl } from '../config/auth-utils';
 
 const COMMON_FALLBACK_PROVIDERS = ['openai', 'anthropic', 'google'] as const;
 const INVALID_REGISTRY_PROVIDERS = new Set(['', 'custom']);
@@ -21,6 +22,23 @@ export interface PiModelLookupOptions {
 export interface PiModelLookupCandidate {
   provider: string;
   model: string;
+}
+
+function shouldDisableDeveloperRoleForEndpoint(
+  model: Model<Api>,
+  options: PiModelLookupOptions,
+): boolean {
+  if (model.api !== 'openai-completions' && model.api !== 'openai-responses') {
+    return false;
+  }
+
+  const endpoint = options.customBaseUrl?.trim() || model.baseUrl?.trim();
+  if (!endpoint || isOfficialOpenAIBaseUrl(endpoint)) {
+    return false;
+  }
+
+  const effectiveProvider = options.rawProvider || options.configProvider;
+  return effectiveProvider === 'custom' || effectiveProvider === 'openai';
 }
 
 export function inferPiApi(protocol: string): string {
@@ -136,9 +154,10 @@ export function applyPiModelRuntimeOverrides(
 ): Model<Api> {
   let nextModel = model;
   const isCustomProvider = options.rawProvider === 'custom' || options.configProvider === 'custom';
+  const shouldHonorConfiguredBaseUrl = options.rawProvider === 'openai' || isCustomProvider;
   const modelHasBaseUrl = Boolean(nextModel.baseUrl);
 
-  if (options.customBaseUrl && (isCustomProvider || !modelHasBaseUrl)) {
+  if (options.customBaseUrl && (shouldHonorConfiguredBaseUrl || !modelHasBaseUrl)) {
     nextModel = { ...nextModel, baseUrl: options.customBaseUrl } as typeof nextModel;
   }
 
@@ -153,6 +172,15 @@ export function applyPiModelRuntimeOverrides(
   }
   if (effectiveProvider === 'openrouter' && nextModel.api !== 'openai-completions') {
     nextModel = { ...nextModel, api: 'openai-completions' } as typeof nextModel;
+  }
+  if (shouldDisableDeveloperRoleForEndpoint(nextModel, options)) {
+    nextModel = {
+      ...nextModel,
+      compat: {
+        ...(nextModel.compat || {}),
+        supportsDeveloperRole: false,
+      },
+    } as typeof nextModel;
   }
 
   return nextModel;

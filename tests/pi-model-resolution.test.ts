@@ -102,6 +102,55 @@ describe('pi model resolution helpers', () => {
     expect(model.api).toBe('openai-responses');
   });
 
+  it('disables developer role for third-party openai-compatible endpoints', () => {
+    const model = applyPiModelRuntimeOverrides(
+      {
+        id: 'kimi-k2.5',
+        name: 'kimi-k2.5',
+        api: 'openai-completions',
+        provider: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        reasoning: true,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128000,
+        maxTokens: 16384,
+      },
+      {
+        configProvider: 'openai',
+        rawProvider: 'openai',
+        customBaseUrl: 'https://api.moonshot.cn/v1',
+      }
+    );
+
+    expect(model.baseUrl).toBe('https://api.moonshot.cn/v1');
+    expect(model.compat?.supportsDeveloperRole).toBe(false);
+  });
+
+  it('keeps developer role enabled for first-party openai endpoints', () => {
+    const model = applyPiModelRuntimeOverrides(
+      {
+        id: 'gpt-5.4',
+        name: 'gpt-5.4',
+        api: 'openai-completions',
+        provider: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        reasoning: true,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128000,
+        maxTokens: 16384,
+      },
+      {
+        configProvider: 'openai',
+        rawProvider: 'openai',
+        customBaseUrl: 'https://api.openai.com/v1',
+      }
+    );
+
+    expect(model.compat?.supportsDeveloperRole).toBeUndefined();
+  });
+
   it('auto-detects reasoning models by model id pattern', () => {
     const thinking = buildSyntheticPiModel('kimi-k2-thinking', 'moonshot', 'openai', 'https://api.moonshot.cn/v1');
     expect(thinking.reasoning).toBe(true);
