@@ -266,8 +266,12 @@ describe('api config state helpers', () => {
     expect(source).toContain('baseUrl: requestedBaseUrl || undefined');
     expect(source).toContain("showErrorKey('api.localOllamaNotFound')");
     expect(source).toContain("showSuccessKey('api.localOllamaDiscovered'");
+    expect(source).toContain("showErrorKey('api.localOllamaNoModels')");
+    expect(source).toContain("showErrorKey('api.localOllamaModelUnavailable'");
     expect(source).toContain('shouldAutoDiscoverLocalOllamaBaseUrl(baseUrl)');
     expect(source).toContain('ollamaDiscoverRequestIdRef');
+    expect(source).toContain('clearDiscoveredModelsForProfile(setDiscoveredModels, requestedProfileKey)');
+    expect(source).toContain("autoSelectModelId: result.status === 'model_usable' ? result.probeModel : undefined");
   });
 
   it('only auto-discovers local Ollama for the default local endpoint', () => {

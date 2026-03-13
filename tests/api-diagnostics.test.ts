@@ -201,14 +201,25 @@ describe('runDiagnostics TLS step', () => {
   });
 
   it('discovers local Ollama using the caller-provided loopback endpoint', async () => {
-    mocks.fetch.mockResolvedValueOnce(
+    mocks.fetch
+      .mockResolvedValueOnce(
       new Response(JSON.stringify({
         data: [{ id: 'qwen3.5:0.8b' }],
       }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })
-    );
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          id: 'chatcmpl-1',
+          object: 'chat.completion',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'pong' }, finish_reason: 'stop' }],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
 
     const result = await discoverLocalOllama({
       baseUrl: 'http://127.0.0.1:18080/api',
@@ -218,24 +229,46 @@ describe('runDiagnostics TLS step', () => {
       available: true,
       baseUrl: 'http://127.0.0.1:18080/v1',
       models: ['qwen3.5:0.8b'],
+      status: 'model_usable',
+      probeModel: 'qwen3.5:0.8b',
     });
-    expect(mocks.fetch).toHaveBeenCalledWith(
+    expect(mocks.fetch).toHaveBeenNthCalledWith(
+      1,
       'http://127.0.0.1:18080/v1/models',
       expect.objectContaining({
+        signal: expect.any(AbortSignal),
+      })
+    );
+    expect(mocks.fetch).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:18080/v1/chat/completions',
+      expect.objectContaining({
+        method: 'POST',
         signal: expect.any(AbortSignal),
       })
     );
   });
 
   it('falls back to the default local endpoint when a remote base url is passed to local discovery', async () => {
-    mocks.fetch.mockResolvedValueOnce(
+    mocks.fetch
+      .mockResolvedValueOnce(
       new Response(JSON.stringify({
         data: [{ id: 'qwen3.5:0.8b' }],
       }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })
-    );
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          id: 'chatcmpl-1',
+          object: 'chat.completion',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'pong' }, finish_reason: 'stop' }],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
 
     const result = await discoverLocalOllama({
       baseUrl: 'https://ollama.example.internal/v1',
@@ -245,11 +278,131 @@ describe('runDiagnostics TLS step', () => {
       available: true,
       baseUrl: 'http://localhost:11434/v1',
       models: ['qwen3.5:0.8b'],
+      status: 'model_usable',
+      probeModel: 'qwen3.5:0.8b',
     });
-    expect(mocks.fetch).toHaveBeenCalledWith(
+    expect(mocks.fetch).toHaveBeenNthCalledWith(
+      1,
       'http://localhost:11434/v1/models',
       expect.objectContaining({
         signal: expect.any(AbortSignal),
+      })
+    );
+  });
+
+  it('distinguishes a reachable service with no models from a usable local model runtime', async () => {
+    mocks.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        data: [],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const result = await discoverLocalOllama({
+      baseUrl: 'http://127.0.0.1:18080/v1',
+    });
+
+    expect(result).toEqual({
+      available: true,
+      baseUrl: 'http://127.0.0.1:18080/v1',
+      models: [],
+      status: 'service_available',
+    });
+  });
+
+  it('distinguishes a listed model that cannot complete a minimal inference request', async () => {
+    mocks.fetch
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: [{ id: 'qwen3.5:0.8b' }],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response('model loading failed', {
+          status: 500,
+          headers: { 'Content-Type': 'text/plain' },
+        })
+      );
+
+    const result = await discoverLocalOllama({
+      baseUrl: 'http://127.0.0.1:18080/v1',
+    });
+
+    expect(result).toEqual({
+      available: true,
+      baseUrl: 'http://127.0.0.1:18080/v1',
+      models: ['qwen3.5:0.8b'],
+      status: 'model_unusable',
+      probeModel: 'qwen3.5:0.8b',
+      probeError: 'model loading failed',
+    });
+  });
+
+  it('keeps probing later models until one can complete a minimal inference request', async () => {
+    mocks.fetch
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: [{ id: 'bad-model' }, { id: 'good-model' }],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response('first model failed', {
+          status: 500,
+          headers: { 'Content-Type': 'text/plain' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          id: 'chatcmpl-1',
+          object: 'chat.completion',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'pong' }, finish_reason: 'stop' }],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+    const result = await discoverLocalOllama({
+      baseUrl: 'http://127.0.0.1:18080/v1',
+    });
+
+    expect(result).toEqual({
+      available: true,
+      baseUrl: 'http://127.0.0.1:18080/v1',
+      models: ['bad-model', 'good-model'],
+      status: 'model_usable',
+      probeModel: 'good-model',
+    });
+    expect(mocks.fetch).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:18080/v1/chat/completions',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          model: 'bad-model',
+          messages: [{ role: 'user', content: 'ping' }],
+          max_tokens: 1,
+        }),
+      })
+    );
+    expect(mocks.fetch).toHaveBeenNthCalledWith(
+      3,
+      'http://127.0.0.1:18080/v1/chat/completions',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          model: 'good-model',
+          messages: [{ role: 'user', content: 'ping' }],
+          max_tokens: 1,
+        }),
       })
     );
   });

@@ -35,6 +35,41 @@ const TCP_TIMEOUT_MS = 5000;
 const TLS_TIMEOUT_MS = 5000;
 const LOCAL_ANTHROPIC_PLACEHOLDER_KEY = 'sk-ant-local-proxy';
 
+export interface LocalOllamaDiscoveryResult {
+  available: boolean;
+  baseUrl: string;
+  models?: string[];
+  status: 'unavailable' | 'service_available' | 'model_usable' | 'model_unusable';
+  probeModel?: string;
+  probeError?: string;
+}
+
+async function probeOllamaModel(baseUrl: string, model: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const probeResponse = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 1,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!probeResponse.ok) {
+      const probeError = await probeResponse.text();
+      return { ok: false, error: probeError || `HTTP ${probeResponse.status}` };
+    }
+
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -235,7 +270,7 @@ async function stepTls(
         },
         () => {
           if (!socket.authorized && socket.authorizationError) {
-            finish(new Error(socket.authorizationError));
+            finish(new Error(String(socket.authorizationError)));
             return;
           }
           finish();
@@ -243,7 +278,7 @@ async function stepTls(
       );
       socket.once('secureConnect', () => {
         if (!socket.authorized && socket.authorizationError) {
-          finish(new Error(socket.authorizationError));
+          finish(new Error(String(socket.authorizationError)));
         }
       });
       socket.once('timeout', () => {
@@ -547,18 +582,9 @@ export async function runDiagnostics(input: DiagnosticInput): Promise<Diagnostic
 // Local Ollama discovery
 // ---------------------------------------------------------------------------
 
-export async function discoverLocalOllama(): Promise<{
-  available: boolean;
-  baseUrl: string;
-  models?: string[];
-}>;
 export async function discoverLocalOllama(input?: {
   baseUrl?: string;
-}): Promise<{
-  available: boolean;
-  baseUrl: string;
-  models?: string[];
-}> {
+}): Promise<LocalOllamaDiscoveryResult> {
   const preferredBaseUrl = input?.baseUrl?.trim();
   const baseUrl = preferredBaseUrl && isLoopbackBaseUrl(preferredBaseUrl)
     ? (normalizeOllamaBaseUrl(preferredBaseUrl) || DEFAULT_OLLAMA_BASE_URL)
@@ -573,15 +599,41 @@ export async function discoverLocalOllama(input?: {
     clearTimeout(timeout);
 
     if (!response.ok) {
-      return { available: false, baseUrl };
+      return { available: false, baseUrl, status: 'unavailable' };
     }
 
     const body = (await response.json()) as { data?: Array<{ id: string }> };
-    const models = body.data?.map((m) => m.id);
+    const models = body.data?.map((m) => m.id).filter(Boolean) as string[] | undefined;
 
-    log('[Diagnostics] Local Ollama discovered', { modelCount: models?.length ?? 0 });
-    return { available: true, baseUrl, models };
+    if (!models?.length) {
+      log('[Diagnostics] Local Ollama discovered without loaded models');
+      return { available: true, baseUrl, models: [], status: 'service_available' };
+    }
+
+    let lastProbeError = '';
+    for (const probeModel of models) {
+      const probeResult = await probeOllamaModel(baseUrl, probeModel);
+      if (probeResult.ok) {
+        log('[Diagnostics] Local Ollama discovered', { modelCount: models?.length ?? 0, probeModel });
+        return { available: true, baseUrl, models, status: 'model_usable', probeModel };
+      }
+
+      lastProbeError = probeResult.error;
+      logWarn('[Diagnostics] Local Ollama model probe failed', {
+        model: probeModel,
+        error: probeResult.error.slice(0, 200),
+      });
+    }
+
+    return {
+      available: true,
+      baseUrl,
+      models,
+      status: 'model_unusable',
+      probeModel: models[0],
+      probeError: lastProbeError,
+    };
   } catch {
-    return { available: false, baseUrl };
+    return { available: false, baseUrl, status: 'unavailable' };
   }
 }

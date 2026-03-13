@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import type {
@@ -206,6 +206,18 @@ function normalizeDiscoveredOllamaModels(models: string[] | undefined): Provider
     .map((id) => id.trim())
     .filter(Boolean)
     .map((id) => ({ id, name: id }));
+}
+
+function clearDiscoveredModelsForProfile(
+  setDiscoveredModels: Dispatch<
+    SetStateAction<Partial<Record<ProviderProfileKey, ProviderModelInfo[]>>>
+  >,
+  profileKey: ProviderProfileKey
+): void {
+  setDiscoveredModels((prev) => ({
+    ...prev,
+    [profileKey]: [],
+  }));
 }
 
 function isPristineCustomProfile(
@@ -1214,6 +1226,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       ) {
         return [];
       }
+      clearDiscoveredModelsForProfile(setDiscoveredModels, requestedProfileKey);
       if (refreshError instanceof Error) {
         showErrorText(refreshError.message);
       } else {
@@ -1240,7 +1253,12 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   ]);
 
   const applyDiscoveredOllamaState = useCallback(
-    (targetProfileKey: ProviderProfileKey, discoveredBaseUrl: string, models: ProviderModelInfo[]) => {
+    (
+      targetProfileKey: ProviderProfileKey,
+      discoveredBaseUrl: string,
+      models: ProviderModelInfo[],
+      options?: { autoSelectModelId?: string }
+    ) => {
       const normalizedBaseUrl =
         normalizeOllamaBaseUrl(discoveredBaseUrl) || DEFAULT_OLLAMA_BASE_URL;
 
@@ -1248,15 +1266,16 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
         const current = prev[targetProfileKey] || defaultProfileForKey(targetProfileKey, presets);
         const currentPresetModel = current.model.trim();
         const hasPresetMatch = models.some((item) => item.id === currentPresetModel);
+        const autoSelectModelId = options?.autoSelectModelId?.trim() || '';
         const shouldAdoptFirstPresetModel =
-          !current.useCustomModel && (!currentPresetModel || !hasPresetMatch) && Boolean(models[0]);
+          !current.useCustomModel && Boolean(autoSelectModelId) && (!currentPresetModel || !hasPresetMatch);
 
         return {
           ...prev,
           [targetProfileKey]: {
             ...current,
             baseUrl: normalizedBaseUrl,
-            model: shouldAdoptFirstPresetModel ? models[0]!.id : current.model,
+            model: shouldAdoptFirstPresetModel ? autoSelectModelId : current.model,
           },
         };
       });
@@ -1277,6 +1296,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
 
       const requestedProfileKey = activeProfileKey;
       const requestedBaseUrl = baseUrl.trim();
+      const shouldClearDiscoveredModels = !requestedBaseUrl || isLoopbackBaseUrl(requestedBaseUrl);
       const requestId = ++ollamaDiscoverRequestIdRef.current;
       setIsDiscoveringLocalOllama(true);
       if (!options?.silent) {
@@ -1297,6 +1317,9 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
           return result;
         }
         if (!result.available) {
+          if (shouldClearDiscoveredModels) {
+            clearDiscoveredModelsForProfile(setDiscoveredModels, requestedProfileKey);
+          }
           if (!options?.silent) {
             showErrorKey('api.localOllamaNotFound');
           }
@@ -1304,11 +1327,21 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
         }
 
         const models = normalizeDiscoveredOllamaModels(result.models);
-        applyDiscoveredOllamaState(requestedProfileKey, result.baseUrl, models);
+        applyDiscoveredOllamaState(requestedProfileKey, result.baseUrl, models, {
+          autoSelectModelId: result.status === 'model_usable' ? result.probeModel : undefined,
+        });
 
         if (!options?.silent) {
-          showSuccessKey('api.localOllamaDiscovered', { count: models.length });
-          setTimeout(() => clearSuccessMessage(), 2500);
+          if (result.status === 'service_available') {
+            showErrorKey('api.localOllamaNoModels');
+          } else if (result.status === 'model_unusable') {
+            showErrorKey('api.localOllamaModelUnavailable', {
+              model: result.probeModel || models[0]?.id || '',
+            });
+          } else {
+            showSuccessKey('api.localOllamaDiscovered', { count: models.length });
+            setTimeout(() => clearSuccessMessage(), 2500);
+          }
         }
         return result;
       } catch (discoveryError) {
@@ -1320,6 +1353,9 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
           || latestTarget.baseUrl !== requestedBaseUrl
         ) {
           return null;
+        }
+        if (shouldClearDiscoveredModels) {
+          clearDiscoveredModelsForProfile(setDiscoveredModels, requestedProfileKey);
         }
         if (!options?.silent) {
           if (discoveryError instanceof Error) {
@@ -1342,6 +1378,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       clearError,
       clearSuccessMessage,
       provider,
+      setDiscoveredModels,
       showErrorKey,
       showErrorText,
       showSuccessKey,

@@ -141,6 +141,8 @@
     "discoverLocalOllamaHint": "Scan your local machine for a running Ollama service and fill in the local URL and models.",
     "localOllamaDiscovered": "Found local Ollama with {{count}} available model(s).",
     "localOllamaNotFound": "No local Ollama service was found. Start it with `ollama serve` and try again.",
+    "localOllamaNoModels": "Found a local Ollama service, but it does not currently expose any models.",
+    "localOllamaModelUnavailable": "Found local Ollama, but model {{model}} could not complete a minimal inference request.",
     "liveTest": "Live request verification",
     "liveTestHint": "Sends a minimal request and may consume a small quota",
     "liveTestCompatibilityHint": "Some compatible providers may reject this probe; disable it and try again if needed.",
