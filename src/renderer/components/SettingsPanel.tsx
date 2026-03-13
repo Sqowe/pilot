@@ -556,10 +556,10 @@ function APISettingsTab() {
                 key={p}
                 onClick={() => changeProvider(p)}
                 disabled={isLoadingConfig}
-                className={`px-3 py-2 text-sm transition-colors border-l-2 ${
+                className={`px-3 py-2 rounded-lg text-sm transition-colors border ${
                   provider === p
-                    ? 'border-accent text-text-primary font-medium'
-                    : 'border-transparent text-text-secondary hover:text-text-primary disabled:opacity-50'
+                    ? 'border-accent bg-accent/10 text-accent font-medium'
+                    : 'border-border-muted text-text-secondary hover:border-border hover:text-text-primary disabled:opacity-50'
                 }`}
               >
                 {p === 'custom' ? t('api.moreModels') : presets?.[p]?.name || p}
@@ -606,10 +606,10 @@ function APISettingsTab() {
               <button
                 key={mode.id}
                 onClick={() => changeProtocol(mode.id)}
-                className={`px-3 py-2 text-sm transition-colors border-l-2 ${
+                className={`px-3 py-2 rounded-lg text-sm transition-colors border ${
                   customProtocol === mode.id
-                    ? 'border-accent text-text-primary font-medium'
-                    : 'border-transparent text-text-secondary hover:text-text-primary'
+                    ? 'border-accent bg-accent/10 text-accent font-medium'
+                    : 'border-border-muted text-text-secondary hover:border-border hover:text-text-primary'
                 }`}
               >
                 {mode.label}
@@ -702,7 +702,7 @@ function APISettingsTab() {
               className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors active:scale-95 ${
                 useCustomModel
                   ? 'bg-accent-muted text-accent'
-                  : 'bg-surface-hover text-text-secondary hover:bg-surface-active'
+                  : 'border border-border-muted bg-background text-text-secondary hover:bg-surface-hover'
               }`}
             >
               <Edit3 className="w-3 h-3" />
