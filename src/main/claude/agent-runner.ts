@@ -1104,7 +1104,7 @@ ${hints.join('\n')}
         const parts = modelString.split('/');
         const syntheticId = parts.length >= 2 ? parts.slice(1).join('/') : modelString;
         const syntheticProvider = parts.length >= 2 ? parts[0] : (configProtocol === 'custom' ? 'anthropic' : configProtocol);
-        piModel = buildSyntheticPiModel(syntheticId, syntheticProvider, configProtocol, runtimeConfig.baseUrl?.trim() || undefined);
+        piModel = buildSyntheticPiModel(syntheticId, syntheticProvider, configProtocol, runtimeConfig.baseUrl?.trim() || undefined, undefined, undefined, runtimeConfig.contextWindow, runtimeConfig.maxTokens);
         logCtxWarn('[ClaudeAgentRunner] Model not in pi-ai registry, using synthetic model:', modelString, '→', piModel.api);
       }
       logCtx('[ClaudeAgentRunner] Resolved pi-ai model:', piModel.provider, piModel.id);

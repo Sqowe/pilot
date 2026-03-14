@@ -440,6 +440,8 @@ export interface ProviderProfile {
   apiKey: string;
   baseUrl?: string;
   model: string;
+  contextWindow?: number;
+  maxTokens?: number;
 }
 
 export interface ApiConfigSet {
@@ -466,6 +468,8 @@ export interface AppConfig {
   baseUrl?: string;
   customProtocol?: CustomProtocolType;
   model: string;
+  contextWindow?: number;
+  maxTokens?: number;
   activeProfileKey: ProviderProfileKey;
   profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
   activeConfigSetId: ConfigSetId;

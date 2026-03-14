@@ -43,6 +43,8 @@ interface UIProviderProfile {
   model: string;
   customModel: string;
   useCustomModel: boolean;
+  contextWindow: string;
+  maxTokens: string;
 }
 
 interface ConfigStateSnapshot {
@@ -198,6 +200,8 @@ function defaultProfileForKey(
     model: preset.models[0]?.id || '',
     customModel: '',
     useCustomModel: prefersCustomInput,
+    contextWindow: '',
+    maxTokens: '',
   };
 }
 
@@ -253,6 +257,8 @@ function normalizeProfile(
       baseUrl: fallback.baseUrl,
       customModel: '',
       useCustomModel: true,
+      contextWindow: '',
+      maxTokens: '',
     };
   }
 
@@ -269,6 +275,8 @@ function normalizeProfile(
     model: hasPresetModel ? modelValue : fallback.model,
     customModel: hasPresetModel ? '' : modelValue,
     useCustomModel: !hasPresetModel,
+    contextWindow: profile?.contextWindow ? String(profile.contextWindow) : '',
+    maxTokens: profile?.maxTokens ? String(profile.maxTokens) : '',
   };
 }
 
@@ -345,6 +353,8 @@ function toPersistedProfiles(
       apiKey: profile.apiKey,
       baseUrl: profile.baseUrl.trim() || undefined,
       model: finalModel,
+      contextWindow: profile.contextWindow ? Number(profile.contextWindow) : undefined,
+      maxTokens: profile.maxTokens ? Number(profile.maxTokens) : undefined,
     };
   }
   return persisted;
@@ -688,6 +698,8 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   const model = currentProfile.model;
   const customModel = currentProfile.customModel;
   const useCustomModel = currentProfile.useCustomModel;
+  const contextWindow = currentProfile.contextWindow;
+  const maxTokens = currentProfile.maxTokens;
   const detectedProviderSetup = useMemo(
     () => (provider === 'custom' ? detectCommonProviderSetup(baseUrl) : null),
     [baseUrl, provider]
@@ -936,6 +948,20 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   const setCustomModel = useCallback(
     (value: string) => {
       updateActiveProfile((prev) => ({ ...prev, customModel: value, useCustomModel: true }));
+    },
+    [updateActiveProfile]
+  );
+
+  const setContextWindow = useCallback(
+    (value: string) => {
+      updateActiveProfile((prev) => ({ ...prev, contextWindow: value }));
+    },
+    [updateActiveProfile]
+  );
+
+  const setMaxTokens = useCallback(
+    (value: string) => {
+      updateActiveProfile((prev) => ({ ...prev, maxTokens: value }));
     },
     [updateActiveProfile]
   );
@@ -1775,6 +1801,8 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     model,
     customModel,
     useCustomModel,
+    contextWindow,
+    maxTokens,
     modelInputPlaceholder: modelInputGuidance.placeholder,
     modelInputHint: modelInputGuidance.hint,
     enableThinking,
@@ -1813,6 +1841,8 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     setBaseUrl,
     setModel,
     setCustomModel,
+    setContextWindow,
+    setMaxTokens,
     toggleCustomModel,
     setUseLiveTest,
     setEnableThinking,

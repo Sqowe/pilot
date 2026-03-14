@@ -55,6 +55,41 @@ export function inferPiApi(protocol: string): string {
   }
 }
 
+/**
+ * Known context window / max output specs for common Ollama model families.
+ * Used as a middle layer between user config overrides and the hardcoded default.
+ */
+const KNOWN_MODEL_SPECS: Record<string, { contextWindow: number; maxTokens: number }> = {
+  'qwen3.5':      { contextWindow: 258048, maxTokens: 32768 },
+  'qwen3':        { contextWindow: 40960,  maxTokens: 8192 },
+  'qwen2.5':      { contextWindow: 131072, maxTokens: 8192 },
+  'llama3':       { contextWindow: 131072, maxTokens: 4096 },
+  'llama3.1':     { contextWindow: 131072, maxTokens: 4096 },
+  'llama3.2':     { contextWindow: 131072, maxTokens: 4096 },
+  'llama3.3':     { contextWindow: 131072, maxTokens: 4096 },
+  'deepseek-r1':  { contextWindow: 65536,  maxTokens: 8192 },
+  'deepseek-v3':  { contextWindow: 65536,  maxTokens: 8192 },
+  'gemma2':       { contextWindow: 8192,   maxTokens: 4096 },
+  'gemma3':       { contextWindow: 131072, maxTokens: 8192 },
+  'phi3':         { contextWindow: 131072, maxTokens: 4096 },
+  'phi4':         { contextWindow: 16384,  maxTokens: 4096 },
+  'mistral':      { contextWindow: 32768,  maxTokens: 4096 },
+  'mixtral':      { contextWindow: 32768,  maxTokens: 4096 },
+  'codellama':    { contextWindow: 16384,  maxTokens: 4096 },
+  'command-r':    { contextWindow: 131072, maxTokens: 4096 },
+};
+
+function lookupModelSpecs(modelId: string): { contextWindow: number; maxTokens: number } | undefined {
+  const lower = modelId.toLowerCase();
+  // Match by prefix: "qwen3.5:0.8b" → "qwen3.5", "deepseek-r1-distill" → "deepseek-r1"
+  for (const [key, specs] of Object.entries(KNOWN_MODEL_SPECS)) {
+    if (lower === key || lower.startsWith(key + ':') || lower.startsWith(key + '-')) {
+      return specs;
+    }
+  }
+  return undefined;
+}
+
 export function buildSyntheticPiModel(
   modelId: string,
   provider: string,
@@ -62,9 +97,12 @@ export function buildSyntheticPiModel(
   baseUrl?: string,
   apiOverride?: string,
   reasoning?: boolean,
+  contextWindow?: number,
+  maxTokens?: number,
 ): Model<Api> {
   const api = apiOverride || inferPiApi(protocol);
   const autoReasoning = reasoning ?? REASONING_MODEL_PATTERN.test(modelId);
+  const knownSpecs = lookupModelSpecs(modelId);
   return {
     id: modelId,
     name: modelId,
@@ -74,8 +112,8 @@ export function buildSyntheticPiModel(
     reasoning: autoReasoning,
     input: ['text', 'image'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: 16384,
+    contextWindow: contextWindow || knownSpecs?.contextWindow || 128000,
+    maxTokens: maxTokens || knownSpecs?.maxTokens || 16384,
   } as Model<Api>;
 }
 

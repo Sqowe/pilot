@@ -460,6 +460,8 @@ function APISettingsTab() {
     model,
     customModel,
     useCustomModel,
+    contextWindow,
+    maxTokens,
     modelInputPlaceholder,
     modelInputHint,
     presets,
@@ -490,6 +492,8 @@ function APISettingsTab() {
     setBaseUrl,
     setModel,
     setCustomModel,
+    setContextWindow,
+    setMaxTokens,
     toggleCustomModel,
     setEnableThinking,
     applyCommonProviderSetup,
@@ -738,6 +742,41 @@ function APISettingsTab() {
           </select>
         )}
         {useCustomModel && <p className="text-xs text-text-muted">{modelInputHint}</p>}
+
+        {/* Context Window & Max Tokens — only for non-registry providers */}
+        {(provider === 'ollama' || provider === 'custom') && (
+          <div className="grid grid-cols-2 gap-3 pt-2">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">
+                {t('api.contextWindow')}
+              </label>
+              <input
+                type="number"
+                value={contextWindow}
+                onChange={(e) => setContextWindow(e.target.value)}
+                placeholder={t('api.contextWindowPlaceholder')}
+                min={1024}
+                step={1024}
+                className="w-full px-3 py-2 rounded-lg bg-background border border-border text-text-primary text-sm placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">
+                {t('api.maxOutputTokens')}
+              </label>
+              <input
+                type="number"
+                value={maxTokens}
+                onChange={(e) => setMaxTokens(e.target.value)}
+                placeholder={t('api.maxOutputTokensPlaceholder')}
+                min={256}
+                step={256}
+                className="w-full px-3 py-2 rounded-lg bg-background border border-border text-text-primary text-sm placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all"
+              />
+            </div>
+            <p className="col-span-2 text-xs text-text-muted">{t('api.contextWindowHint')}</p>
+          </div>
+        )}
       </div>
 
       {provider === 'custom' && (
