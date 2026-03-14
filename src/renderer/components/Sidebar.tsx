@@ -15,7 +15,6 @@ import {
   Check,
 } from 'lucide-react';
 import type { Session } from '../types';
-import { formatRelativeAppTime } from '../utils/i18n-format';
 
 const sidebarLogoSrc = new URL('../../../resources/logo.png', import.meta.url).href;
 
@@ -42,7 +41,6 @@ export function Sidebar() {
   const setShowSettings = useAppStore((s) => s.setShowSettings);
   const { deleteSession, batchDeleteSessions, getSessionMessages, getSessionTraceSteps, isElectron } = useIPC();
   const [hoveredSession, setHoveredSession] = useState<string | null>(null);
-  const [loadingSession, setLoadingSession] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -145,7 +143,6 @@ export function Sidebar() {
 
       const existingMessages = messagesBySession[sessionId];
       if ((!existingMessages || existingMessages.length === 0) && isElectron) {
-        setLoadingSession(sessionId);
         try {
           const messages = await getSessionMessages(sessionId);
           if (messages && messages.length > 0) {
@@ -153,8 +150,6 @@ export function Sidebar() {
           }
         } catch (error) {
           console.error('[Sidebar] Failed to load messages:', error);
-        } finally {
-          setLoadingSession(null);
         }
       }
 
@@ -276,19 +271,14 @@ export function Sidebar() {
 
         <button
           onClick={handleNewSession}
-          className="mt-4 w-full flex items-center gap-3 rounded-2xl border border-border-subtle bg-background/60 px-3.5 py-3 text-left text-text-primary hover:bg-surface-hover transition-colors"
+          className="mt-3 w-full flex items-center gap-2 rounded-xl bg-background/60 px-3 py-2 text-left text-text-primary hover:bg-surface-hover transition-colors"
         >
-          <div className="w-8 h-8 rounded-xl bg-accent-muted text-accent flex items-center justify-center flex-shrink-0">
-            <Plus className="w-4 h-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="text-sm font-medium">{t('sidebar.newTask')}</div>
-            <div className="text-[11px] text-text-muted mt-0.5">{t('sidebar.newTaskHint')}</div>
-          </div>
+          <Plus className="w-4 h-4 text-text-secondary flex-shrink-0" />
+          <span className="text-[13px] font-medium">{t('sidebar.newTask')}</span>
         </button>
 
         {sessions.length > 0 && (
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-2 flex items-center gap-2">
             <div className="relative flex-1 min-w-0">
               <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-muted" />
               <input
@@ -322,21 +312,20 @@ export function Sidebar() {
 
       <div className="flex-1 overflow-y-auto px-3 py-4">
         {groupedSessions.length === 0 ? (
-          <div className="px-3 py-8">
+          <div className="px-3 py-6">
             <p className="text-sm text-text-secondary">{t('sidebar.noTasks')}</p>
             <p className="mt-1 text-xs leading-5 text-text-muted">{t('sidebar.noTasksHint')}</p>
           </div>
         ) : (
-          <div className="space-y-5">
+          <div className="space-y-3">
             {groupedSessions.map((group) => (
               <section key={group.key}>
                 <div className="px-3 pb-2 text-[11px] font-medium tracking-[0.04em] text-text-muted">
                   {group.label}
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-0.5">
                   {group.sessions.map((session) => {
                     const isActive = activeSessionId === session.id;
-                    const isLoading = loadingSession === session.id;
                     const isSelected = selectedIds.has(session.id);
                     return (
                       <div
@@ -350,34 +339,29 @@ export function Sidebar() {
                         }}
                         onMouseEnter={() => setHoveredSession(session.id)}
                         onMouseLeave={() => setHoveredSession(null)}
-                        className={`group relative cursor-pointer rounded-2xl px-3 py-3 transition-colors ${
+                        className={`group relative cursor-pointer rounded-lg px-2.5 py-1.5 transition-colors ${
                           isSelectMode && isSelected
-                            ? 'bg-accent-muted/20 border border-accent/15'
+                            ? 'bg-accent-muted/20'
                             : isActive && !isSelectMode
-                              ? 'bg-background border border-border-subtle'
-                              : 'border border-transparent hover:bg-surface-hover/80'
+                              ? 'bg-surface-hover/80'
+                              : 'hover:bg-surface-hover/60'
                         }`}
                       >
-                        <div className={`flex items-start gap-2.5 ${!isSelectMode ? 'pr-8' : ''}`}>
+                        <div className={`flex items-center gap-2 ${!isSelectMode ? 'pr-6' : ''}`}>
                           {isSelectMode && (
                             <div
-                              className={`mt-0.5 w-4.5 h-4.5 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                              className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
                                 isSelected
                                   ? 'bg-accent text-white'
-                                  : 'border border-border bg-background'
+                                  : 'border border-border-muted bg-background'
                               }`}
                             >
-                              {isSelected && <Check className="w-3 h-3" />}
+                              {isSelected && <Check className="w-2.5 h-2.5" />}
                             </div>
                           )}
                           <div className="min-w-0 flex-1">
                             <div className="text-[13px] font-medium leading-5 text-text-primary truncate">
                               {session.title}
-                            </div>
-                            <div className="mt-1 text-[11px] leading-4 text-text-muted">
-                              {isLoading
-                                ? t('common.loading')
-                                : formatRelativeTime(session.updatedAt || session.createdAt)}
                             </div>
                           </div>
                         </div>
@@ -385,10 +369,10 @@ export function Sidebar() {
                         {!isSelectMode && hoveredSession === session.id && (
                           <button
                             onClick={(e) => handleDeleteSession(e, session.id)}
-                            className="absolute right-2 top-2 w-7 h-7 rounded-xl flex items-center justify-center text-text-muted hover:text-error hover:bg-surface-active transition-colors"
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-lg flex items-center justify-center text-text-muted hover:text-error hover:bg-surface-active transition-colors"
                             title={t('common.delete')}
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-3 h-3" />
                           </button>
                         )}
                       </div>
@@ -517,8 +501,4 @@ function groupSessionsByDate(sessions: Session[], t: (key: string) => string): S
   }
 
   return buckets.filter((bucket) => bucket.sessions.length > 0);
-}
-
-function formatRelativeTime(timestamp: number): string {
-  return formatRelativeAppTime(timestamp);
 }
