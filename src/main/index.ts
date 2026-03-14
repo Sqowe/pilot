@@ -2304,6 +2304,9 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
     case 'session.delete':
       return sm.deleteSession(event.payload.sessionId);
 
+    case 'session.batchDelete':
+      return sm.batchDeleteSessions(event.payload.sessionIds);
+
     case 'session.list': {
       const sessions = sm.listSessions();
       sendToRenderer({ type: 'session.list', payload: { sessions } });

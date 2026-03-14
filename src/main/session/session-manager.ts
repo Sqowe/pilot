@@ -739,6 +739,12 @@ export class SessionManager {
     log('[SessionManager] Session deleted:', sessionId);
   }
 
+  async batchDeleteSessions(sessionIds: string[]): Promise<void> {
+    for (const sessionId of sessionIds) {
+      await this.deleteSession(sessionId);
+    }
+  }
+
   // Update session status
   private updateSessionStatus(sessionId: string, status: Session['status']): void {
     this.db.sessions.update(sessionId, { status, updated_at: Date.now() });

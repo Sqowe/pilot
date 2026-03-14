@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
@@ -11,6 +11,8 @@ import {
   Settings,
   Search as SearchIcon,
   Plus,
+  ListChecks,
+  Check,
 } from 'lucide-react';
 import type { Session } from '../types';
 import { formatRelativeAppTime } from '../utils/i18n-format';
@@ -38,10 +40,13 @@ export function Sidebar() {
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const setShowSettings = useAppStore((s) => s.setShowSettings);
-  const { deleteSession, getSessionMessages, getSessionTraceSteps, isElectron } = useIPC();
+  const { deleteSession, batchDeleteSessions, getSessionMessages, getSessionTraceSteps, isElectron } = useIPC();
   const [hoveredSession, setHoveredSession] = useState<string | null>(null);
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const filteredSessions = normalizedQuery
@@ -52,6 +57,83 @@ export function Sidebar() {
     () => groupSessionsByDate(filteredSessions, t),
     [filteredSessions, t]
   );
+
+  // Exit select mode when sidebar collapses
+  useEffect(() => {
+    if (sidebarCollapsed && isSelectMode) {
+      setIsSelectMode(false);
+      setSelectedIds(new Set());
+      setShowDeleteConfirm(false);
+    }
+  }, [sidebarCollapsed, isSelectMode]);
+
+  // Escape key exits select mode
+  useEffect(() => {
+    if (!isSelectMode) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsSelectMode(false);
+        setSelectedIds(new Set());
+        setShowDeleteConfirm(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSelectMode]);
+
+  const exitSelectMode = useCallback(() => {
+    setIsSelectMode(false);
+    setSelectedIds(new Set());
+    setShowDeleteConfirm(false);
+  }, []);
+
+  const toggleSelectSession = useCallback((sessionId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) {
+        next.delete(sessionId);
+      } else {
+        next.add(sessionId);
+      }
+      return next;
+    });
+  }, []);
+
+  const visibleSessionIds = useMemo(
+    () => filteredSessions.map((s) => s.id),
+    [filteredSessions]
+  );
+
+  const allVisibleSelected = visibleSessionIds.length > 0 && visibleSessionIds.every((id) => selectedIds.has(id));
+
+  const toggleSelectAll = useCallback(() => {
+    if (allVisibleSelected) {
+      // Deselect all visible, keep others
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of visibleSessionIds) {
+          next.delete(id);
+        }
+        return next;
+      });
+    } else {
+      // Select all visible, keep existing selections
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of visibleSessionIds) {
+          next.add(id);
+        }
+        return next;
+      });
+    }
+  }, [allVisibleSelected, visibleSessionIds]);
+
+  const handleBatchDelete = useCallback(() => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    batchDeleteSessions(ids);
+    exitSelectMode();
+  }, [selectedIds, batchDeleteSessions, exitSelectMode]);
 
   const handleSessionClick = useCallback(
     async (sessionId: string) => {
@@ -206,15 +288,34 @@ export function Sidebar() {
         </button>
 
         {sessions.length > 0 && (
-          <div className="mt-3 relative">
-            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-muted" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={t('sidebar.search')}
-              className="w-full rounded-xl border border-transparent bg-background/50 pl-9 pr-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-border focus:bg-background transition-colors"
-            />
+          <div className="mt-3 flex items-center gap-2">
+            <div className="relative flex-1 min-w-0">
+              <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-muted" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={t('sidebar.search')}
+                className="w-full rounded-xl border border-transparent bg-background/50 pl-9 pr-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-border focus:bg-background transition-colors"
+              />
+            </div>
+            <button
+              onClick={() => {
+                if (isSelectMode) {
+                  exitSelectMode();
+                } else {
+                  setIsSelectMode(true);
+                }
+              }}
+              className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors ${
+                isSelectMode
+                  ? 'bg-accent text-white'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+              }`}
+              title={t('sidebar.manage')}
+            >
+              <ListChecks className="w-3.5 h-3.5" />
+            </button>
           </div>
         )}
       </div>
@@ -236,30 +337,52 @@ export function Sidebar() {
                   {group.sessions.map((session) => {
                     const isActive = activeSessionId === session.id;
                     const isLoading = loadingSession === session.id;
+                    const isSelected = selectedIds.has(session.id);
                     return (
                       <div
                         key={session.id}
-                        onClick={() => handleSessionClick(session.id)}
+                        onClick={() => {
+                          if (isSelectMode) {
+                            toggleSelectSession(session.id);
+                          } else {
+                            handleSessionClick(session.id);
+                          }
+                        }}
                         onMouseEnter={() => setHoveredSession(session.id)}
                         onMouseLeave={() => setHoveredSession(null)}
                         className={`group relative cursor-pointer rounded-2xl px-3 py-3 transition-colors ${
-                          isActive
-                            ? 'bg-background border border-border-subtle'
-                            : 'hover:bg-surface-hover/80'
+                          isSelectMode && isSelected
+                            ? 'bg-accent-muted/20 border border-accent/15'
+                            : isActive && !isSelectMode
+                              ? 'bg-background border border-border-subtle'
+                              : 'border border-transparent hover:bg-surface-hover/80'
                         }`}
                       >
-                        <div className="pr-8 min-w-0">
-                          <div className="text-[13px] font-medium leading-5 text-text-primary truncate">
-                            {session.title}
-                          </div>
-                          <div className="mt-1 text-[11px] leading-4 text-text-muted">
-                            {isLoading
-                              ? t('common.loading')
-                              : formatRelativeTime(session.updatedAt || session.createdAt)}
+                        <div className={`flex items-start gap-2.5 ${!isSelectMode ? 'pr-8' : ''}`}>
+                          {isSelectMode && (
+                            <div
+                              className={`mt-0.5 w-4.5 h-4.5 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                                isSelected
+                                  ? 'bg-accent text-white'
+                                  : 'border border-border bg-background'
+                              }`}
+                            >
+                              {isSelected && <Check className="w-3 h-3" />}
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[13px] font-medium leading-5 text-text-primary truncate">
+                              {session.title}
+                            </div>
+                            <div className="mt-1 text-[11px] leading-4 text-text-muted">
+                              {isLoading
+                                ? t('common.loading')
+                                : formatRelativeTime(session.updatedAt || session.createdAt)}
+                            </div>
                           </div>
                         </div>
 
-                        {hoveredSession === session.id && (
+                        {!isSelectMode && hoveredSession === session.id && (
                           <button
                             onClick={(e) => handleDeleteSession(e, session.id)}
                             className="absolute right-2 top-2 w-7 h-7 rounded-xl flex items-center justify-center text-text-muted hover:text-error hover:bg-surface-active transition-colors"
@@ -278,6 +401,61 @@ export function Sidebar() {
         )}
       </div>
 
+      {isSelectMode ? (
+        <div className="px-3 py-3 border-t border-border-muted">
+          {showDeleteConfirm ? (
+            <div className="border border-error/30 bg-error/10 rounded-lg px-3 py-3">
+              <p className="text-[13px] text-text-primary mb-3">
+                {t('sidebar.batchDeleteConfirm', { count: selectedIds.size })}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="flex-1 px-3 py-1.5 rounded-lg text-[13px] font-medium text-text-secondary hover:bg-surface-hover transition-colors"
+                >
+                  {t('sidebar.cancel')}
+                </button>
+                <button
+                  onClick={handleBatchDelete}
+                  className="flex-1 px-3 py-1.5 rounded-lg text-[13px] font-medium bg-error text-white hover:bg-error/90 transition-colors"
+                >
+                  {t('sidebar.confirmDelete')}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between px-1">
+                <button
+                  onClick={toggleSelectAll}
+                  className="text-[12px] font-medium text-accent hover:text-accent/80 transition-colors"
+                >
+                  {allVisibleSelected ? t('sidebar.deselectAll') : t('sidebar.selectAll')}
+                </button>
+                <span className="text-[12px] text-text-muted">
+                  {t('sidebar.nSelected', { count: selectedIds.size })}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={exitSelectMode}
+                  className="flex-1 px-3 py-2 rounded-xl text-[13px] font-medium text-text-secondary hover:bg-surface-hover transition-colors"
+                >
+                  {t('sidebar.cancel')}
+                </button>
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  disabled={selectedIds.size === 0}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[13px] font-medium bg-error text-white hover:bg-error/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {t('common.delete')}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
       <div className="px-3 py-3 border-t border-border-muted">
         <div className="flex items-center gap-2 rounded-2xl bg-background/50 px-3 py-2.5">
           <button
@@ -304,6 +482,7 @@ export function Sidebar() {
           </button>
         </div>
       </div>
+      )}
     </aside>
   );
 }
