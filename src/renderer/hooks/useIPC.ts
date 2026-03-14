@@ -120,6 +120,7 @@ export function useIPC() {
             status: event.payload.status,
           });
           if (event.payload.status !== 'running') {
+            store.finishExecutionClock(event.payload.sessionId);
             store.setLoading(false);
             store.clearActiveTurn(event.payload.sessionId);
             store.clearPendingTurns(event.payload.sessionId);
@@ -325,6 +326,8 @@ export function useIPC() {
   const activateNextTurn = useAppStore((s) => s.activateNextTurn);
   const clearPendingTurns = useAppStore((s) => s.clearPendingTurns);
   const cancelQueuedMessages = useAppStore((s) => s.cancelQueuedMessages);
+  const startExecutionClock = useAppStore((s) => s.startExecutionClock);
+  const finishExecutionClock = useAppStore((s) => s.finishExecutionClock);
 
   // Send event to main process
   const send = useCallback((event: ClientEvent) => {
@@ -397,6 +400,7 @@ export function useIPC() {
           timestamp: Date.now(),
         };
         addMessage(sessionId, userMessage);
+        startExecutionClock(sessionId, userMessage.timestamp);
         const mockStepId = `mock-step-${Date.now()}`;
         activateNextTurn(sessionId, mockStepId);
 
@@ -442,6 +446,7 @@ export function useIPC() {
             timestamp: Date.now(),
           };
           addMessage(session.id, userMessage);
+          startExecutionClock(session.id, userMessage.timestamp);
 
           // Immediately activate turn to show processing indicator while waiting for API
           const mockStepId = `pending-step-${Date.now()}`;
@@ -460,7 +465,7 @@ export function useIPC() {
         return null;
       }
     },
-    [invoke, addSession, addMessage, updateSession, setLoading, activateNextTurn, clearActiveTurn]
+    [invoke, addSession, addMessage, updateSession, setLoading, activateNextTurn, clearActiveTurn, startExecutionClock]
   );
 
   // Continue an existing session
@@ -495,6 +500,7 @@ export function useIPC() {
         localStatus: shouldQueue ? 'queued' : undefined,
       };
       addMessage(sessionId, userMessage);
+      startExecutionClock(sessionId, userMessage.timestamp);
 
       // Browser mode mock
       if (!isElectron) {
@@ -545,6 +551,7 @@ export function useIPC() {
       activateNextTurn,
       clearActiveTurn,
       clearPendingTurns,
+      startExecutionClock,
     ]
   );
 
@@ -553,6 +560,7 @@ export function useIPC() {
       cancelQueuedMessages(sessionId);
       clearPendingTurns(sessionId);
       clearActiveTurn(sessionId);
+      finishExecutionClock(sessionId);
       if (!isElectron) {
         updateSession(sessionId, { status: 'idle' });
         setLoading(false);
@@ -561,7 +569,7 @@ export function useIPC() {
       send({ type: 'session.stop', payload: { sessionId } });
       setLoading(false);
     },
-    [send, updateSession, setLoading, cancelQueuedMessages, clearPendingTurns, clearActiveTurn]
+    [send, updateSession, setLoading, cancelQueuedMessages, clearPendingTurns, clearActiveTurn, finishExecutionClock]
   );
 
   const deleteSession = useCallback(

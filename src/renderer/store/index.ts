@@ -26,6 +26,11 @@ export interface GlobalNotice {
   action?: GlobalNoticeAction;
 }
 
+export interface SessionExecutionClock {
+  startAt: number | null;
+  endAt: number | null;
+}
+
 interface AppState {
   // Sessions
   sessions: Session[];
@@ -37,6 +42,7 @@ interface AppState {
   partialThinkingBySession: Record<string, string>;
   pendingTurnsBySession: Record<string, string[]>;
   activeTurnsBySession: Record<string, { stepId: string; userMessageId: string } | null>;
+  executionClockBySession: Record<string, SessionExecutionClock>;
 
   // Trace steps
   traceStepsBySession: Record<string, TraceStep[]>;
@@ -84,6 +90,9 @@ interface AppState {
   setActiveSession: (sessionId: string | null) => void;
 
   addMessage: (sessionId: string, message: Message) => void;
+  startExecutionClock: (sessionId: string, startAt: number) => void;
+  finishExecutionClock: (sessionId: string, endAt?: number) => void;
+  clearExecutionClock: (sessionId: string) => void;
   setMessages: (sessionId: string, messages: Message[]) => void;
   setPartialMessage: (sessionId: string, partial: string) => void;
   clearPartialMessage: (sessionId: string) => void;
@@ -172,6 +181,7 @@ export const useAppStore = create<AppState>((set) => ({
   partialThinkingBySession: {},
   pendingTurnsBySession: {},
   activeTurnsBySession: {},
+  executionClockBySession: {},
   traceStepsBySession: {},
   isLoading: false,
   sidebarCollapsed: false,
@@ -204,6 +214,10 @@ export const useAppStore = create<AppState>((set) => ({
       partialThinkingBySession: { ...state.partialThinkingBySession, [session.id]: '' },
       pendingTurnsBySession: { ...state.pendingTurnsBySession, [session.id]: [] },
       activeTurnsBySession: { ...state.activeTurnsBySession, [session.id]: null },
+      executionClockBySession: {
+        ...state.executionClockBySession,
+        [session.id]: { startAt: null, endAt: null },
+      },
       traceStepsBySession: { ...state.traceStepsBySession, [session.id]: [] },
     })),
 
@@ -220,6 +234,7 @@ export const useAppStore = create<AppState>((set) => ({
         state.partialThinkingBySession;
       const { [sessionId]: __pending, ...restPendingTurns } = state.pendingTurnsBySession;
       const { [sessionId]: __active, ...restActiveTurns } = state.activeTurnsBySession;
+      const { [sessionId]: __clock, ...restExecutionClocks } = state.executionClockBySession;
       const { [sessionId]: __traces, ...restTraces } = state.traceStepsBySession;
       return {
         sessions: state.sessions.filter((s) => s.id !== sessionId),
@@ -228,6 +243,7 @@ export const useAppStore = create<AppState>((set) => ({
         partialThinkingBySession: restThinkingPartials,
         pendingTurnsBySession: restPendingTurns,
         activeTurnsBySession: restActiveTurns,
+        executionClockBySession: restExecutionClocks,
         traceStepsBySession: restTraces,
         activeSessionId: state.activeSessionId === sessionId ? null : state.activeSessionId,
       };
@@ -293,6 +309,37 @@ export const useAppStore = create<AppState>((set) => ({
           : state.partialThinkingBySession,
       };
     }),
+
+  startExecutionClock: (sessionId, startAt) =>
+    set((state) => ({
+      executionClockBySession: {
+        ...state.executionClockBySession,
+        [sessionId]: { startAt, endAt: null },
+      },
+    })),
+
+  finishExecutionClock: (sessionId, endAt) =>
+    set((state) => {
+      const current = state.executionClockBySession[sessionId] ?? { startAt: null, endAt: null };
+      if (current.startAt === null) return {};
+      return {
+        executionClockBySession: {
+          ...state.executionClockBySession,
+          [sessionId]: {
+            startAt: current.startAt,
+            endAt: endAt ?? Date.now(),
+          },
+        },
+      };
+    }),
+
+  clearExecutionClock: (sessionId) =>
+    set((state) => ({
+      executionClockBySession: {
+        ...state.executionClockBySession,
+        [sessionId]: { startAt: null, endAt: null },
+      },
+    })),
 
   setMessages: (sessionId, messages) =>
     set((state) => ({

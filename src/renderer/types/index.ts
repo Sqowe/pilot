@@ -30,6 +30,7 @@ export interface Message {
   timestamp: number;
   tokenUsage?: TokenUsage;
   localStatus?: 'queued' | 'cancelled';
+  executionTimeMs?: number;
 }
 
 export type MessageRole = 'user' | 'assistant' | 'system';
@@ -371,6 +372,7 @@ export type ServerEvent =
   | { type: 'stream.message'; payload: { sessionId: string; message: Message } }
   | { type: 'stream.partial'; payload: { sessionId: string; delta: string } }
   | { type: 'stream.thinking'; payload: { sessionId: string; delta: string } }
+  | { type: 'stream.executionTime'; payload: { sessionId: string; messageId: string; executionTimeMs: number } }
   | { type: 'session.status'; payload: { sessionId: string; status: SessionStatus; error?: string } }
   | { type: 'session.update'; payload: { sessionId: string; updates: Partial<Session> } }
   | { type: 'session.list'; payload: { sessions: Session[] } }

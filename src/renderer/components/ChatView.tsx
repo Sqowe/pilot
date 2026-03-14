@@ -1,10 +1,10 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
 import { MessageCard } from './MessageCard';
 import type { Message, ContentBlock } from '../types';
-import { Send, Square, Plus, Loader2, Plug, X } from 'lucide-react';
+import { Send, Square, Plus, Loader2, Plug, X, Clock } from 'lucide-react';
 
 type AttachedFile = {
   name: string;
@@ -23,6 +23,7 @@ export function ChatView() {
   const partialThinkingBySession = useAppStore((s) => s.partialThinkingBySession);
   const activeTurnsBySession = useAppStore((s) => s.activeTurnsBySession);
   const pendingTurnsBySession = useAppStore((s) => s.pendingTurnsBySession);
+  const executionClockBySession = useAppStore((s) => s.executionClockBySession);
   const appConfig = useAppStore((s) => s.appConfig);
   const { continueSession, stopSession, isElectron } = useIPC();
   const [prompt, setPrompt] = useState('');
@@ -94,6 +95,37 @@ export function ChatView() {
 
     return [...messages.slice(0, insertIndex), streamingMessage, ...messages.slice(insertIndex)];
   }, [activeSessionId, activeTurn?.userMessageId, messages, partialMessage, partialThinking]);
+
+  // Format execution time for display
+  const formatExecutionTime = useCallback((ms: number): string => {
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+    const minutes = Math.floor(ms / 60000);
+    const seconds = ((ms % 60000) / 1000).toFixed(0);
+    return `${minutes}m ${seconds}s`;
+  }, []);
+
+  // --- Real-time execution timer ---
+  const executionClock = activeSessionId ? executionClockBySession[activeSessionId] : undefined;
+  const [clockNow, setClockNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const isActive = Boolean(executionClock?.startAt && executionClock.endAt === null);
+    if (!isActive) {
+      return;
+    }
+    setClockNow(Date.now());
+    const interval = setInterval(() => {
+      setClockNow(Date.now());
+    }, 100);
+    return () => clearInterval(interval);
+  }, [executionClock?.startAt, executionClock?.endAt]);
+
+  const liveElapsed =
+    executionClock?.startAt == null
+      ? 0
+      : Math.max(0, (executionClock.endAt ?? clockNow) - executionClock.startAt);
+  const timerActive = Boolean(executionClock?.startAt && executionClock.endAt === null);
 
   // Debounced scroll function to prevent scroll conflicts
   const scrollToBottom = useRef((behavior: ScrollBehavior = 'auto', immediate: boolean = false) => {
@@ -648,6 +680,18 @@ export function ChatView() {
             <div className="flex items-center gap-3 px-4 py-3 rounded-full bg-background/80 border border-border-subtle max-w-fit">
               <Loader2 className="w-4 h-4 text-accent animate-spin" />
               <span className="text-sm text-text-secondary">{t('chat.processing')}</span>
+            </div>
+          )}
+
+          {/* Real-time execution timer */}
+          {liveElapsed > 0 && (
+            <div className="flex items-center gap-1.5 text-[11px] text-text-muted mt-1 ml-0.5">
+              <Clock className="w-3 h-3" />
+              <span>
+                {timerActive
+                  ? formatExecutionTime(liveElapsed)
+                  : t('messageCard.executionTime', { time: formatExecutionTime(liveElapsed) })}
+              </span>
             </div>
           )}
 

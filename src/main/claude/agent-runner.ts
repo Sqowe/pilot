@@ -155,6 +155,32 @@ function toErrorText(error: unknown): string {
   return serialized;
 }
 
+function normalizeTokenUsage(
+  usage: unknown
+): Message['tokenUsage'] | undefined {
+  if (!usage || typeof usage !== 'object') {
+    return undefined;
+  }
+
+  const raw = usage as {
+    input?: unknown;
+    output?: unknown;
+    input_tokens?: unknown;
+    output_tokens?: unknown;
+    inputTokens?: unknown;
+    outputTokens?: unknown;
+  };
+
+  const input = raw.input ?? raw.input_tokens ?? raw.inputTokens;
+  const output = raw.output ?? raw.output_tokens ?? raw.outputTokens;
+
+  if (typeof input !== 'number' || typeof output !== 'number') {
+    return undefined;
+  }
+
+  return { input, output };
+}
+
 interface AgentRunnerOptions {
   sendToRenderer: (event: ServerEvent) => void;
   saveMessage?: (message: Message) => void;
@@ -1341,6 +1367,10 @@ Tool routing:
             }
 
             const msg = event.message;
+            log(
+              '[ClaudeAgentRunner] message_end raw message:',
+              safeStringify(msg, 2)
+            );
             const resolvedPayload = resolveMessageEndPayload({
               message: msg as any,
               streamedText,
@@ -1395,16 +1425,26 @@ Tool routing:
                 payload: { sessionId: session.id, delta: '' },
               });
               if (contentBlocks.length > 0) {
+                const tokenUsage = normalizeTokenUsage((msg as any).usage);
+                if ((msg as any).usage) {
+                  log(
+                    '[ClaudeAgentRunner] normalized usage:',
+                    safeStringify(
+                      {
+                        raw: (msg as any).usage,
+                        normalized: tokenUsage,
+                      },
+                      2
+                    )
+                  );
+                }
                 const assistantMsg: Message = {
                   id: uuidv4(),
                   sessionId: session.id,
                   role: 'assistant',
                   content: contentBlocks,
                   timestamp: Date.now(),
-                  tokenUsage: (msg as any).usage ? {
-                    input: (msg as any).usage.input,
-                    output: (msg as any).usage.output,
-                  } : undefined,
+                  tokenUsage,
                 };
                 this.sendMessage(session.id, assistantMsg);
               }

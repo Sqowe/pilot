@@ -801,6 +801,7 @@ export class SessionManager {
       content: JSON.stringify(message.content),
       timestamp: message.timestamp,
       token_usage: message.tokenUsage ? JSON.stringify(message.tokenUsage) : null,
+      execution_time_ms: message.executionTimeMs ?? null,
     });
     const cached = this.messageCache.get(message.sessionId);
     if (cached) {
@@ -825,6 +826,7 @@ export class SessionManager {
       content: this.normalizeContent(row.content),
       timestamp: row.timestamp,
       tokenUsage: row.token_usage ? JSON.parse(row.token_usage) : undefined,
+      executionTimeMs: row.execution_time_ms ?? undefined,
     }));
     this.messageCache.set(sessionId, messages);
     return [...messages];
