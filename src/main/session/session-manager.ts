@@ -24,7 +24,7 @@ import { configStore } from '../config/config-store';
 import { MCPManager } from '../mcp/mcp-manager';
 import { mcpConfigStore } from '../mcp/mcp-config-store';
 import { PluginRuntimeService } from '../skills/plugin-runtime-service';
-import { log, logError, logWarn } from '../utils/logger';
+import { log, logError, logWarn, logCtx, logCtxError, runWithLogContext, generateTraceId } from '../utils/logger';
 import { maybeGenerateSessionTitle } from './session-title-flow';
 import {
   buildTitlePrompt,
@@ -487,8 +487,10 @@ export class SessionManager {
 
   // Process a prompt using ClaudeAgentRunner
   private async processPrompt(session: Session, prompt: string, content?: ContentBlock[]): Promise<void> {
-    log('[SessionManager] Processing prompt for session:', session.id);
-    log('[SessionManager] Received content:', content ? JSON.stringify(content.map((c: any) => ({ type: c.type, hasData: !!c.source?.data }))) : 'none');
+    const traceId = generateTraceId();
+    return runWithLogContext({ sessionId: session.id, traceId }, async () => {
+    logCtx('[SessionManager] Processing prompt for session:', session.id, 'traceId:', traceId);
+    logCtx('[SessionManager] Received content:', content ? JSON.stringify(content.map((c: any) => ({ type: c.type, hasData: !!c.source?.data }))) : 'none');
 
     // Ensure sandbox is initialized for this workspace
     await this.ensureSandboxInitialized(session);
@@ -502,7 +504,7 @@ export class SessionManager {
       // Process file attachments - copy to .tmp directory
       messageContent = await this.processFileAttachments(session, messageContent);
 
-      log('[SessionManager] Final message content types:', messageContent.map((c: any) => c.type));
+      logCtx('[SessionManager] Final message content types:', messageContent.map((c: any) => c.type));
 
       // Build enhanced prompt with file information
       let enhancedPrompt = prompt;
@@ -512,7 +514,7 @@ export class SessionManager {
           `- ${f.filename} (${(f.size / 1024).toFixed(1)} KB) at path: ${f.relativePath}`
         ).join('\n');
         enhancedPrompt = `${prompt}\n\n[Attached files - use Read tool to access them]:\n${fileInfo}`;
-        log('[SessionManager] Enhanced prompt with file info:', enhancedPrompt);
+        logCtx('[SessionManager] Enhanced prompt with file info:', enhancedPrompt);
       }
 
       // Save user message to database for persistence
@@ -525,7 +527,7 @@ export class SessionManager {
         timestamp: Date.now(),
       };
       this.saveMessage(userMessage);
-      log('[SessionManager] User message saved:', userMessage.id, 'with', messageContent.length, 'content blocks');
+      logCtx('[SessionManager] User message saved:', userMessage.id, 'with', messageContent.length, 'content blocks');
       const messagesForContext = [...existingMessages, userMessage];
 
       // Update session model to match current config (may have changed since session creation)
@@ -544,9 +546,9 @@ export class SessionManager {
 
       // 标题生成不再与首轮对话并发，避免与主请求竞争同一上游配额/通道导致体感变慢。
       this.runSessionTitleGeneration(session, prompt, existingMessages)
-        .catch(err => logError('[SessionManager] Title generation failed:', err));
+        .catch(err => logCtxError('[SessionManager] Title generation failed:', err));
     } catch (error) {
-      logError('[SessionManager] Error processing prompt:', error);
+      logCtxError('[SessionManager] Error processing prompt:', error);
       const errorText = error instanceof Error ? error.message : 'Unknown error';
       const alreadyReportedToUser = Boolean(
         error &&
@@ -572,6 +574,7 @@ export class SessionManager {
         payload: { message: errorText },
       });
     }
+    }); // end runWithLogContext
   }
 
   private async runSessionTitleGeneration(session: Session, prompt: string, existingMessages: Message[]): Promise<void> {

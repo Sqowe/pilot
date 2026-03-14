@@ -28,7 +28,7 @@ import { PathResolver } from '../sandbox/path-resolver';
 import { MCPManager } from '../mcp/mcp-manager';
 import { mcpConfigStore } from '../mcp/mcp-config-store';
 import { credentialsStore, type UserCredential } from '../credentials/credentials-store';
-import { log, logWarn, logError } from '../utils/logger';
+import { log, logWarn, logError, logCtx, logCtxWarn, logCtxError, logTiming } from '../utils/logger';
 import * as path from 'path';
 import * as fs from 'fs';
 import { app } from 'electron';
@@ -543,19 +543,15 @@ ${sections.join('\n\n')}
     const model = routeModel
       || configuredModel
       || 'anthropic/claude-sonnet-4';
-    log('[ClaudeAgentRunner] Current model:', model);
-    log('[ClaudeAgentRunner] Model source:', routeModel ? 'runtimeRoute.model' : configuredModel ? 'configStore.model' : 'default');
+    logCtx('[ClaudeAgentRunner] Current model:', model);
+    logCtx('[ClaudeAgentRunner] Model source:', routeModel ? 'runtimeRoute.model' : configuredModel ? 'configStore.model' : 'default');
     return model;
   }
 
   async run(session: Session, prompt: string, existingMessages: Message[]): Promise<void> {
-    const startTime = Date.now();
-    const logTiming = (label: string) => {
-      log(`[TIMING] ${label}: ${Date.now() - startTime}ms`);
-    };
-    
-    logTiming('run() started');
-    
+    const runStartTime = Date.now();
+    logCtx('[ClaudeAgentRunner] run() started');
+
     const controller = new AbortController();
     try {
       // SDK 会在同一 AbortSignal 上挂载较多监听器，放开上限避免无意义告警干扰排错。
@@ -578,7 +574,7 @@ ${sections.join('\n\n')}
 
     try {
       this.pathResolver.registerSession(session.id, session.mountedPaths);
-      logTiming('pathResolver.registerSession');
+      logTiming('pathResolver.registerSession', runStartTime);
 
       // Note: User message is now added by the frontend immediately for better UX
       // No need to send it again from backend
@@ -592,11 +588,11 @@ ${sections.join('\n\n')}
         title: 'Processing request...',
         timestamp: Date.now(),
       });
-      logTiming('sendTraceStep (thinking)');
+      logTiming('sendTraceStep (thinking)', runStartTime);
 
       // Use session's cwd - each session has its own working directory
       const workingDir = session.cwd || undefined;
-      log('[ClaudeAgentRunner] Working directory:', workingDir || '(none)');
+      logCtx('[ClaudeAgentRunner] Working directory:', workingDir || '(none)');
 
       // Initialize sandbox sync if WSL mode is active
       const sandbox = getSandboxAdapter();
@@ -874,14 +870,14 @@ ${sections.join('\n\n')}
         ? existingMessages[existingMessages.length - 1]
         : null;
 
-      log('[ClaudeAgentRunner] Total messages:', existingMessages.length);
+      logCtx('[ClaudeAgentRunner] Total messages:', existingMessages.length);
 
       const hasImages = lastUserMessage?.content.some((c: any) => c.type === 'image') || false;
       if (hasImages) {
         log('[ClaudeAgentRunner] User message contains images');
       }
 
-      logTiming('before pi-ai model resolution');
+      logTiming('before pi-ai model resolution', runStartTime);
 
       // Resolve model via pi-ai
       const runtimeConfig = configStore.getAll();
@@ -900,9 +896,9 @@ ${sections.join('\n\n')}
         const syntheticId = parts.length >= 2 ? parts.slice(1).join('/') : modelString;
         const syntheticProvider = parts.length >= 2 ? parts[0] : (configProtocol === 'custom' ? 'anthropic' : configProtocol);
         piModel = buildSyntheticPiModel(syntheticId, syntheticProvider, configProtocol, runtimeConfig.baseUrl?.trim() || undefined);
-        logWarn('[ClaudeAgentRunner] Model not in pi-ai registry, using synthetic model:', modelString, '→', piModel.api);
+        logCtxWarn('[ClaudeAgentRunner] Model not in pi-ai registry, using synthetic model:', modelString, '→', piModel.api);
       }
-      log('[ClaudeAgentRunner] Resolved pi-ai model:', piModel.provider, piModel.id);
+      logCtx('[ClaudeAgentRunner] Resolved pi-ai model:', piModel.provider, piModel.id);
 
       // Set up API keys via AuthStorage
       const authStorage = getSharedAuthStorage();
@@ -926,9 +922,9 @@ ${sections.join('\n\n')}
       }
 
       // baseUrl is now embedded in the model object via resolvePiModel()
-      log('[ClaudeAgentRunner] Model baseUrl:', piModel.baseUrl, 'api:', piModel.api);
+      logCtx('[ClaudeAgentRunner] Model baseUrl:', piModel.baseUrl, 'api:', piModel.api);
 
-      logTiming('after pi-ai model resolution');
+      logTiming('after pi-ai model resolution', runStartTime);
 
       // pi-coding-agent handles path sandboxing via its own tools
       const imageCapable = true; // pi-ai models generally support images; let the model handle unsupported cases
@@ -987,14 +983,14 @@ ${sections.join('\n\n')}
       log('[ClaudeAgentRunner] App claude dir:', userClaudeDir);
       log('[ClaudeAgentRunner] User working directory:', workingDir);
 
-      logTiming('before building conversation context');
+      logTiming('before building conversation context', runStartTime);
 
       // pi-ai handles auth and model routing natively — no proxy, no env overrides needed.
-      log('[ClaudeAgentRunner] Using pi-ai native routing for:', piModel.provider, piModel.id);
+      logCtx('[ClaudeAgentRunner] Using pi-ai native routing for:', piModel.provider, piModel.id);
 
       // Resolve thinking level early — needed for session reuse check below
       const enableThinking = configStore.get('enableThinking') ?? false;
-      log('[ClaudeAgentRunner] Enable thinking mode:', enableThinking);
+      logCtx('[ClaudeAgentRunner] Enable thinking mode:', enableThinking);
       type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
       const thinkingLevel: PiThinkingLevel = enableThinking ? 'medium' : 'off';
 
@@ -1048,10 +1044,10 @@ ${sections.join('\n\n')}
         }
       } else {
         // Reusing session — SDK already has the full conversation context
-        log('[ClaudeAgentRunner] Reusing existing SDK session for:', session.id);
+        logCtx('[ClaudeAgentRunner] Reusing existing SDK session for:', session.id);
       }
 
-      logTiming('before building MCP servers config');
+      logTiming('before building MCP servers config', runStartTime);
 
       // Build MCP servers configuration for SDK
       // IMPORTANT: SDK uses tool names in format: mcp__<ServerKey>__<toolName>
@@ -1187,7 +1183,7 @@ ${sections.join('\n\n')}
           log('[ClaudeAgentRunner] Final mcpServers config:', safeStringify(mcpServers, 2));
         }
       }
-      logTiming('after building MCP servers config');
+      logTiming('after building MCP servers config', runStartTime);
 
       const workspaceInfoPrompt = useSandboxIsolation && sandboxPath
         ? `<workspace_info>
@@ -1221,7 +1217,7 @@ Tool routing:
         includeCredentialsPrompt ? this.getCredentialsPrompt() : '',
       ].filter((section): section is string => Boolean(section && section.trim())).join('\n\n');
 
-      logTiming('before pi-coding-agent session creation');
+      logTiming('before pi-coding-agent session creation', runStartTime);
 
       // Create or reuse pi-coding-agent session
       const effectiveCwd = (useSandboxIsolation && sandboxPath) ? sandboxPath : (workingDir || process.cwd());
@@ -1260,8 +1256,8 @@ Tool routing:
       const wrappedTools = this.wrapBashToolForSudo(codingTools as ToolDefinition[], session.id);
 
       // Diagnostic: log tools being passed to SDK (helps debug Ollama tool use)
-      log(`[ClaudeAgentRunner] Session reuse check: cached=${!!cachedSession}`);
-      log(`[ClaudeAgentRunner] Model=${piModel.id}, thinkingLevel=${thinkingLevel}`);
+      logCtx(`[ClaudeAgentRunner] Session reuse check: cached=${!!cachedSession}`);
+      logCtx(`[ClaudeAgentRunner] Model=${piModel.id}, thinkingLevel=${thinkingLevel}`);
       log(`[ClaudeAgentRunner] Built-in tools (${wrappedTools.length}): ${wrappedTools.map((t: { name?: string; type?: string }) => t.name || t.type).join(', ')}`);
       log(`[ClaudeAgentRunner] Custom MCP tools (${mcpCustomTools.length}): ${mcpCustomTools.map(t => t.name).join(', ')}`);
 
@@ -1272,18 +1268,18 @@ Tool routing:
 
         // Hot-swap model/thinking if changed — SDK supports this natively
         if (cachedSession.modelId !== piModel.id) {
-          log('[ClaudeAgentRunner] Model changed, hot-swapping:', cachedSession.modelId, '→', piModel.id);
+          logCtx('[ClaudeAgentRunner] Model changed, hot-swapping:', cachedSession.modelId, '→', piModel.id);
           await piSession.setModel(piModel);
           cachedSession.modelId = piModel.id;
         }
         if (cachedSession.thinkingLevel !== thinkingLevel) {
-          log('[ClaudeAgentRunner] Thinking level changed, hot-swapping:', cachedSession.thinkingLevel, '→', thinkingLevel);
+          logCtx('[ClaudeAgentRunner] Thinking level changed, hot-swapping:', cachedSession.thinkingLevel, '→', thinkingLevel);
           piSession.setThinkingLevel(thinkingLevel);
           cachedSession.thinkingLevel = thinkingLevel;
         }
 
-        log('[ClaudeAgentRunner] Reusing cached pi session for:', session.id);
-        logTiming('pi-coding-agent session reused');
+        logCtx('[ClaudeAgentRunner] Reusing cached pi session for:', session.id);
+        logTiming('pi-coding-agent session reused', runStartTime);
       } else {
         // First query in this session — create new pi-coding-agent session
         const { session: newPiSession } = await createAgentSession({
@@ -1305,7 +1301,7 @@ Tool routing:
 
         // Store session for reuse
         this.piSessions.set(session.id, { session: piSession, modelId: piModel.id, thinkingLevel });
-        logTiming('pi-coding-agent session created');
+        logTiming('pi-coding-agent session created', runStartTime);
       }
 
       // Set up event handler to bridge pi-coding-agent events → our ServerEvent protocol
@@ -1370,7 +1366,7 @@ Tool routing:
               log('[ClaudeAgentRunner] message_update done event (handled in message_end)');
             } else if (ame.type === 'error') {
               const errorDetail = JSON.stringify(ame.error?.content || 'no content');
-              logError('[ClaudeAgentRunner] pi-ai stream error:', ame.reason, errorDetail);
+              logCtxError('[ClaudeAgentRunner] pi-ai stream error:', ame.reason, errorDetail);
             }
             break;
           }
@@ -1466,7 +1462,7 @@ Tool routing:
           }
 
           case 'tool_execution_start': {
-            log(`[ClaudeAgentRunner] Tool execution start: ${event.toolName}`);
+            logCtx(`[ClaudeAgentRunner] Tool execution start: ${event.toolName}`);
             break;
           }
 
@@ -1501,7 +1497,7 @@ Tool routing:
           }
 
           case 'agent_end': {
-            log('[ClaudeAgentRunner] Agent finished');
+            logCtx('[ClaudeAgentRunner] Agent finished');
             break;
           }
 
@@ -1554,7 +1550,7 @@ Tool routing:
         try { unsubscribe(); } catch (e) { logWarn('[ClaudeAgentRunner] unsubscribe error:', e); }
       }
 
-      logTiming('pi-coding-agent prompt completed');
+      logTiming('pi-coding-agent prompt completed', runStartTime);
 
       // Complete - update the initial thinking step
       this.sendTraceUpdate(session.id, thinkingStepId, {
@@ -1564,9 +1560,9 @@ Tool routing:
 
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        log('[ClaudeAgentRunner] Aborted');
+        logCtx('[ClaudeAgentRunner] Aborted');
       } else {
-        logError('[ClaudeAgentRunner] Error:', error);
+        logCtxError('[ClaudeAgentRunner] Error:', error);
 
         const errorText = toUserFacingErrorText(toErrorText(error));
         const errorMsg: Message = {
