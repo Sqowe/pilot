@@ -113,16 +113,12 @@ export class SessionManager {
   }
 
   /**
-   * Reload API config only — recreate agent runner without touching MCP or sandbox.
+   * Notify that API config changed.
+   * Model/apiKey/baseUrl changes are picked up per-query via configStore.getAll()
+   * and hot-swapped via piSession.setModel(). No need to recreate the runner.
    */
   reloadConfig(): void {
-    log('[SessionManager] Reloading API config and recreating agent runner');
-    for (const sessionId of this.activeSessions.keys()) {
-      log('[SessionManager] Stopping active session before config reload:', sessionId);
-      this.stopSession(sessionId);
-    }
-    this.createAgentRunner();
-    log('[SessionManager] API config reloaded successfully');
+    log('[SessionManager] API config changed — will apply on next query');
   }
 
   /**
@@ -131,6 +127,26 @@ export class SessionManager {
   async reloadMCP(): Promise<void> {
     log('[SessionManager] Reloading MCP servers');
     await this.initializeMCP();
+  }
+
+  /**
+   * Invalidate cached MCP servers config so the next query rebuilds tools.
+   * Call after MCP server add/update/delete.
+   */
+  invalidateMcpServersCache(): void {
+    if (this.agentRunner && 'invalidateMcpServersCache' in this.agentRunner) {
+      (this.agentRunner as ClaudeAgentRunner).invalidateMcpServersCache();
+    }
+  }
+
+  /**
+   * Invalidate skills setup so the next query re-links skills.
+   * Call after skill install/uninstall/toggle.
+   */
+  invalidateSkillsSetup(): void {
+    if (this.agentRunner && 'invalidateSkillsSetup' in this.agentRunner) {
+      (this.agentRunner as ClaudeAgentRunner).invalidateSkillsSetup();
+    }
   }
 
   /**

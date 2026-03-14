@@ -179,7 +179,7 @@ export class ClaudeAgentRunner {
   private _pluginRuntimeService?: PluginRuntimeService;
   private _skillsAdapter?: SkillsAdapter;
   private activeControllers: Map<string, AbortController> = new Map();
-  private piSessions: Map<string, PiAgentSession> = new Map(); // sessionId -> pi AgentSession
+  private piSessions: Map<string, { session: PiAgentSession; modelId: string; thinkingLevel: string }> = new Map();
 
   // Per-instance caches — invalidated when the underlying config changes.
   private _mcpServersCache: { fingerprint: string; servers: Record<string, unknown> } | null = null;
@@ -190,9 +190,9 @@ export class ClaudeAgentRunner {
    * Called when session's cwd changes - SDK sessions are bound to cwd
    */
   clearSdkSession(sessionId: string): void {
-    const piSession = this.piSessions.get(sessionId);
-    if (piSession) {
-      piSession.dispose();
+    const cached = this.piSessions.get(sessionId);
+    if (cached) {
+      try { cached.session.dispose(); } catch (e) { logWarn('[ClaudeAgentRunner] dispose error:', e); }
       this.piSessions.delete(sessionId);
       log('[ClaudeAgentRunner] Disposed pi session for:', sessionId);
     }
@@ -206,6 +206,8 @@ export class ClaudeAgentRunner {
   /** Call after the user changes MCP server config so the next query rebuilds mcpServers. */
   invalidateMcpServersCache(): void {
     this._mcpServersCache = null;
+    // Sessions stay alive — MCP tools are rebuilt each query via buildMcpCustomTools()
+    log('[ClaudeAgentRunner] MCP servers cache invalidated — tools will rebuild on next query');
   }
 
   /**
@@ -990,28 +992,63 @@ ${sections.join('\n\n')}
       // pi-ai handles auth and model routing natively — no proxy, no env overrides needed.
       log('[ClaudeAgentRunner] Using pi-ai native routing for:', piModel.provider, piModel.id);
 
-      // Build conversation context for text-only history
-      let contextualPrompt = prompt;
-      const conversationMessages = existingMessages
-        .filter(msg => msg.role === 'user' || msg.role === 'assistant');
-      const historyMessages = (
-        conversationMessages.length > 0
-          && conversationMessages[conversationMessages.length - 1]?.role === 'user'
-      )
-        ? conversationMessages.slice(0, -1)
-        : conversationMessages;
-      const historyItems = historyMessages
-        .map(msg => {
-          const textContent = msg.content
-            .filter(c => c.type === 'text')
-            .map(c => (c as any).text)
-            .join('\n');
-          return `${msg.role === 'user' ? 'Human' : 'Assistant'}: ${textContent}`;
-        });
+      // Resolve thinking level early — needed for session reuse check below
+      const enableThinking = configStore.get('enableThinking') ?? false;
+      log('[ClaudeAgentRunner] Enable thinking mode:', enableThinking);
+      type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+      const thinkingLevel: PiThinkingLevel = enableThinking ? 'medium' : 'off';
 
-      if (historyItems.length > 0 && !hasImages) {
-        contextualPrompt = `${historyItems.join('\n')}\nHuman: ${prompt}\nAssistant:`;
-        log('[ClaudeAgentRunner] Including', historyItems.length, 'history messages in context');
+      // Build contextual prompt — if reusing an existing SDK session, the SDK
+      // already has conversation history so we only pass the new prompt.
+      // For cold starts (new SDK session with existing DB history), we inject
+      // a token-budgeted summary of recent history as a preamble.
+      const cachedSession = this.piSessions.get(session.id);
+
+      let contextualPrompt = prompt;
+      if (!cachedSession) {
+        // Cold start: inject recent history into prompt if available
+        const conversationMessages = existingMessages
+          .filter(msg => msg.role === 'user' || msg.role === 'assistant');
+        const historyMessages = (
+          conversationMessages.length > 0
+            && conversationMessages[conversationMessages.length - 1]?.role === 'user'
+        )
+          ? conversationMessages.slice(0, -1)
+          : conversationMessages;
+
+        if (historyMessages.length > 0 && !hasImages) {
+          // Token-budget: ~4 chars/token, use ~30% of context window for history
+          const contextWindow = piModel.contextWindow || 128000;
+          const historyTokenBudget = Math.floor(contextWindow * 0.3);
+          const historyCharBudget = historyTokenBudget * 4;
+
+          const historyItems: string[] = [];
+          let charCount = 0;
+          // Build from newest to oldest, then reverse
+          for (let i = historyMessages.length - 1; i >= 0; i--) {
+            const msg = historyMessages[i];
+            const textContent = msg.content
+              .filter(c => c.type === 'text')
+              .map(c => (c as any).text)
+              .join('\n');
+            const entry = `${msg.role === 'user' ? 'Human' : 'Assistant'}: ${textContent}`;
+            if (charCount + entry.length > historyCharBudget) break;
+            charCount += entry.length;
+            historyItems.unshift(entry);
+          }
+
+          if (historyItems.length > 0) {
+            const trimmedCount = historyMessages.length - historyItems.length;
+            const preamble = trimmedCount > 0
+              ? `[Previous conversation - ${trimmedCount} older messages omitted]\n${historyItems.join('\n')}`
+              : historyItems.join('\n');
+            contextualPrompt = `${preamble}\nHuman: ${prompt}\nAssistant:`;
+            log('[ClaudeAgentRunner] Cold start: injecting', historyItems.length, 'of', historyMessages.length, 'history messages (budget:', historyCharBudget, 'chars, used:', charCount, ')');
+          }
+        }
+      } else {
+        // Reusing session — SDK already has the full conversation context
+        log('[ClaudeAgentRunner] Reusing existing SDK session for:', session.id);
       }
 
       logTiming('before building MCP servers config');
@@ -1151,10 +1188,6 @@ ${sections.join('\n\n')}
         }
       }
       logTiming('after building MCP servers config');
-      
-      // Get enableThinking from config
-      const enableThinking = configStore.get('enableThinking') ?? false;
-      log('[ClaudeAgentRunner] Enable thinking mode:', enableThinking);
 
       const workspaceInfoPrompt = useSandboxIsolation && sandboxPath
         ? `<workspace_info>
@@ -1189,10 +1222,6 @@ Tool routing:
       ].filter((section): section is string => Boolean(section && section.trim())).join('\n\n');
 
       logTiming('before pi-coding-agent session creation');
-
-      // Resolve thinking level for pi-coding-agent
-      type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-      const thinkingLevel: PiThinkingLevel = enableThinking ? 'medium' : 'off';
 
       // Create or reuse pi-coding-agent session
       const effectiveCwd = (useSandboxIsolation && sandboxPath) ? sandboxPath : (workingDir || process.cwd());
@@ -1231,30 +1260,53 @@ Tool routing:
       const wrappedTools = this.wrapBashToolForSudo(codingTools as ToolDefinition[], session.id);
 
       // Diagnostic: log tools being passed to SDK (helps debug Ollama tool use)
-      log(`[ClaudeAgentRunner] Creating session with model=${piModel}, thinkingLevel=${thinkingLevel}`);
+      log(`[ClaudeAgentRunner] Session reuse check: cached=${!!cachedSession}`);
+      log(`[ClaudeAgentRunner] Model=${piModel.id}, thinkingLevel=${thinkingLevel}`);
       log(`[ClaudeAgentRunner] Built-in tools (${wrappedTools.length}): ${wrappedTools.map((t: { name?: string; type?: string }) => t.name || t.type).join(', ')}`);
       log(`[ClaudeAgentRunner] Custom MCP tools (${mcpCustomTools.length}): ${mcpCustomTools.map(t => t.name).join(', ')}`);
 
-      const { session: piSession } = await createAgentSession({
-        model: piModel,
-        thinkingLevel,
-        authStorage,
-        modelRegistry,
-        tools: wrappedTools as unknown as ReturnType<typeof createCodingTools>,
-        customTools: mcpCustomTools,
-        sessionManager: PiSessionManager.inMemory(),
-        settingsManager: PiSettingsManager.inMemory({
-          compaction: { enabled: true },
-          retry: { enabled: true, maxRetries: 2 },
-        }),
-        resourceLoader,
-        cwd: effectiveCwd,
-      });
+      let piSession: PiAgentSession;
+      if (cachedSession) {
+        // Reuse existing session — SDK retains full conversation history and handles compaction
+        piSession = cachedSession.session;
 
-      // Store session reference for potential reuse/abort
-      this.piSessions.set(session.id, piSession);
+        // Hot-swap model/thinking if changed — SDK supports this natively
+        if (cachedSession.modelId !== piModel.id) {
+          log('[ClaudeAgentRunner] Model changed, hot-swapping:', cachedSession.modelId, '→', piModel.id);
+          await piSession.setModel(piModel);
+          cachedSession.modelId = piModel.id;
+        }
+        if (cachedSession.thinkingLevel !== thinkingLevel) {
+          log('[ClaudeAgentRunner] Thinking level changed, hot-swapping:', cachedSession.thinkingLevel, '→', thinkingLevel);
+          piSession.setThinkingLevel(thinkingLevel);
+          cachedSession.thinkingLevel = thinkingLevel;
+        }
 
-      logTiming('pi-coding-agent session created');
+        log('[ClaudeAgentRunner] Reusing cached pi session for:', session.id);
+        logTiming('pi-coding-agent session reused');
+      } else {
+        // First query in this session — create new pi-coding-agent session
+        const { session: newPiSession } = await createAgentSession({
+          model: piModel,
+          thinkingLevel,
+          authStorage,
+          modelRegistry,
+          tools: wrappedTools as unknown as ReturnType<typeof createCodingTools>,
+          customTools: mcpCustomTools,
+          sessionManager: PiSessionManager.inMemory(),
+          settingsManager: PiSettingsManager.inMemory({
+            compaction: { enabled: true },
+            retry: { enabled: true, maxRetries: 2 },
+          }),
+          resourceLoader,
+          cwd: effectiveCwd,
+        });
+        piSession = newPiSession;
+
+        // Store session for reuse
+        this.piSessions.set(session.id, { session: piSession, modelId: piModel.id, thinkingLevel });
+        logTiming('pi-coding-agent session created');
+      }
 
       // Set up event handler to bridge pi-coding-agent events → our ServerEvent protocol
 
@@ -1450,6 +1502,36 @@ Tool routing:
 
           case 'agent_end': {
             log('[ClaudeAgentRunner] Agent finished');
+            break;
+          }
+
+          case 'auto_compaction_start': {
+            log('[ClaudeAgentRunner] Auto-compaction started, reason:', event.reason);
+            this.sendTraceStep(session.id, {
+              id: `compaction-${Date.now()}`,
+              type: 'thinking',
+              status: 'running',
+              title: `Compacting context (${event.reason})...`,
+              timestamp: Date.now(),
+            });
+            break;
+          }
+
+          case 'auto_compaction_end': {
+            const status = event.aborted ? 'error' : (event.errorMessage ? 'error' : 'completed');
+            const title = event.aborted
+              ? 'Context compaction aborted'
+              : event.errorMessage
+                ? `Compaction error: ${event.errorMessage}`
+                : 'Context compacted successfully';
+            log('[ClaudeAgentRunner] Auto-compaction ended:', title, 'willRetry:', event.willRetry);
+            this.sendTraceStep(session.id, {
+              id: `compaction-end-${Date.now()}`,
+              type: 'thinking',
+              status,
+              title,
+              timestamp: Date.now(),
+            });
             break;
           }
         }

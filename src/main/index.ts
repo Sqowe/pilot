@@ -1218,6 +1218,7 @@ ipcMain.handle('mcp.saveServer', async (_event, config: MCPServerConfig) => {
     const mcpManager = sessionManager.getMCPManager();
     try {
       await mcpManager.updateServer(config);
+      sessionManager.invalidateMcpServersCache();
       log(`[MCP] Server ${config.name} updated successfully`);
     } catch (err) {
       logError('[MCP] Failed to update server:', err);
@@ -1233,6 +1234,7 @@ ipcMain.handle('mcp.deleteServer', async (_event, serverId: string) => {
     const mcpManager = sessionManager.getMCPManager();
     try {
       await mcpManager.removeServer(serverId);
+      sessionManager.invalidateMcpServersCache();
       log(`[MCP] Server ${serverId} removed successfully`);
     } catch (err) {
       logError('[MCP] Failed to remove server:', err);
@@ -1370,6 +1372,7 @@ ipcMain.handle('skills.install', async (_event, skillPath: string) => {
       throw new Error('SkillsManager not initialized');
     }
     const skill = await skillsManager.installSkill(skillPath);
+    sessionManager?.invalidateSkillsSetup();
     return { success: true, skill };
   } catch (error) {
     logError('[Skills] Error installing skill:', error);
@@ -1383,6 +1386,7 @@ ipcMain.handle('skills.delete', async (_event, skillId: string) => {
       throw new Error('SkillsManager not initialized');
     }
     await skillsManager.uninstallSkill(skillId);
+    sessionManager?.invalidateSkillsSetup();
     return { success: true };
   } catch (error) {
     logError('[Skills] Error deleting skill:', error);
@@ -1396,6 +1400,7 @@ ipcMain.handle('skills.setEnabled', async (_event, skillId: string, enabled: boo
       throw new Error('SkillsManager not initialized');
     }
     skillsManager.setSkillEnabled(skillId, enabled);
+    sessionManager?.invalidateSkillsSetup();
     return { success: true };
   } catch (error) {
     logError('[Skills] Error toggling skill:', error);
@@ -1479,7 +1484,9 @@ ipcMain.handle('plugins.install', async (_event, pluginName: string) => {
     if (!pluginRuntimeService) {
       throw new Error('PluginRuntimeService not initialized');
     }
-    return await pluginRuntimeService.install(pluginName);
+    const result = await pluginRuntimeService.install(pluginName);
+    sessionManager?.invalidateSkillsSetup();
+    return result;
   } catch (error) {
     logError('[Plugins] Error installing plugin:', error);
     throw error;
@@ -1491,7 +1498,9 @@ ipcMain.handle('plugins.setEnabled', async (_event, pluginId: string, enabled: b
     if (!pluginRuntimeService) {
       throw new Error('PluginRuntimeService not initialized');
     }
-    return await pluginRuntimeService.setEnabled(pluginId, enabled);
+    const result = await pluginRuntimeService.setEnabled(pluginId, enabled);
+    sessionManager?.invalidateSkillsSetup();
+    return result;
   } catch (error) {
     logError('[Plugins] Error toggling plugin:', error);
     throw error;
@@ -1510,7 +1519,11 @@ ipcMain.handle(
       if (!pluginRuntimeService) {
         throw new Error('PluginRuntimeService not initialized');
       }
-      return await pluginRuntimeService.setComponentEnabled(pluginId, component, enabled);
+      const result = await pluginRuntimeService.setComponentEnabled(pluginId, component, enabled);
+      if (component === 'skills') {
+        sessionManager?.invalidateSkillsSetup();
+      }
+      return result;
     } catch (error) {
       logError('[Plugins] Error toggling plugin component:', error);
       throw error;
@@ -1523,7 +1536,9 @@ ipcMain.handle('plugins.uninstall', async (_event, pluginId: string) => {
     if (!pluginRuntimeService) {
       throw new Error('PluginRuntimeService not initialized');
     }
-    return await pluginRuntimeService.uninstall(pluginId);
+    const result = await pluginRuntimeService.uninstall(pluginId);
+    sessionManager?.invalidateSkillsSetup();
+    return result;
   } catch (error) {
     logError('[Plugins] Error uninstalling plugin:', error);
     throw error;
@@ -1557,6 +1572,7 @@ ipcMain.handle('skills.installPlugin', async (_event, pluginName: string) => {
       throw new Error('PluginRuntimeService not initialized');
     }
     const result = await pluginRuntimeService.install(pluginName);
+    sessionManager?.invalidateSkillsSetup();
     return {
       pluginName: result.plugin.name,
       installedSkills: result.installedSkills,
