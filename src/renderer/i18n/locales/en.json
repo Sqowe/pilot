@@ -620,7 +620,9 @@
     "totalTokens": "Total",
     "changeDir": "Change directory",
     "changeDirFailed": "Failed to change directory",
-    "copyPath": "Copy path"
+    "copyPath": "Copy path",
+    "contextUsage": "Context Usage",
+    "contextUsageLabel": "{{used}} / {{total}}"
   },
   "messageCard": {
     "request": "Request",

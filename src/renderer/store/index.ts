@@ -82,6 +82,9 @@ interface AppState {
   skillsStorageChangedAt: number;
   skillsStorageChangeEvent: SkillsStorageChangeEvent | null;
 
+  // Context window per session (from model resolution)
+  contextWindowBySession: Record<string, number>;
+
   // Actions
   setSessions: (sessions: Session[]) => void;
   addSession: (session: Session) => void;
@@ -143,6 +146,9 @@ interface AppState {
   setSandboxSyncStatus: (status: SandboxSyncStatus | null) => void;
   setSkillsStorageChangedAt: (timestamp: number) => void;
   setSkillsStorageChangeEvent: (event: SkillsStorageChangeEvent | null) => void;
+
+  // Context window actions
+  setSessionContextWindow: (sessionId: string, contextWindow: number) => void;
 }
 
 const defaultSettings: Settings = {
@@ -203,6 +209,7 @@ export const useAppStore = create<AppState>((set) => ({
   sandboxSyncStatus: null,
   skillsStorageChangedAt: 0,
   skillsStorageChangeEvent: null,
+  contextWindowBySession: {},
 
   // Session actions
   setSessions: (sessions) => set({ sessions }),
@@ -237,6 +244,7 @@ export const useAppStore = create<AppState>((set) => ({
       const { [sessionId]: __active, ...restActiveTurns } = state.activeTurnsBySession;
       const { [sessionId]: __clock, ...restExecutionClocks } = state.executionClockBySession;
       const { [sessionId]: __traces, ...restTraces } = state.traceStepsBySession;
+      const { [sessionId]: __ctx, ...restContextWindows } = state.contextWindowBySession;
       return {
         sessions: state.sessions.filter((s) => s.id !== sessionId),
         messagesBySession: restMessages,
@@ -246,6 +254,7 @@ export const useAppStore = create<AppState>((set) => ({
         activeTurnsBySession: restActiveTurns,
         executionClockBySession: restExecutionClocks,
         traceStepsBySession: restTraces,
+        contextWindowBySession: restContextWindows,
         activeSessionId: state.activeSessionId === sessionId ? null : state.activeSessionId,
       };
     }),
@@ -259,6 +268,7 @@ export const useAppStore = create<AppState>((set) => ({
       const newPendingTurns: Record<string, string[]> = {};
       const newActiveTurns: Record<string, { stepId: string; userMessageId: string } | null> = {};
       const newTraces: Record<string, TraceStep[]> = {};
+      const newContextWindows: Record<string, number> = {};
 
       for (const key of Object.keys(state.messagesBySession)) {
         if (!idSet.has(key)) newMessages[key] = state.messagesBySession[key];
@@ -278,6 +288,9 @@ export const useAppStore = create<AppState>((set) => ({
       for (const key of Object.keys(state.traceStepsBySession)) {
         if (!idSet.has(key)) newTraces[key] = state.traceStepsBySession[key];
       }
+      for (const key of Object.keys(state.contextWindowBySession)) {
+        if (!idSet.has(key)) newContextWindows[key] = state.contextWindowBySession[key];
+      }
 
       return {
         sessions: state.sessions.filter((s) => !idSet.has(s.id)),
@@ -287,6 +300,7 @@ export const useAppStore = create<AppState>((set) => ({
         pendingTurnsBySession: newPendingTurns,
         activeTurnsBySession: newActiveTurns,
         traceStepsBySession: newTraces,
+        contextWindowBySession: newContextWindows,
         activeSessionId:
           state.activeSessionId && idSet.has(state.activeSessionId)
             ? null
@@ -601,6 +615,15 @@ export const useAppStore = create<AppState>((set) => ({
   setSandboxSyncStatus: (status) => set({ sandboxSyncStatus: status }),
   setSkillsStorageChangedAt: (timestamp) => set({ skillsStorageChangedAt: timestamp }),
   setSkillsStorageChangeEvent: (event) => set({ skillsStorageChangeEvent: event }),
+
+  // Context window actions
+  setSessionContextWindow: (sessionId, contextWindow) =>
+    set((state) => ({
+      contextWindowBySession: {
+        ...state.contextWindowBySession,
+        [sessionId]: contextWindow,
+      },
+    })),
 }));
 
 // Expose helpers for nav-server (CLI-driven UI navigation via executeJavaScript)

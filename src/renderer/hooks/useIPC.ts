@@ -264,6 +264,10 @@ export function useIPC() {
           store.setWorkingDir(event.payload.path || null);
           break;
 
+        case 'session.contextInfo':
+          store.setSessionContextWindow(event.payload.sessionId, event.payload.contextWindow);
+          break;
+
         case 'proxy.warmup':
           if (event.payload.status === 'warming') {
             store.setGlobalNotice({

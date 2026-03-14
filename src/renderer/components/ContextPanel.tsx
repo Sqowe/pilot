@@ -40,6 +40,7 @@ export function ContextPanel() {
   const messagesBySession = useAppStore((s) => s.messagesBySession);
   const appConfig = useAppStore((s) => s.appConfig);
   const contextPanelCollapsed = useAppStore((s) => s.contextPanelCollapsed);
+  const contextWindowBySession = useAppStore((s) => s.contextWindowBySession);
   const toggleContextPanel = useAppStore((s) => s.toggleContextPanel);
   const workingDir = useAppStore((s) => s.workingDir);
   const setGlobalNotice = useAppStore((s) => s.setGlobalNotice);
@@ -92,6 +93,24 @@ export function ContextPanel() {
     }
     return { input, output, total: input + output };
   }, [messages]);
+
+  // Context usage: last message's input tokens ≈ current context occupation
+  const contextUsage = useMemo(() => {
+    const contextWindow = activeSessionId ? contextWindowBySession[activeSessionId] : undefined;
+    if (!contextWindow) return null;
+
+    let lastInput = 0;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].tokenUsage?.input) {
+        lastInput = messages[i].tokenUsage!.input;
+        break;
+      }
+    }
+    if (lastInput === 0) return null;
+
+    const percentage = Math.min((lastInput / contextWindow) * 100, 100);
+    return { used: lastInput, total: contextWindow, percentage };
+  }, [activeSessionId, contextWindowBySession, messages]);
   const artifactStepKey = useMemo(
     () => displayArtifactSteps.map((step) => step.id).join('|'),
     [displayArtifactSteps]
@@ -254,6 +273,40 @@ export function ContextPanel() {
               </span>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Context Usage */}
+      {activeSession && contextUsage && (
+        <div className="px-4 py-2.5 border-b border-border-muted space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
+              {t('context.contextUsage')}
+            </span>
+            <span className={`text-xs font-medium ${
+              contextUsage.percentage > 95 ? 'text-error' :
+              contextUsage.percentage > 80 ? 'text-warning' :
+              'text-text-primary'
+            }`}>
+              {Math.round(contextUsage.percentage)}%
+            </span>
+          </div>
+          <div className="h-1.5 bg-surface-muted rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ease-out ${
+                contextUsage.percentage > 95 ? 'bg-error' :
+                contextUsage.percentage > 80 ? 'bg-warning' :
+                'bg-gradient-to-r from-accent to-accent-hover'
+              }`}
+              style={{ width: `${contextUsage.percentage}%` }}
+            />
+          </div>
+          <p className="text-xs text-text-muted">
+            {t('context.contextUsageLabel', {
+              used: formatTokenCount(contextUsage.used),
+              total: formatTokenCount(contextUsage.total),
+            })}
+          </p>
         </div>
       )}
 

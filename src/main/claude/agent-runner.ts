@@ -926,6 +926,12 @@ ${sections.join('\n\n')}
       }
       logCtx('[ClaudeAgentRunner] Resolved pi-ai model:', piModel.provider, piModel.id);
 
+      // Send context window info to renderer for UI display
+      this.sendToRenderer({
+        type: 'session.contextInfo',
+        payload: { sessionId: session.id, contextWindow: piModel.contextWindow || 128000 },
+      });
+
       // Set up API keys via AuthStorage
       const authStorage = getSharedAuthStorage();
       const provider = runtimeConfig.provider || 'anthropic';
