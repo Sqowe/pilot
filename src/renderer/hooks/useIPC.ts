@@ -188,17 +188,6 @@ export function useIPC() {
             stepId: event.payload.stepId,
             updates: event.payload.updates,
           });
-          if (event.payload.updates.status && event.payload.updates.status !== 'running') {
-            // Flush pending traces so the store reflects any trace.step adds from this frame
-            flushTraces();
-            const steps = useAppStore.getState().traceStepsBySession[event.payload.sessionId] || [];
-            const step = steps.find((item) => item.id === event.payload.stepId);
-            if (step?.type === 'thinking') {
-              // 兜底：若 session.status 丢失，仍能结束加载状态
-              store.updateSession(event.payload.sessionId, { status: 'idle' });
-              store.setLoading(false);
-            }
-          }
           break;
 
         case 'permission.request':

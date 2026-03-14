@@ -1437,7 +1437,7 @@ Tool routing:
                 id: uuidv4(),
                 sessionId: session.id,
                 role: 'assistant',
-                content: [{ type: 'text', text: `**Error**: ${resolvedPayload.errorText}` }],
+                content: [{ type: 'text', text: `**Error**: ${resolvedPayload.errorText}\n\n_Agent is still running and may retry..._` }],
                 timestamp: Date.now(),
               });
               break;
