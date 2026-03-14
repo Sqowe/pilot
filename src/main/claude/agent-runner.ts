@@ -1334,6 +1334,7 @@ Tool routing:
 
       // Accumulate streamed text deltas in case message_end.content is empty (pi SDK streaming behaviour)
       let streamedText = '';
+      let compactionStepId: string | undefined;
       const thinkParser = new ThinkTagStreamParser();
 
       const unsubscribe = piSession.subscribe((event) => {
@@ -1543,8 +1544,9 @@ Tool routing:
 
           case 'auto_compaction_start': {
             log('[ClaudeAgentRunner] Auto-compaction started, reason:', event.reason);
+            compactionStepId = `compaction-${Date.now()}`;
             this.sendTraceStep(session.id, {
-              id: `compaction-${Date.now()}`,
+              id: compactionStepId,
               type: 'thinking',
               status: 'running',
               title: `Compacting context (${event.reason})...`,
@@ -1561,13 +1563,19 @@ Tool routing:
                 ? `Compaction error: ${event.errorMessage}`
                 : 'Context compacted successfully';
             log('[ClaudeAgentRunner] Auto-compaction ended:', title, 'willRetry:', event.willRetry);
-            this.sendTraceStep(session.id, {
-              id: `compaction-end-${Date.now()}`,
-              type: 'thinking',
-              status,
-              title,
-              timestamp: Date.now(),
-            });
+            if (compactionStepId) {
+              this.sendTraceUpdate(session.id, compactionStepId, { status, title });
+              compactionStepId = undefined;
+            } else {
+              // Fallback: no matching start event, send as new step
+              this.sendTraceStep(session.id, {
+                id: `compaction-end-${Date.now()}`,
+                type: 'thinking',
+                status,
+                title,
+                timestamp: Date.now(),
+              });
+            }
             break;
           }
         }
