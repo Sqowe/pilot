@@ -267,6 +267,7 @@ export const useAppStore = create<AppState>((set) => ({
       const newThinkingPartials: Record<string, string> = {};
       const newPendingTurns: Record<string, string[]> = {};
       const newActiveTurns: Record<string, { stepId: string; userMessageId: string } | null> = {};
+      const newExecutionClocks: Record<string, SessionExecutionClock> = {};
       const newTraces: Record<string, TraceStep[]> = {};
       const newContextWindows: Record<string, number> = {};
 
@@ -285,6 +286,9 @@ export const useAppStore = create<AppState>((set) => ({
       for (const key of Object.keys(state.activeTurnsBySession)) {
         if (!idSet.has(key)) newActiveTurns[key] = state.activeTurnsBySession[key];
       }
+      for (const key of Object.keys(state.executionClockBySession)) {
+        if (!idSet.has(key)) newExecutionClocks[key] = state.executionClockBySession[key];
+      }
       for (const key of Object.keys(state.traceStepsBySession)) {
         if (!idSet.has(key)) newTraces[key] = state.traceStepsBySession[key];
       }
@@ -299,6 +303,7 @@ export const useAppStore = create<AppState>((set) => ({
         partialThinkingBySession: newThinkingPartials,
         pendingTurnsBySession: newPendingTurns,
         activeTurnsBySession: newActiveTurns,
+        executionClockBySession: newExecutionClocks,
         traceStepsBySession: newTraces,
         contextWindowBySession: newContextWindows,
         activeSessionId:

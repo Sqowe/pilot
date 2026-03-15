@@ -455,7 +455,7 @@ export function ContextPanel() {
           {mcpServers.length === 0 ? (
             <div className="flex items-center gap-2 text-xs text-text-muted py-1">
               <Plug className="w-3.5 h-3.5 shrink-0" />
-              <span>{t('context.noConnectors', t('mcp.notConnected'))}</span>
+              <span>{t('context.noConnectors')}</span>
             </div>
           ) : (
             <div className="space-y-0.5">

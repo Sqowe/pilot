@@ -79,6 +79,13 @@ export function Sidebar() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isSelectMode]);
 
+  // Reset selection when search query changes to avoid deleting hidden sessions
+  useEffect(() => {
+    if (isSelectMode) {
+      setSelectedIds(new Set());
+    }
+  }, [searchQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const exitSelectMode = useCallback(() => {
     setIsSelectMode(false);
     setSelectedIds(new Set());

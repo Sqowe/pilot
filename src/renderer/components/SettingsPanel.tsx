@@ -230,7 +230,7 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
     } catch {
       /* ignore */
     }
-  }, [t]);
+  }, []);
 
   // Consume the store signal and apply tab in one effect
   useEffect(() => {
@@ -1479,6 +1479,8 @@ function StatusItem({
 
 function CredentialsTab() {
   const { t } = useTranslation();
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; });
   const [credentials, setCredentials] = useState<UserCredential[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -1492,9 +1494,9 @@ function CredentialsTab() {
       setError('');
     } catch (err) {
       console.error('Failed to load credentials:', err);
-      setError(t('credentials.failedToLoad'));
+      setError(tRef.current('credentials.failedToLoad'));
     }
-  }, [t]);
+  }, []);
 
   useEffect(() => {
     if (isElectron) {
@@ -1849,6 +1851,8 @@ function CredentialForm({
 
 function ConnectorsTab({ isActive }: { isActive: boolean }) {
   const { t } = useTranslation();
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; });
   const [servers, setServers] = useState<MCPServerConfig[]>([]);
   const [statuses, setStatuses] = useState<MCPServerStatus[]>([]);
   const [tools, setTools] = useState<MCPToolInfo[]>([]);
@@ -1881,9 +1885,9 @@ function ConnectorsTab({ isActive }: { isActive: boolean }) {
       setError('');
     } catch (err) {
       console.error('Failed to load servers:', err);
-      setError(t('mcp.loadServersFailed'));
+      setError(tRef.current('mcp.loadServersFailed'));
     }
-  }, [t]);
+  }, []);
 
   const loadStatuses = useCallback(async () => {
     try {
@@ -2725,6 +2729,8 @@ function ServerForm({
 
 function SkillsTab({ isActive }: { isActive: boolean }) {
   const { t } = useTranslation();
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; });
   const skillsStorageChangedAt = useAppStore((state) => state.skillsStorageChangedAt);
   const skillsStorageChangeEvent = useAppStore((state) => state.skillsStorageChangeEvent);
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -2823,7 +2829,7 @@ function SkillsTab({ isActive }: { isActive: boolean }) {
           errors.push(
             skillsResult.reason instanceof Error
               ? skillsResult.reason.message
-              : t('skills.failedToLoad')
+              : tRef.current('skills.failedToLoad')
           );
         }
         if (storagePathResult.status === 'fulfilled') {
@@ -2832,7 +2838,7 @@ function SkillsTab({ isActive }: { isActive: boolean }) {
           errors.push(
             storagePathResult.reason instanceof Error
               ? storagePathResult.reason.message
-              : t('skills.storagePathUnavailable')
+              : tRef.current('skills.storagePathUnavailable')
           );
         }
 
@@ -2849,13 +2855,13 @@ function SkillsTab({ isActive }: { isActive: boolean }) {
           setError({
             text:
               err instanceof Error && err.message
-                ? `${t('skills.failedToLoad')}: ${err.message}`
-                : t('skills.failedToLoad'),
+                ? `${tRef.current('skills.failedToLoad')}: ${err.message}`
+                : tRef.current('skills.failedToLoad'),
           });
         }
       }
     },
-    [t]
+    []
   );
 
   useEffect(() => {
