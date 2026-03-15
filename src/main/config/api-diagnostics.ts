@@ -151,6 +151,24 @@ function isGeminiProtocol(input: DiagnosticInput): boolean {
 }
 
 /**
+ * Run a callback with ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN temporarily
+ * removed from process.env, then restore them. Prevents SDK from reading
+ * stale env vars during diagnostics.
+ */
+async function withSuppressedAnthropicEnv<T>(fn: () => Promise<T>): Promise<T> {
+  const savedApiKey = process.env.ANTHROPIC_API_KEY;
+  const savedAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_AUTH_TOKEN;
+  try {
+    return await fn();
+  } finally {
+    if (savedApiKey !== undefined) process.env.ANTHROPIC_API_KEY = savedApiKey;
+    if (savedAuthToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = savedAuthToken;
+  }
+}
+
+/**
  * Resolve the effective base URL for SDK clients, applying provider-specific normalization.
  */
 function resolveClientBaseUrl(input: DiagnosticInput): string | undefined {
@@ -364,20 +382,12 @@ async function stepAuth(input: DiagnosticInput, step: DiagnosticStep): Promise<v
       });
 
       // Temporarily clear env vars to prevent SDK from reading them
-      const savedApiKey = process.env.ANTHROPIC_API_KEY;
-      const savedAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
-      delete process.env.ANTHROPIC_API_KEY;
-      delete process.env.ANTHROPIC_AUTH_TOKEN;
-
-      try {
+      await withSuppressedAnthropicEnv(async () => {
         const client = useAuthToken
           ? new Anthropic({ authToken: effectiveKey, baseURL: clientBaseUrl, timeout: 15000 })
           : new Anthropic({ apiKey: effectiveKey, baseURL: clientBaseUrl, timeout: 15000 });
         await client.models.list();
-      } finally {
-        if (savedApiKey !== undefined) process.env.ANTHROPIC_API_KEY = savedApiKey;
-        if (savedAuthToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = savedAuthToken;
-      }
+      });
     }
 
     step.status = 'ok';
@@ -449,12 +459,7 @@ async function stepModel(input: DiagnosticInput, step: DiagnosticStep): Promise<
         apiKey: effectiveKey,
       });
 
-      const savedApiKey = process.env.ANTHROPIC_API_KEY;
-      const savedAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
-      delete process.env.ANTHROPIC_API_KEY;
-      delete process.env.ANTHROPIC_AUTH_TOKEN;
-
-      try {
+      await withSuppressedAnthropicEnv(async () => {
         const client = useAuthToken
           ? new Anthropic({ authToken: effectiveKey, baseURL: clientBaseUrl, timeout: 30000 })
           : new Anthropic({ apiKey: effectiveKey, baseURL: clientBaseUrl, timeout: 30000 });
@@ -463,10 +468,7 @@ async function stepModel(input: DiagnosticInput, step: DiagnosticStep): Promise<
           max_tokens: 1,
           messages: [{ role: 'user', content: 'ping' }],
         });
-      } finally {
-        if (savedApiKey !== undefined) process.env.ANTHROPIC_API_KEY = savedApiKey;
-        if (savedAuthToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = savedAuthToken;
-      }
+      });
     } else {
       // Gemini or unknown — skip model check
       step.status = 'skip';
@@ -487,7 +489,28 @@ async function stepModel(input: DiagnosticInput, step: DiagnosticStep): Promise<
 // Main entry point
 // ---------------------------------------------------------------------------
 
+// Guard to prevent concurrent diagnostic runs
+let diagnosticsRunning = false;
+
 export async function runDiagnostics(input: DiagnosticInput): Promise<DiagnosticResult> {
+  if (diagnosticsRunning) {
+    log('[Diagnostics] Skipping — another run is already in progress');
+    return {
+      steps: STEP_NAMES.map((name) => ({ name, status: 'skip' as const, latencyMs: 0 })),
+      overallOk: false,
+      failedAt: undefined,
+      totalLatencyMs: 0,
+    };
+  }
+  diagnosticsRunning = true;
+  try {
+    return await runDiagnosticsImpl(input);
+  } finally {
+    diagnosticsRunning = false;
+  }
+}
+
+async function runDiagnosticsImpl(input: DiagnosticInput): Promise<DiagnosticResult> {
   log('[Diagnostics] Starting', {
     provider: input.provider,
     customProtocol: input.customProtocol,

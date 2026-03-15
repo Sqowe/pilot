@@ -199,7 +199,7 @@ export function shouldAllowEmptyOpenAIApiKey(
   config: Pick<AppConfig, 'provider' | 'customProtocol' | 'baseUrl'>
 ): boolean {
   return config.provider === 'custom'
-    && (config.customProtocol ?? 'anthropic') === 'openai'
+    && config.customProtocol === 'openai'
     && isLoopbackBaseUrl(config.baseUrl);
 }
 

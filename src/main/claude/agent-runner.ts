@@ -859,8 +859,7 @@ ${hints.join('\n')}
             const sandboxSkillsPath = `${sandboxPath}/.claude/skills`;
 
             // Create .claude/skills directory in sandbox
-            const { execSync } = require('child_process');
-            execSync(`wsl -d ${distro} -e mkdir -p "${sandboxSkillsPath}"`, {
+            execFileSync('wsl', ['-d', distro, '-e', 'mkdir', '-p', sandboxSkillsPath], {
               encoding: 'utf-8',
               timeout: 10000
             });
@@ -871,7 +870,7 @@ ${hints.join('\n')}
               const rsyncCmd = `rsync -av "${wslSourcePath}/" "${sandboxSkillsPath}/"`;
               log(`[ClaudeAgentRunner] Copying skills with rsync: ${rsyncCmd}`);
 
-              execSync(`wsl -d ${distro} -e bash -c "${rsyncCmd}"`, {
+              execFileSync('wsl', ['-d', distro, '-e', 'bash', '-c', rsyncCmd], {
                 encoding: 'utf-8',
                 timeout: 120000  // 2 min timeout for large skill directories
               });
@@ -889,14 +888,14 @@ ${hints.join('\n')}
               const rsyncCmd = `rsync -avL "${wslSourcePath}/" "${sandboxSkillsPath}/"`;
               log(`[ClaudeAgentRunner] Copying app skills with rsync: ${rsyncCmd}`);
 
-              execSync(`wsl -d ${distro} -e bash -c "${rsyncCmd}"`, {
+              execFileSync('wsl', ['-d', distro, '-e', 'bash', '-c', rsyncCmd], {
                 encoding: 'utf-8',
                 timeout: 120000  // 2 min timeout for large skill directories
               });
             }
 
             // List copied skills for verification
-            const copiedSkills = execSync(`wsl -d ${distro} -e ls "${sandboxSkillsPath}"`, {
+            const copiedSkills = execFileSync('wsl', ['-d', distro, '-e', 'ls', sandboxSkillsPath], {
               encoding: 'utf-8',
               timeout: 10000
             }).trim().split('\n').filter(Boolean);
@@ -994,8 +993,7 @@ ${hints.join('\n')}
             const sandboxSkillsPath = `${sandboxPath}/.claude/skills`;
 
             // Create .claude/skills directory in sandbox
-            const { execSync } = require('child_process');
-            execSync(`limactl shell claude-sandbox -- mkdir -p "${sandboxSkillsPath}"`, {
+            execFileSync('limactl', ['shell', 'claude-sandbox', '--', 'mkdir', '-p', sandboxSkillsPath], {
               encoding: 'utf-8',
               timeout: 10000
             });
@@ -1006,7 +1004,7 @@ ${hints.join('\n')}
               const rsyncCmd = `rsync -av "${builtinSkillsPath}/" "${sandboxSkillsPath}/"`;
               log(`[ClaudeAgentRunner] Copying skills with rsync: ${rsyncCmd}`);
 
-              execSync(`limactl shell claude-sandbox -- bash -c "${rsyncCmd.replace(/"/g, '\\"')}"`, {
+              execFileSync('limactl', ['shell', 'claude-sandbox', '--', 'bash', '-c', rsyncCmd], {
                 encoding: 'utf-8',
                 timeout: 120000  // 2 min timeout for large skill directories
               });
@@ -1023,14 +1021,14 @@ ${hints.join('\n')}
               const rsyncCmd = `rsync -avL "${appSkillsDir}/" "${sandboxSkillsPath}/"`;
               log(`[ClaudeAgentRunner] Copying app skills with rsync: ${rsyncCmd}`);
 
-              execSync(`limactl shell claude-sandbox -- bash -c "${rsyncCmd.replace(/"/g, '\\"')}"`, {
+              execFileSync('limactl', ['shell', 'claude-sandbox', '--', 'bash', '-c', rsyncCmd], {
                 encoding: 'utf-8',
                 timeout: 120000  // 2 min timeout for large skill directories
               });
             }
 
             // List copied skills for verification
-            const copiedSkills = execSync(`limactl shell claude-sandbox -- ls "${sandboxSkillsPath}"`, {
+            const copiedSkills = execFileSync('limactl', ['shell', 'claude-sandbox', '--', 'ls', sandboxSkillsPath], {
               encoding: 'utf-8',
               timeout: 10000
             }).trim().split('\n').filter(Boolean);
@@ -1446,16 +1444,6 @@ Tool routing:
         : this.legacySkillPaths();
       log('[ClaudeAgentRunner] Skill paths for pi ResourceLoader:', skillPaths);
 
-      const { DefaultResourceLoader } = await import('@mariozechner/pi-coding-agent');
-      const resourceLoader = new DefaultResourceLoader({
-        cwd: effectiveCwd,
-        additionalSkillPaths: skillPaths,
-        appendSystemPrompt: coworkAppendPrompt,
-      });
-      await resourceLoader.reload();
-
-      const modelRegistry = new ModelRegistry(authStorage);
-
       // Bridge MCP tools as customTools for pi-coding-agent.
       // Re-read every query so newly added/removed MCP servers take effect immediately.
       const mcpCustomTools = this.mcpManager ? buildMcpCustomTools(this.mcpManager) : [];
@@ -1502,6 +1490,17 @@ Tool routing:
         logTiming('pi-coding-agent session reused', runStartTime);
       } else {
         // First query in this session — create new pi-coding-agent session
+        // ResourceLoader + ModelRegistry only needed for session creation — skip on reuse
+        const { DefaultResourceLoader } = await import('@mariozechner/pi-coding-agent');
+        const resourceLoader = new DefaultResourceLoader({
+          cwd: effectiveCwd,
+          additionalSkillPaths: skillPaths,
+          appendSystemPrompt: coworkAppendPrompt,
+        });
+        await resourceLoader.reload();
+
+        const modelRegistry = new ModelRegistry(authStorage);
+
         const { session: newPiSession } = await createAgentSession({
           model: piModel,
           thinkingLevel,
@@ -1531,8 +1530,22 @@ Tool routing:
       let compactionStepId: string | undefined;
       const thinkParser = new ThinkTagStreamParser();
 
+      // Activity-based timeout: reset the 5-min timer whenever the SDK sends events
+      const PROMPT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+      let activityTimeoutId: ReturnType<typeof setTimeout> | undefined;
+      const resetActivityTimeout = () => {
+        if (activityTimeoutId) clearTimeout(activityTimeoutId);
+        activityTimeoutId = setTimeout(() => {
+          logWarn('[ClaudeAgentRunner] Prompt timed out (no activity for 5 min), aborting');
+          controller.abort();
+        }, PROMPT_TIMEOUT_MS);
+      };
+
       const unsubscribe = piSession.subscribe((event) => {
         if (controller.signal.aborted) return;
+
+        // Reset activity timeout on meaningful events
+        resetActivityTimeout();
 
         // Debug: log every event type
         if (event.type === 'message_update') {
@@ -1775,18 +1788,14 @@ Tool routing:
         }
       });
 
-      // Execute the prompt with timeout
+      // Execute the prompt with activity-based timeout
       try {
-        const PROMPT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-        const timeoutId = setTimeout(() => {
-          logWarn('[ClaudeAgentRunner] Prompt timed out, aborting');
-          controller.abort();
-        }, PROMPT_TIMEOUT_MS);
+        resetActivityTimeout();
         try {
           const promptResult = await piSession.prompt(contextualPrompt);
           log('[ClaudeAgentRunner] prompt() returned:', JSON.stringify(promptResult ?? 'void').substring(0, 1000));
         } finally {
-          clearTimeout(timeoutId);
+          if (activityTimeoutId) clearTimeout(activityTimeoutId);
         }
       } finally {
         try { unsubscribe(); } catch (e) { logWarn('[ClaudeAgentRunner] unsubscribe error:', e); }
