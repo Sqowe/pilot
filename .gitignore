@@ -87,3 +87,12 @@ mcp_server.log
 
 # Development log
 DEV_LOG.md
+
+# Playwright MCP
+.playwright-mcp/
+
+# Temp directories
+.tmp/
+
+# Screenshots (debug/review)
+*.png
