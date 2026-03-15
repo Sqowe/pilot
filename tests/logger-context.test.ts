@@ -23,8 +23,14 @@ describe('logger context (AsyncLocalStorage)', () => {
     }));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.restoreAllMocks();
+    try {
+      const logger = await import('../src/main/utils/logger');
+      logger.closeLogFile();
+    } catch {
+      // Module may not be importable if test failed early
+    }
   });
 
   it('runWithLogContext propagates sessionId and traceId to logCtx output', async () => {

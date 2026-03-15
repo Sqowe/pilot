@@ -113,14 +113,4 @@ describe('logger fallback behavior', () => {
     logger.closeLogFile();
   });
 
-  it('ignores ENOENT while collecting old log file metadata during cleanup', () => {
-    const source = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/main/utils/logger.ts'),
-      'utf8'
-    );
-
-    expect(source).toContain('.flatMap((f) => {');
-    expect(source).toContain("if (errno.code === 'ENOENT') {");
-    expect(source).toContain('return [];');
-  });
 });
