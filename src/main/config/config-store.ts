@@ -34,6 +34,7 @@ import { API_PROVIDER_PRESETS, PI_AI_CURATED_PRESETS } from '../../shared/api-mo
  */
 export type ProviderType = 'openrouter' | 'anthropic' | 'custom' | 'openai' | 'gemini' | 'ollama';
 export type CustomProtocolType = 'anthropic' | 'openai' | 'gemini';
+export type AppTheme = 'dark' | 'light' | 'system';
 export type ProviderProfileKey =
   | 'openrouter'
   | 'anthropic'
@@ -106,6 +107,9 @@ export interface AppConfig {
   // Developer logs
   enableDevLogs: boolean;
 
+  // UI theme preference
+  theme: AppTheme;
+
   // Sandbox mode (WSL/Lima isolation)
   sandboxEnabled: boolean;
 
@@ -131,6 +135,7 @@ const DIRECT_READ_KEYS = new Set<keyof AppConfig>([
   'defaultWorkdir',
   'globalSkillsPath',
   'enableDevLogs',
+  'theme',
   'sandboxEnabled',
   'enableThinking',
   'isConfigured',
@@ -205,6 +210,7 @@ const defaultConfig: AppConfig = {
   defaultWorkdir: '',
   globalSkillsPath: '',
   enableDevLogs: true,
+  theme: 'light',
   sandboxEnabled: false,
   enableThinking: false,
   isConfigured: false,
@@ -267,6 +273,7 @@ const PROFILE_KEYS: ProviderProfileKey[] = [
   'custom:openai',
   'custom:gemini',
 ];
+const VALID_THEMES: AppTheme[] = ['dark', 'light', 'system'];
 
 function isProviderType(value: unknown): value is ProviderType {
   return value === 'openrouter' || value === 'anthropic' || value === 'custom' || value === 'openai' || value === 'gemini' || value === 'ollama';
@@ -278,6 +285,10 @@ function isCustomProtocol(value: unknown): value is CustomProtocolType {
 
 function isProfileKey(value: unknown): value is ProviderProfileKey {
   return typeof value === 'string' && PROFILE_KEYS.includes(value as ProviderProfileKey);
+}
+
+function isAppTheme(value: unknown): value is AppTheme {
+  return typeof value === 'string' && VALID_THEMES.includes(value as AppTheme);
 }
 
 function profileKeyFromProvider(provider: ProviderType, customProtocol: CustomProtocolType = 'anthropic'): ProviderProfileKey {
@@ -359,16 +370,11 @@ export class ConfigStore {
   constructor() {
     const storeOptions: any = {
       name: 'config',
+      projectName: 'open-cowork',
       defaults: defaultConfig,
       // Encrypt the API key using a per-installation derived key
       encryptionKey: ConfigStore.getConfigKey().toString('hex'),
     };
-
-    // Add projectName for non-Electron environments (e.g., MCP servers)
-    // This is required by the underlying 'conf' package
-    if (typeof process !== 'undefined' && !process.versions.electron) {
-      storeOptions.projectName = 'open-cowork';
-    }
 
     this.store = new Store<AppConfig>(storeOptions);
     this.ensureNormalized();
@@ -780,6 +786,7 @@ export class ConfigStore {
       defaultWorkdir: typeof raw.defaultWorkdir === 'string' ? raw.defaultWorkdir : defaultConfig.defaultWorkdir,
       globalSkillsPath: typeof raw.globalSkillsPath === 'string' ? raw.globalSkillsPath : defaultConfig.globalSkillsPath,
       enableDevLogs: toBoolean(raw.enableDevLogs, defaultConfig.enableDevLogs),
+      theme: isAppTheme(raw.theme) ? raw.theme : defaultConfig.theme,
       sandboxEnabled: toBoolean(raw.sandboxEnabled, defaultConfig.sandboxEnabled),
       enableThinking: projected.enableThinking,
       isConfigured: toBoolean(raw.isConfigured, defaultConfig.isConfigured),
@@ -1141,6 +1148,7 @@ export class ConfigStore {
       defaultWorkdir: updates.defaultWorkdir !== undefined ? updates.defaultWorkdir : current.defaultWorkdir,
       globalSkillsPath: updates.globalSkillsPath !== undefined ? updates.globalSkillsPath : current.globalSkillsPath,
       enableDevLogs: updates.enableDevLogs !== undefined ? updates.enableDevLogs : current.enableDevLogs,
+      theme: updates.theme !== undefined ? updates.theme : current.theme,
       sandboxEnabled: updates.sandboxEnabled !== undefined ? updates.sandboxEnabled : current.sandboxEnabled,
       isConfigured: updates.isConfigured !== undefined ? updates.isConfigured : current.isConfigured,
     });
