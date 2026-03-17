@@ -114,4 +114,15 @@ describe('toUserFacingErrorText', () => {
     const result = toUserFacingErrorText('other side closed');
     expect(result).toContain('网络连接中断');
   });
+
+  it('maps "too many requests" without status code to throttle hint', () => {
+    const result = toUserFacingErrorText('too many requests');
+    expect(result).toContain('请求被限流（429）');
+    expect(result).toContain('原始错误:');
+  });
+
+  it('maps "retry delay exceeded" to network connection hint', () => {
+    const result = toUserFacingErrorText('retry delay exceeded');
+    expect(result).toContain('网络连接中断');
+  });
 });

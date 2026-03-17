@@ -258,12 +258,8 @@ function buildMcpCustomTools(mcpManager: MCPManager): ToolDefinition[] {
             details: undefined as unknown,
           };
         } catch (err: unknown) {
-          const errMsg = err instanceof Error ? err.message : String(err);
           logError(`[ClaudeAgentRunner] MCP tool ${mcpTool.name} failed:`, err);
-          return {
-            content: [{ type: 'text' as const, text: `MCP tool error: ${errMsg}` }],
-            details: undefined as unknown,
-          };
+          throw err instanceof Error ? err : new Error(String(err));
         }
       },
     };
@@ -967,7 +963,7 @@ ${hints.join('\n')}
             payload: {
               sessionId: session.id,
               phase: 'error',
-              message: 'Sandbox sync failed',
+              message: '沙盒文件同步失败，已回退到直接访问模式',
               detail: 'Falling back to direct access mode (less secure)',
             },
           });
@@ -1100,7 +1096,7 @@ ${hints.join('\n')}
             payload: {
               sessionId: session.id,
               phase: 'error',
-              message: 'Sandbox sync failed',
+              message: '沙盒文件同步失败，已回退到直接访问模式',
               detail: 'Falling back to direct access mode (less secure)',
             },
           });
@@ -1575,6 +1571,7 @@ Tool routing:
       // Accumulate streamed text deltas in case message_end.content is empty (pi SDK streaming behaviour)
       let streamedText = '';
       let compactionStepId: string | undefined;
+      let hasEmittedError = false;
       const thinkParser = new ThinkTagStreamParser();
 
       // Activity-based timeout: reset the 5-min timer whenever the SDK sends events
@@ -1681,20 +1678,23 @@ Tool routing:
             });
             streamedText = resolvedPayload.nextStreamedText;
             if (resolvedPayload.errorText) {
-              this.sendMessage(session.id, {
-                id: uuidv4(),
-                sessionId: session.id,
-                role: 'assistant',
-                content: [{
-                  type: 'text',
-                  text: `**Error**: ${resolvedPayload.errorText}\n\n${
-                    /\b4\d{2}\b/.test(resolvedPayload.errorText)
-                      ? '_请检查配置后重试。_'
-                      : '_Agent is still running and may retry..._'
-                  }`,
-                }],
-                timestamp: Date.now(),
-              });
+              if (!hasEmittedError) {
+                hasEmittedError = true;
+                this.sendMessage(session.id, {
+                  id: uuidv4(),
+                  sessionId: session.id,
+                  role: 'assistant',
+                  content: [{
+                    type: 'text',
+                    text: `**Error**: ${resolvedPayload.errorText}\n\n${
+                      /\b4\d{2}\b/.test(resolvedPayload.errorText)
+                        ? '_请检查配置后重试。_'
+                        : '_Agent 正在自动重试，请稍候..._'
+                    }`,
+                  }],
+                  timestamp: Date.now(),
+                });
+              }
               break;
             }
             if (resolvedPayload.shouldEmitMessage) {
@@ -1819,10 +1819,10 @@ Tool routing:
           case 'auto_compaction_end': {
             const status = event.aborted ? 'error' : (event.errorMessage ? 'error' : 'completed');
             const title = event.aborted
-              ? 'Context compaction aborted'
+              ? '上下文压缩已中止'
               : event.errorMessage
-                ? `Compaction error: ${event.errorMessage}`
-                : 'Context compacted successfully';
+                ? `上下文压缩失败: ${event.errorMessage}`
+                : '上下文压缩完成';
             log('[ClaudeAgentRunner] Auto-compaction ended:', title, 'willRetry:', event.willRetry);
             if (compactionStepId) {
               this.sendTraceUpdate(session.id, compactionStepId, { status, title });
@@ -1865,7 +1865,20 @@ Tool routing:
 
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        logCtx('[ClaudeAgentRunner] Aborted');
+        const isTimeout = error.message?.toLowerCase().includes('timeout');
+        if (isTimeout) {
+          logCtx('[ClaudeAgentRunner] Aborted due to timeout');
+          const errorMsg: Message = {
+            id: uuidv4(),
+            sessionId: session.id,
+            role: 'assistant',
+            content: [{ type: 'text', text: '**请求超时**：长时间未收到响应，操作已中止。' }],
+            timestamp: Date.now(),
+          };
+          this.sendMessage(session.id, errorMsg);
+        } else {
+          logCtx('[ClaudeAgentRunner] Aborted by user');
+        }
       } else {
         logCtxError('[ClaudeAgentRunner] Error:', error);
 

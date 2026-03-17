@@ -966,7 +966,15 @@ export class SessionManager {
     input: Record<string, unknown>
   ): Promise<PermissionResult> {
     return new Promise((resolve) => {
-      this.pendingPermissions.set(toolUseId, resolve);
+      const timeoutId = setTimeout(() => {
+        this.pendingPermissions.delete(toolUseId);
+        resolve('deny');
+        this.sendToRenderer({ type: 'permission.dismiss', payload: { toolUseId } });
+      }, 60_000);
+      this.pendingPermissions.set(toolUseId, (result: PermissionResult) => {
+        clearTimeout(timeoutId);
+        resolve(result);
+      });
       this.sendToRenderer({
         type: 'permission.request',
         payload: { toolUseId, toolName, input, sessionId },

@@ -857,6 +857,12 @@ app
         });
         return { sessionId: started.id };
       },
+      onTaskError: (taskId, error) => {
+        sendToRenderer({
+          type: 'scheduled-task.error',
+          payload: { taskId, error },
+        });
+      },
       now: () => Date.now(),
     });
     scheduledTaskManager.start();

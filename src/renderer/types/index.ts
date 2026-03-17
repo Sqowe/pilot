@@ -378,6 +378,7 @@ export type ServerEvent =
   | { type: 'session.update'; payload: { sessionId: string; updates: Partial<Session> } }
   | { type: 'session.list'; payload: { sessions: Session[] } }
   | { type: 'permission.request'; payload: PermissionRequest }
+  | { type: 'permission.dismiss'; payload: { toolUseId: string } }
   | { type: 'sudo.password.request'; payload: SudoPasswordRequest }
   | { type: 'sudo.password.dismiss'; payload: { toolUseId: string } }
   | { type: 'trace.step'; payload: { sessionId: string; step: TraceStep } }
@@ -395,6 +396,7 @@ export type ServerEvent =
   | { type: 'native-theme.changed'; payload: { shouldUseDarkColors: boolean } }
   | { type: 'new-session' }
   | { type: 'navigate'; payload: string }
+  | { type: 'scheduled-task.error'; payload: { taskId: string; error: string } }
   | { type: 'error'; payload: { message: string; code?: 'CONFIG_REQUIRED_ACTIVE_SET'; action?: 'open_api_settings' } };
 
 // Settings types
