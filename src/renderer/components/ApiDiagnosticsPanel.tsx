@@ -249,8 +249,15 @@ export default function ApiDiagnosticsPanel({
           {/* Failure detail */}
           {failedStep && <FailureDetail step={failedStep} />}
 
+          {/* Skipped info */}
+          {result?.skippedReason && !isRunning && (
+            <div className="mt-3 pt-3 border-t border-border text-sm text-text-muted">
+              {t('api.diagnostic.skipped', 'Diagnostics skipped: another run is already in progress.')}
+            </div>
+          )}
+
           {/* Overall summary */}
-          {result && !isRunning && (
+          {result && !result.skippedReason && !isRunning && (
             <div className="mt-3 pt-3 border-t border-border flex items-center justify-between text-sm">
               <span
                 className={result.overallOk ? 'text-success font-medium' : 'text-error font-medium'}

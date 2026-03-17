@@ -813,6 +813,8 @@ ${hints.join('\n')}
       return content.replace(new RegExp(sandboxPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), VIRTUAL_WORKSPACE_PATH);
     };
 
+    const thinkingStepId = uuidv4();
+
     try {
       this.pathResolver.registerSession(session.id, session.mountedPaths);
       logTiming('pathResolver.registerSession', runStartTime);
@@ -821,7 +823,6 @@ ${hints.join('\n')}
       // No need to send it again from backend
 
       // Send initial thinking trace
-      const thinkingStepId = uuidv4();
       this.sendTraceStep(session.id, {
         id: thinkingStepId,
         type: 'thinking',
@@ -1574,6 +1575,20 @@ Tool routing:
       let hasEmittedError = false;
       const thinkParser = new ThinkTagStreamParser();
 
+      // Ollama cold-start feedback: if provider is 'ollama' and no stream event arrives
+      // within 10 seconds, show a "model loading" trace update so users know what's happening.
+      let ollamaColdStartTimerId: ReturnType<typeof setTimeout> | undefined;
+      let receivedFirstStreamEvent = false;
+      if (provider === 'ollama') {
+        ollamaColdStartTimerId = setTimeout(() => {
+          if (!receivedFirstStreamEvent && !controller.signal.aborted) {
+            this.sendTraceUpdate(session.id, thinkingStepId, {
+              title: 'Waiting for model to load into memory...',
+            });
+          }
+        }, 10000);
+      }
+
       // Activity-based timeout: reset the 5-min timer whenever the SDK sends events
       const PROMPT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
       let activityTimeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -1586,6 +1601,7 @@ Tool routing:
       };
 
       const unsubscribe = piSession.subscribe((event) => {
+        try {
         if (controller.signal.aborted) return;
 
         // Reset activity timeout on meaningful events
@@ -1607,6 +1623,14 @@ Tool routing:
             if (controller.signal.aborted) break;
             const ame = event.assistantMessageEvent;
             if (ame.type === 'text_delta') {
+              // Clear Ollama cold-start indicator on first stream event
+              if (!receivedFirstStreamEvent && ollamaColdStartTimerId) {
+                receivedFirstStreamEvent = true;
+                clearTimeout(ollamaColdStartTimerId);
+                this.sendTraceUpdate(session.id, thinkingStepId, {
+                  title: 'Processing request...',
+                });
+              }
               const parsed = thinkParser.push(ame.delta);
               if (parsed.thinking) {
                 this.sendToRenderer({
@@ -1619,6 +1643,14 @@ Tool routing:
                 this.sendPartial(session.id, parsed.text);
               }
             } else if (ame.type === 'thinking_delta') {
+              // Clear Ollama cold-start indicator on first stream event
+              if (!receivedFirstStreamEvent && ollamaColdStartTimerId) {
+                receivedFirstStreamEvent = true;
+                clearTimeout(ollamaColdStartTimerId);
+                this.sendTraceUpdate(session.id, thinkingStepId, {
+                  title: 'Processing request...',
+                });
+              }
               // Forward thinking delta to renderer for real-time display
               this.sendToRenderer({
                 type: 'stream.thinking',
@@ -1840,6 +1872,27 @@ Tool routing:
             break;
           }
         }
+        } catch (subscribeErr) {
+          logError('[ClaudeAgentRunner] Error in subscribe callback:', subscribeErr);
+          if (compactionStepId) {
+            this.sendTraceUpdate(session.id, compactionStepId, {
+              status: 'error',
+              title: 'Error during context compaction',
+            });
+            compactionStepId = undefined;
+          }
+          if (!hasEmittedError) {
+            hasEmittedError = true;
+            const errorText = toUserFacingErrorText(toErrorText(subscribeErr));
+            this.sendMessage(session.id, {
+              id: uuidv4(),
+              sessionId: session.id,
+              role: 'assistant',
+              content: [{ type: 'text', text: `**Error**: ${errorText}` }],
+              timestamp: Date.now(),
+            });
+          }
+        }
       });
 
       // Execute the prompt with activity-based timeout
@@ -1850,6 +1903,7 @@ Tool routing:
           log('[ClaudeAgentRunner] prompt() returned:', JSON.stringify(promptResult ?? 'void').substring(0, 1000));
         } finally {
           if (activityTimeoutId) clearTimeout(activityTimeoutId);
+          if (ollamaColdStartTimerId) clearTimeout(ollamaColdStartTimerId);
         }
       } finally {
         try { unsubscribe(); } catch (e) { logWarn('[ClaudeAgentRunner] unsubscribe error:', e); }
@@ -1876,8 +1930,16 @@ Tool routing:
             timestamp: Date.now(),
           };
           this.sendMessage(session.id, errorMsg);
+          this.sendTraceUpdate(session.id, thinkingStepId, {
+            status: 'error',
+            title: 'Request timed out',
+          });
         } else {
           logCtx('[ClaudeAgentRunner] Aborted by user');
+          this.sendTraceUpdate(session.id, thinkingStepId, {
+            status: 'completed',
+            title: 'Cancelled',
+          });
         }
       } else {
         logCtxError('[ClaudeAgentRunner] Error:', error);
@@ -1911,25 +1973,36 @@ Tool routing:
 
       // Sync changes from sandbox back to host OS (but don't cleanup - sandbox persists)
       if (useSandboxIsolation && sandboxPath) {
-        const sandbox = getSandboxAdapter();
+        try {
+          const sandbox = getSandboxAdapter();
 
-        if (sandbox.isWSL) {
-          log('[ClaudeAgentRunner] Syncing sandbox changes to Windows...');
-          const syncResult = await SandboxSync.syncToWindows(session.id);
-          if (syncResult.success) {
-            log('[ClaudeAgentRunner] Sync completed successfully');
-          } else {
-            logError('[ClaudeAgentRunner] Sync failed:', syncResult.error);
+          if (sandbox.isWSL) {
+            log('[ClaudeAgentRunner] Syncing sandbox changes to Windows...');
+            const syncResult = await SandboxSync.syncToWindows(session.id);
+            if (syncResult.success) {
+              log('[ClaudeAgentRunner] Sync completed successfully');
+            } else {
+              logError('[ClaudeAgentRunner] Sync failed:', syncResult.error);
+            }
+          } else if (sandbox.isLima) {
+            log('[ClaudeAgentRunner] Syncing sandbox changes to macOS...');
+            const { LimaSync } = await import('../sandbox/lima-sync');
+            const syncResult = await LimaSync.syncToMac(session.id);
+            if (syncResult.success) {
+              log('[ClaudeAgentRunner] Sync completed successfully');
+            } else {
+              logError('[ClaudeAgentRunner] Sync failed:', syncResult.error);
+            }
           }
-        } else if (sandbox.isLima) {
-          log('[ClaudeAgentRunner] Syncing sandbox changes to macOS...');
-          const { LimaSync } = await import('../sandbox/lima-sync');
-          const syncResult = await LimaSync.syncToMac(session.id);
-          if (syncResult.success) {
-            log('[ClaudeAgentRunner] Sync completed successfully');
-          } else {
-            logError('[ClaudeAgentRunner] Sync failed:', syncResult.error);
-          }
+        } catch (syncErr) {
+          logError('[ClaudeAgentRunner] Sandbox sync error:', syncErr);
+          this.sendMessage(session.id, {
+            id: uuidv4(),
+            sessionId: session.id,
+            role: 'assistant',
+            content: [{ type: 'text', text: `**Warning**: Sandbox sync failed: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}` }],
+            timestamp: Date.now(),
+          });
         }
       }
     }

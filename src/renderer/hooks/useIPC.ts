@@ -110,6 +110,7 @@ export function useIPC() {
       const store = storeRef.current;
       console.log('[useIPC] Received event:', event.type);
 
+      try {
       switch (event.type) {
         case 'session.list':
           store.setSessions(event.payload.sessions);
@@ -294,6 +295,9 @@ export function useIPC() {
 
         default:
           console.log('[useIPC] Unknown server event:', event);
+      }
+      } catch (err) {
+        console.error('[useIPC] Error handling server event:', event.type, err);
       }
     });
 

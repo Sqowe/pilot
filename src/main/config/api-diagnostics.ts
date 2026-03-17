@@ -10,7 +10,7 @@ import * as net from 'net';
 import * as tls from 'tls';
 import OpenAI from 'openai';
 import { Anthropic } from '@anthropic-ai/sdk';
-import { PROVIDER_PRESETS } from './config-store';
+import { PROVIDER_PRESETS, configStore } from './config-store';
 import { DEFAULT_OLLAMA_BASE_URL } from '../../shared/ollama-base-url';
 import { isLoopbackBaseUrl } from '../../shared/network/loopback';
 import {
@@ -29,6 +29,8 @@ import type {
   DiagnosticStepName,
 } from '../../renderer/types';
 import { log, logWarn } from '../utils/logger';
+import { probeWithClaudeSdk } from '../claude/claude-sdk-one-shot';
+import { withRetry } from '../utils/retry';
 
 const STEP_NAMES: DiagnosticStepName[] = ['dns', 'tcp', 'tls', 'auth', 'model'];
 const TCP_TIMEOUT_MS = 5000;
@@ -39,7 +41,7 @@ export interface LocalOllamaDiscoveryResult {
   available: boolean;
   baseUrl: string;
   models?: string[];
-  status: 'unavailable' | 'service_available' | 'model_usable' | 'model_unusable';
+  status: 'unavailable' | 'service_available' | 'model_usable' | 'model_unusable' | 'model_loading';
   probeModel?: string;
   probeError?: string;
 }
@@ -56,7 +58,7 @@ async function probeOllamaModel(baseUrl: string, model: string): Promise<{ ok: t
         messages: [{ role: 'user', content: 'ping' }],
         max_tokens: 1,
       }),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(90000),
     });
 
     if (!probeResponse.ok) {
@@ -415,72 +417,27 @@ async function stepModel(input: DiagnosticInput, step: DiagnosticStep): Promise<
   }
 
   const start = Date.now();
-  const apiKey = input.apiKey?.trim() || '';
-  const clientBaseUrl = resolveClientBaseUrl(input);
-  const model = input.model;
-
   try {
-    if (isOpenAICompatible(input)) {
-      const resolved =
-        input.provider === 'ollama'
-          ? resolveOllamaCredentials({
-              provider: input.provider,
-              customProtocol: input.customProtocol,
-              apiKey,
-              baseUrl: clientBaseUrl,
-            })
-          : resolveOpenAICredentials({
-              provider: input.provider,
-              customProtocol: input.customProtocol,
-              apiKey,
-              baseUrl: clientBaseUrl,
-            });
+    const config = configStore.getAll();
+    const result = await probeWithClaudeSdk({
+      provider: input.provider,
+      apiKey: input.apiKey,
+      baseUrl: input.baseUrl,
+      customProtocol: input.customProtocol,
+      model: input.model,
+    }, config);
 
-      const client = new OpenAI({
-        apiKey: resolved?.apiKey || apiKey,
-        baseURL: resolved?.baseUrl || clientBaseUrl,
-        timeout: 30000,
-      });
-      await client.chat.completions.create({
-        model,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 1,
-      });
-    } else if (isAnthropicCompatible(input)) {
-      const allowEmpty = shouldAllowEmptyAnthropicApiKey({
-        provider: input.provider,
-        customProtocol: input.customProtocol,
-        baseUrl: clientBaseUrl,
-      });
-      const effectiveKey = apiKey || (allowEmpty ? LOCAL_ANTHROPIC_PLACEHOLDER_KEY : '');
-      const useAuthToken = shouldUseAnthropicAuthToken({
-        provider: input.provider,
-        customProtocol: input.customProtocol,
-        apiKey: effectiveKey,
-      });
-
-      await withSuppressedAnthropicEnv(async () => {
-        const client = useAuthToken
-          ? new Anthropic({ authToken: effectiveKey, baseURL: clientBaseUrl, timeout: 30000 })
-          : new Anthropic({ apiKey: effectiveKey, baseURL: clientBaseUrl, timeout: 30000 });
-        await client.messages.create({
-          model,
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'ping' }],
-        });
-      });
+    if (result.ok) {
+      step.status = 'ok';
     } else {
-      // Gemini or unknown — skip model check
-      step.status = 'skip';
-      step.latencyMs = 0;
-      return;
+      step.status = 'fail';
+      step.error = result.details;
+      step.fix = `model_unavailable:${input.model}`;
     }
-
-    step.status = 'ok';
   } catch (err) {
     step.status = 'fail';
     step.error = (err as Error).message;
-    step.fix = `model_unavailable:${model}`;
+    step.fix = `model_unavailable:${input.model}`;
   }
   step.latencyMs = Date.now() - start;
 }
@@ -497,7 +454,8 @@ export async function runDiagnostics(input: DiagnosticInput): Promise<Diagnostic
     log('[Diagnostics] Skipping — another run is already in progress');
     return {
       steps: STEP_NAMES.map((name) => ({ name, status: 'skip' as const, latencyMs: 0 })),
-      overallOk: false,
+      overallOk: true,
+      skippedReason: 'concurrent_run',
       failedAt: undefined,
       totalLatencyMs: 0,
     };
@@ -616,7 +574,7 @@ export async function discoverLocalOllama(input?: {
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
+    const timeout = setTimeout(() => controller.abort(), 8000);
 
     const response = await fetch(modelsUrl, { signal: controller.signal });
     clearTimeout(timeout);
@@ -634,8 +592,14 @@ export async function discoverLocalOllama(input?: {
     }
 
     let lastProbeError = '';
-    for (const probeModel of models) {
-      const probeResult = await probeOllamaModel(baseUrl, probeModel);
+    const probeModel = models[0];
+    try {
+      const probeResult = await withRetry(() => probeOllamaModel(baseUrl, probeModel), {
+        maxRetries: 2,
+        delayMs: 3000,
+        backoffMultiplier: 2,
+        shouldRetry: (err) => /timeout|abort/i.test(err.message),
+      });
       if (probeResult.ok) {
         log('[Diagnostics] Local Ollama discovered', { modelCount: models?.length ?? 0, probeModel });
         return { available: true, baseUrl, models, status: 'model_usable', probeModel };
@@ -645,6 +609,24 @@ export async function discoverLocalOllama(input?: {
       logWarn('[Diagnostics] Local Ollama model probe failed', {
         model: probeModel,
         error: probeResult.error.slice(0, 200),
+      });
+    } catch (retryError) {
+      const errMsg = retryError instanceof Error ? retryError.message : String(retryError);
+      if (/timeout|abort/i.test(errMsg)) {
+        log('[Diagnostics] Local Ollama model still loading (probe timed out after retries)', { probeModel });
+        return {
+          available: true,
+          baseUrl,
+          models,
+          status: 'model_loading',
+          probeModel,
+          probeError: errMsg,
+        };
+      }
+      lastProbeError = errMsg;
+      logWarn('[Diagnostics] Local Ollama model probe failed after retries', {
+        model: probeModel,
+        error: errMsg.slice(0, 200),
       });
     }
 

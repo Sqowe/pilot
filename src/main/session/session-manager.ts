@@ -60,7 +60,6 @@ export class SessionManager {
   private titleGenerationTokens: Map<string, symbol> = new Map();
   private messageCache: Map<string, Message[]> = new Map();
   private static readonly MAX_CACHE_SIZE = 100;
-  private isProcessingQueue = false;
 
   constructor(
     db: DatabaseInstance,
@@ -182,6 +181,10 @@ export class SessionManager {
       log(`[SessionManager] Initialized ${servers.length} MCP servers`);
     } catch (error) {
       logError('[SessionManager] Failed to initialize MCP servers:', error);
+      this.sendToRenderer({
+        type: 'error',
+        payload: { message: `Failed to initialize MCP servers: ${error instanceof Error ? error.message : String(error)}` },
+      });
     }
   }
 
@@ -419,6 +422,10 @@ export class SessionManager {
       log('[SessionManager] Sandbox mode:', this.sandboxAdapter.mode);
     } catch (error) {
       logError('[SessionManager] Failed to initialize sandbox:', error);
+      this.sendToRenderer({
+        type: 'error',
+        payload: { message: `Failed to initialize sandbox: ${error instanceof Error ? error.message : String(error)}` },
+      });
       // Continue anyway - sandbox adapter will fallback to native
     } finally {
       this.sandboxInitPromises.delete(session.cwd);
@@ -510,6 +517,10 @@ export class SessionManager {
           });
         } catch (error) {
           logError('[SessionManager] Error copying file:', error);
+          this.sendToRenderer({
+            type: 'error',
+            payload: { message: `Failed to process file attachment: ${error instanceof Error ? error.message : String(error)}` },
+          });
           // Skip this file attachment
         }
       } else {
@@ -697,6 +708,10 @@ export class SessionManager {
     if (!this.activeSessions.has(session.id)) {
       this.processQueue(session).catch(err => {
         logError('[SessionManager] Queue processing error:', err);
+        this.sendToRenderer({
+          type: 'error',
+          payload: { message: `Failed to process message: ${err instanceof Error ? err.message : String(err)}` },
+        });
       });
     } else {
       log('[SessionManager] Session running, queued prompt:', session.id);
@@ -705,8 +720,6 @@ export class SessionManager {
 
   private async processQueue(session: Session): Promise<void> {
     if (this.activeSessions.has(session.id)) return;
-    if (this.isProcessingQueue) return;
-    this.isProcessingQueue = true;
 
     const controller = new AbortController();
     this.activeSessions.set(session.id, controller);
@@ -731,7 +744,6 @@ export class SessionManager {
         if (controller.signal.aborted) break;
       }
     } finally {
-      this.isProcessingQueue = false;
       this.activeSessions.delete(session.id);
       const queue = this.promptQueues.get(session.id);
       if (queue && queue.length === 0) {
@@ -745,6 +757,10 @@ export class SessionManager {
           log('[SessionManager] Restarting queued prompts after stop/drain:', session.id);
           this.processQueue(latestSession).catch(err => {
             logError('[SessionManager] Queue processing error:', err);
+            this.sendToRenderer({
+              type: 'error',
+              payload: { message: `Failed to process message: ${err instanceof Error ? err.message : String(err)}` },
+            });
           });
         } else {
           this.promptQueues.delete(session.id);

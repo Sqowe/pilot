@@ -514,7 +514,6 @@ export interface ApiTestInput {
   baseUrl?: string;
   customProtocol?: AppConfig['customProtocol'];
   model?: string;
-  useLiveRequest?: boolean;
 }
 
 export interface ApiTestResult {
@@ -530,6 +529,7 @@ export interface ApiTestResult {
     | 'server_error'
     | 'network_error'
     | 'ollama_not_running'
+    | 'ollama_loading'
     | 'unknown';
   details?: string;
 }
@@ -552,6 +552,8 @@ export interface DiagnosticResult {
   /** Which step failed first (null if all ok) */
   failedAt?: DiagnosticStepName;
   totalLatencyMs: number;
+  /** Present when the run was skipped (e.g. 'concurrent_run') */
+  skippedReason?: string;
 }
 
 export interface DiagnosticInput {
