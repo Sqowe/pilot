@@ -8,7 +8,7 @@
  * - Path conversion between Windows and WSL
  */
 
-import { spawn, exec, ChildProcess } from 'child_process';
+import { spawn, exec, execFile, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { v4 as uuidv4 } from 'uuid';
 import * as path from 'path';
@@ -37,6 +37,11 @@ async function loadBootstrap() {
 }
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+function escapeForDoubleQuotes(s: string): string {
+  return s.replace(/[\\$`"!]/g, '\\$&');
+}
 
 /**
  * Path conversion utilities for Windows <-> WSL
@@ -392,22 +397,25 @@ export class WSLBridge implements SandboxExecutor {
     try {
       // Step 1: Install nvm
       log('[WSL] Step 1: Installing nvm...');
-      await execAsync(
-        `wsl -d ${distro} -e bash -c "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash"`,
+      await execFileAsync(
+        'wsl',
+        ['-d', distro, '-e', 'bash', '-c', 'curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash'],
         { timeout: 120000, encoding: 'utf-8' }
       );
-      
+
       // Step 2: Install node using nvm
       log('[WSL] Step 2: Installing Node.js 20 via nvm...');
-      await execAsync(
-        `wsl -d ${distro} -e bash -c "source ~/.nvm/nvm.sh && nvm install 20 && nvm alias default 20"`,
+      await execFileAsync(
+        'wsl',
+        ['-d', distro, '-e', 'bash', '-c', 'source ~/.nvm/nvm.sh && nvm install 20 && nvm alias default 20'],
         { timeout: 180000, encoding: 'utf-8' }
       );
 
       // Verify installation
       log('[WSL] Step 3: Verifying installation...');
-      const verifyResult = await execAsync(
-        `wsl -d ${distro} -e bash -c "source ~/.nvm/nvm.sh && node --version"`,
+      const verifyResult = await execFileAsync(
+        'wsl',
+        ['-d', distro, '-e', 'bash', '-c', 'source ~/.nvm/nvm.sh && node --version'],
         { timeout: 10000, encoding: 'utf-8' }
       );
       
@@ -715,7 +723,7 @@ export class WSLBridge implements SandboxExecutor {
 
     // Start WSL process with the agent
     // Need to source nvm.sh first since node is installed via nvm
-    const nodeCommand = `source ~/.nvm/nvm.sh 2>/dev/null; node "${wslAgentPath}"`;
+    const nodeCommand = `source ~/.nvm/nvm.sh 2>/dev/null; node "${escapeForDoubleQuotes(wslAgentPath)}"`;
     log('[WSL] Agent command:', nodeCommand);
     
     this.wslProcess = spawn('wsl', [

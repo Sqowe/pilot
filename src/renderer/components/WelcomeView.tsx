@@ -216,7 +216,7 @@ export function WelcomeView() {
       if (filePaths.length === 0) return;
 
       const newFiles = filePaths.map((filePath) => {
-        const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'unknown';
+        const fileName = filePath.split(/[/\\]/).pop() || 'unknown';
         return {
           name: fileName,
           path: filePath,
