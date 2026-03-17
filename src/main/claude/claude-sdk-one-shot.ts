@@ -122,7 +122,11 @@ function buildProbeConfig(input: ApiTestInput, config: AppConfig): AppConfig {
   };
 }
 
-function mapPiAiError(errorText: string, durationMs: number): ApiTestResult {
+function mapPiAiError(
+  errorText: string,
+  durationMs: number,
+  provider?: string,
+): ApiTestResult {
   const details = errorText.trim();
   const lowered = details.toLowerCase();
 
@@ -134,6 +138,9 @@ function mapPiAiError(errorText: string, durationMs: number): ApiTestResult {
   }
   if (SERVER_ERROR_RE.test(lowered)) {
     return { ok: false, latencyMs: durationMs, errorType: 'server_error', details };
+  }
+  if (provider === 'ollama' && /econnrefused/i.test(lowered)) {
+    return { ok: false, latencyMs: durationMs, errorType: 'ollama_not_running', details };
   }
   if (NETWORK_ERROR_RE.test(lowered)) {
     return { ok: false, latencyMs: durationMs, errorType: 'network_error', details };
@@ -265,7 +272,7 @@ export async function probeWithClaudeSdk(input: ApiTestInput, config: AppConfig)
     return { ok: true, latencyMs: result.durationMs };
   } catch (error) {
     const details = error instanceof Error ? error.message : String(error);
-    return mapPiAiError(details, 0);
+    return mapPiAiError(details, 0, input.provider);
   }
 }
 

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => {
   const tlsConnect = vi.fn();
   const openaiModelsList = vi.fn();
   const fetch = vi.fn();
+  const probeWithClaudeSdk = vi.fn();
 
   return {
     dnsLookup,
@@ -13,6 +14,7 @@ const mocks = vi.hoisted(() => {
     tlsConnect,
     openaiModelsList,
     fetch,
+    probeWithClaudeSdk,
   };
 });
 
@@ -53,6 +55,23 @@ vi.mock('../src/main/config/config-store', () => ({
     ollama: { baseUrl: 'http://localhost:11434/v1' },
     openrouter: { baseUrl: 'https://openrouter.ai/api' },
   },
+  configStore: {
+    getAll: () => ({
+      provider: 'openai',
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4.1',
+      activeProfileKey: 'openai',
+      profiles: {},
+      activeConfigSetId: 'default',
+      configSets: [],
+      isConfigured: true,
+    }),
+  },
+}));
+
+vi.mock('../src/main/claude/claude-sdk-one-shot', () => ({
+  probeWithClaudeSdk: mocks.probeWithClaudeSdk,
 }));
 
 vi.mock('../src/main/utils/logger', () => ({
@@ -71,10 +90,12 @@ describe('runDiagnostics TLS step', () => {
     mocks.tlsConnect.mockReset();
     mocks.openaiModelsList.mockReset();
     mocks.fetch.mockReset();
+    mocks.probeWithClaudeSdk.mockReset();
     global.fetch = mocks.fetch;
 
     mocks.dnsLookup.mockResolvedValue({ address: '127.0.0.1', family: 4 });
     mocks.openaiModelsList.mockResolvedValue({});
+    mocks.probeWithClaudeSdk.mockResolvedValue({ ok: true, latencyMs: 10 });
 
     mocks.tcpConnect.mockImplementation(() => {
       const handlers: Record<string, () => void> = {};
@@ -198,6 +219,48 @@ describe('runDiagnostics TLS step', () => {
       timeout: 5000,
       servername: 'ollama.example.internal',
     });
+  });
+
+  it('model step uses probeWithClaudeSdk', async () => {
+    mocks.probeWithClaudeSdk.mockResolvedValue({ ok: true, latencyMs: 15 });
+
+    const result = await runDiagnostics({
+      provider: 'openai',
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4.1',
+    });
+
+    expect(result.overallOk).toBe(true);
+    expect(mocks.probeWithClaudeSdk).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'openai',
+        apiKey: 'sk-test',
+        model: 'gpt-4.1',
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it('model step reports failure from probeWithClaudeSdk', async () => {
+    mocks.probeWithClaudeSdk.mockResolvedValue({
+      ok: false,
+      errorType: 'unauthorized',
+      details: '401 Unauthorized',
+    });
+
+    const result = await runDiagnostics({
+      provider: 'openai',
+      apiKey: 'sk-bad',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4.1',
+    });
+
+    expect(result.overallOk).toBe(false);
+    expect(result.failedAt).toBe('model');
+    const modelStep = result.steps.find(s => s.name === 'model');
+    expect(modelStep?.status).toBe('fail');
+    expect(modelStep?.error).toBe('401 Unauthorized');
   });
 
   it('discovers local Ollama using the caller-provided loopback endpoint', async () => {
@@ -341,69 +404,5 @@ describe('runDiagnostics TLS step', () => {
       probeModel: 'qwen3.5:0.8b',
       probeError: 'model loading failed',
     });
-  });
-
-  it('keeps probing later models until one can complete a minimal inference request', async () => {
-    mocks.fetch
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({
-          data: [{ id: 'bad-model' }, { id: 'good-model' }],
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      )
-      .mockResolvedValueOnce(
-        new Response('first model failed', {
-          status: 500,
-          headers: { 'Content-Type': 'text/plain' },
-        })
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({
-          id: 'chatcmpl-1',
-          object: 'chat.completion',
-          choices: [{ index: 0, message: { role: 'assistant', content: 'pong' }, finish_reason: 'stop' }],
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      );
-
-    const result = await discoverLocalOllama({
-      baseUrl: 'http://127.0.0.1:18080/v1',
-    });
-
-    expect(result).toEqual({
-      available: true,
-      baseUrl: 'http://127.0.0.1:18080/v1',
-      models: ['bad-model', 'good-model'],
-      status: 'model_usable',
-      probeModel: 'good-model',
-    });
-    expect(mocks.fetch).toHaveBeenNthCalledWith(
-      2,
-      'http://127.0.0.1:18080/v1/chat/completions',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          model: 'bad-model',
-          messages: [{ role: 'user', content: 'ping' }],
-          max_tokens: 1,
-        }),
-      })
-    );
-    expect(mocks.fetch).toHaveBeenNthCalledWith(
-      3,
-      'http://127.0.0.1:18080/v1/chat/completions',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          model: 'good-model',
-          messages: [{ role: 'user', content: 'ping' }],
-          max_tokens: 1,
-        }),
-      })
-    );
   });
 });

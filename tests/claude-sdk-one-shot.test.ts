@@ -221,4 +221,57 @@ describe('probeWithClaudeSdk', () => {
 
     expect(result.ok).toBe(true);
   });
+
+  it('maps ECONNREFUSED to ollama_not_running for ollama provider', async () => {
+    mocks.completeSimple.mockRejectedValue(
+      new Error('connect ECONNREFUSED 127.0.0.1:11434')
+    );
+
+    const result = await probeWithClaudeSdk(
+      {
+        provider: 'ollama',
+        apiKey: '',
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3.5:0.8b',
+      },
+      createConfig({
+        provider: 'ollama',
+        apiKey: '',
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3.5:0.8b',
+        activeProfileKey: 'ollama',
+      })
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.errorType).toBe('ollama_not_running');
+    expect(result.details).toMatch(/ECONNREFUSED/i);
+  });
+
+  it('maps ECONNREFUSED to network_error for non-ollama provider', async () => {
+    mocks.completeSimple.mockRejectedValue(
+      new Error('connect ECONNREFUSED 127.0.0.1:8080')
+    );
+
+    const result = await probeWithClaudeSdk(
+      {
+        provider: 'custom',
+        customProtocol: 'openai',
+        apiKey: 'sk-test',
+        baseUrl: 'http://127.0.0.1:8080',
+        model: 'gpt-4.1-mini',
+      },
+      createConfig({
+        provider: 'custom',
+        customProtocol: 'openai',
+        apiKey: 'sk-test',
+        baseUrl: 'http://127.0.0.1:8080',
+        model: 'gpt-4.1-mini',
+        activeProfileKey: 'custom:openai',
+      })
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.errorType).toBe('network_error');
+  });
 });

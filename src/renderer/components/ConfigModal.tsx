@@ -67,11 +67,8 @@ export function ConfigModal({
     isDiscoveringLocalOllama,
     testResult,
     friendlyTestDetails,
-    useLiveTest,
-    supportsLiveRequestTest,
     isOllamaMode,
     requiresApiKey,
-    showsCompatibilityProbeHint,
     protocolGuidanceText,
     protocolGuidanceTone,
     baseUrlGuidanceText,
@@ -89,7 +86,6 @@ export function ConfigModal({
     setModel,
     setCustomModel,
     toggleCustomModel,
-    setUseLiveTest,
     applyCommonProviderSetup,
     changeProvider,
     changeProtocol,
@@ -446,22 +442,6 @@ export function ConfigModal({
             <div className="mb-3 flex items-center gap-2 px-4 py-3 rounded-xl bg-success/10 text-success text-sm">
               <CheckCircle className="w-4 h-4 flex-shrink-0" />
               {successMessage}
-            </div>
-          )}
-          {supportsLiveRequestTest && (
-            <div className="flex items-start gap-2 text-xs text-text-muted mb-3">
-              <input
-                type="checkbox"
-                id="api-live-test-modal"
-                checked={useLiveTest}
-                onChange={(e) => setUseLiveTest(e.target.checked)}
-                className="mt-0.5 w-4 h-4 rounded border-border text-accent focus:ring-accent"
-              />
-              <label htmlFor="api-live-test-modal" className="space-y-0.5">
-                <div className="text-text-primary">{t('api.liveTest')}</div>
-                <div>{t('api.liveTestHint')}</div>
-                {showsCompatibilityProbeHint && <div>{t('api.liveTestCompatibilityHint')}</div>}
-              </label>
             </div>
           )}
           <div className="grid grid-cols-2 gap-2">

@@ -149,9 +149,7 @@
     "localOllamaNotFound": "未发现本地 Ollama 服务，请先执行 `ollama serve` 后重试。",
     "localOllamaNoModels": "已发现本地 Ollama 服务，但当前没有可用模型。",
     "localOllamaModelUnavailable": "已发现本地 Ollama，但模型 {{model}} 目前无法完成最小推理请求。",
-    "liveTest": "真实请求验证",
-    "liveTestHint": "会发送一次最小请求，可能消耗少量额度",
-    "liveTestCompatibilityHint": "部分兼容服务可能不支持该探测请求，失败时可关闭后重试。",
+    "localOllamaModelLoading": "已发现本地 Ollama，但模型仍在加载中，大型模型可能需要一分钟左右。",
     "enableThinking": "启用思考模式",
     "enableThinkingHint": "显示 Claude 的思考过程。这提供更多透明度，但可能增加 token 消耗。",
     "enableThinkingOllamaHint": "大多数 Ollama 模型不支持思考模式，仅在模型明确支持时启用。",
@@ -166,6 +164,7 @@
       "server_error": "服务端错误，请稍后再试",
       "network_error": "网络连接失败，请检查网络或地址",
       "ollama_not_running": "无法连接 Ollama，请确认 Ollama 已启动（ollama serve）",
+      "ollama_loading": "Ollama 正在将模型加载到内存中，大型模型可能需要 30–120 秒，请稍候后重试。",
       "unknown": "连接失败"
     },
     "guidance": {
@@ -282,7 +281,8 @@
         "auth_invalid_key": "API Key 无效或已过期，请检查 Key 是否正确",
         "auth_endpoint_not_found": "API 端点不存在，请检查 Base URL 是否正确",
         "auth_request_failed": "认证请求失败，请检查配置",
-        "model_unavailable": "模型 {{model}} 不可用，请确认模型名称是否正确"
+        "model_unavailable": "模型 {{model}} 不可用，请确认模型名称是否正确",
+        "model_cold_start": "模型可能仍在加载到 GPU/CPU 内存中。大型模型（7B+）首次使用可能需要 30–120 秒，请稍后重试。"
       }
     }
   },

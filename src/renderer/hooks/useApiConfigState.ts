@@ -613,7 +613,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   );
   const [lastSaveCompletedAt, setLastSaveCompletedAt] = useState(0);
   const [testResult, setTestResult] = useState<ApiTestResult | null>(null);
-  const [useLiveTest, setUseLiveTest] = useState(false);
   const [diagnosticResult, setDiagnosticResult] = useState<DiagnosticResult | null>(null);
   const [isDiagnosing, setIsDiagnosing] = useState(false);
   const ollamaRefreshRequestIdRef = useRef(0);
@@ -627,6 +626,8 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     provider: 'openrouter',
   });
   const autoDiscoveryAttemptedRef = useRef<Set<string>>(new Set());
+  const autoDiscoveryRetryCountRef = useRef<number>(0);
+  const autoDiscoveryRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ollamaDiscoverRequestIdRef = useRef(0);
 
   const clearError = useCallback(() => {
@@ -849,11 +850,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
         (customProtocol === 'openai' && isCustomOpenAiLoopbackGateway(baseUrl)) ||
         (customProtocol === 'gemini' && isCustomGeminiLoopbackGateway(baseUrl))));
   const requiresApiKey = !allowEmptyApiKey;
-  const supportsLiveRequestTest =
-    provider !== 'gemini' && !(provider === 'custom' && customProtocol === 'gemini');
-  const showsCompatibilityProbeHint =
-    provider === 'openrouter' || (provider === 'custom' && customProtocol === 'anthropic');
-
   const currentDraftSignature = useMemo(
     () => buildApiConfigDraftSignature(activeProfileKey, profiles, enableThinking),
     [activeProfileKey, profiles, enableThinking]
@@ -1116,12 +1112,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     });
   }, [activeProfileKey, baseUrl, provider, presets]);
 
-  useEffect(() => {
-    if (!supportsLiveRequestTest && useLiveTest) {
-      setUseLiveTest(false);
-    }
-  }, [supportsLiveRequestTest, useLiveTest]);
-
   const handleTest = useCallback(async () => {
     if (requiresApiKey && !apiKey.trim()) {
       showErrorKey('api.testError.missing_key');
@@ -1154,7 +1144,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
         baseUrl: resolvedBaseUrl || undefined,
         customProtocol,
         model: finalModel,
-        useLiveRequest: useLiveTest,
       });
       setTestResult(result);
       if (result.ok && hasUnsavedChanges) {
@@ -1183,7 +1172,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     clearError,
     clearSuccessMessage,
     useCustomModel,
-    useLiveTest,
     showErrorKey,
     showSuccessKey,
   ]);
@@ -1396,6 +1384,9 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
         if (!options?.silent) {
           if (result.status === 'service_available') {
             showErrorKey('api.localOllamaNoModels');
+          } else if (result.status === 'model_loading') {
+            showSuccessKey('api.localOllamaModelLoading');
+            setTimeout(() => clearSuccessMessage(), 5000);
           } else if (result.status === 'model_unusable') {
             showErrorKey('api.localOllamaModelUnavailable', {
               model: result.probeModel || models[0]?.id || '',
@@ -1475,8 +1466,51 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     }
 
     autoDiscoveryAttemptedRef.current.add(attemptKey);
-    void discoverLocalOllama({ silent: true });
+    autoDiscoveryRetryCountRef.current = 0;
+
+    const attemptDiscovery = async () => {
+      const result = await discoverLocalOllama({ silent: true });
+      if (result && result.available) {
+        return; // Success, no retry needed
+      }
+      // Schedule retries: 15s then 30s
+      const retryDelays = [15000, 30000];
+      const retryIndex = autoDiscoveryRetryCountRef.current;
+      if (retryIndex < retryDelays.length) {
+        autoDiscoveryRetryCountRef.current = retryIndex + 1;
+        autoDiscoveryRetryTimerRef.current = setTimeout(() => {
+          void attemptDiscovery();
+        }, retryDelays[retryIndex]);
+      }
+    };
+
+    void attemptDiscovery();
+
+    return () => {
+      if (autoDiscoveryRetryTimerRef.current) {
+        clearTimeout(autoDiscoveryRetryTimerRef.current);
+        autoDiscoveryRetryTimerRef.current = null;
+      }
+    };
   }, [activeProfileKey, baseUrl, discoverLocalOllama, provider]);
+
+  // Periodic re-check: when Ollama provider is selected with no discovered models
+  // and the base URL is loopback, poll every 60s until models are found.
+  useEffect(() => {
+    if (!isElectron || provider !== 'ollama') return;
+
+    const normalizedBaseUrl = normalizeOllamaBaseUrl(baseUrl) || DEFAULT_OLLAMA_BASE_URL;
+    if (!isLoopbackBaseUrl(normalizedBaseUrl)) return;
+
+    const currentModels = discoveredModels[activeProfileKey];
+    if (currentModels && currentModels.length > 0) return;
+
+    const intervalId = setInterval(() => {
+      void discoverLocalOllama({ silent: true });
+    }, 60000);
+
+    return () => clearInterval(intervalId);
+  }, [activeProfileKey, baseUrl, discoverLocalOllama, discoveredModels, provider]);
 
   const handleSave = useCallback(
     async (options?: { silentSuccess?: boolean }) => {
@@ -1840,14 +1874,11 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     lastSaveCompletedAt,
     testResult,
     friendlyTestDetails,
-    useLiveTest,
-    supportsLiveRequestTest,
     diagnosticResult,
     isDiagnosing,
     handleDiagnose,
     isOllamaMode: provider === 'ollama',
     requiresApiKey,
-    showsCompatibilityProbeHint,
     detectedProviderSetup,
     protocolGuidanceText,
     protocolGuidanceTone,
@@ -1869,7 +1900,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     setContextWindow,
     setMaxTokens,
     toggleCustomModel,
-    setUseLiveTest,
     setEnableThinking,
     applyCommonProviderSetup,
     changeProvider,

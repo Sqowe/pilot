@@ -149,9 +149,7 @@
     "localOllamaNotFound": "No local Ollama service was found. Start it with `ollama serve` and try again.",
     "localOllamaNoModels": "Found a local Ollama service, but it does not currently expose any models.",
     "localOllamaModelUnavailable": "Found local Ollama, but model {{model}} could not complete a minimal inference request.",
-    "liveTest": "Live request verification",
-    "liveTestHint": "Sends a minimal request and may consume a small quota",
-    "liveTestCompatibilityHint": "Some compatible providers may reject this probe; disable it and try again if needed.",
+    "localOllamaModelLoading": "Found local Ollama, but the model is still loading into memory. Large models may take up to a minute.",
     "enableThinking": "Enable Thinking Mode",
     "enableThinkingHint": "Show Claude's thinking process step by step. This provides more transparency but may increase token usage.",
     "enableThinkingOllamaHint": "Most Ollama models do not support thinking mode. Enable only if your model explicitly supports it.",
@@ -166,6 +164,7 @@
       "server_error": "Service error. Please try again later",
       "network_error": "Network error. Check your connection",
       "ollama_not_running": "Cannot connect to Ollama. Please make sure Ollama is running (ollama serve).",
+      "ollama_loading": "Ollama is loading the model into memory. Large models may take 30–120 seconds. Please wait and try again.",
       "unknown": "Connection failed"
     },
     "guidance": {
@@ -282,7 +281,8 @@
         "auth_invalid_key": "API Key is invalid or expired. Please check if the key is correct.",
         "auth_endpoint_not_found": "API endpoint not found. Please check if the Base URL is correct.",
         "auth_request_failed": "Authentication request failed. Please check your configuration.",
-        "model_unavailable": "Model {{model}} is not available. Please verify the model name."
+        "model_unavailable": "Model {{model}} is not available. Please verify the model name.",
+        "model_cold_start": "The model may still be loading into GPU/CPU memory. Large models (7B+) can take 30–120 seconds on first use. Try again shortly."
       }
     }
   },

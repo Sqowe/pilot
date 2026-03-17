@@ -594,12 +594,21 @@ export async function discoverLocalOllama(input?: {
     let lastProbeError = '';
     const probeModel = models[0];
     try {
-      const probeResult = await withRetry(() => probeOllamaModel(baseUrl, probeModel), {
-        maxRetries: 2,
-        delayMs: 3000,
-        backoffMultiplier: 2,
-        shouldRetry: (err) => /timeout|abort/i.test(err.message),
-      });
+      const probeResult = await withRetry(
+        async () => {
+          const r = await probeOllamaModel(baseUrl, probeModel);
+          if (!r.ok && /timed?\s*out|timeout|abort/i.test(r.error)) {
+            throw new Error(r.error);
+          }
+          return r;
+        },
+        {
+          maxRetries: 2,
+          delayMs: 3000,
+          backoffMultiplier: 2,
+          shouldRetry: (err) => /timed?\s*out|timeout|abort/i.test(err.message),
+        }
+      );
       if (probeResult.ok) {
         log('[Diagnostics] Local Ollama discovered', { modelCount: models?.length ?? 0, probeModel });
         return { available: true, baseUrl, models, status: 'model_usable', probeModel };
