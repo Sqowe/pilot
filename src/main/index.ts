@@ -1389,13 +1389,6 @@ ipcMain.handle('config.discover-local', async (_event, payload?: { baseUrl?: str
   return discoverLocalOllama(payload);
 });
 
-ipcMain.handle('auth.getStatus', () => {
-  return [];
-});
-
-ipcMain.handle('auth.importToken', () => {
-  return null;
-});
 
 // MCP Server IPC handlers
 ipcMain.handle('mcp.getServers', () => {
@@ -1758,45 +1751,6 @@ ipcMain.handle('plugins.uninstall', async (_event, pluginId: string) => {
   }
 });
 
-ipcMain.handle('skills.listPlugins', async (_event, installableOnly?: boolean) => {
-  try {
-    logWarn('[Skills] skills.listPlugins is deprecated. Use plugins.listCatalog instead.');
-    if (!pluginRuntimeService) {
-      throw new Error('PluginRuntimeService not initialized');
-    }
-    const plugins = await pluginRuntimeService.listCatalog({
-      installableOnly: installableOnly === true,
-    });
-    return plugins.map((plugin) => ({
-      ...plugin,
-      skillCount: plugin.componentCounts.skills,
-      hasSkills: plugin.componentCounts.skills > 0,
-    }));
-  } catch (error) {
-    logError('[Skills] Error listing plugins:', error);
-    throw error;
-  }
-});
-
-ipcMain.handle('skills.installPlugin', async (_event, pluginName: string) => {
-  try {
-    logWarn('[Skills] skills.installPlugin is deprecated. Use plugins.install instead.');
-    if (!pluginRuntimeService) {
-      throw new Error('PluginRuntimeService not initialized');
-    }
-    const result = await pluginRuntimeService.install(pluginName);
-    sessionManager?.invalidateSkillsSetup();
-    return {
-      pluginName: result.plugin.name,
-      installedSkills: result.installedSkills,
-      skippedSkills: [],
-      errors: result.warnings,
-    };
-  } catch (error) {
-    logError('[Skills] Error installing plugin:', error);
-    throw error;
-  }
-});
 
 // Window control IPC handlers
 ipcMain.on('window.minimize', () => {
@@ -1887,14 +1841,6 @@ ipcMain.handle('sandbox.installPythonInWSL', async (_event, distro: string) => {
   }
 });
 
-ipcMain.handle('sandbox.installClaudeCodeInWSL', async (_event, distro: string) => {
-  try {
-    return await WSLBridge.installClaudeCodeInWSL(distro);
-  } catch (error) {
-    logError('[Sandbox] Error installing claude-code:', error);
-    return false;
-  }
-});
 
 // Lima IPC handlers (macOS)
 ipcMain.handle('sandbox.checkLima', async () => {
@@ -1951,14 +1897,6 @@ ipcMain.handle('sandbox.installPythonInLima', async () => {
   }
 });
 
-ipcMain.handle('sandbox.installClaudeCodeInLima', async () => {
-  try {
-    return await LimaBridge.installClaudeCodeInLima();
-  } catch (error) {
-    logError('[Sandbox] Error installing claude-code in Lima:', error);
-    return false;
-  }
-});
 
 // Logs IPC handlers
 ipcMain.handle('logs.getPath', () => {

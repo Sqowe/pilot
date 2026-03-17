@@ -1094,7 +1094,27 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       delete next[activeProfileKey];
       return next;
     });
-  }, [activeProfileKey, baseUrl, provider]);
+
+    // If the current model came from discovered models and is not in presets,
+    // reset to the first preset model to keep the dropdown in sync
+    const preset = modelPresetForProfile(activeProfileKey, presets);
+    setProfiles((prevProfiles) => {
+      const current = prevProfiles[activeProfileKey];
+      if (current && !current.useCustomModel && current.model) {
+        const inPreset = preset.models.some((m) => m.id === current.model);
+        if (!inPreset) {
+          return {
+            ...prevProfiles,
+            [activeProfileKey]: {
+              ...current,
+              model: preset.models[0]?.id || '',
+            },
+          };
+        }
+      }
+      return prevProfiles;
+    });
+  }, [activeProfileKey, baseUrl, provider, presets]);
 
   useEffect(() => {
     if (!supportsLiveRequestTest && useLiveTest) {
@@ -1250,6 +1270,11 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       const currentModel = useCustomModel ? customModel.trim() : model;
       if (!currentModel && models[0]) {
         setModel(models[0].id);
+      } else if (!useCustomModel && currentModel && models.length > 0) {
+        const currentModelInList = models.some((m) => m.id === currentModel);
+        if (!currentModelInList) {
+          setModel(models[0].id);
+        }
       }
       return models;
     } catch (refreshError) {
@@ -1312,6 +1337,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
             ...current,
             baseUrl: normalizedBaseUrl,
             model: shouldAdoptFirstPresetModel ? autoSelectModelId : current.model,
+            useCustomModel: shouldAdoptFirstPresetModel ? false : current.useCustomModel,
           },
         };
       });
