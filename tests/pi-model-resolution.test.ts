@@ -215,6 +215,12 @@ describe('pi model resolution helpers', () => {
     const deepseekR1 = buildSyntheticPiModel('deepseek-r1-distill', 'deepseek', 'openai', 'https://api.deepseek.com/v1');
     expect(deepseekR1.reasoning).toBe(true);
 
+    const qwen35 = buildSyntheticPiModel('qwen3.5:0.8b', 'openai', 'openai', 'http://localhost:11434/v1');
+    expect(qwen35.reasoning).toBe(true);
+
+    const qwen3 = buildSyntheticPiModel('qwen3:8b', 'openai', 'openai', 'http://localhost:11434/v1');
+    expect(qwen3.reasoning).toBe(true);
+
     const reasoner = buildSyntheticPiModel('o3-reasoner', 'openai', 'openai');
     expect(reasoner.reasoning).toBe(true);
 
@@ -271,6 +277,31 @@ describe('pi model resolution helpers', () => {
 
     expect(model.baseUrl).toBe('http://localhost:11434/v1');
     expect(model.compat?.supportsDeveloperRole).toBe(false);
+  });
+
+  it('maps ollama thinking off to reasoning_effort none for reasoning models', () => {
+    const model = applyPiModelRuntimeOverrides(
+      {
+        id: 'qwen3.5:0.8b',
+        name: 'qwen3.5:0.8b',
+        api: 'openai-completions',
+        provider: 'openai',
+        baseUrl: 'http://localhost:11434/v1',
+        reasoning: true,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 258048,
+        maxTokens: 32768,
+      },
+      {
+        configProvider: 'openai',
+        rawProvider: 'ollama',
+        customBaseUrl: 'http://localhost:11434/v1',
+      },
+    );
+
+    expect(model.compat?.supportsReasoningEffort).toBe(true);
+    expect((model.compat?.reasoningEffortMap as Record<string, string> | undefined)?.off).toBe('none');
   });
 
   it('disables developer role for openrouter with custom endpoint', () => {
