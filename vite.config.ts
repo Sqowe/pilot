@@ -6,6 +6,14 @@ import { builtinModules } from 'module';
 
 // Node built-in modules must be external for Electron main process
 const nodeBuiltins = builtinModules.flatMap(m => [m, `node:${m}`]);
+const ignoredWatchPaths = [
+  '**/release/**',
+  '**/dist/**',
+  '**/dist-electron/**',
+  '**/dist-wsl-agent/**',
+  '**/dist-lima-agent/**',
+  '**/dist-mcp/**',
+];
 
 export default defineConfig({
   plugins: [
@@ -55,10 +63,14 @@ export default defineConfig({
       '@renderer': resolve(__dirname, 'src/renderer'),
     },
   },
+  server: {
+    watch: {
+      ignored: ignoredWatchPaths,
+    },
+  },
   build: {
     sourcemap: process.env.NODE_ENV !== 'production',
     outDir: 'dist',
     emptyOutDir: true,
   },
 });
-
