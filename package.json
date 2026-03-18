@@ -27,7 +27,6 @@
     "rebuild": "node -e \"const {execSync}=require('node:child_process'); const v=require('electron/package.json').version; execSync('npm rebuild better-sqlite3 --runtime=electron --target='+v+' --disturl=https://electronjs.org/headers',{stdio:'inherit'})\""
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^2.1.7",
     "@anthropic-ai/sdk": "^0.39.0",
     "@larksuiteoapi/node-sdk": "^1.58.0",
     "@mariozechner/pi-ai": "^0.60.0",

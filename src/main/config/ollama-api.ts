@@ -3,8 +3,8 @@ import { isLoopbackBaseUrl } from '../../shared/network/loopback';
 import { normalizeOllamaBaseUrl } from './auth-utils';
 
 export const REQUEST_TIMEOUT_MS = 120000;
-export const OLLAMA_MODELS_TIMEOUT_LOCAL_MS = 2500;
-export const OLLAMA_MODELS_TIMEOUT_REMOTE_MS = 5000;
+export const OLLAMA_MODELS_TIMEOUT_LOCAL_MS = 5000;
+export const OLLAMA_MODELS_TIMEOUT_REMOTE_MS = 8000;
 const OLLAMA_MODELS_CACHE_TTL_MS = 10000;
 
 interface OllamaModelIndexResult {

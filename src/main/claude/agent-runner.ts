@@ -377,7 +377,7 @@ interface CachedPiSession {
 }
 
 /**
- * ClaudeAgentRunner - Uses @anthropic-ai/claude-agent-sdk with allowedTools
+ * ClaudeAgentRunner - Uses @mariozechner/pi-coding-agent SDK
  * 
  * Environment variables should be set before running:
  *   ANTHROPIC_BASE_URL=https://openrouter.ai/api
@@ -1291,7 +1291,7 @@ ${hints.join('\n')}
               } catch (err) {
                 // If symlink fails (e.g., on Windows without permissions), copy the directory
                 logWarn(`[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`, err);
-                // We'll skip copying for now to keep it simple
+                this.copyDirectorySync(builtinSkillPath, userSkillPath);
               }
             }
           }

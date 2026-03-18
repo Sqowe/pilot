@@ -13,10 +13,19 @@ files:
   - dist-electron/**/*
   - dist-mcp/**/*
   - package.json
-  - node_modules/@anthropic-ai/claude-code/**/*
-  - node_modules/@anthropic-ai/claude-agent-sdk/**/*
   - node_modules/@img/**/*
   - node_modules/better-sqlite3/**/*
+  - node_modules/@anthropic-ai/sdk/**/*
+  - node_modules/@larksuiteoapi/**/*
+  - node_modules/openai/**/*
+  - node_modules/@modelcontextprotocol/**/*
+  - node_modules/electron-updater/**/*
+  - node_modules/chokidar/**/*
+  - node_modules/archiver/**/*
+  - node_modules/ngrok/**/*
+  - node_modules/ws/**/*
+  - node_modules/glob/**/*
+  - node_modules/dotenv/**/*
   - .claude/skills/**/*
 
 # MCP servers (compiled JavaScript files, cross-platform)
@@ -26,13 +35,10 @@ extraResources:
     filter:
       - "**/*"
 
-# Unpack claude-code so it can be executed as a CLI
-# Also unpack skills so they can be read/written at runtime
+# Unpack skills so they can be read/written at runtime
 # Sharp native modules must also be unpacked for image processing
 # Note: MCP servers are now bundled with esbuild, so no need to unpack MCP SDK
 asarUnpack:
-  - node_modules/@anthropic-ai/claude-code/**/*
-  - node_modules/@anthropic-ai/claude-agent-sdk/**/*
   - node_modules/@img/**/*
   - node_modules/better-sqlite3/**/*
   - node_modules/bufferutil/**/*
