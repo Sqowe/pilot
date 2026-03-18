@@ -37,6 +37,22 @@ describe('resolveMessageEndPayload', () => {
     expect(result.effectiveContent).toEqual([]);
     expect(result.errorText).toBe('模型响应超时：长时间未收到上游返回，请稍后重试或检查当前模型/网关负载。');
   });
+
+  it('surfaces empty_success_result when message_end has no content and no streamed fallback', () => {
+    const result = resolveMessageEndPayload({
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'stop',
+      },
+      streamedText: '',
+    });
+
+    expect(result.nextStreamedText).toBe('');
+    expect(result.shouldEmitMessage).toBe(false);
+    expect(result.effectiveContent).toEqual([]);
+    expect(result.errorText).toBe('模型返回了一个空的成功结果，当前模型或网关兼容性可能有问题，请重试或切换协议后再试。');
+  });
 });
 
 describe('toUserFacingErrorText', () => {

@@ -171,7 +171,7 @@ export function resolveSyntheticPiModelFallback(
     };
   }
 
-  const fallbackProvider = input.rawProvider === 'custom'
+  const fallbackProvider = input.rawProvider === 'custom' || input.rawProvider === 'ollama'
     ? (input.routeProtocol || 'anthropic')
     : (parsedProvider || input.rawProvider || input.routeProtocol || 'anthropic');
 

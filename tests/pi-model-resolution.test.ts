@@ -92,6 +92,21 @@ describe('pi model resolution helpers', () => {
     });
   });
 
+  it('maps ollama synthetic fallbacks onto the openai provider', () => {
+    const fallback = resolveSyntheticPiModelFallback({
+      rawModel: 'qwen3.5:0.8b',
+      resolvedModelString: 'qwen3.5:0.8b',
+      rawProvider: 'ollama',
+      routeProtocol: 'openai',
+      baseUrl: 'http://localhost:11434/v1',
+    });
+
+    expect(fallback).toEqual({
+      provider: 'openai',
+      modelId: 'qwen3.5:0.8b',
+    });
+  });
+
   it('downgrades openai responses api to completions for custom endpoints', () => {
     const model = applyPiModelRuntimeOverrides(
       {

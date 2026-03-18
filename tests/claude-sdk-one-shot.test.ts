@@ -351,6 +351,41 @@ describe('probeWithClaudeSdk', () => {
     expect(result.errorType).toBe('network_error');
   });
 
+  it('normalizes ollama probe base urls before building synthetic models', async () => {
+    mocks.resolvePiRegistryModel.mockReturnValue(undefined);
+    mocks.buildSyntheticPiModel.mockReturnValue({
+      id: 'qwen3.5:0.8b',
+      provider: 'ollama',
+      api: 'openai-completions',
+      baseUrl: 'http://localhost:11434/v1',
+    });
+
+    const result = await probeWithClaudeSdk(
+      {
+        provider: 'ollama',
+        apiKey: '',
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3.5:0.8b',
+      },
+      createConfig({
+        provider: 'ollama',
+        apiKey: '',
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3.5:0.8b',
+        activeProfileKey: 'ollama',
+      })
+    );
+
+    expect(result.ok).toBe(true);
+    expect(mocks.buildSyntheticPiModel).toHaveBeenCalledWith(
+      'qwen3.5:0.8b',
+      expect.any(String),
+      'openai',
+      'http://localhost:11434/v1',
+      'openai-completions',
+    );
+  });
+
   it('keeps explicit openrouter model namespaces for synthetic fallback models', async () => {
     mocks.resolvePiRegistryModel.mockReturnValue(undefined);
     mocks.buildSyntheticPiModel.mockReturnValue({

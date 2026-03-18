@@ -62,6 +62,15 @@ export function resolveMessageEndPayload(
     ? message.content
     : (streamedText ? [{ type: 'text' as const, text: streamedText }] : []);
 
+  if (rawContent.length === 0 && message) {
+    return {
+      effectiveContent: [],
+      errorText: toUserFacingErrorText('empty_success_result'),
+      nextStreamedText,
+      shouldEmitMessage: false,
+    };
+  }
+
   // Post-process: split any <think>...</think> tags in text blocks into
   // separate thinking + text content blocks for proper UI rendering.
   const effectiveContent: MessageEndContentBlock[] = [];

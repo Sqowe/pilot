@@ -3,6 +3,7 @@ import type { ApiTestInput, ApiTestResult } from '../../renderer/types';
 import { PROVIDER_PRESETS, type AppConfig, type CustomProtocolType } from '../config/config-store';
 import {
   normalizeAnthropicBaseUrl,
+  normalizeOllamaBaseUrl,
   resolveOllamaCredentials,
   resolveOpenAICredentials,
   shouldAllowEmptyAnthropicApiKey,
@@ -96,9 +97,13 @@ function buildProbeConfig(input: ApiTestInput, config: AppConfig): AppConfig {
   const normalizedInputApiKey = typeof input.apiKey === 'string' ? input.apiKey.trim() : undefined;
   const resolvedCustomProtocol = resolvePiRouteProtocol(input.provider, input.customProtocol) as CustomProtocolType;
   const effectiveRawBaseUrl = resolvedBaseUrl || '';
-  const effectiveBaseUrl = resolvedCustomProtocol === 'openai' || resolvedCustomProtocol === 'gemini'
-    ? effectiveRawBaseUrl
-    : normalizeAnthropicBaseUrl(effectiveRawBaseUrl);
+  const effectiveBaseUrl = input.provider === 'ollama'
+    ? (normalizeOllamaBaseUrl(effectiveRawBaseUrl) || effectiveRawBaseUrl)
+    : (
+      resolvedCustomProtocol === 'openai' || resolvedCustomProtocol === 'gemini'
+        ? effectiveRawBaseUrl
+        : normalizeAnthropicBaseUrl(effectiveRawBaseUrl)
+    );
   const effectiveApiKey = resolveProbeApiKey(
     input,
     resolvedCustomProtocol,

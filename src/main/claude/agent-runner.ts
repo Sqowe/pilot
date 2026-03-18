@@ -1140,6 +1140,7 @@ ${hints.join('\n')}
         runtimeConfig.provider,
         runtimeConfig.customProtocol,
       );
+      let usedSyntheticModel = false;
       let piModel = resolvePiRegistryModel(modelString, {
         configProvider: configProtocol,
         customBaseUrl: runtimeConfig.baseUrl?.trim() || undefined,
@@ -1148,6 +1149,7 @@ ${hints.join('\n')}
       });
 
       if (!piModel) {
+        usedSyntheticModel = true;
         // Synthetic fallback: construct a Model for unknown/custom models
         const synthetic = resolveSyntheticPiModelFallback({
           rawModel: runtimeConfig.model,
@@ -1202,7 +1204,16 @@ ${hints.join('\n')}
         }
         log('[ClaudeAgentRunner] Set runtime API key for config provider:', piProvider);
       } else {
-        logWarn('[ClaudeAgentRunner] No API key configured for provider:', provider);
+        if (provider === 'ollama') {
+          log('[ClaudeAgentRunner] Ollama configured without explicit API key; relying on OpenAI-compatible placeholder/env auth path', safeStringify({
+            provider,
+            modelProvider: piModel.provider,
+            modelId: piModel.id,
+            baseUrl: piModel.baseUrl || runtimeConfig.baseUrl || '',
+          }));
+        } else {
+          logWarn('[ClaudeAgentRunner] No API key configured for provider:', provider);
+        }
       }
 
       // baseUrl is now embedded in the model object via resolvePiModel()
@@ -1627,12 +1638,15 @@ Tool routing:
       let streamedText = '';
       let compactionStepId: string | undefined;
       let hasEmittedError = false;
+      let terminalErrorText: string | undefined;
       const thinkParser = new ThinkTagStreamParser();
+      const promptStartedAt = Date.now();
 
       // Ollama cold-start feedback: if provider is 'ollama' and no stream event arrives
       // within 10 seconds, show a "model loading" trace update so users know what's happening.
       let ollamaColdStartTimerId: ReturnType<typeof setTimeout> | undefined;
       let receivedFirstStreamEvent = false;
+      let firstStreamEventAt: number | undefined;
       if (provider === 'ollama') {
         ollamaColdStartTimerId = setTimeout(() => {
           if (!receivedFirstStreamEvent && !controller.signal.aborted) {
@@ -1642,6 +1656,30 @@ Tool routing:
           }
         }, 10000);
       }
+
+      const markFirstStreamEvent = (eventType: string) => {
+        if (receivedFirstStreamEvent) {
+          return;
+        }
+        receivedFirstStreamEvent = true;
+        firstStreamEventAt = Date.now();
+        if (ollamaColdStartTimerId) {
+          clearTimeout(ollamaColdStartTimerId);
+        }
+        this.sendTraceUpdate(session.id, thinkingStepId, {
+          title: 'Processing request...',
+        });
+        if (provider === 'ollama') {
+          log('[ClaudeAgentRunner] Ollama first stream event received', safeStringify({
+            sessionId: session.id,
+            eventType,
+            modelId: piModel.id,
+            modelProvider: piModel.provider,
+            baseUrl: piModel.baseUrl || runtimeConfig.baseUrl || '',
+            latencyMs: firstStreamEventAt - promptStartedAt,
+          }));
+        }
+      };
 
       // Activity-based timeout: reset the 5-min timer whenever the SDK sends events
       const PROMPT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -1677,14 +1715,7 @@ Tool routing:
             if (controller.signal.aborted) break;
             const ame = event.assistantMessageEvent;
             if (ame.type === 'text_delta') {
-              // Clear Ollama cold-start indicator on first stream event
-              if (!receivedFirstStreamEvent && ollamaColdStartTimerId) {
-                receivedFirstStreamEvent = true;
-                clearTimeout(ollamaColdStartTimerId);
-                this.sendTraceUpdate(session.id, thinkingStepId, {
-                  title: 'Processing request...',
-                });
-              }
+              markFirstStreamEvent(ame.type);
               const parsed = thinkParser.push(ame.delta);
               if (parsed.thinking) {
                 this.sendToRenderer({
@@ -1697,20 +1728,14 @@ Tool routing:
                 this.sendPartial(session.id, parsed.text);
               }
             } else if (ame.type === 'thinking_delta') {
-              // Clear Ollama cold-start indicator on first stream event
-              if (!receivedFirstStreamEvent && ollamaColdStartTimerId) {
-                receivedFirstStreamEvent = true;
-                clearTimeout(ollamaColdStartTimerId);
-                this.sendTraceUpdate(session.id, thinkingStepId, {
-                  title: 'Processing request...',
-                });
-              }
+              markFirstStreamEvent(ame.type);
               // Forward thinking delta to renderer for real-time display
               this.sendToRenderer({
                 type: 'stream.thinking',
                 payload: { sessionId: session.id, delta: ame.delta },
               });
             } else if (ame.type === 'toolcall_start') {
+              markFirstStreamEvent(ame.type);
               const partial = ame.partial;
               const toolContent = partial?.content?.[ame.contentIndex];
               const toolName = toolContent?.type === 'toolCall' ? toolContent.name : 'unknown';
@@ -1763,7 +1788,23 @@ Tool routing:
               streamedText,
             });
             streamedText = resolvedPayload.nextStreamedText;
+            if (provider === 'ollama') {
+              log('[ClaudeAgentRunner] Ollama message_end diagnostics', safeStringify({
+                sessionId: session.id,
+                modelId: piModel.id,
+                modelProvider: piModel.provider,
+                usedSyntheticModel,
+                receivedFirstStreamEvent,
+                firstStreamLatencyMs: firstStreamEventAt ? firstStreamEventAt - promptStartedAt : null,
+                stopReason: (msg as { stopReason?: unknown })?.stopReason ?? null,
+                contentBlocks: Array.isArray((msg as { content?: unknown[] })?.content)
+                  ? ((msg as { content?: unknown[] }).content?.length ?? 0)
+                  : 0,
+                emittedError: Boolean(resolvedPayload.errorText),
+              }));
+            }
             if (resolvedPayload.errorText) {
+              terminalErrorText = resolvedPayload.errorText;
               if (!hasEmittedError) {
                 hasEmittedError = true;
                 this.sendMessage(session.id, {
@@ -1952,6 +1993,17 @@ Tool routing:
       // Execute the prompt with activity-based timeout
       try {
         resetActivityTimeout();
+        if (provider === 'ollama') {
+          log('[ClaudeAgentRunner] Starting Ollama prompt', safeStringify({
+            sessionId: session.id,
+            modelId: piModel.id,
+            modelProvider: piModel.provider,
+            baseUrl: piModel.baseUrl || runtimeConfig.baseUrl || '',
+            usedSyntheticModel,
+            hasExplicitApiKey: Boolean(apiKey),
+            thinkingLevel,
+          }));
+        }
         try {
           const promptResult = await piSession.prompt(contextualPrompt);
           log('[ClaudeAgentRunner] prompt() returned:', JSON.stringify(promptResult ?? 'void').substring(0, 1000));
@@ -1967,8 +2019,8 @@ Tool routing:
 
       // Complete - update the initial thinking step
       this.sendTraceUpdate(session.id, thinkingStepId, {
-        status: 'completed',
-        title: 'Task completed',
+        status: terminalErrorText ? 'error' : 'completed',
+        title: terminalErrorText ? 'Request failed' : 'Task completed',
       });
 
     } catch (error) {
