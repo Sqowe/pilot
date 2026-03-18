@@ -288,6 +288,34 @@ function safeStringify(value: unknown, space = 0): string {
   }
 }
 
+function summarizeMessageForLog(message: unknown): Record<string, unknown> {
+  if (!message || typeof message !== 'object') {
+    return { present: false };
+  }
+
+  const typedMessage = message as {
+    role?: unknown;
+    stopReason?: unknown;
+    content?: unknown[];
+    usage?: unknown;
+  };
+  const content = Array.isArray(typedMessage.content) ? typedMessage.content : [];
+
+  return {
+    present: true,
+    role: typeof typedMessage.role === 'string' ? typedMessage.role : undefined,
+    stopReason: typedMessage.stopReason ?? undefined,
+    contentBlocks: content.length,
+    contentTypes: content.slice(0, 8).map((block) => {
+      if (!block || typeof block !== 'object') {
+        return typeof block;
+      }
+      const type = (block as { type?: unknown }).type;
+      return typeof type === 'string' ? type : 'unknown';
+    }),
+    usage: normalizeTokenUsage(typedMessage.usage),
+  };
+}
 
 function toErrorText(error: unknown): string {
   if (error instanceof Error) {
@@ -1642,6 +1670,7 @@ Tool routing:
       let terminalErrorText: string | undefined;
       const thinkParser = new ThinkTagStreamParser();
       const promptStartedAt = Date.now();
+      const streamEventCounts = new Map<string, number>();
 
       // Ollama cold-start feedback: if provider is 'ollama' and no stream event arrives
       // within 10 seconds, show a "model loading" trace update so users know what's happening.
@@ -1694,6 +1723,15 @@ Tool routing:
         }, PROMPT_TIMEOUT_MS);
       };
 
+      const recordStreamEvent = (eventType: string) => {
+        streamEventCounts.set(eventType, (streamEventCounts.get(eventType) ?? 0) + 1);
+      };
+
+      const getStreamEventSummary = () =>
+        Object.fromEntries(
+          Array.from(streamEventCounts.entries()).sort(([left], [right]) => left.localeCompare(right))
+        );
+
       const unsubscribe = piSession.subscribe((event) => {
         try {
         if (controller.signal.aborted) return;
@@ -1701,13 +1739,27 @@ Tool routing:
         // Reset activity timeout on meaningful events
         resetActivityTimeout();
 
-        // Debug: log every event type
         if (event.type === 'message_update') {
-          log(`[ClaudeAgentRunner] Event: ${event.type} → ${event.assistantMessageEvent.type}`);
-        } else if (event.type === 'message_start' || event.type === 'message_end') {
-          log(`[ClaudeAgentRunner] Event: ${event.type}`, JSON.stringify((event.message as any)?.content || 'no content').substring(0, 500));
+          const updateType = event.assistantMessageEvent.type;
+          recordStreamEvent(updateType);
+          if (updateType !== 'text_delta' && updateType !== 'thinking_delta') {
+            log(`[ClaudeAgentRunner] Event: ${event.type} → ${updateType}`);
+          }
+        } else if (event.type === 'message_start') {
+          log('[ClaudeAgentRunner] Event: message_start', safeStringify(summarizeMessageForLog(event.message), 2));
+        } else if (event.type === 'message_end') {
+          log(
+            '[ClaudeAgentRunner] Event: message_end',
+            safeStringify(
+              {
+                message: summarizeMessageForLog(event.message),
+                messageUpdateCounts: getStreamEventSummary(),
+              },
+              2
+            )
+          );
         } else if (event.type === 'turn_end') {
-          log(`[ClaudeAgentRunner] Event: ${event.type}`, JSON.stringify((event.message as any)?.content || 'no content').substring(0, 500));
+          log(`[ClaudeAgentRunner] Event: ${event.type}`);
         } else {
           log(`[ClaudeAgentRunner] Event: ${event.type}`);
         }
@@ -1781,10 +1833,12 @@ Tool routing:
             }
 
             const msg = event.message;
-            log(
-              '[ClaudeAgentRunner] message_end raw message:',
-              safeStringify(msg, 2)
-            );
+            if (process.env.COWORK_LOG_SDK_MESSAGES_FULL === '1') {
+              log(
+                '[ClaudeAgentRunner] message_end raw message:',
+                safeStringify(msg, 2)
+              );
+            }
             const resolvedPayload = resolveMessageEndPayload({
               message: msg as any,
               streamedText,
