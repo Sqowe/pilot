@@ -172,12 +172,17 @@ async function waitForDevServer(url: string, maxAttempts = 30, intervalMs = 500)
 // Single-instance lock: skip in dev mode so vite-plugin-electron can restart freely
 // without the old process blocking the new one during async cleanup.
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
+const ELECTRON_DEVTOOLS_DEBUG_PORT = '9223';
 
 // Enable Chrome DevTools Protocol in dev mode so the renderer can be inspected
-// via chrome://inspect or connected to by Puppeteer/Playwright at localhost:9222
+// via chrome://inspect or connected to by Puppeteer/Playwright at localhost:9223.
+// Chrome MCP uses 9222, so keep Electron on a separate port in development.
 if (isDev) {
-  app.commandLine.appendSwitch('remote-debugging-port', '9222');
-  app.commandLine.appendSwitch('remote-allow-origins', 'http://localhost:9222');
+  app.commandLine.appendSwitch('remote-debugging-port', ELECTRON_DEVTOOLS_DEBUG_PORT);
+  app.commandLine.appendSwitch(
+    'remote-allow-origins',
+    `http://localhost:${ELECTRON_DEVTOOLS_DEBUG_PORT}`
+  );
 }
 
 const hasSingleInstanceLock = isDev || app.requestSingleInstanceLock();

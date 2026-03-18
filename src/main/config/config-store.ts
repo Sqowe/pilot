@@ -12,9 +12,11 @@
  * Dependencies: electron-store, auth-utils, api-model-presets
  */
 import Store from 'electron-store';
-import * as crypto from 'crypto';
-import * as os from 'os';
 import { log, logWarn } from '../utils/logger';
+import {
+  createEncryptedStoreWithKeyRotation,
+  getLegacyDerivedKeyHexes,
+} from '../utils/store-encryption';
 import {
   isOpenAIProvider,
   isOllamaLegacyCustomOpenAIConfig,
@@ -362,21 +364,29 @@ function defaultProtocolForProvider(provider: ProviderType): CustomProtocolType 
 export class ConfigStore {
   private store: Store<AppConfig>;
 
-  private static getConfigKey(): Buffer {
-    const seed = `${os.hostname()}:${__dirname}:open-cowork-config-v1`;
-    return crypto.scryptSync(seed, 'open-cowork-config-salt', 32);
-  }
-
   constructor() {
     const storeOptions: any = {
       name: 'config',
       projectName: 'open-cowork',
       defaults: defaultConfig,
-      // Encrypt the API key using a per-installation derived key
-      encryptionKey: ConfigStore.getConfigKey().toString('hex'),
     };
 
-    this.store = new Store<AppConfig>(storeOptions);
+    this.store = createEncryptedStoreWithKeyRotation<AppConfig>({
+      stableKey: 'open-cowork-config-stable-v1',
+      legacyKeys: [
+        'open-cowork-config-v1',
+        ...getLegacyDerivedKeyHexes({
+          moduleDirname: __dirname,
+          stableSeed: 'open-cowork-config-stable-v1',
+          legacySeed: 'open-cowork-config-v1',
+          salt: 'open-cowork-config-salt',
+        }),
+      ],
+      storeOptions,
+      logPrefix: '[ConfigStore]',
+      log,
+      warn: logWarn,
+    });
     this.ensureNormalized();
   }
 

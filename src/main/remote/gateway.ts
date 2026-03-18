@@ -132,7 +132,7 @@ export class RemoteGateway extends EventEmitter {
    * Stop the gateway
    */
   async stop(): Promise<void> {
-    if (!this._running) {
+    if (!this._running && !this.httpServer && !this.wss) {
       return;
     }
     
