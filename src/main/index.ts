@@ -828,7 +828,7 @@ app
           click: () => mainWindow?.webContents.send('server-event', { type: 'navigate', payload: 'settings' }),
         },
       ]);
-      app.dock.setMenu(dockMenu);
+      app.dock?.setMenu(dockMenu);
     }
 
     // macOS: send initial system theme to renderer
