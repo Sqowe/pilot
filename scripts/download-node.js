@@ -144,6 +144,37 @@ async function downloadAndExtract(platform, arch) {
 
     // Clean up archive
     removeFileWithRetries(archivePath);
+
+    // Remove files not needed at runtime to reduce bundle size (~65MB savings)
+    const CLEANUP_DIRS = ['include', 'share'];
+    const CLEANUP_FILES = ['CHANGELOG.md', 'README.md'];
+    const CLEANUP_NPM_DIRS = ['docs', 'man'];
+
+    for (const dir of CLEANUP_DIRS) {
+      const dirPath = path.join(extractDir, dir);
+      if (fs.existsSync(dirPath)) {
+        fs.rmSync(dirPath, { recursive: true, force: true });
+        console.log(`  Removed ${dir}/`);
+      }
+    }
+    for (const file of CLEANUP_FILES) {
+      const filePath = path.join(extractDir, file);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`  Removed ${file}`);
+      }
+    }
+    const npmDir = path.join(extractDir, 'lib', 'node_modules', 'npm');
+    if (fs.existsSync(npmDir)) {
+      for (const sub of CLEANUP_NPM_DIRS) {
+        const subPath = path.join(npmDir, sub);
+        if (fs.existsSync(subPath)) {
+          fs.rmSync(subPath, { recursive: true, force: true });
+          console.log(`  Removed npm/${sub}/`);
+        }
+      }
+    }
+
     console.log(`✓ Extracted: ${platform}-${arch}`);
   } catch (error) {
     console.error(`✗ Failed to download ${platform}-${arch}:`, error?.stack || error);

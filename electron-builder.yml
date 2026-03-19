@@ -7,6 +7,8 @@ directories:
   buildResources: resources
 
 npmRebuild: true
+afterPack: ./scripts/after-pack.js
+afterAllArtifactBuild: ./scripts/compress-dmg.js
 
 files:
   - dist/**/*
@@ -30,11 +32,19 @@ files:
   - .claude/skills/**/*
   # Exclude non-essential files from node_modules to reduce bundle size
   - "!**/*.js.map"
+  - "!**/*.mjs.map"
   - "!**/*.d.ts.map"
   - "!**/*.mts.map"
+  - "!**/*.d.ts"
+  - "!**/*.ts"
   - "!**/README.md"
   - "!**/CHANGELOG.md"
   - "!**/CHANGELOG"
+  - "!**/LICENSE"
+  - "!**/LICENSE.md"
+  - "!**/.npmignore"
+  - "!**/.eslintrc*"
+  - "!**/tsconfig.json"
 
 # MCP servers (compiled JavaScript files, cross-platform)
 extraResources:
@@ -71,10 +81,9 @@ win:
 mac:
   icon: resources/icon.icns
   target:
-    - target: dmg
+    - target: dir
       arch:
         - arm64
-        - x64
   artifactName: ${productName}-${version}-mac-${arch}.${ext}
   identity: auto
   hardenedRuntime: true
@@ -115,6 +124,10 @@ nsis:
   deleteAppDataOnUninstall: false
 
 dmg:
+  # Explicit size to avoid dmgbuild "No space left on device" for large apps.
+  # The temporary writable DMG is auto-shrunk after copying, so this doesn't
+  # affect final DMG size. Our ULMO compression hook further reduces it.
+  size: "3g"
   window:
     width: 600
     height: 440

@@ -357,6 +357,116 @@ function installPackages(siteDir, platformTag, pythonBin) {
   fs.writeFileSync(runtimeMarkerFile, BUNDLED_RUNTIME_FINGERPRINT, 'utf-8');
 }
 
+/**
+ * Remove unnecessary files from the Python runtime to reduce bundle size.
+ *
+ * python-build-standalone ships a full Python with many pre-installed packages
+ * (litellm, google-cloud, grpc, etc.) that we don't need. We only keep the
+ * packages required for GUI automation (PIL, pyobjc/Quartz).
+ */
+function cleanPythonRuntime(destDir, siteDir) {
+  console.log(`🧹 Cleaning Python runtime to reduce bundle size...`);
+
+  // --- 1. Clean site-packages: keep only whitelisted packages ---
+  const SITE_PACKAGES_WHITELIST = new Set([
+    'PIL', 'Pillow', 'Pillow.libs',
+    'Quartz', 'AppKit', 'Foundation', 'CoreFoundation',
+    'objc', 'PyObjCTools',
+    'pyobjc_core', 'pyobjc_framework_Cocoa', 'pyobjc_framework_Quartz',
+  ]);
+
+  // Match package dirs and their .dist-info counterparts
+  function isWhitelisted(name) {
+    // Exact match
+    if (SITE_PACKAGES_WHITELIST.has(name)) return true;
+    // .dist-info for whitelisted packages (e.g. Pillow-10.0.0.dist-info)
+    if (name.endsWith('.dist-info')) {
+      const pkgName = name.replace(/-[\d].*$/, '');
+      // Check if the base package name matches any whitelist entry (case-insensitive)
+      for (const w of SITE_PACKAGES_WHITELIST) {
+        if (pkgName.toLowerCase() === w.toLowerCase()) return true;
+        // Handle underscored variants (pyobjc_core -> pyobjc-core)
+        if (pkgName.toLowerCase().replace(/-/g, '_') === w.toLowerCase()) return true;
+      }
+    }
+    return false;
+  }
+
+  if (exists(siteDir)) {
+    let removedCount = 0;
+    let removedBytes = 0;
+    const entries = fs.readdirSync(siteDir);
+    for (const entry of entries) {
+      if (isWhitelisted(entry)) continue;
+      const entryPath = path.join(siteDir, entry);
+      try {
+        const stat = fs.statSync(entryPath);
+        const size = stat.isDirectory()
+          ? parseInt(execSync(`du -sk "${entryPath}"`, { encoding: 'utf8' }).split('\t')[0], 10) * 1024
+          : stat.size;
+        fs.rmSync(entryPath, { recursive: true, force: true });
+        removedCount++;
+        removedBytes += size;
+      } catch {
+        // Ignore errors during cleanup
+      }
+    }
+    console.log(`  ✓ site-packages: removed ${removedCount} items (~${Math.round(removedBytes / 1024 / 1024)}MB)`);
+  }
+
+  // --- 2. Clean __pycache__ and .pyc files ---
+  // Note: execSync with controlled build-time paths (not user input)
+  try {
+    execSync(`find "${destDir}" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true`, { stdio: 'ignore' });
+    execSync(`find "${destDir}" -name "*.pyc" -delete 2>/dev/null || true`, { stdio: 'ignore' });
+    console.log(`  ✓ Removed __pycache__ and .pyc files`);
+  } catch {
+    // Ignore errors
+  }
+
+  // --- 3. Remove unnecessary stdlib modules ---
+  const libDir = path.join(destDir, 'lib');
+  // Find the pythonX.Y directory
+  const pythonLibDirs = fs.existsSync(libDir)
+    ? fs.readdirSync(libDir).filter(d => d.startsWith('python'))
+    : [];
+
+  for (const pyDir of pythonLibDirs) {
+    const stdlibDir = path.join(libDir, pyDir);
+    const STDLIB_REMOVE = ['test', 'idlelib', 'lib2to3', 'tkinter', 'pydoc_data', 'ensurepip'];
+    for (const mod of STDLIB_REMOVE) {
+      const modPath = path.join(stdlibDir, mod);
+      if (exists(modPath)) {
+        fs.rmSync(modPath, { recursive: true, force: true });
+        console.log(`  ✓ Removed stdlib/${mod}`);
+      }
+    }
+    // Remove turtle* files
+    try {
+      const turtleFiles = fs.readdirSync(stdlibDir).filter(f => f.startsWith('turtle'));
+      for (const f of turtleFiles) {
+        fs.rmSync(path.join(stdlibDir, f), { recursive: true, force: true });
+      }
+      if (turtleFiles.length > 0) console.log(`  ✓ Removed turtle* (${turtleFiles.length} items)`);
+    } catch { /* ignore */ }
+  }
+
+  // --- 4. Remove Tcl/Tk libraries ---
+  if (exists(libDir)) {
+    const tclTkDirs = fs.readdirSync(libDir).filter(d => d.startsWith('tcl') || d.startsWith('tk'));
+    for (const d of tclTkDirs) {
+      fs.rmSync(path.join(libDir, d), { recursive: true, force: true });
+    }
+    if (tclTkDirs.length > 0) console.log(`  ✓ Removed Tcl/Tk libraries (${tclTkDirs.length} dirs)`);
+  }
+
+  // Report final size
+  try {
+    const sizeStr = execSync(`du -sh "${destDir}"`, { encoding: 'utf8' }).split('\t')[0];
+    console.log(`  📦 Python runtime size after cleanup: ${sizeStr}`);
+  } catch { /* ignore */ }
+}
+
 async function preparePlatformArch(platform, arch) {
   const target = TARGETS[platform]?.[arch];
   if (!target) return;
@@ -369,7 +479,7 @@ async function preparePlatformArch(platform, arch) {
   if (!exists(pythonBin)) {
     console.log(`🐍 Preparing standalone Python ${PYTHON_MINOR} for ${platform}-${arch}...`);
     const url = await findStandaloneAssetUrl(target.triple, target.envUrlKey);
-    
+
     // Handle file:// URLs (existing archive) vs http(s):// URLs (need download)
     let archivePath;
     if (url.startsWith('file://')) {
@@ -395,12 +505,18 @@ async function preparePlatformArch(platform, arch) {
     if (!exists(pythonBin)) {
       throw new Error(`Python extraction failed: ${pythonBin} not found`);
     }
+
+    // Clean up Python runtime (remove unnecessary stdlib modules, Tcl/Tk, etc.)
+    cleanPythonRuntime(destDir, siteDir);
   } else {
     console.log(`✓ Standalone Python already present: ${pythonBin}`);
   }
 
   // Install packages for GUI automation
   installPackages(siteDir, target.platformTag, pythonBin);
+
+  // Clean site-packages of non-whitelisted packages (also runs after pip install)
+  cleanPythonRuntime(destDir, siteDir);
 }
 
 async function main() {
