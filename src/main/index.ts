@@ -388,6 +388,7 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     backgroundColor: THEME.background,
+    icon: join(__dirname, '../../resources/icon.ico'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
