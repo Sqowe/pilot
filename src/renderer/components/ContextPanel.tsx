@@ -466,7 +466,7 @@ export function ContextPanel() {
           {mcpServers.length === 0 ? (
             <div className="flex items-center gap-2 text-xs text-text-muted py-1">
               <Plug className="w-3.5 h-3.5 shrink-0" />
-              <span>{t('context.noConnectors')}</span>
+              <span>{t('mcp.noConnectors')}</span>
             </div>
           ) : (
             <div className="space-y-0.5">
@@ -551,8 +551,8 @@ function ConnectorItem({
           </div>
           {server.connected && (
             <p className="text-xs text-text-muted">
-              {server.toolCount} tools
-              {usageCount > 0 && ` • ${usageCount} calls`}
+              {t('mcp.toolCount', { count: server.toolCount })}
+              {usageCount > 0 && ` • ${t('mcp.callCount', { count: usageCount })}`}
             </p>
           )}
         </div>

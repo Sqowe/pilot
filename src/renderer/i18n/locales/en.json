@@ -133,8 +133,6 @@
     "maxOutputTokensPlaceholder": "Auto-detect",
     "contextWindowHint": "Leave empty for auto-detection. Override only if the model reports incorrect limits.",
     "saveFailed": "Failed to save settings. Please try again.",
-    "loadFailed": "Failed to load configuration. Using defaults — your saved settings may not be shown.",
-    "diagnosisFailed": "Diagnosis failed",
     "getStarted": "Get Started",
     "saveSettings": "Save Settings",
     "openSettingsAction": "Open API Settings",
@@ -450,7 +448,9 @@
     "deleteServerFailed": "Failed to delete connector",
     "deleteConnectorConfirm": "Delete this connector?",
     "commandRequired": "Command is required",
-    "urlRequired": "URL is required"
+    "urlRequired": "URL is required",
+    "toolCount": "{{count}} tools",
+    "callCount": "{{count}} calls"
   },
   "credentials": {
     "title": "Credentials",

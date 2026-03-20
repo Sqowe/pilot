@@ -162,12 +162,13 @@ export function SettingsAPI() {
 
       {/* API Key */}
       <div className="space-y-3 py-5 border-b border-border-muted">
-        <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
+        <label htmlFor="api-key-input" className="flex items-center gap-2 text-sm font-medium text-text-primary">
           <Key className="w-4 h-4" />
           {t('api.apiKey')}
         </label>
         <p className="text-xs leading-5 text-text-muted">{t('api.apiKeyDescription')}</p>
         <input
+          id="api-key-input"
           type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
@@ -182,7 +183,7 @@ export function SettingsAPI() {
       {/* Custom Protocol */}
       {provider === 'custom' && (
         <div className="space-y-3 py-5 border-b border-border-muted">
-          <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
+          <label id="api-protocol-label" className="flex items-center gap-2 text-sm font-medium text-text-primary">
             <Server className="w-4 h-4" />
             {t('api.protocol')}
           </label>
@@ -215,7 +216,7 @@ export function SettingsAPI() {
       {(provider === 'custom' || provider === 'ollama') && (
         <div className="space-y-3 py-5 border-b border-border-muted">
           <div className="flex items-center justify-between gap-2">
-            <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
+            <label htmlFor="api-base-url-input" className="flex items-center gap-2 text-sm font-medium text-text-primary">
               <Server className="w-4 h-4" />
               {t('api.baseUrl')}
             </label>
@@ -236,6 +237,7 @@ export function SettingsAPI() {
             )}
           </div>
           <input
+            id="api-base-url-input"
             type="text"
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
@@ -269,7 +271,7 @@ export function SettingsAPI() {
       {/* Model Selection */}
       <div className="space-y-3 py-5 border-b border-border-muted">
         <div className="flex items-center justify-between">
-          <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
+          <label htmlFor="api-model-input" className="flex items-center gap-2 text-sm font-medium text-text-primary">
             <Cpu className="w-4 h-4" />
             {t('api.model')}
           </label>
@@ -307,6 +309,7 @@ export function SettingsAPI() {
         </div>
         {useCustomModel ? (
           <input
+            id="api-model-input"
             type="text"
             value={customModel}
             onChange={(e) => setCustomModel(e.target.value)}
@@ -315,6 +318,7 @@ export function SettingsAPI() {
           />
         ) : (
           <select
+            id="api-model-input"
             value={modelOptions.length ? model : ''}
             onChange={(e) => setModel(e.target.value)}
             className="w-full px-4 py-3 rounded-lg bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all appearance-none cursor-pointer"
@@ -338,10 +342,11 @@ export function SettingsAPI() {
         {(provider === 'ollama' || provider === 'custom') && (
           <div className="grid grid-cols-2 gap-3 pt-2">
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1">
+              <label htmlFor="api-context-window-input" className="block text-xs font-medium text-text-secondary mb-1">
                 {t('api.contextWindow')}
               </label>
               <input
+                id="api-context-window-input"
                 type="number"
                 value={contextWindow}
                 onChange={(e) => setContextWindow(e.target.value)}
@@ -352,10 +357,11 @@ export function SettingsAPI() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1">
+              <label htmlFor="api-max-tokens-input" className="block text-xs font-medium text-text-secondary mb-1">
                 {t('api.maxOutputTokens')}
               </label>
               <input
+                id="api-max-tokens-input"
                 type="number"
                 value={maxTokens}
                 onChange={(e) => setMaxTokens(e.target.value)}
@@ -657,17 +663,19 @@ function CredentialForm({
   const [url, setUrl] = useState(credential?.url || '');
   const [notes, setNotes] = useState(credential?.notes || '');
   const [showPassword, setShowPassword] = useState(false);
+  const [formError, setFormError] = useState('');
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !username.trim()) {
-      alert(t('credentials.nameRequired'));
+      setFormError(t('credentials.nameRequired'));
       return;
     }
     if (!credential && !password.trim()) {
-      alert(t('credentials.passwordRequired'));
+      setFormError(t('credentials.passwordRequired'));
       return;
     }
+    setFormError('');
 
     onSave({
       name: name.trim(),
@@ -688,6 +696,13 @@ function CredentialForm({
       <h3 className="font-medium text-text-primary">
         {credential ? t('credentials.editCredential') : t('credentials.addNewCredential')}
       </h3>
+
+      {formError && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-error/10 text-error text-sm">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          {formError}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-4">
         <div>
