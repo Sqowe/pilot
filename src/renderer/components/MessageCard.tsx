@@ -126,7 +126,7 @@ export const MessageCard = memo(function MessageCard({ message, isStreaming }: M
             ) : (
               contentBlocks.map((block, index) => (
                 <ContentBlockView
-                  key={(block as any).id || `block-${block.type}-${index}`}
+                  key={('id' in block ? (block as ToolUseContent).id : undefined) || `block-${block.type}-${index}`}
                   block={block}
                   isUser={isUser}
                   isStreaming={isStreaming}
@@ -159,7 +159,7 @@ export const MessageCard = memo(function MessageCard({ message, isStreaming }: M
             }
             return (
               <ContentBlockView
-                key={(block as any).id || `block-${block.type}-${index}`}
+                key={('id' in block ? (block as ToolUseContent).id : undefined) || `block-${block.type}-${index}`}
                 block={block}
                 isUser={isUser}
                 isStreaming={isStreaming}
@@ -746,7 +746,7 @@ function shortenPath(p: string): string {
 }
 
 /** Get compact label: tool action + key argument */
-function getToolLabel(name: string, input: any): string {
+function getToolLabel(name: string, input: Record<string, unknown>): string {
   const inp = input || {};
   // MCP tools
   if (name.startsWith('mcp__')) {
@@ -797,7 +797,7 @@ interface TodoItem {
 const TodoWriteBlock = memo(function TodoWriteBlock({ block }: { block: ToolUseContent }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(true);
-  const todos: TodoItem[] = (block.input as any)?.todos || [];
+  const todos: TodoItem[] = (block.input.todos as TodoItem[] | undefined) || [];
 
   // Calculate progress
   const completedCount = todos.filter((t) => t.status === 'completed').length;
@@ -899,7 +899,7 @@ const TodoWriteBlock = memo(function TodoWriteBlock({ block }: { block: ToolUseC
 function AskUserQuestionBlock({ block }: { block: ToolUseContent }) {
   const { t } = useTranslation();
   // Parse questions from input
-  const questions: QuestionItem[] = (block.input as any)?.questions || [];
+  const questions: QuestionItem[] = (block.input.questions as QuestionItem[] | undefined) || [];
 
   const getOptionLetter = (index: number) => String.fromCharCode(65 + index);
 
