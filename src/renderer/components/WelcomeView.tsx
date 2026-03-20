@@ -92,7 +92,7 @@ export function WelcomeView() {
         newImages.push({
           url,
           base64,
-          mediaType: resizedBlob.type as any,
+          mediaType: resizedBlob.type,
         });
       } catch (err) {
         console.error('Failed to process pasted image:', err);
@@ -319,7 +319,7 @@ export function WelcomeView() {
         type: 'image',
         source: {
           type: 'base64',
-          media_type: img.mediaType as any,
+          media_type: img.mediaType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
           data: img.base64,
         },
       });

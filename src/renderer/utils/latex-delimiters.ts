@@ -27,6 +27,7 @@ export function normalizeLatexDelimiters(text: string): string {
   out = out.replace(/\\\[([\s\S]+?)\\\]/g, (_, c) => `$$${c}$$`);
 
   // 5. Restore protected blocks
+  // eslint-disable-next-line no-control-regex
   out = out.replace(/\x00P(\d+)\x00/g, (_, i) => preserved[+i]);
 
   return out;
