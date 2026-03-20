@@ -183,22 +183,39 @@ class CredentialsStore {
   }
 
   /**
-   * Get all credentials (with decrypted passwords)
+   * Get all credentials (with decrypted passwords).
+   * Credentials that fail decryption are skipped and logged rather than
+   * crashing the entire lookup — guards against a single corrupt entry
+   * making all credentials inaccessible.
    */
   getAll(): UserCredential[] {
     const stored = this.store.get('credentials', []);
-    return stored.map((cred) => ({
-      id: cred.id,
-      name: cred.name,
-      type: cred.type,
-      service: cred.service,
-      username: cred.username,
-      password: this.decrypt(cred.encryptedPassword, cred.iv),
-      url: cred.url,
-      notes: cred.notes,
-      createdAt: cred.createdAt,
-      updatedAt: cred.updatedAt,
-    }));
+    const results: UserCredential[] = [];
+
+    for (const cred of stored) {
+      try {
+        results.push({
+          id: cred.id,
+          name: cred.name,
+          type: cred.type,
+          service: cred.service,
+          username: cred.username,
+          password: this.decrypt(cred.encryptedPassword, cred.iv),
+          url: cred.url,
+          notes: cred.notes,
+          createdAt: cred.createdAt,
+          updatedAt: cred.updatedAt,
+        });
+      } catch (error) {
+        logWarn('[CredentialsStore] Skipping corrupt credential — decryption failed', {
+          id: cred.id,
+          name: cred.name,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return results;
   }
 
   /**

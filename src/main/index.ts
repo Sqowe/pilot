@@ -955,8 +955,11 @@ app
     }
 
     app.on('activate', () => {
-      const hasVisibleWindow = BrowserWindow.getAllWindows().some((w) => !w.isDestroyed());
-      if (!hasVisibleWindow) {
+      // Dock click: restore hidden window if it exists, otherwise create a new one.
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+      } else {
         createWindow();
       }
     });
@@ -1639,7 +1642,10 @@ ipcMain.handle(
   'credentials.save',
   (_event, credential: Omit<UserCredential, 'id' | 'createdAt' | 'updatedAt'>) => {
     try {
-      return credentialsStore.save(credential);
+      const saved = credentialsStore.save(credential);
+      // Strip password before returning to renderer
+      const { password: _pw, ...safeSaved } = saved;
+      return safeSaved;
     } catch (error) {
       logError('[Credentials] Error saving credential:', error);
       throw error;
@@ -1655,7 +1661,11 @@ ipcMain.handle(
     updates: Partial<Omit<UserCredential, 'id' | 'createdAt' | 'updatedAt'>>
   ) => {
     try {
-      return credentialsStore.update(id, updates);
+      const updated = credentialsStore.update(id, updates);
+      if (!updated) return undefined;
+      // Strip password before returning to renderer
+      const { password: _pw, ...safeUpdated } = updated;
+      return safeUpdated;
     } catch (error) {
       logError('[Credentials] Error updating credential:', error);
       throw error;
