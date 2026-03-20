@@ -20,6 +20,21 @@ import type {
   LocalOllamaDiscoveryResult,
 } from '../renderer/types';
 import type { DiagnosticInput, DiagnosticResult } from '../renderer/types';
+import type {
+  McpServerConfig,
+  McpTool,
+  McpServerStatus,
+  McpPresetsMap,
+  CredentialRecord,
+  CredentialSaveInput,
+  CredentialUpdateInput,
+  RemoteConfig,
+  GatewayConfig,
+  FeishuChannelConfig,
+  PairedUser,
+  PairingRequest,
+  RemoteSessionMapping,
+} from '../shared/ipc-types';
 
 // Track registered callbacks to prevent duplicate listeners
 let registeredCallback: ((event: ServerEvent) => void) | null = null;
@@ -129,15 +144,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // MCP methods
   mcp: {
-    getServers: (): Promise<unknown[]> => ipcRenderer.invoke('mcp.getServers'),
-    getServer: (serverId: string): Promise<unknown> => ipcRenderer.invoke('mcp.getServer', serverId),
-    saveServer: (config: unknown): Promise<{ success: boolean }> =>
+    getServers: (): Promise<McpServerConfig[]> => ipcRenderer.invoke('mcp.getServers'),
+    getServer: (serverId: string): Promise<McpServerConfig | undefined> => ipcRenderer.invoke('mcp.getServer', serverId),
+    saveServer: (config: McpServerConfig): Promise<{ success: boolean }> =>
       ipcRenderer.invoke('mcp.saveServer', config),
     deleteServer: (serverId: string): Promise<{ success: boolean }> =>
       ipcRenderer.invoke('mcp.deleteServer', serverId),
-    getTools: (): Promise<unknown[]> => ipcRenderer.invoke('mcp.getTools'),
-    getServerStatus: (): Promise<unknown[]> => ipcRenderer.invoke('mcp.getServerStatus'),
-    getPresets: (): Promise<unknown> => ipcRenderer.invoke('mcp.getPresets'),
+    getTools: (): Promise<McpTool[]> => ipcRenderer.invoke('mcp.getTools'),
+    getServerStatus: (): Promise<McpServerStatus[]> => ipcRenderer.invoke('mcp.getServerStatus'),
+    getPresets: (): Promise<McpPresetsMap> => ipcRenderer.invoke('mcp.getPresets'),
   },
 
   // Credentials methods
@@ -145,12 +160,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // the password field. Passwords are stripped by the main process IPC handlers
   // so the renderer process never has access to plaintext passwords.
   credentials: {
-    getAll: (): Promise<unknown[]> => ipcRenderer.invoke('credentials.getAll'),
-    getById: (id: string): Promise<unknown> => ipcRenderer.invoke('credentials.getById', id),
-    getByType: (type: string): Promise<unknown[]> => ipcRenderer.invoke('credentials.getByType', type),
-    getByService: (service: string): Promise<unknown[]> => ipcRenderer.invoke('credentials.getByService', service),
-    save: (credential: unknown): Promise<unknown> => ipcRenderer.invoke('credentials.save', credential),
-    update: (id: string, updates: unknown): Promise<unknown> => ipcRenderer.invoke('credentials.update', id, updates),
+    getAll: (): Promise<CredentialRecord[]> => ipcRenderer.invoke('credentials.getAll'),
+    getById: (id: string): Promise<CredentialRecord | undefined> => ipcRenderer.invoke('credentials.getById', id),
+    getByType: (type: string): Promise<CredentialRecord[]> => ipcRenderer.invoke('credentials.getByType', type),
+    getByService: (service: string): Promise<CredentialRecord[]> => ipcRenderer.invoke('credentials.getByService', service),
+    save: (credential: CredentialSaveInput): Promise<CredentialRecord> => ipcRenderer.invoke('credentials.save', credential),
+    update: (id: string, updates: CredentialUpdateInput): Promise<CredentialRecord | undefined> => ipcRenderer.invoke('credentials.update', id, updates),
     delete: (id: string): Promise<boolean> => ipcRenderer.invoke('credentials.delete', id),
   },
 
@@ -280,14 +295,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('logs.setEnabled', enabled),
     isEnabled: (): Promise<{ success: boolean; enabled?: boolean; error?: string }> =>
       ipcRenderer.invoke('logs.isEnabled'),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- variadic IPC args
-    write: (level: 'info' | 'warn' | 'error', ...args: any[]): Promise<{ success: boolean; error?: string }> =>
+    write: (level: 'info' | 'warn' | 'error', ...args: unknown[]): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('logs.write', level, args),
   },
 
   // Remote control methods
   remote: {
-    getConfig: (): Promise<unknown> => ipcRenderer.invoke('remote.getConfig'),
+    getConfig: (): Promise<RemoteConfig> => ipcRenderer.invoke('remote.getConfig'),
     getStatus: (): Promise<{
       running: boolean;
       port?: number;
@@ -298,17 +312,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }> => ipcRenderer.invoke('remote.getStatus'),
     setEnabled: (enabled: boolean): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('remote.setEnabled', enabled),
-    updateGatewayConfig: (config: unknown): Promise<{ success: boolean; error?: string }> =>
+    updateGatewayConfig: (config: Partial<GatewayConfig>): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('remote.updateGatewayConfig', config),
-    updateFeishuConfig: (config: unknown): Promise<{ success: boolean; error?: string }> =>
+    updateFeishuConfig: (config: FeishuChannelConfig): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('remote.updateFeishuConfig', config),
-    getPairedUsers: (): Promise<unknown[]> => ipcRenderer.invoke('remote.getPairedUsers'),
-    getPendingPairings: (): Promise<unknown[]> => ipcRenderer.invoke('remote.getPendingPairings'),
+    getPairedUsers: (): Promise<PairedUser[]> => ipcRenderer.invoke('remote.getPairedUsers'),
+    getPendingPairings: (): Promise<PairingRequest[]> => ipcRenderer.invoke('remote.getPendingPairings'),
     approvePairing: (channelType: string, userId: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('remote.approvePairing', channelType, userId),
     revokePairing: (channelType: string, userId: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('remote.revokePairing', channelType, userId),
-    getRemoteSessions: (): Promise<unknown[]> => ipcRenderer.invoke('remote.getRemoteSessions'),
+    getRemoteSessions: (): Promise<RemoteSessionMapping[]> => ipcRenderer.invoke('remote.getRemoteSessions'),
     clearRemoteSession: (sessionId: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('remote.clearRemoteSession', sessionId),
     getTunnelStatus: (): Promise<{
@@ -377,21 +391,21 @@ declare global {
         close: () => void;
       };
       mcp: {
-        getServers: () => Promise<unknown[]>;
-        getServer: (serverId: string) => Promise<unknown>;
-        saveServer: (config: unknown) => Promise<{ success: boolean }>;
+        getServers: () => Promise<McpServerConfig[]>;
+        getServer: (serverId: string) => Promise<McpServerConfig | undefined>;
+        saveServer: (config: McpServerConfig) => Promise<{ success: boolean }>;
         deleteServer: (serverId: string) => Promise<{ success: boolean }>;
-        getTools: () => Promise<unknown[]>;
-        getServerStatus: () => Promise<unknown[]>;
-        getPresets: () => Promise<unknown>;
+        getTools: () => Promise<McpTool[]>;
+        getServerStatus: () => Promise<McpServerStatus[]>;
+        getPresets: () => Promise<McpPresetsMap>;
       };
       credentials: {
-        getAll: () => Promise<unknown[]>;
-        getById: (id: string) => Promise<unknown>;
-        getByType: (type: string) => Promise<unknown[]>;
-        getByService: (service: string) => Promise<unknown[]>;
-        save: (credential: unknown) => Promise<unknown>;
-        update: (id: string, updates: unknown) => Promise<unknown>;
+        getAll: () => Promise<CredentialRecord[]>;
+        getById: (id: string) => Promise<CredentialRecord | undefined>;
+        getByType: (type: string) => Promise<CredentialRecord[]>;
+        getByService: (service: string) => Promise<CredentialRecord[]>;
+        save: (credential: CredentialSaveInput) => Promise<CredentialRecord>;
+        update: (id: string, updates: CredentialUpdateInput) => Promise<CredentialRecord | undefined>;
         delete: (id: string) => Promise<boolean>;
       };
       skills: {
@@ -488,11 +502,10 @@ declare global {
         clear: () => Promise<{ success: boolean; deletedCount?: number; error?: string }>;
         setEnabled: (enabled: boolean) => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
         isEnabled: () => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- variadic IPC args
-        write: (level: 'info' | 'warn' | 'error', ...args: any[]) => Promise<{ success: boolean; error?: string }>;
+        write: (level: 'info' | 'warn' | 'error', ...args: unknown[]) => Promise<{ success: boolean; error?: string }>;
       };
       remote: {
-        getConfig: () => Promise<unknown>;
+        getConfig: () => Promise<RemoteConfig>;
         getStatus: () => Promise<{
           running: boolean;
           port?: number;
@@ -502,13 +515,13 @@ declare global {
           pendingPairings: number;
         }>;
         setEnabled: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
-        updateGatewayConfig: (config: unknown) => Promise<{ success: boolean; error?: string }>;
-        updateFeishuConfig: (config: unknown) => Promise<{ success: boolean; error?: string }>;
-        getPairedUsers: () => Promise<unknown[]>;
-        getPendingPairings: () => Promise<unknown[]>;
+        updateGatewayConfig: (config: Partial<GatewayConfig>) => Promise<{ success: boolean; error?: string }>;
+        updateFeishuConfig: (config: FeishuChannelConfig) => Promise<{ success: boolean; error?: string }>;
+        getPairedUsers: () => Promise<PairedUser[]>;
+        getPendingPairings: () => Promise<PairingRequest[]>;
         approvePairing: (channelType: string, userId: string) => Promise<{ success: boolean; error?: string }>;
         revokePairing: (channelType: string, userId: string) => Promise<{ success: boolean; error?: string }>;
-        getRemoteSessions: () => Promise<unknown[]>;
+        getRemoteSessions: () => Promise<RemoteSessionMapping[]>;
         clearRemoteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
         getTunnelStatus: () => Promise<{
           connected: boolean;
