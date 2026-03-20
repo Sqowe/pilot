@@ -31,21 +31,57 @@ export interface SessionExecutionClock {
   endAt: number | null;
 }
 
+// Unified per-session state that replaces 8 parallel xxxBySession Maps
+export interface SessionState {
+  messages: Message[];
+  partialMessage: string;
+  partialThinking: string;
+  pendingTurns: string[];
+  activeTurn: { stepId: string; userMessageId: string } | null;
+  executionClock: SessionExecutionClock;
+  traceSteps: TraceStep[];
+  contextWindow: number;
+}
+
+const DEFAULT_SESSION_STATE: SessionState = {
+  messages: [],
+  partialMessage: '',
+  partialThinking: '',
+  pendingTurns: [],
+  activeTurn: null,
+  executionClock: { startAt: null, endAt: null },
+  traceSteps: [],
+  contextWindow: 0,
+};
+
+// Helper to immutably update a single session's state within the record
+function patchSession(
+  states: Record<string, SessionState>,
+  sessionId: string,
+  updates: Partial<SessionState>
+): Record<string, SessionState> {
+  const current = states[sessionId] ?? DEFAULT_SESSION_STATE;
+  return {
+    ...states,
+    [sessionId]: { ...current, ...updates },
+  };
+}
+
+// Helper to get a session's state with safe defaults
+function getSession(
+  states: Record<string, SessionState>,
+  sessionId: string
+): SessionState {
+  return states[sessionId] ?? DEFAULT_SESSION_STATE;
+}
+
 interface AppState {
   // Sessions
   sessions: Session[];
   activeSessionId: string | null;
 
-  // Messages
-  messagesBySession: Record<string, Message[]>;
-  partialMessagesBySession: Record<string, string>;
-  partialThinkingBySession: Record<string, string>;
-  pendingTurnsBySession: Record<string, string[]>;
-  activeTurnsBySession: Record<string, { stepId: string; userMessageId: string } | null>;
-  executionClockBySession: Record<string, SessionExecutionClock>;
-
-  // Trace steps
-  traceStepsBySession: Record<string, TraceStep[]>;
+  // Per-session state (messages, partials, turns, traces, etc.)
+  sessionStates: Record<string, SessionState>;
 
   // UI state
   isLoading: boolean;
@@ -81,9 +117,6 @@ interface AppState {
   sandboxSyncStatus: SandboxSyncStatus | null;
   skillsStorageChangedAt: number;
   skillsStorageChangeEvent: SkillsStorageChangeEvent | null;
-
-  // Context window per session (from model resolution)
-  contextWindowBySession: Record<string, number>;
 
   // System theme (from OS native theme)
   systemDarkMode: boolean;
@@ -190,13 +223,7 @@ export const useAppStore = create<AppState>((set) => ({
   // Initial state
   sessions: [],
   activeSessionId: null,
-  messagesBySession: {},
-  partialMessagesBySession: {},
-  partialThinkingBySession: {},
-  pendingTurnsBySession: {},
-  activeTurnsBySession: {},
-  executionClockBySession: {},
-  traceStepsBySession: {},
+  sessionStates: {},
   isLoading: false,
   sidebarCollapsed: false,
   contextPanelCollapsed: false,
@@ -216,7 +243,6 @@ export const useAppStore = create<AppState>((set) => ({
   sandboxSyncStatus: null,
   skillsStorageChangedAt: 0,
   skillsStorageChangeEvent: null,
-  contextWindowBySession: {},
   systemDarkMode: false,
 
   // Session actions
@@ -225,16 +251,10 @@ export const useAppStore = create<AppState>((set) => ({
   addSession: (session) =>
     set((state) => ({
       sessions: [session, ...state.sessions],
-      messagesBySession: { ...state.messagesBySession, [session.id]: [] },
-      partialMessagesBySession: { ...state.partialMessagesBySession, [session.id]: '' },
-      partialThinkingBySession: { ...state.partialThinkingBySession, [session.id]: '' },
-      pendingTurnsBySession: { ...state.pendingTurnsBySession, [session.id]: [] },
-      activeTurnsBySession: { ...state.activeTurnsBySession, [session.id]: null },
-      executionClockBySession: {
-        ...state.executionClockBySession,
-        [session.id]: { startAt: null, endAt: null },
+      sessionStates: {
+        ...state.sessionStates,
+        [session.id]: { ...DEFAULT_SESSION_STATE },
       },
-      traceStepsBySession: { ...state.traceStepsBySession, [session.id]: [] },
     })),
 
   updateSession: (sessionId, updates) =>
@@ -244,25 +264,10 @@ export const useAppStore = create<AppState>((set) => ({
 
   removeSession: (sessionId) =>
     set((state) => {
-      const { [sessionId]: _, ...restMessages } = state.messagesBySession;
-      const { [sessionId]: __partials, ...restPartials } = state.partialMessagesBySession;
-      const { [sessionId]: __thinkingPartials, ...restThinkingPartials } =
-        state.partialThinkingBySession;
-      const { [sessionId]: __pending, ...restPendingTurns } = state.pendingTurnsBySession;
-      const { [sessionId]: __active, ...restActiveTurns } = state.activeTurnsBySession;
-      const { [sessionId]: __clock, ...restExecutionClocks } = state.executionClockBySession;
-      const { [sessionId]: __traces, ...restTraces } = state.traceStepsBySession;
-      const { [sessionId]: __ctx, ...restContextWindows } = state.contextWindowBySession;
+      const { [sessionId]: _, ...restSessionStates } = state.sessionStates;
       return {
         sessions: state.sessions.filter((s) => s.id !== sessionId),
-        messagesBySession: restMessages,
-        partialMessagesBySession: restPartials,
-        partialThinkingBySession: restThinkingPartials,
-        pendingTurnsBySession: restPendingTurns,
-        activeTurnsBySession: restActiveTurns,
-        executionClockBySession: restExecutionClocks,
-        traceStepsBySession: restTraces,
-        contextWindowBySession: restContextWindows,
+        sessionStates: restSessionStates,
         activeSessionId: state.activeSessionId === sessionId ? null : state.activeSessionId,
       };
     }),
@@ -270,50 +275,14 @@ export const useAppStore = create<AppState>((set) => ({
   removeSessions: (sessionIds) =>
     set((state) => {
       const idSet = new Set(sessionIds);
-      const newMessages: Record<string, Message[]> = {};
-      const newPartials: Record<string, string> = {};
-      const newThinkingPartials: Record<string, string> = {};
-      const newPendingTurns: Record<string, string[]> = {};
-      const newActiveTurns: Record<string, { stepId: string; userMessageId: string } | null> = {};
-      const newExecutionClocks: Record<string, SessionExecutionClock> = {};
-      const newTraces: Record<string, TraceStep[]> = {};
-      const newContextWindows: Record<string, number> = {};
-
-      for (const key of Object.keys(state.messagesBySession)) {
-        if (!idSet.has(key)) newMessages[key] = state.messagesBySession[key];
-      }
-      for (const key of Object.keys(state.partialMessagesBySession)) {
-        if (!idSet.has(key)) newPartials[key] = state.partialMessagesBySession[key];
-      }
-      for (const key of Object.keys(state.partialThinkingBySession)) {
-        if (!idSet.has(key)) newThinkingPartials[key] = state.partialThinkingBySession[key];
-      }
-      for (const key of Object.keys(state.pendingTurnsBySession)) {
-        if (!idSet.has(key)) newPendingTurns[key] = state.pendingTurnsBySession[key];
-      }
-      for (const key of Object.keys(state.activeTurnsBySession)) {
-        if (!idSet.has(key)) newActiveTurns[key] = state.activeTurnsBySession[key];
-      }
-      for (const key of Object.keys(state.executionClockBySession)) {
-        if (!idSet.has(key)) newExecutionClocks[key] = state.executionClockBySession[key];
-      }
-      for (const key of Object.keys(state.traceStepsBySession)) {
-        if (!idSet.has(key)) newTraces[key] = state.traceStepsBySession[key];
-      }
-      for (const key of Object.keys(state.contextWindowBySession)) {
-        if (!idSet.has(key)) newContextWindows[key] = state.contextWindowBySession[key];
+      const newSessionStates: Record<string, SessionState> = {};
+      for (const key of Object.keys(state.sessionStates)) {
+        if (!idSet.has(key)) newSessionStates[key] = state.sessionStates[key];
       }
 
       return {
         sessions: state.sessions.filter((s) => !idSet.has(s.id)),
-        messagesBySession: newMessages,
-        partialMessagesBySession: newPartials,
-        partialThinkingBySession: newThinkingPartials,
-        pendingTurnsBySession: newPendingTurns,
-        activeTurnsBySession: newActiveTurns,
-        executionClockBySession: newExecutionClocks,
-        traceStepsBySession: newTraces,
-        contextWindowBySession: newContextWindows,
+        sessionStates: newSessionStates,
         activeSessionId:
           state.activeSessionId && idSet.has(state.activeSessionId)
             ? null
@@ -326,19 +295,16 @@ export const useAppStore = create<AppState>((set) => ({
   // Message actions
   addMessage: (sessionId, message) =>
     set((state) => {
-      const messages = state.messagesBySession[sessionId] || [];
+      const ss = getSession(state.sessionStates, sessionId);
+      const messages = ss.messages;
       let updatedMessages = messages;
-      let updatedPendingTurns = state.pendingTurnsBySession;
+      let updatedPendingTurns = ss.pendingTurns;
 
       if (message.role === 'user') {
         updatedMessages = [...messages, message];
-        const pending = [...(state.pendingTurnsBySession[sessionId] || []), message.id];
-        updatedPendingTurns = {
-          ...state.pendingTurnsBySession,
-          [sessionId]: pending,
-        };
+        updatedPendingTurns = [...ss.pendingTurns, message.id];
       } else {
-        const activeTurn = state.activeTurnsBySession[sessionId];
+        const activeTurn = ss.activeTurn;
         if (activeTurn?.userMessageId) {
           const anchorIndex = messages.findIndex((item) => item.id === activeTurn.userMessageId);
           if (anchorIndex >= 0) {
@@ -362,169 +328,135 @@ export const useAppStore = create<AppState>((set) => ({
 
       const shouldClearPartial = message.role === 'assistant';
       return {
-        messagesBySession: {
-          ...state.messagesBySession,
-          [sessionId]: updatedMessages,
-        },
-        pendingTurnsBySession: updatedPendingTurns,
-        partialMessagesBySession: shouldClearPartial
-          ? {
-              ...state.partialMessagesBySession,
-              [sessionId]: '',
-            }
-          : state.partialMessagesBySession,
-        partialThinkingBySession: shouldClearPartial
-          ? {
-              ...state.partialThinkingBySession,
-              [sessionId]: '',
-            }
-          : state.partialThinkingBySession,
+        sessionStates: patchSession(state.sessionStates, sessionId, {
+          messages: updatedMessages,
+          pendingTurns: updatedPendingTurns,
+          ...(shouldClearPartial ? { partialMessage: '', partialThinking: '' } : {}),
+        }),
       };
     }),
 
   startExecutionClock: (sessionId, startAt) =>
     set((state) => ({
-      executionClockBySession: {
-        ...state.executionClockBySession,
-        [sessionId]: { startAt, endAt: null },
-      },
+      sessionStates: patchSession(state.sessionStates, sessionId, {
+        executionClock: { startAt, endAt: null },
+      }),
     })),
 
   finishExecutionClock: (sessionId, endAt) =>
     set((state) => {
-      const current = state.executionClockBySession[sessionId] ?? { startAt: null, endAt: null };
-      if (current.startAt === null) return {};
+      const ss = getSession(state.sessionStates, sessionId);
+      if (ss.executionClock.startAt === null) return {};
       return {
-        executionClockBySession: {
-          ...state.executionClockBySession,
-          [sessionId]: {
-            startAt: current.startAt,
+        sessionStates: patchSession(state.sessionStates, sessionId, {
+          executionClock: {
+            startAt: ss.executionClock.startAt,
             endAt: endAt ?? Date.now(),
           },
-        },
+        }),
       };
     }),
 
   clearExecutionClock: (sessionId) =>
     set((state) => ({
-      executionClockBySession: {
-        ...state.executionClockBySession,
-        [sessionId]: { startAt: null, endAt: null },
-      },
+      sessionStates: patchSession(state.sessionStates, sessionId, {
+        executionClock: { startAt: null, endAt: null },
+      }),
     })),
 
   setMessages: (sessionId, messages) =>
     set((state) => ({
-      messagesBySession: {
-        ...state.messagesBySession,
-        [sessionId]: messages,
-      },
+      sessionStates: patchSession(state.sessionStates, sessionId, { messages }),
     })),
 
   setPartialMessage: (sessionId, partial) =>
-    set((state) => ({
-      partialMessagesBySession: {
-        ...state.partialMessagesBySession,
-        [sessionId]: (state.partialMessagesBySession[sessionId] || '') + partial,
-      },
-    })),
+    set((state) => {
+      const ss = getSession(state.sessionStates, sessionId);
+      return {
+        sessionStates: patchSession(state.sessionStates, sessionId, {
+          partialMessage: ss.partialMessage + partial,
+        }),
+      };
+    }),
 
   clearPartialMessage: (sessionId) =>
     set((state) => ({
-      partialMessagesBySession: {
-        ...state.partialMessagesBySession,
-        [sessionId]: '',
-      },
+      sessionStates: patchSession(state.sessionStates, sessionId, { partialMessage: '' }),
     })),
 
   setPartialThinking: (sessionId, delta) =>
-    set((state) => ({
-      partialThinkingBySession: {
-        ...state.partialThinkingBySession,
-        [sessionId]: (state.partialThinkingBySession[sessionId] || '') + delta,
-      },
-    })),
+    set((state) => {
+      const ss = getSession(state.sessionStates, sessionId);
+      return {
+        sessionStates: patchSession(state.sessionStates, sessionId, {
+          partialThinking: ss.partialThinking + delta,
+        }),
+      };
+    }),
 
   clearPartialThinking: (sessionId) =>
     set((state) => ({
-      partialThinkingBySession: {
-        ...state.partialThinkingBySession,
-        [sessionId]: '',
-      },
+      sessionStates: patchSession(state.sessionStates, sessionId, { partialThinking: '' }),
     })),
 
   activateNextTurn: (sessionId, stepId) =>
     set((state) => {
-      const pending = state.pendingTurnsBySession[sessionId] || [];
-      if (pending.length === 0) {
+      const ss = getSession(state.sessionStates, sessionId);
+      if (ss.pendingTurns.length === 0) {
         return {
-          activeTurnsBySession: {
-            ...state.activeTurnsBySession,
-            [sessionId]: null,
-          },
+          sessionStates: patchSession(state.sessionStates, sessionId, {
+            activeTurn: null,
+          }),
         };
       }
 
-      const [nextMessageId, ...rest] = pending;
-      const messages = state.messagesBySession[sessionId] || [];
-      const updatedMessages = messages.map((message) =>
+      const [nextMessageId, ...rest] = ss.pendingTurns;
+      const updatedMessages = ss.messages.map((message) =>
         message.id === nextMessageId ? { ...message, localStatus: undefined } : message
       );
 
       return {
-        messagesBySession: {
-          ...state.messagesBySession,
-          [sessionId]: updatedMessages,
-        },
-        pendingTurnsBySession: {
-          ...state.pendingTurnsBySession,
-          [sessionId]: rest,
-        },
-        activeTurnsBySession: {
-          ...state.activeTurnsBySession,
-          [sessionId]: { stepId, userMessageId: nextMessageId },
-        },
+        sessionStates: patchSession(state.sessionStates, sessionId, {
+          messages: updatedMessages,
+          pendingTurns: rest,
+          activeTurn: { stepId, userMessageId: nextMessageId },
+        }),
       };
     }),
 
   updateActiveTurnStep: (sessionId, stepId) =>
     set((state) => {
-      const activeTurn = state.activeTurnsBySession[sessionId];
-      if (!activeTurn || activeTurn.stepId === stepId) return {};
+      const ss = getSession(state.sessionStates, sessionId);
+      if (!ss.activeTurn || ss.activeTurn.stepId === stepId) return {};
       return {
-        activeTurnsBySession: {
-          ...state.activeTurnsBySession,
-          [sessionId]: { ...activeTurn, stepId },
-        },
+        sessionStates: patchSession(state.sessionStates, sessionId, {
+          activeTurn: { ...ss.activeTurn, stepId },
+        }),
       };
     }),
 
   clearActiveTurn: (sessionId, stepId) =>
     set((state) => {
-      const activeTurn = state.activeTurnsBySession[sessionId];
-      if (!activeTurn) return {};
-      if (stepId && activeTurn.stepId !== stepId) return {};
+      const ss = getSession(state.sessionStates, sessionId);
+      if (!ss.activeTurn) return {};
+      if (stepId && ss.activeTurn.stepId !== stepId) return {};
       return {
-        activeTurnsBySession: {
-          ...state.activeTurnsBySession,
-          [sessionId]: null,
-        },
+        sessionStates: patchSession(state.sessionStates, sessionId, {
+          activeTurn: null,
+        }),
       };
     }),
 
   clearPendingTurns: (sessionId) =>
     set((state) => ({
-      pendingTurnsBySession: {
-        ...state.pendingTurnsBySession,
-        [sessionId]: [],
-      },
+      sessionStates: patchSession(state.sessionStates, sessionId, { pendingTurns: [] }),
     })),
 
   clearQueuedMessages: (sessionId) =>
     set((state) => {
-      const messages = state.messagesBySession[sessionId] || [];
+      const ss = getSession(state.sessionStates, sessionId);
       let hasQueued = false;
-      const updatedMessages = messages.map((message) => {
+      const updatedMessages = ss.messages.map((message) => {
         if (message.localStatus === 'queued') {
           hasQueued = true;
           return { ...message, localStatus: undefined };
@@ -533,18 +465,17 @@ export const useAppStore = create<AppState>((set) => ({
       });
       if (!hasQueued) return {};
       return {
-        messagesBySession: {
-          ...state.messagesBySession,
-          [sessionId]: updatedMessages,
-        },
+        sessionStates: patchSession(state.sessionStates, sessionId, {
+          messages: updatedMessages,
+        }),
       };
     }),
 
   cancelQueuedMessages: (sessionId) =>
     set((state) => {
-      const messages = state.messagesBySession[sessionId] || [];
+      const ss = getSession(state.sessionStates, sessionId);
       let hasQueued = false;
-      const updatedMessages = messages.map((message) => {
+      const updatedMessages = ss.messages.map((message) => {
         if (message.localStatus === 'queued') {
           hasQueued = true;
           return { ...message, localStatus: 'cancelled' as const };
@@ -553,38 +484,38 @@ export const useAppStore = create<AppState>((set) => ({
       });
       if (!hasQueued) return {};
       return {
-        messagesBySession: {
-          ...state.messagesBySession,
-          [sessionId]: updatedMessages,
-        },
+        sessionStates: patchSession(state.sessionStates, sessionId, {
+          messages: updatedMessages,
+        }),
       };
     }),
 
   // Trace actions
   addTraceStep: (sessionId, step) =>
-    set((state) => ({
-      traceStepsBySession: {
-        ...state.traceStepsBySession,
-        [sessionId]: [...(state.traceStepsBySession[sessionId] || []), step],
-      },
-    })),
+    set((state) => {
+      const ss = getSession(state.sessionStates, sessionId);
+      return {
+        sessionStates: patchSession(state.sessionStates, sessionId, {
+          traceSteps: [...ss.traceSteps, step],
+        }),
+      };
+    }),
 
   updateTraceStep: (sessionId, stepId, updates) =>
-    set((state) => ({
-      traceStepsBySession: {
-        ...state.traceStepsBySession,
-        [sessionId]: (state.traceStepsBySession[sessionId] || []).map((step) =>
-          step.id === stepId ? { ...step, ...updates } : step
-        ),
-      },
-    })),
+    set((state) => {
+      const ss = getSession(state.sessionStates, sessionId);
+      return {
+        sessionStates: patchSession(state.sessionStates, sessionId, {
+          traceSteps: ss.traceSteps.map((step) =>
+            step.id === stepId ? { ...step, ...updates } : step
+          ),
+        }),
+      };
+    }),
 
   setTraceSteps: (sessionId, steps) =>
     set((state) => ({
-      traceStepsBySession: {
-        ...state.traceStepsBySession,
-        [sessionId]: steps,
-      },
+      sessionStates: patchSession(state.sessionStates, sessionId, { traceSteps: steps }),
     })),
 
   // UI actions
@@ -644,10 +575,7 @@ export const useAppStore = create<AppState>((set) => ({
   // Context window actions
   setSessionContextWindow: (sessionId, contextWindow) =>
     set((state) => ({
-      contextWindowBySession: {
-        ...state.contextWindowBySession,
-        [sessionId]: contextWindow,
-      },
+      sessionStates: patchSession(state.sessionStates, sessionId, { contextWindow }),
     })),
 
   // System theme actions

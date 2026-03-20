@@ -38,11 +38,9 @@ export function ContextPanel() {
   const { t } = useTranslation();
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessions = useAppStore((s) => s.sessions);
-  const traceStepsBySession = useAppStore((s) => s.traceStepsBySession);
-  const messagesBySession = useAppStore((s) => s.messagesBySession);
+  const sessionStates = useAppStore((s) => s.sessionStates);
   const appConfig = useAppStore((s) => s.appConfig);
   const contextPanelCollapsed = useAppStore((s) => s.contextPanelCollapsed);
-  const contextWindowBySession = useAppStore((s) => s.contextWindowBySession);
   const toggleContextPanel = useAppStore((s) => s.toggleContextPanel);
   const workingDir = useAppStore((s) => s.workingDir);
   const setGlobalNotice = useAppStore((s) => s.setGlobalNotice);
@@ -74,7 +72,8 @@ export function ContextPanel() {
     }
   };
 
-  const steps = activeSessionId ? traceStepsBySession[activeSessionId] ?? EMPTY_STEPS : EMPTY_STEPS;
+  const ss = activeSessionId ? sessionStates[activeSessionId] : undefined;
+  const steps = ss?.traceSteps ?? EMPTY_STEPS;
   const activeSession = activeSessionId ? sessions.find(s => s.id === activeSessionId) : null;
   const currentWorkingDir = activeSession?.cwd || workingDir;
   const { displayArtifactSteps } = getArtifactSteps(steps);
@@ -82,8 +81,8 @@ export function ContextPanel() {
 
   // Session info computations
   const messages = useMemo(
-    () => (activeSessionId ? messagesBySession[activeSessionId] || [] : []),
-    [activeSessionId, messagesBySession]
+    () => (activeSessionId ? sessionStates[activeSessionId]?.messages || [] : []),
+    [activeSessionId, sessionStates]
   );
   const messageCount = messages.length;
   const toolCallCount = steps.filter((s) => s.type === 'tool_call').length;
@@ -104,7 +103,7 @@ export function ContextPanel() {
 
   // Context usage: last message's input tokens ≈ current context occupation
   const contextUsage = useMemo(() => {
-    const contextWindow = activeSessionId ? contextWindowBySession[activeSessionId] : undefined;
+    const contextWindow = activeSessionId ? sessionStates[activeSessionId]?.contextWindow : undefined;
     if (!contextWindow) return null;
 
     let lastInput = 0;
@@ -118,7 +117,7 @@ export function ContextPanel() {
 
     const percentage = Math.min((lastInput / contextWindow) * 100, 100);
     return { used: lastInput, total: contextWindow, percentage };
-  }, [activeSessionId, contextWindowBySession, messages]);
+  }, [activeSessionId, sessionStates, messages]);
 
   const completedStepCount = useMemo(
     () => steps.reduce((n, s) => n + (s.status === 'completed' ? 1 : 0), 0),

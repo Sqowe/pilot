@@ -550,9 +550,7 @@ const ToolUseBlock = memo(function ToolUseBlock({
   allBlocks?: ContentBlock[];
   message?: Message;
 }) {
-  const traceStepsBySession = useAppStore((s) => s.traceStepsBySession);
-  const messagesBySession = useAppStore((s) => s.messagesBySession);
-  const activeTurnsBySession = useAppStore((s) => s.activeTurnsBySession);
+  const sessionStates = useAppStore((s) => s.sessionStates);
   const [expanded, setExpanded] = useState(false);
 
   // Check if this is AskUserQuestion - render inline question UI
@@ -565,13 +563,15 @@ const ToolUseBlock = memo(function ToolUseBlock({
     return <TodoWriteBlock block={block} />;
   }
 
+  const ss = message?.sessionId ? sessionStates[message.sessionId] : undefined;
+
   // Find matching tool_result: first in same message, then across all session messages
   let toolResult = allBlocks?.find(
     (b) => b.type === 'tool_result' && (b as ToolResultContent).toolUseId === block.id
   ) as ToolResultContent | undefined;
 
   if (!toolResult && message?.sessionId) {
-    const allMessages = messagesBySession[message.sessionId] || [];
+    const allMessages = ss?.messages || [];
     for (const msg of allMessages) {
       if (!Array.isArray(msg.content)) continue;
       const found = (msg.content as ContentBlock[]).find(
@@ -586,9 +586,7 @@ const ToolUseBlock = memo(function ToolUseBlock({
 
   // Determine state: running / success / error
   // Only show spinner if session still has an active turn; otherwise treat as done
-  const hasActiveTurn = message?.sessionId
-    ? Boolean(activeTurnsBySession[message.sessionId])
-    : false;
+  const hasActiveTurn = Boolean(ss?.activeTurn);
   const isRunning = !toolResult && hasActiveTurn;
   const isError = toolResult?.isError === true;
   const isSuccess = toolResult && !isError;
@@ -618,7 +616,7 @@ const ToolUseBlock = memo(function ToolUseBlock({
   // Duration from trace steps
   let duration: number | undefined;
   if (message?.sessionId) {
-    const steps = traceStepsBySession[message.sessionId] || [];
+    const steps = ss?.traceSteps || [];
     const resultStep = steps.find((s) => s.id === block.id && s.type === 'tool_result');
     duration = resultStep?.duration;
   }
@@ -972,13 +970,14 @@ const ToolResultBlock = memo(function ToolResultBlock({
   allBlocks?: ContentBlock[];
   message?: Message;
 }) {
-  const traceStepsBySession = useAppStore((s) => s.traceStepsBySession);
-  const messagesBySession = useAppStore((s) => s.messagesBySession);
+  const sessionStates = useAppStore((s) => s.sessionStates);
   const [expanded, setExpanded] = useState(false);
+
+  const ss = message?.sessionId ? sessionStates[message.sessionId] : undefined;
 
   // If a ToolUseBlock in any message already merges this result, hide this block
   if (message?.sessionId) {
-    const allMessages = messagesBySession[message.sessionId] || [];
+    const allMessages = ss?.messages || [];
     for (const msg of allMessages) {
       if (!Array.isArray(msg.content)) continue;
       const hasMatchingToolUse = (msg.content as ContentBlock[]).some(
@@ -991,7 +990,7 @@ const ToolResultBlock = memo(function ToolResultBlock({
   // Try to find the tool name from trace steps
   let toolName: string | undefined;
   if (message?.sessionId) {
-    const steps = traceStepsBySession[message.sessionId] || [];
+    const steps = ss?.traceSteps || [];
     const toolCallStep = steps.find((s) => s.id === block.toolUseId && s.type === 'tool_call');
     if (toolCallStep) toolName = toolCallStep.toolName;
   }

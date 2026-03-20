@@ -170,8 +170,9 @@ export function useIPC() {
         case 'trace.step': {
           if (event.payload.step.type === 'thinking' && event.payload.step.status === 'running') {
             const currentState = useAppStore.getState();
-            const pending = currentState.pendingTurnsBySession[event.payload.sessionId] || [];
-            const activeTurn = currentState.activeTurnsBySession[event.payload.sessionId];
+            const ss = currentState.sessionStates[event.payload.sessionId];
+            const pending = ss?.pendingTurns || [];
+            const activeTurn = ss?.activeTurn;
             if (pending.length > 0) {
               store.activateNextTurn(event.payload.sessionId, event.payload.step.id);
             } else if (activeTurn) {
@@ -508,8 +509,9 @@ export function useIPC() {
       const store = useAppStore.getState();
       const isSessionRunning =
         store.sessions.find((session) => session.id === sessionId)?.status === 'running';
-      const hasActiveTurn = Boolean(store.activeTurnsBySession[sessionId]);
-      const hasPending = (store.pendingTurnsBySession[sessionId]?.length ?? 0) > 0;
+      const ss = store.sessionStates[sessionId];
+      const hasActiveTurn = Boolean(ss?.activeTurn);
+      const hasPending = (ss?.pendingTurns?.length ?? 0) > 0;
       const shouldQueue = isSessionRunning || hasActiveTurn || hasPending;
       const userMessage: Message = {
         id: `msg-user-${Date.now()}`,

@@ -18,12 +18,7 @@ export function ChatView() {
   const { t } = useTranslation();
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessions = useAppStore((s) => s.sessions);
-  const messagesBySession = useAppStore((s) => s.messagesBySession);
-  const partialMessagesBySession = useAppStore((s) => s.partialMessagesBySession);
-  const partialThinkingBySession = useAppStore((s) => s.partialThinkingBySession);
-  const activeTurnsBySession = useAppStore((s) => s.activeTurnsBySession);
-  const pendingTurnsBySession = useAppStore((s) => s.pendingTurnsBySession);
-  const executionClockBySession = useAppStore((s) => s.executionClockBySession);
+  const sessionStates = useAppStore((s) => s.sessionStates);
   const appConfig = useAppStore((s) => s.appConfig);
   const { continueSession, stopSession, isElectron } = useIPC();
   const [prompt, setPrompt] = useState('');
@@ -51,13 +46,12 @@ export function ChatView() {
   const isScrollingRef = useRef(false);
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
-  const messages = activeSessionId ? messagesBySession[activeSessionId] || [] : [];
-  const pendingTurns = activeSessionId ? pendingTurnsBySession[activeSessionId] || [] : [];
-  const partialMessage = activeSessionId ? partialMessagesBySession[activeSessionId] || '' : '';
-  const partialThinking = activeSessionId
-    ? partialThinkingBySession[activeSessionId] || ''
-    : '';
-  const activeTurn = activeSessionId ? activeTurnsBySession[activeSessionId] : null;
+  const ss = activeSessionId ? sessionStates[activeSessionId] : undefined;
+  const messages = ss?.messages || [];
+  const pendingTurns = ss?.pendingTurns || [];
+  const partialMessage = ss?.partialMessage || '';
+  const partialThinking = ss?.partialThinking || '';
+  const activeTurn = ss?.activeTurn ?? null;
   const hasActiveTurn = Boolean(activeTurn);
   const pendingCount = pendingTurns.length;
   const isSessionRunning = activeSession?.status === 'running';
@@ -106,7 +100,7 @@ export function ChatView() {
   }, []);
 
   // --- Real-time execution timer ---
-  const executionClock = activeSessionId ? executionClockBySession[activeSessionId] : undefined;
+  const executionClock = ss?.executionClock;
   const [clockNow, setClockNow] = useState(() => Date.now());
 
   useEffect(() => {

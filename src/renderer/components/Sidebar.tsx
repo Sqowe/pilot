@@ -30,8 +30,7 @@ export function Sidebar() {
   const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const settings = useAppStore((s) => s.settings);
-  const messagesBySession = useAppStore((s) => s.messagesBySession);
-  const traceStepsBySession = useAppStore((s) => s.traceStepsBySession);
+  const sessionStates = useAppStore((s) => s.sessionStates);
   const setActiveSession = useAppStore((s) => s.setActiveSession);
   const setMessages = useAppStore((s) => s.setMessages);
   const setTraceSteps = useAppStore((s) => s.setTraceSteps);
@@ -151,7 +150,7 @@ export function Sidebar() {
 
       setActiveSession(sessionId);
 
-      const existingMessages = messagesBySession[sessionId];
+      const existingMessages = sessionStates[sessionId]?.messages;
       if ((!existingMessages || existingMessages.length === 0) && isElectron) {
         try {
           const messages = await getSessionMessages(sessionId);
@@ -163,7 +162,7 @@ export function Sidebar() {
         }
       }
 
-      const existingSteps = traceStepsBySession[sessionId];
+      const existingSteps = sessionStates[sessionId]?.traceSteps;
       if ((!existingSteps || existingSteps.length === 0) && isElectron) {
         try {
           const steps = await getSessionTraceSteps(sessionId);
@@ -178,12 +177,11 @@ export function Sidebar() {
       getSessionMessages,
       getSessionTraceSteps,
       isElectron,
-      messagesBySession,
+      sessionStates,
       setActiveSession,
       setMessages,
       setShowSettings,
       setTraceSteps,
-      traceStepsBySession,
     ]
   );
 
