@@ -236,9 +236,14 @@ export class MCPManager {
       }
     } else if (platform === 'win32') {
       // Windows: try PowerShell to get user PATH
+      // Use full path to avoid relying on PATH in Electron packaged environment
+      const psExe = path.join(
+        process.env.SystemRoot || 'C:\\Windows',
+        'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'
+      );
       try {
         const { stdout } = await execAsync(
-          'powershell.exe -NoProfile -Command "[Environment]::GetEnvironmentVariable(\'Path\', \'User\') + \';\' + [Environment]::GetEnvironmentVariable(\'Path\', \'Machine\')"',
+          `"${psExe}" -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine')"`,
           { timeout: 5000 }
         );
         if (stdout.trim()) {
@@ -528,11 +533,28 @@ export class MCPManager {
       if (command === 'npx' || command.endsWith('/npx')) {
         // Check if npx is in PATH, throw error if not found
         await this.checkNpxInPath();
-        
+
         // Use the resolved npx path
         if (this.npxPath) {
           command = this.npxPath;
           log(`[MCPManager] Using npx from PATH: ${command}`);
+        }
+      }
+
+      // Windows: resolve bare commands (e.g. 'npx', 'node') to their .cmd/.exe equivalents.
+      // Without this, spawn with shell:false fails with ENOENT because Windows cannot
+      // execute .cmd batch wrappers without the explicit extension.
+      if (process.platform === 'win32') {
+        const cmdBase = path.basename(command).toLowerCase();
+        const winSuffixMap: Record<string, string> = {
+          'npx': '.cmd', 'npm': '.cmd', 'yarn': '.cmd', 'pnpm': '.cmd',
+          'tsx': '.cmd', 'ts-node': '.cmd',
+          'node': '.exe',
+        };
+        // Only touch bare commands (no directory separator, no existing extension)
+        if (winSuffixMap[cmdBase] && command === cmdBase) {
+          command = command + winSuffixMap[cmdBase];
+          log(`[MCPManager] Windows: resolved bare command '${cmdBase}' to '${command}'`);
         }
       }
       
@@ -929,7 +951,21 @@ export class MCPManager {
     if (platform === 'darwin') {
       chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
     } else if (platform === 'win32') {
-      chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const fs = require('fs');
+      // Chrome can be installed in per-user (%LOCALAPPDATA%) or system-wide locations
+      const candidates = [
+        path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join(process.env['PROGRAMFILES'] || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      ];
+      chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'; // fallback
+      for (const candidate of candidates) {
+        if (candidate && fs.existsSync(candidate)) {
+          chromePath = candidate;
+          break;
+        }
+      }
     } else {
       chromePath = 'google-chrome';
     }
@@ -959,15 +995,25 @@ export class MCPManager {
   }
 
   /**
-   * Gracefully kill a child process: SIGTERM first, then SIGKILL after timeout
+   * Gracefully kill a child process.
+   * Unix: SIGTERM first, then SIGKILL after timeout.
+   * Windows: proc.kill() (TerminateProcess) — SIGTERM/SIGKILL are unreliable on Windows.
    */
   private async gracefulKill(proc: ChildProcess, timeoutMs = 5000): Promise<void> {
     return new Promise((resolve) => {
       proc.once('exit', () => resolve());
-      proc.kill('SIGTERM');
+      if (process.platform === 'win32') {
+        proc.kill(); // Windows: TerminateProcess
+      } else {
+        proc.kill('SIGTERM'); // Unix: graceful shutdown
+      }
       setTimeout(() => {
         if (!proc.killed) {
-          proc.kill('SIGKILL');
+          if (process.platform === 'win32') {
+            proc.kill();
+          } else {
+            proc.kill('SIGKILL');
+          }
         }
         resolve();
       }, timeoutMs);

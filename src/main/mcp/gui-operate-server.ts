@@ -183,7 +183,6 @@ async function inferMostRecentAppNameFromDisk(): Promise<string | null> {
 
 async function restoreLastAppContext(): Promise<boolean> {
   if (currentAppName) return true;
-  if (os.platform() !== 'darwin') return false;
 
   try {
     const data = await fs.readFile(GUI_LAST_APP_FILE, 'utf-8');
@@ -976,30 +975,31 @@ async function resolvePythonExec(): Promise<PythonExec | null> {
       writeMCPLog(`[resolvePythonExec] Dev mode: which/where command failed: ${error instanceof Error ? error.message : String(error)}`, 'Python Resolve');
     }
     
-    // Fallback: try 'python3' directly (will use PATH from current environment)
-    // This handles cases where which/where doesn't work but python3 is in PATH
-    writeMCPLog('[resolvePythonExec] Dev mode: Trying python3 --version as fallback', 'Python Resolve');
+    // Fallback: try 'python3' (or 'python' on Windows) directly
+    // This handles cases where which/where doesn't work but python is in PATH
+    const python3Cmd = PLATFORM === 'win32' ? 'python' : 'python3';
+    writeMCPLog(`[resolvePythonExec] Dev mode: Trying ${python3Cmd} --version as fallback`, 'Python Resolve');
     try {
-      const testResult = await executeCommand('python3 --version', 2000);
-      writeMCPLog(`[resolvePythonExec] Dev mode: python3 --version result: stdout=${testResult.stdout}, stderr=${testResult.stderr}`, 'Python Resolve');
+      const testResult = await executeCommand(`${python3Cmd} --version`, 2000);
+      writeMCPLog(`[resolvePythonExec] Dev mode: ${python3Cmd} --version result: stdout=${testResult.stdout}, stderr=${testResult.stderr}`, 'Python Resolve');
       if (testResult.stdout || testResult.stderr) {
-        // python3 is available, try to get its full path for consistency
-        let pythonPath = 'python3';
+        // python is available, try to get its full path for consistency
+        let pythonPath = python3Cmd;
         try {
-          const whichResult = await executeCommand(PLATFORM === 'win32' ? 'where python3' : 'which python', 2000);
+          const whichResult = await executeCommand(PLATFORM === 'win32' ? `where ${python3Cmd}` : `which ${python3Cmd}`, 2000);
           const resolvedPath = whichResult.stdout.trim().split(/\r?\n/).filter(Boolean)[0];
-          writeMCPLog(`[resolvePythonExec] Dev mode: Resolved python3 path: ${resolvedPath}`, 'Python Resolve');
+          writeMCPLog(`[resolvePythonExec] Dev mode: Resolved ${python3Cmd} path: ${resolvedPath}`, 'Python Resolve');
           if (resolvedPath && await pathExists(resolvedPath)) {
             pythonPath = resolvedPath;
           }
         } catch (error) {
-          writeMCPLog(`[resolvePythonExec] Dev mode: Failed to resolve python3 path: ${error instanceof Error ? error.message : String(error)}`, 'Python Resolve');
-          // If which/where fails, just use 'python3' command name
+          writeMCPLog(`[resolvePythonExec] Dev mode: Failed to resolve ${python3Cmd} path: ${error instanceof Error ? error.message : String(error)}`, 'Python Resolve');
+          // If which/where fails, just use the command name directly
         }
-        
+
         cachedPythonExec = {
           python: pythonPath,
-          pythonRoot: pythonPath !== 'python3' ? path.resolve(pythonPath, '..', '..') : '',
+          pythonRoot: pythonPath !== python3Cmd ? path.resolve(pythonPath, '..', '..') : '',
           env: {
             ...baseEnv, // Keep all current environment variables (including conda settings)
             // Don't set PYTHONHOME in dev mode to preserve conda/venv environment
@@ -1008,11 +1008,11 @@ async function resolvePythonExec(): Promise<PythonExec | null> {
             PYTHONUTF8: '1',
           },
         };
-        writeMCPLog(`[resolvePythonExec] Dev mode: Using python3 (${pythonPath}) from current environment`, 'Python Resolve');
+        writeMCPLog(`[resolvePythonExec] Dev mode: Using ${python3Cmd} (${pythonPath}) from current environment`, 'Python Resolve');
         return cachedPythonExec;
       }
     } catch (error) {
-      writeMCPLog(`[resolvePythonExec] Dev mode: python3 --version test failed: ${error instanceof Error ? error.message : String(error)}`, 'Python Resolve');
+      writeMCPLog(`[resolvePythonExec] Dev mode: ${python3Cmd} --version test failed: ${error instanceof Error ? error.message : String(error)}`, 'Python Resolve');
     }
     writeMCPLog('[resolvePythonExec] Dev mode: Failed to find Python in current environment, falling back to bundled Python', 'Python Resolve');
   }
@@ -4235,7 +4235,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 try:
     # Load image
-    img = Image.open('${screenshotPath.replace(/'/g, "\\'")}')
+    img = Image.open('${screenshotPath.replace(/\\/g, '/').replace(/'/g, "\\'")}')
     img_width, img_height = img.size
     scale_factor = ${scaleFactor}
     
@@ -4376,7 +4376,7 @@ try:
     img = img.convert('RGB')
     
     # Save annotated image
-    img.save('${annotatedPath.replace(/'/g, "\\'")}')
+    img.save('${annotatedPath.replace(/\\/g, '/').replace(/'/g, "\\'")}')
     print('SUCCESS')
     
 except Exception as e:
