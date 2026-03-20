@@ -91,7 +91,8 @@ export class LimaSync {
 
       // Verify sandbox still exists
       try {
-        await this.limaExec(`test -d "${existingSession.sandboxPath}"`);
+        // Verify sandbox still exists (single-quote escaped to prevent shell injection)
+        await this.limaExec(`test -d '${LimaSync.shellEscapePath(existingSession.sandboxPath)}'`);
         return {
           success: true,
           sandboxPath: existingSession.sandboxPath,
@@ -114,8 +115,8 @@ export class LimaSync {
     log(`[LimaSync]   Sandbox path: ${sandboxPath}`);
 
     try {
-      // Create sandbox directory
-      await this.limaExec(`mkdir -p "${sandboxPath}"`);
+      // Create sandbox directory (single-quote escaping prevents shell injection)
+      await this.limaExec(`mkdir -p '${this.shellEscapePath(sandboxPath)}'`);
 
       // Lima mounts /Users at /Users, so paths are the same
       const limaSourcePath = macPath;
@@ -125,14 +126,15 @@ export class LimaSync {
       const excludeArgs = SYNC_EXCLUDES.map(e => `--exclude="${e}"`).join(' ');
 
       // Sync files from macOS to sandbox (within Lima VM)
-      const rsyncCmd = `rsync -av --delete ${excludeArgs} "${limaSourcePath}/" "${sandboxPath}/"`;
+      // Paths are single-quote escaped to prevent shell injection
+      const rsyncCmd = `rsync -av --delete ${excludeArgs} '${this.shellEscapePath(limaSourcePath)}/' '${this.shellEscapePath(sandboxPath)}/'`;
       log(`[LimaSync] Running: ${rsyncCmd}`);
 
       await this.limaExec(rsyncCmd, 300000); // 5 min timeout
 
-      // Count files and get size
-      const countResult = await this.limaExec(`find "${sandboxPath}" -type f | wc -l`);
-      const sizeResult = await this.limaExec(`du -sb "${sandboxPath}" | cut -f1`);
+      // Count files and get size (single-quote escaped sandbox path)
+      const countResult = await this.limaExec(`find '${this.shellEscapePath(sandboxPath)}' -type f | wc -l`);
+      const sizeResult = await this.limaExec(`du -sb '${this.shellEscapePath(sandboxPath)}' | cut -f1`);
 
       const fileCount = parseInt(countResult.stdout.trim()) || 0;
       const totalSize = parseInt(sizeResult.stdout.trim()) || 0;
@@ -199,8 +201,8 @@ export class LimaSync {
       // Sync back to macOS (Lima mounts /Users directly)
       // NOTE: We use --delete to ensure files deleted/moved in sandbox are also deleted locally
       // This is important for file organization tasks where files are moved to new locations
-      const rsyncCmd = `rsync -av --delete ${excludeArgs} "${session.sandboxPath}/" "${limaDestPath}/"`;
-      log(`[LimaSync] Running: ${rsyncCmd}`);
+      // Paths are single-quote escaped to prevent shell injection
+      const rsyncCmd = `rsync -av --delete ${excludeArgs} '${LimaSync.shellEscapePath(session.sandboxPath)}/' '${LimaSync.shellEscapePath(limaDestPath)}/'`;      log(`[LimaSync] Running: ${rsyncCmd}`);
 
       await this.limaExec(rsyncCmd, 300000); // 5 min timeout
 
@@ -243,8 +245,8 @@ export class LimaSync {
       // First sync back to macOS
       await this.syncToMac(sessionId);
 
-      // Then delete sandbox directory
-      await this.limaExec(`rm -rf "${session.sandboxPath}"`);
+      // Then delete sandbox directory (single-quote escaped to prevent shell injection)
+      await this.limaExec(`rm -rf '${LimaSync.shellEscapePath(session.sandboxPath)}'`);
       log(`[LimaSync] Sandbox deleted: ${session.sandboxPath}`);
     } catch (error) {
       logError(`[LimaSync] Cleanup error:`, error);
@@ -285,11 +287,12 @@ export class LimaSync {
     try {
       const destDir = sandboxDestPath.substring(0, sandboxDestPath.lastIndexOf('/'));
 
-      // Create parent directory
-      await this.limaExec(`mkdir -p "${destDir}"`);
+      // Create parent directory (single-quote escaped to prevent shell injection)
+      await this.limaExec(`mkdir -p '${LimaSync.shellEscapePath(destDir)}'`);
 
       // Copy file (Lima mounts /Users directly)
-      const cpCmd = `cp "${macSourcePath}" "${sandboxDestPath}"`;
+      // Paths are single-quote escaped to prevent shell injection
+      const cpCmd = `cp '${LimaSync.shellEscapePath(macSourcePath)}' '${LimaSync.shellEscapePath(sandboxDestPath)}'`;
       log(`[LimaSync] Running: ${cpCmd}`);
 
       await this.limaExec(cpCmd, 60000); // 1 min timeout
@@ -428,6 +431,16 @@ export class LimaSync {
     }
 
     return null;
+  }
+
+  /**
+   * Escape a filesystem path for safe interpolation into a POSIX single-quoted shell string.
+   * Single quotes in the path are replaced with the sequence '\'' (end quote, literal
+   * single-quote, reopen quote) which is the standard POSIX escaping technique.
+   * The returned value does NOT include the surrounding single-quote delimiters.
+   */
+  private static shellEscapePath(p: string): string {
+    return p.replace(/'/g, "'\\''");
   }
 
   /**

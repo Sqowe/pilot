@@ -497,6 +497,7 @@ export class WSLBridge implements SandboxExecutor {
    * Install Python packages commonly needed by skills (PDF, PPTX, etc.)
    */
   static async installSkillDependencies(distro: string): Promise<void> {
+    WSLBridge.validateDistroName(distro);
     log('[WSL] Installing skill dependencies (markitdown, pypdf, etc.)...');
     
     // These packages are required by the built-in PDF and PPTX skills
@@ -527,6 +528,7 @@ export class WSLBridge implements SandboxExecutor {
    * Install pip in WSL (when Python exists but pip doesn't)
    */
   static async installPipInWSL(distro: string): Promise<boolean> {
+    WSLBridge.validateDistroName(distro);
     log('[WSL] Installing pip in WSL...');
     
     try {
