@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Release macOS
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Cache Electron
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-mac-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-mac-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install cliclick for GUI tools
+        run: brew install cliclick
+
+      - name: Download Node binaries
+        run: node scripts/download-node.js
+
+      - name: Prepare Python runtime
+        run: node scripts/prepare-python.js
+
+      - name: Prepare GUI tools
+        run: node scripts/prepare-gui-tools.js
+
+      - name: Build Lima agent
+        run: npm run build:lima-agent
+
+      - name: Build MCP servers
+        run: npm run build:mcp
+
+      - name: TypeScript compile
+        run: npx tsc
+
+      - name: Vite build
+        run: npx vite build
+
+      - name: Electron Builder (signed)
+        run: npx electron-builder --mac dmg
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.dmg
+            release/*.zip
+          draft: true
+
+  build-windows:
+    name: Release Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Cache Electron
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/electron/Cache
+          key: electron-win-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-win-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Node binaries
+        run: node scripts/download-node.js
+
+      - name: Build WSL agent
+        run: npm run build:wsl-agent
+
+      - name: Build MCP servers
+        run: npm run build:mcp
+
+      - name: TypeScript compile
+        run: npx tsc
+
+      - name: Vite build
+        run: npx vite build
+
+      - name: Electron Builder
+        run: npx electron-builder --win nsis
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.exe
+          draft: true

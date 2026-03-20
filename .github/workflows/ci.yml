@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Lint
+        run: npm run lint
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npx vitest run
+
+  build-macos:
+    name: Build macOS
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Cache Electron
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-mac-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-mac-
+
+      - name: Cache Node binaries
+        uses: actions/cache@v4
+        with:
+          path: resources/node/darwin-arm64
+          key: node-darwin-arm64-v22.22.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install cliclick for GUI tools
+        run: brew install cliclick
+
+      - name: Download Node binaries
+        run: node scripts/download-node.js
+
+      - name: Prepare Python runtime
+        run: node scripts/prepare-python.js
+
+      - name: Prepare GUI tools
+        run: node scripts/prepare-gui-tools.js
+
+      - name: Build Lima agent
+        run: npm run build:lima-agent
+
+      - name: Build MCP servers
+        run: npm run build:mcp
+
+      - name: TypeScript compile
+        run: npx tsc
+
+      - name: Vite build
+        run: npx vite build
+
+      - name: Electron Builder (unsigned)
+        run: npx electron-builder --mac dir
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-cowork-macos
+          path: release/*.app
+          retention-days: 7
+          if-no-files-found: warn
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Cache Electron
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/electron/Cache
+          key: electron-win-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-win-
+
+      - name: Cache Node binaries
+        uses: actions/cache@v4
+        with:
+          path: resources/node/win32-x64
+          key: node-win32-x64-v22.22.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Node binaries
+        run: node scripts/download-node.js
+
+      - name: Build WSL agent
+        run: npm run build:wsl-agent
+
+      - name: Build MCP servers
+        run: npm run build:mcp
+
+      - name: TypeScript compile
+        run: npx tsc
+
+      - name: Vite build
+        run: npx vite build
+
+      - name: Electron Builder
+        run: npx electron-builder --win nsis
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-cowork-windows
+          path: |
+            release/*.exe
+          retention-days: 7
+          if-no-files-found: warn
