@@ -555,15 +555,25 @@ export function useIPC() {
         activateNextTurn(sessionId, mockStepId);
       }
 
-      send({
-        type: 'session.continue',
-        payload: {
-          sessionId,
-          prompt,
-          content, // Send full content blocks including images
-        },
-      });
-      // Loading will be reset when we receive session.status event
+      try {
+        send({
+          type: 'session.continue',
+          payload: {
+            sessionId,
+            prompt,
+            content, // Send full content blocks including images
+          },
+        });
+        // Loading will be reset when we receive session.status event
+      } catch (e) {
+        setLoading(false);
+        useAppStore.getState().setGlobalNotice({
+          id: `notice-session-continue-${Date.now()}`,
+          type: 'error',
+          message: e instanceof Error ? e.message : i18n.t('chat.startFailed'),
+          messageKey: e instanceof Error ? undefined : 'chat.startFailed',
+        });
+      }
     },
     [
       send,
@@ -642,7 +652,7 @@ export function useIPC() {
         console.log('[useIPC] Browser mode - no persistent trace steps');
         return [];
       }
-      return invoke<TraceStep[]>({ type: 'session.getTraceSteps', payload: { sessionId } });
+      return (await invoke<TraceStep[]>({ type: 'session.getTraceSteps', payload: { sessionId } })) || [];
     },
     [invoke]
   );
