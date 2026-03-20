@@ -16,6 +16,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { app, BrowserWindow } from 'electron';
+import type { ChildProcess } from 'child_process';
 import path from 'path';
 import { log, logError, logWarn, logCtx, logCtxError, logTiming } from '../utils/logger';
 import { getDefaultShell } from '../utils/shell-resolver';
@@ -44,7 +45,7 @@ export interface MCPTool {
   description: string;
   inputSchema: {
     type: string;
-    properties: Record<string, any>;
+    properties: Record<string, unknown>;
     required?: string[];
   };
   serverId: string;
@@ -57,7 +58,7 @@ export interface MCPTool {
 export class MCPManager {
   private clients: Map<string, Client> = new Map();
   private transports: Map<string, StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport> = new Map();
-  private processes: Map<string, any> = new Map();
+  private processes: Map<string, ChildProcess> = new Map();
   private tools: Map<string, MCPTool> = new Map(); // toolName -> MCPTool
   private serverConfigs: Map<string, MCPServerConfig> = new Map();
   private npxPath: string | null = null; // Cached npx path
@@ -72,8 +73,11 @@ export class MCPManager {
    * Returns the path to the bundled node/npx binaries
    */
   private getBundledNodePath(): { node: string; npx: string } | null {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const path = require('path');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const fs = require('fs');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const os = require('os');
     
     const platform = os.platform();
@@ -226,8 +230,8 @@ export class MCPManager {
         }
         
         log(`[MCPManager] Enhanced environment with ${Object.keys(shellEnv).length} variables from shell`);
-      } catch (error: any) {
-        logWarn(`[MCPManager] Could not get environment from shell: ${error.message}`);
+      } catch (error: unknown) {
+        logWarn(`[MCPManager] Could not get environment from shell: ${error instanceof Error ? error.message : String(error)}`);
         logWarn(`[MCPManager] Using limited process.env, MCP servers may fail`);
       }
     } else if (platform === 'win32') {
@@ -250,8 +254,8 @@ export class MCPManager {
           env.PATH = allPaths.join(pathDelimiter);
           log(`[MCPManager] Enhanced Windows PATH: ${winPaths.length} user/machine paths + ${allPaths.length - winPaths.length} unique process paths = ${allPaths.length} total`);
         }
-      } catch (error: any) {
-        logWarn(`[MCPManager] Could not get Windows PATH from PowerShell: ${error.message}`);
+      } catch (error: unknown) {
+        logWarn(`[MCPManager] Could not get Windows PATH from PowerShell: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     
@@ -378,8 +382,9 @@ export class MCPManager {
    * Get the path to a MCP server file in the mcp directory
    */
   private getMcpServerPath(filename: string): string {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const fs = require('fs');
-    
+
     // In development: __dirname points to dist-electron/main
     // In production: appPath points to the app.asar or unpacked app
     if (app.isPackaged) {
@@ -581,10 +586,10 @@ export class MCPManager {
           env: env
         });
         log(`[MCPManager] npx test successful: ${testResult.stdout.trim()}`);
-      } catch (testError: any) {
-        logError(`[MCPManager] npx test failed: ${testError.message}`);
-        if (testError.stderr) {
-          logError(`[MCPManager] npx test stderr: ${testError.stderr}`);
+      } catch (testError: unknown) {
+        logError(`[MCPManager] npx test failed: ${testError instanceof Error ? testError.message : String(testError)}`);
+        if (testError instanceof Error && (testError as NodeJS.ErrnoException & { stderr?: string }).stderr) {
+          logError(`[MCPManager] npx test stderr: ${(testError as NodeJS.ErrnoException & { stderr?: string }).stderr}`);
         }
         logError(`[MCPManager] This indicates npx cannot run with the current environment`);
       }
@@ -604,6 +609,7 @@ export class MCPManager {
       
       // Try to capture stderr from the spawned process for debugging
       try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const transportAny = transport as any;
         if (transportAny._process) {
           const process = transportAny._process;
@@ -658,9 +664,9 @@ export class MCPManager {
         } else {
           logWarn(`[MCPManager] Could not access transport._process, it may not be spawned yet`);
         }
-      } catch (e: any) {
+      } catch (e: unknown) {
         // Ignore if we can't access internal process
-        logWarn(`[MCPManager] Could not attach to MCP server process for logging: ${e.message}`);
+        logWarn(`[MCPManager] Could not attach to MCP server process for logging: ${e instanceof Error ? e.message : String(e)}`);
       }
     } else if (config.type === 'sse') {
       if (!config.url) {
@@ -709,9 +715,10 @@ export class MCPManager {
       // Connect (client.connect() will automatically call transport.start())
       await client.connect(transport);
       log(`[MCPManager] Client.connect() completed successfully`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       logError(`[MCPManager] Client.connect() failed:`, error);
-      logError(`[MCPManager] Error details - code: ${error.code}, name: ${error.name}, message: ${error.message}`);
+      const connErr = error as { code?: unknown; name?: unknown; message?: unknown };
+      logError(`[MCPManager] Error details - code: ${connErr.code}, name: ${connErr.name}, message: ${connErr.message}`);
 
       // Try to get more details from the transport
       if (config.type === 'stdio' && commandForLogging) {
@@ -719,7 +726,7 @@ export class MCPManager {
         logError(`[MCPManager] Command was: ${commandForLogging} ${argsForLogging.join(' ')}`);
       }
 
-      try { await transport.close(); } catch {}
+      try { await transport.close(); } catch { /* ignore close error */ }
       throw error;
     }
 
@@ -753,8 +760,8 @@ export class MCPManager {
         log(`[MCPManager] Chrome debug port returned status: ${response.status}`);
         return false;
       }
-    } catch (error: any) {
-      log(`[MCPManager] Chrome debug port check failed: ${error.message}`);
+    } catch (error: unknown) {
+      log(`[MCPManager] Chrome debug port check failed: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }
@@ -811,9 +818,10 @@ export class MCPManager {
         log(`[MCPManager] ✓ Chrome connected successfully, using existing instance`);
         log(`[MCPManager] list_pages result:`, result);
         return;
-      } catch (error: any) {
+      } catch (error: unknown) {
         logWarn(`[MCPManager] ⚠️ Port accessible but tool call failed`);
-        logWarn(`[MCPManager] Error code: ${error.code}, message: ${error.message}`);
+        const chromeErr = error as { code?: unknown; message?: unknown };
+        logWarn(`[MCPManager] Error code: ${chromeErr.code}, message: ${chromeErr.message}`);
         log(`[MCPManager] Will try to start new Chrome instance...`);
       }
     } else {
@@ -853,23 +861,25 @@ export class MCPManager {
           log(`[MCPManager] ✓ Chrome MCP connection verified successfully!`);
           log(`[MCPManager] list_pages result:`, result);
           return;
-        } catch (verifyError: any) {
+        } catch (verifyError: unknown) {
+          const ve = verifyError as { code?: unknown; message?: unknown };
           if (i < 4) {
             log(`[MCPManager] Connection verification attempt ${i + 1}/5 failed, retrying...`);
-            log(`[MCPManager] Error: ${verifyError.message}`);
+            log(`[MCPManager] Error: ${ve.message}`);
             await new Promise(resolve => setTimeout(resolve, 1000));
           } else {
             logError(`[MCPManager] ❌ Chrome started but MCP connection verification failed after 5 attempts`);
-            logError(`[MCPManager] Last error code: ${verifyError.code}, message: ${verifyError.message}`);
+            logError(`[MCPManager] Last error code: ${ve.code}, message: ${ve.message}`);
             logError(`[MCPManager] The chrome-devtools-mcp server may not be working correctly`);
             throw new Error('Chrome 浏览器未就绪，无法执行此操作: MCP connection verification failed after 5 attempts');
           }
         }
       }
-    } catch (startError: any) {
+    } catch (startError: unknown) {
       logError(`[MCPManager] ❌ Failed to start Chrome with debugging`);
-      logError(`[MCPManager] Error: ${startError.message || startError}`);
-      throw new Error(`Chrome 浏览器未就绪，无法执行此操作: ${startError.message || startError}`);
+      const startErrMsg = startError instanceof Error ? startError.message : String(startError);
+      logError(`[MCPManager] Error: ${startErrMsg}`);
+      throw new Error(`Chrome 浏览器未就绪，无法执行此操作: ${startErrMsg}`);
     }
   }
 
@@ -878,7 +888,9 @@ export class MCPManager {
    * Chrome 136+ requires --user-data-dir for remote debugging to work properly
    */
   private getChromeUserDataDir(): string {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const os = require('os');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const path = require('path');
     return path.join(os.tmpdir(), 'chrome-mcp-debug');
   }
@@ -933,14 +945,15 @@ export class MCPManager {
       chromeProcess.unref();
 
       log(`[MCPManager] Chrome spawned successfully`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       logWarn(`[MCPManager] Chrome startup command completed with warning`);
-      logWarn(`[MCPManager] Error message: ${error.message}`);
-      if (error.stdout) {
-        log(`[MCPManager] stdout: ${error.stdout}`);
+      logWarn(`[MCPManager] Error message: ${error instanceof Error ? error.message : String(error)}`);
+      const spawnErr = error as { stdout?: string; stderr?: string };
+      if (spawnErr.stdout) {
+        log(`[MCPManager] stdout: ${spawnErr.stdout}`);
       }
-      if (error.stderr) {
-        log(`[MCPManager] stderr: ${error.stderr}`);
+      if (spawnErr.stderr) {
+        log(`[MCPManager] stderr: ${spawnErr.stderr}`);
       }
     }
   }
@@ -948,7 +961,7 @@ export class MCPManager {
   /**
    * Gracefully kill a child process: SIGTERM first, then SIGKILL after timeout
    */
-  private async gracefulKill(proc: any, timeoutMs = 5000): Promise<void> {
+  private async gracefulKill(proc: ChildProcess, timeoutMs = 5000): Promise<void> {
     return new Promise((resolve) => {
       proc.once('exit', () => resolve());
       proc.kill('SIGTERM');
@@ -1065,7 +1078,9 @@ export class MCPManager {
             description: tool.description || '',
             inputSchema: {
               type: 'object',
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               properties: (tool.inputSchema as any)?.properties || {},
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               required: (tool.inputSchema as any)?.required,
             },
             serverId,
@@ -1074,8 +1089,9 @@ export class MCPManager {
         }
 
         log(`[MCPManager] ✓ Loaded ${listToolsResult.tools.length} tools from ${config.name}`);
-      } catch (error: any) {
-        logError(`[MCPManager] ❌ Error listing tools from ${serverId}:`, error.message || error);
+      } catch (error: unknown) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        logError(`[MCPManager] ❌ Error listing tools from ${serverId}:`, errMsg);
 
         // Notify renderer that tools refresh failed for this server
         try {
@@ -1083,7 +1099,7 @@ export class MCPManager {
           if (win) {
             win.webContents.send('server-event', {
               type: 'mcp:tools-refresh-error',
-              payload: { serverId, error: error.message || String(error) },
+              payload: { serverId, error: errMsg },
             });
           }
         } catch (_notifyErr) {
@@ -1120,7 +1136,7 @@ export class MCPManager {
   /**
    * Call an MCP tool with timeout and retry
    */
-  async callTool(toolName: string, args: Record<string, any>): Promise<any> {
+  async callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
     const tool = this.tools.get(toolName);
     if (!tool) {
       throw new Error(`MCP tool not found: ${toolName}`);
@@ -1140,7 +1156,7 @@ export class MCPManager {
 
     const callStartTime = Date.now();
     const maxRetries = 2;
-    let lastError: any;
+    let lastError: unknown;
     let compatHotReloadTried = false;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -1183,9 +1199,9 @@ export class MCPManager {
 
         logTiming(`MCP tool ${actualToolName}`, callStartTime);
         return result;
-      } catch (error: any) {
+      } catch (error: unknown) {
         lastError = error;
-        const errorMsg = error.message || String(error);
+        const errorMsg = error instanceof Error ? error.message : String(error);
         logCtxError(`[MCPManager] Error calling tool ${toolName} (attempt ${attempt + 1}/${maxRetries + 1}):`, errorMsg);
 
         if (attempt >= maxRetries) {
@@ -1310,13 +1326,14 @@ export function mergeShellEnvForMcp(
   return merged;
 }
 
-function extractStructuredToolErrorMessage(result: any): string {
+function extractStructuredToolErrorMessage(result: unknown): string {
   if (!result || typeof result !== 'object') {
     return '';
   }
 
   const topLevelIsError = (result as { isError?: unknown }).isError === true;
-  const content = Array.isArray(result.content) ? result.content : [];
+  const resultObj = result as { content?: unknown };
+  const content = Array.isArray(resultObj.content) ? resultObj.content : [];
   for (const item of content) {
     if (!item || typeof item !== 'object') continue;
     if ((item as { type?: string }).type !== 'text') continue;
