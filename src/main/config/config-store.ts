@@ -844,7 +844,7 @@ export class ConfigStore {
   private buildUniqueConfigSetName(name: string, existingSets: ApiConfigSet[], excludeId?: string): string {
     const trimmed = name.trim();
     if (!trimmed) {
-      throw new Error('配置方案名称不能为空');
+      throw new Error('Config set name is required');
     }
 
     const usedNames = new Set(
@@ -941,7 +941,7 @@ export class ConfigStore {
   createSet(payload: CreateConfigSetPayload): AppConfig {
     const current = this.getAll();
     if (current.configSets.length >= MAX_CONFIG_SET_COUNT) {
-      throw new Error(`最多只能保存 ${MAX_CONFIG_SET_COUNT} 个配置方案`);
+      throw new Error(`Config set limit reached: max ${MAX_CONFIG_SET_COUNT}`);
     }
 
     const id = this.generateConfigSetId(current.configSets);
@@ -968,7 +968,7 @@ export class ConfigStore {
         || current.configSets[0];
 
       if (!source) {
-        throw new Error('找不到可复制的配置方案');
+        throw new Error('Config set clone source not found');
       }
 
       const cloned = this.cloneConfigSet(source);
@@ -992,7 +992,7 @@ export class ConfigStore {
     const current = this.getAll();
     const target = current.configSets.find((set) => set.id === payload.id);
     if (!target) {
-      throw new Error('配置方案不存在');
+      throw new Error('Config set not found');
     }
 
     const nextName = this.buildUniqueConfigSetName(payload.name, current.configSets, payload.id);
@@ -1016,13 +1016,13 @@ export class ConfigStore {
     const current = this.getAll();
     const target = current.configSets.find((set) => set.id === payload.id);
     if (!target) {
-      throw new Error('配置方案不存在');
+      throw new Error('Config set not found');
     }
     if (target.isSystem) {
-      throw new Error('默认方案不可删除');
+      throw new Error('System config set cannot be deleted');
     }
     if (current.configSets.length <= 1) {
-      throw new Error('至少需要保留一个配置方案');
+      throw new Error('At least one config set must be kept');
     }
 
     const nextSets = current.configSets
@@ -1042,7 +1042,7 @@ export class ConfigStore {
   switchSet(payload: { id: string }): AppConfig {
     const current = this.getAll();
     if (!current.configSets.some((set) => set.id === payload.id)) {
-      throw new Error('配置方案不存在');
+      throw new Error('Config set not found');
     }
 
     this.saveConfig(this.composeProjectedConfig(current, current.configSets, payload.id));

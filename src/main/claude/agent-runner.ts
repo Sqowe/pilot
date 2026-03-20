@@ -1023,7 +1023,7 @@ ${hints.join('\n')}
             payload: {
               sessionId: session.id,
               phase: 'error',
-              message: '沙盒文件同步失败，已回退到直接访问模式',
+              message: 'Sandbox file sync failed, falling back to direct access mode',
               detail: 'Falling back to direct access mode (less secure)',
             },
           });
@@ -1156,7 +1156,7 @@ ${hints.join('\n')}
             payload: {
               sessionId: session.id,
               phase: 'error',
-              message: '沙盒文件同步失败，已回退到直接访问模式',
+              message: 'Sandbox file sync failed, falling back to direct access mode',
               detail: 'Falling back to direct access mode (less secure)',
             },
           });
@@ -2140,10 +2140,10 @@ Tool routing:
           case 'auto_compaction_end': {
             const status = event.aborted ? 'error' : (event.errorMessage ? 'error' : 'completed');
             const title = event.aborted
-              ? '上下文压缩已中止'
+              ? 'Context compaction aborted'
               : event.errorMessage
-                ? `上下文压缩失败: ${event.errorMessage}`
-                : '上下文压缩完成';
+                ? `Context compaction failed: ${event.errorMessage}`
+                : 'Context compaction completed';
             log('[ClaudeAgentRunner] Auto-compaction ended:', title, 'willRetry:', event.willRetry);
             if (compactionStepId) {
               this.sendTraceUpdate(session.id, compactionStepId, { status, title });

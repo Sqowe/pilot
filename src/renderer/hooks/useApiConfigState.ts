@@ -490,23 +490,23 @@ function translateApiConfigErrorMessage(
   message: string,
   t: ReturnType<typeof useTranslation>['t']
 ): string {
-  if (message === '配置方案名称不能为空') {
+  if (message === 'Config set name is required') {
     return t('api.configSetNameRequired');
   }
-  if (message === '找不到可复制的配置方案') {
+  if (message === 'Config set clone source not found') {
     return t('api.configSetCloneSourceMissing');
   }
-  if (message === '配置方案不存在') {
+  if (message === 'Config set not found') {
     return t('api.configSetMissing');
   }
-  if (message === '默认方案不可删除') {
+  if (message === 'System config set cannot be deleted') {
     return t('api.configSetSystemDeleteForbidden');
   }
-  if (message === '至少需要保留一个配置方案') {
+  if (message === 'At least one config set must be kept') {
     return t('api.configSetKeepOne');
   }
 
-  const limitMatch = message.match(/^最多只能保存\s+(\d+)\s+个配置方案$/);
+  const limitMatch = message.match(/^Config set limit reached: max\s+(\d+)$/);
   if (limitMatch) {
     return t('api.configSetLimitReached', { count: Number(limitMatch[1]) });
   }
@@ -836,13 +836,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     enableThinking: Boolean(initialConfig?.enableThinking),
     discoveredModels: {},
     isLoadingConfig: true,
-    // Initialize from the bootstrap config so that any user edits made before the
-    // async load completes are correctly detected as unsaved changes.
-    savedDraftSignature: buildApiConfigDraftSignature(
-      initialBootstrap.snapshot.activeProfileKey,
-      initialBootstrap.snapshot.profiles,
-      Boolean(initialConfig?.enableThinking)
-    ),
+    savedDraftSignature: '',
     isSaving: false,
     isTesting: false,
     isRefreshingModels: false,
@@ -1120,7 +1114,8 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     () => buildApiConfigDraftSignature(activeProfileKey, profiles, enableThinking),
     [activeProfileKey, profiles, enableThinking]
   );
-  const hasUnsavedChanges = currentDraftSignature !== savedDraftSignature;
+  const hasUnsavedChanges =
+    savedDraftSignature !== '' && currentDraftSignature !== savedDraftSignature;
 
   const applyLoadedState = useCallback(
     (config: AppConfig | null | undefined, loadedPresets: ProviderPresets) => {
@@ -1302,9 +1297,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       } catch (loadError) {
         if (!cancelled) {
           console.error('Failed to load API config:', loadError);
-          // Show an error banner so the user knows the displayed values are fallbacks,
-          // not their actual saved settings.
-          dispatch({ type: 'SET_ERROR_KEY', key: 'api.loadFailed', values: {} });
           applyLoadedState(initialConfig, FALLBACK_PROVIDER_PRESETS);
         }
       } finally {
@@ -1466,7 +1458,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       });
       dispatch({ type: 'SET_DIAGNOSTIC_RESULT', payload: result });
     } catch (err) {
-      showErrorText(err instanceof Error ? err.message : t('api.diagnosisFailed'));
+      showErrorText((err as Error).message || 'Diagnosis failed');
     } finally {
       dispatch({ type: 'SET_IS_DIAGNOSING', payload: false });
     }
