@@ -1,35 +1,121 @@
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
+ * Per-test isolated userData directory.  Providing a unique directory via the
+ * electron mock accomplishes two things:
+ *
+ *   1. Prevents cross-worker file-deletion races: when the full suite runs,
+ *      multiple worker threads share the same default .cowork-user-data/logs
+ *      directory.  cleanupOldLogs() in one worker can delete a log file that
+ *      another worker is still trying to read, causing ENOENT failures.
+ *
+ *   2. Keeps test artefacts self-contained so they can be cleaned up in
+ *      afterEach regardless of whether the test passed or failed.
+ */
+let testUserDataDir: string = '';
+
+/**
+ * Holds a reference to the most recent WriteStream opened by the logger's
+ * initLogFile() so getLogContent can wait for the 'finish' event instead of
+ * relying on a fixed-length timeout.
+ *
+ * Populated by a vi.spyOn wrapper installed in each beforeEach and reset in
+ * afterEach, giving every test a fresh, isolated reference.
+ */
+let capturedWriteStream: fs.WriteStream | null = null;
+
+/**
  * Helper: write a log, then read back the file content.
- * The log file is lazily initialized on first write, so we
- * retrieve the path AFTER writing and close before reading.
+ *
+ * The log file is lazily initialized on first write, so we retrieve the path
+ * AFTER writing.  Instead of a fixed setTimeout we wait for the WriteStream
+ * 'finish' event (captured via the createWriteStream spy) to guarantee all
+ * buffered bytes have been flushed before the file is read back.  This makes
+ * the assertion reliable even under heavy CPU load during a full test-suite run.
  */
 async function getLogContent(logger: typeof import('../src/main/utils/logger')): Promise<string> {
   const logFilePath = logger.getLogFilePath();
   expect(logFilePath).toBeTruthy();
+
+  // Capture the stream reference before closeLogFile() clears the internal pointer.
+  const stream = capturedWriteStream;
+
   logger.closeLogFile();
-  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  if (stream) {
+    // Wait until the stream has fully flushed and closed.
+    await new Promise<void>((resolve) => {
+      if (stream.writableFinished || stream.destroyed) {
+        resolve();
+        return;
+      }
+      stream.once('finish', resolve);
+      stream.once('close', resolve);
+    });
+  } else {
+    // No stream was captured (e.g. test that never triggered a write).
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
   return fs.readFileSync(logFilePath!, 'utf8');
 }
 
 describe('logger context (AsyncLocalStorage)', () => {
   beforeEach(() => {
+    // Create a unique temporary directory for this test's log files.
+    // This prevents cleanupOldLogs() from one parallel worker deleting files
+    // that another worker is still reading (the root cause of cross-worker
+    // ENOENT flakiness in a full `npm run test` run).
+    testUserDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cowork-test-logger-'));
+
     vi.resetModules();
     vi.restoreAllMocks();
+
+    // Provide a real app.getPath so the logger writes to our isolated temp dir.
     vi.doMock('electron', () => ({
-      app: {},
+      app: {
+        getPath: (_name: string) => testUserDataDir,
+        getVersion: () => 'test',
+      },
     }));
+
+    // Spy on fs.createWriteStream to capture the stream instance created by
+    // initLogFile().  We use the real implementation and only intercept to
+    // record the returned stream, so the logger behaves normally.
+    //
+    // The spy is set up AFTER vi.resetModules() so the freshly loaded logger
+    // module uses the same fs object reference we are wrapping here.
+    capturedWriteStream = null;
+    const realCreateWriteStream = fs.createWriteStream.bind(fs);
+    vi.spyOn(fs, 'createWriteStream').mockImplementation(
+      (...args: Parameters<typeof fs.createWriteStream>) => {
+        const stream = realCreateWriteStream(...args);
+        capturedWriteStream = stream;
+        return stream;
+      }
+    );
   });
 
   afterEach(async () => {
+    // Restore all mocks before closing the log file so the spy is removed.
     vi.restoreAllMocks();
+    capturedWriteStream = null;
+
     try {
       const logger = await import('../src/main/utils/logger');
       logger.closeLogFile();
     } catch {
       // Module may not be importable if test failed early
+    }
+
+    // Remove the isolated temp directory created for this test.
+    try {
+      fs.rmSync(testUserDataDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup failures — they do not affect correctness.
     }
   });
 
