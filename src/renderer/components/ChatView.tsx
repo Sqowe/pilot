@@ -10,6 +10,7 @@ import {
   useActiveExecutionClock,
   useAppConfig,
 } from '../store/selectors';
+import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
 import { MessageCard } from './MessageCard';
 import type { Message, ContentBlock } from '../types';
@@ -34,6 +35,7 @@ export function ChatView() {
   const pendingTurns = usePendingTurns();
   const executionClock = useActiveExecutionClock();
   const appConfig = useAppConfig();
+  const setGlobalNotice = useAppStore((s) => s.setGlobalNotice);
   const { continueSession, stopSession, isElectron } = useIPC();
   const [prompt, setPrompt] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -273,7 +275,12 @@ export function ChatView() {
           mediaType: resizedBlob.type as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
         });
       } catch (err) {
-        console.error('Failed to process pasted image:', err);
+        // Notify the user instead of silently dropping the error
+        setGlobalNotice({
+          id: `image-paste-failed-${Date.now()}`,
+          type: 'warning',
+          message: t('chat.imageProcessFailed'),
+        });
       }
     }
 
@@ -455,7 +462,12 @@ export function ChatView() {
             mediaType: resizedBlob.type,
           });
         } catch (err) {
-          console.error('Failed to process dropped image:', err);
+          // Notify the user instead of silently dropping the error
+          setGlobalNotice({
+            id: `image-drop-failed-${Date.now()}`,
+            type: 'warning',
+            message: t('chat.imageProcessFailed'),
+          });
         }
       }
 
