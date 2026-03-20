@@ -1,9 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
+// SettingsPanel was split — skills/plugin content lives in settings/SettingsSkills.tsx
 const settingsPanelPath = path.resolve(process.cwd(), 'src/renderer/components/SettingsPanel.tsx');
-const settingsPanelContent = readFileSync(settingsPanelPath, 'utf8');
+const settingsDir = path.resolve(process.cwd(), 'src/renderer/components/settings');
+const settingsPanelContent = [
+  readFileSync(settingsPanelPath, 'utf8'),
+  ...readdirSync(settingsDir).map((f) => readFileSync(path.join(settingsDir, f), 'utf8')),
+].join('\n');
 
 describe('SettingsPanel skills plugin browse entry', () => {
   it('unit: renders browse plugins action', () => {

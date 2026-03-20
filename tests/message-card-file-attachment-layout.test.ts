@@ -2,9 +2,14 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 
+// Content split across MessageCard.tsx and the message/ sub-components directory
 function readMessageCard() {
-  const filePath = path.resolve(__dirname, '../src/renderer/components/MessageCard.tsx');
-  return fs.readFileSync(filePath, 'utf8');
+  const messageCardPath = path.resolve(__dirname, '../src/renderer/components/MessageCard.tsx');
+  const messageDir = path.resolve(__dirname, '../src/renderer/components/message');
+  return [
+    fs.readFileSync(messageCardPath, 'utf8'),
+    ...fs.readdirSync(messageDir).map((f) => fs.readFileSync(path.join(messageDir, f), 'utf8')),
+  ].join('\n');
 }
 
 describe('message card file attachment layout', () => {
