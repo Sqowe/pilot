@@ -5,18 +5,25 @@ import path from 'node:path';
 
 let testRoot = '';
 
-vi.mock('electron', () => ({
-  app: {
-    getName: () => 'open-cowork-test',
-    getVersion: () => '0.0.0-test',
-    getPath: (name: string) => {
-      if (name === 'userData') return path.join(testRoot, 'userData');
-      if (name === 'temp') return path.join(testRoot, 'temp');
-      if (name === 'home') return path.join(testRoot, 'home');
-      return testRoot;
+vi.mock('electron', () => {
+  const electron = {
+    app: {
+      getName: () => 'open-cowork-test',
+      getVersion: () => '0.0.0-test',
+      getPath: (name: string) => {
+        if (name === 'userData') return path.join(testRoot, 'userData');
+        if (name === 'temp') return path.join(testRoot, 'temp');
+        if (name === 'home') return path.join(testRoot, 'home');
+        return testRoot;
+      },
     },
-  },
-}));
+  };
+
+  return {
+    ...electron,
+    default: electron,
+  };
+});
 
 vi.mock('../src/main/utils/logger', () => ({
   log: vi.fn(),
