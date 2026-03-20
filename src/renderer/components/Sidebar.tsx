@@ -17,7 +17,8 @@ import {
 } from 'lucide-react';
 import type { Session } from '../types';
 
-const sidebarLogoSrc = new URL('../../../resources/logo.png', import.meta.url).href;
+// Served from public/ as a static asset — works in both dev and packaged builds
+const sidebarLogoSrc = '/logo.png';
 
 type SessionGroup = {
   key: string;
@@ -41,7 +42,6 @@ export function Sidebar() {
   const setShowSettings = useAppStore((s) => s.setShowSettings);
   const { deleteSession, batchDeleteSessions, getSessionMessages, getSessionTraceSteps, isElectron } = useIPC();
   const [hoveredSession, setHoveredSession] = useState<string | null>(null);
-  const [focusedSession, setFocusedSession] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -346,8 +346,6 @@ export function Sidebar() {
                     return (
                       <div
                         key={session.id}
-                        role="button"
-                        tabIndex={0}
                         onClick={() => {
                           if (isSelectMode) {
                             toggleSelectSession(session.id);
@@ -355,20 +353,8 @@ export function Sidebar() {
                             handleSessionClick(session.id);
                           }
                         }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            if (isSelectMode) {
-                              toggleSelectSession(session.id);
-                            } else {
-                              void handleSessionClick(session.id);
-                            }
-                          }
-                        }}
                         onMouseEnter={() => setHoveredSession(session.id)}
                         onMouseLeave={() => setHoveredSession(null)}
-                        onFocus={() => setFocusedSession(session.id)}
-                        onBlur={() => setFocusedSession(null)}
                         className={`group relative cursor-pointer rounded-lg px-2.5 py-1.5 transition-colors ${
                           isSelectMode && isSelected
                             ? 'bg-accent-muted/20'
@@ -396,11 +382,9 @@ export function Sidebar() {
                           </div>
                         </div>
 
-                        {!isSelectMode && (hoveredSession === session.id || focusedSession === session.id) && (
+                        {!isSelectMode && hoveredSession === session.id && (
                           <button
                             onClick={(e) => handleDeleteSession(e, session.id)}
-                            onFocus={() => setFocusedSession(session.id)}
-                            onBlur={() => setFocusedSession(null)}
                             className="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-lg flex items-center justify-center text-text-muted hover:text-error hover:bg-surface-active transition-colors"
                             title={t('common.delete')}
                           >

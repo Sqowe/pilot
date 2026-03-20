@@ -24,7 +24,8 @@ type AttachedFile = {
   inlineDataBase64?: string;
 };
 
-const welcomeLogoSrc = new URL('../../../resources/logo.png', import.meta.url).href;
+// Served from public/ as a static asset — works in both dev and packaged builds
+const welcomeLogoSrc = '/logo.png';
 
 export function WelcomeView() {
   const { t } = useTranslation();

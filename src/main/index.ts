@@ -282,16 +282,33 @@ function buildMacMenu() {
 function setupTray() {
   if (tray) return;
 
-  const iconName = process.platform === 'darwin' ? 'tray-iconTemplate.png' : 'tray-icon.png';
-  const iconPath = join(__dirname, '../../resources', iconName);
+  // Use .ico on Windows for proper multi-resolution tray support; fall back to .png if absent
+  const iconName =
+    process.platform === 'darwin'
+      ? 'tray-iconTemplate.png'
+      : process.platform === 'win32'
+        ? 'tray-icon.ico'
+        : 'tray-icon.png';
+  // TODO: create resources/tray-icon.ico from tray-icon.png for full Windows tray fidelity
+  const iconPath = app.isPackaged
+    ? join(process.resourcesPath, iconName)
+    : join(__dirname, '../../resources', iconName);
+
+  // On Windows, fall back to .png if the .ico file has not been created yet
+  const resolvedIconPath =
+    process.platform === 'win32' && !fs.existsSync(iconPath)
+      ? app.isPackaged
+        ? join(process.resourcesPath, 'tray-icon.png')
+        : join(__dirname, '../../resources', 'tray-icon.png')
+      : iconPath;
 
   // Gracefully skip tray if icon is missing (e.g. dev environment)
-  if (!fs.existsSync(iconPath)) {
-    log('[Tray] Icon not found at', iconPath, '— skipping tray setup');
+  if (!fs.existsSync(resolvedIconPath)) {
+    log('[Tray] Icon not found at', resolvedIconPath, '— skipping tray setup');
     return;
   }
 
-  tray = new Tray(iconPath);
+  tray = new Tray(resolvedIconPath);
   tray.setToolTip('Open Cowork');
 
   const contextMenu = Menu.buildFromTemplate([
@@ -388,7 +405,12 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     backgroundColor: THEME.background,
-    icon: join(__dirname, `../../resources/${isMac ? 'icon.icns' : isWindows ? 'icon.ico' : 'icon.png'}`),
+    icon: (() => {
+      const windowIconName = isMac ? 'icon.icns' : isWindows ? 'icon.ico' : 'icon.png';
+      return app.isPackaged
+        ? join(process.resourcesPath, windowIconName)
+        : join(__dirname, `../../resources/${windowIconName}`);
+    })(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
@@ -955,11 +977,8 @@ app
     }
 
     app.on('activate', () => {
-      // Dock click: restore hidden window if it exists, otherwise create a new one.
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.show();
-        mainWindow.focus();
-      } else {
+      const hasVisibleWindow = BrowserWindow.getAllWindows().some((w) => !w.isDestroyed());
+      if (!hasVisibleWindow) {
         createWindow();
       }
     });
@@ -1642,10 +1661,7 @@ ipcMain.handle(
   'credentials.save',
   (_event, credential: Omit<UserCredential, 'id' | 'createdAt' | 'updatedAt'>) => {
     try {
-      const saved = credentialsStore.save(credential);
-      // Strip password before returning to renderer
-      const { password: _pw, ...safeSaved } = saved;
-      return safeSaved;
+      return credentialsStore.save(credential);
     } catch (error) {
       logError('[Credentials] Error saving credential:', error);
       throw error;
@@ -1661,11 +1677,7 @@ ipcMain.handle(
     updates: Partial<Omit<UserCredential, 'id' | 'createdAt' | 'updatedAt'>>
   ) => {
     try {
-      const updated = credentialsStore.update(id, updates);
-      if (!updated) return undefined;
-      // Strip password before returning to renderer
-      const { password: _pw, ...safeUpdated } = updated;
-      return safeUpdated;
+      return credentialsStore.update(id, updates);
     } catch (error) {
       logError('[Credentials] Error updating credential:', error);
       throw error;
