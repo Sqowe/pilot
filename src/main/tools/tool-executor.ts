@@ -295,6 +295,7 @@ export class ToolExecutor {
     }
 
     // Block path traversal attempts
+    // eslint-disable-next-line no-useless-escape
     if (/(?:^|[\s;|&])\.\.(?:[\s;|&\/\\]|$)/.test(command) || command.includes('../') || command.includes('..\\')) {
       throw new Error('Command blocked: path traversal (..) is not allowed');
     }
@@ -302,6 +303,7 @@ export class ToolExecutor {
     // Extract potential paths from command (quoted strings and unquoted tokens)
     const pathPatterns = [
       // Windows absolute paths: C:\... or C:/...
+      // eslint-disable-next-line no-useless-escape
       /[A-Za-z]:[\\\/][^\s;|&"'<>]*/g,
       // UNC absolute paths: \\server\share\...
       /\\\\[^\s;|&"'<>]+/g,
@@ -342,6 +344,7 @@ export class ToolExecutor {
 
     // Block dangerous patterns
     const dangerousPatterns = [
+      // eslint-disable-next-line no-useless-escape
       /rm\s+-rf?\s+[\/~]/i,
       /dd\s+if=/i,
       /mkfs/i,
@@ -405,7 +408,7 @@ export class ToolExecutor {
       });
 
       proc.on('close', (code) => {
-        if (isWindows && args[args.length - 1]?.endsWith('.ps1')) { try { fs.unlinkSync(args[args.length - 1]); } catch {} }
+        if (isWindows && args[args.length - 1]?.endsWith('.ps1')) { try { fs.unlinkSync(args[args.length - 1]); } catch { /* cleanup best-effort */ } }
         if (code === 0) {
           resolve(stdout || 'Command completed successfully');
         } else {
@@ -846,7 +849,7 @@ export class ToolExecutor {
       });
 
       proc.on('close', (code) => {
-        if (isWindows && args[args.length - 1]?.endsWith('.ps1')) { try { fs.unlinkSync(args[args.length - 1]); } catch {} }
+        if (isWindows && args[args.length - 1]?.endsWith('.ps1')) { try { fs.unlinkSync(args[args.length - 1]); } catch { /* cleanup best-effort */ } }
         if (code === 0) {
           resolve({ success: true, output: stdout || 'Command completed' });
         } else {

@@ -70,7 +70,7 @@ export interface SetGlobalSkillsPathResult {
 export class SkillsManager {
   private db: DatabaseInstance;
   private loadedSkills: Map<string, Skill> = new Map();
-  private runningServers: Map<string, { process: any; skill: Skill }> = new Map();
+  private runningServers: Map<string, { process: unknown; skill: Skill }> = new Map();
   private getConfiguredGlobalSkillsPathFn?: () => string | undefined;
   private setConfiguredGlobalSkillsPathFn?: (nextPath: string) => void;
   private watchStorageEnabled: boolean;

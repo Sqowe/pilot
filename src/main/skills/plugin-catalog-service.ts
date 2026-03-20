@@ -113,6 +113,7 @@ export class PluginCatalogService {
   private extractPluginSlugs(html: string): string[] {
     const slugs = new Set<string>();
     const matches = html.matchAll(
+      // eslint-disable-next-line no-useless-escape
       /\bhref\s*=\s*(?:"(?:https?:\/\/claude\.com)?\/plugins\/([^"#?\/]+)\/?"|'(?:https?:\/\/claude\.com)?\/plugins\/([^'#?\/]+)\/?')/gi
     );
     for (const match of matches) {

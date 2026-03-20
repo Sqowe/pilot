@@ -292,10 +292,11 @@ export class PluginRuntimeService {
 
   private static async defaultCommandRunner(command: string, args: string[]): Promise<CommandOutput> {
     // Enrich PATH for packaged app (same strategy as agent-runner)
-    let env = { ...process.env };
+    const env = { ...process.env };
     if (process.platform === 'darwin' || process.platform === 'linux') {
       try {
         const userShell = getDefaultShell();
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { execSync } = require('child_process');
         const shellOutput = execSync(`${userShell} -l -c "echo $PATH"`, {
           encoding: 'utf-8',
@@ -305,6 +306,7 @@ export class PluginRuntimeService {
       } catch { /* use process.env.PATH */ }
     } else if (process.platform === 'win32') {
       try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { execSync } = require('child_process');
         const winPath = execSync(
           'powershell.exe -NoProfile -Command "[Environment]::GetEnvironmentVariable(\'Path\', \'User\') + \';\' + [Environment]::GetEnvironmentVariable(\'Path\', \'Machine\')"',
@@ -651,6 +653,7 @@ export class PluginRuntimeService {
 
   private resolveSafePath(rootPath: string, relativePath: string): string | null {
     // Check for path traversal variants
+    // eslint-disable-next-line no-useless-escape
     if (/(\.\.[\/\\]|%2e%2e)/i.test(relativePath)) {
       throw new Error('Path traversal detected');
     }

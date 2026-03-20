@@ -13,6 +13,7 @@ class PluginRegistryStore {
 
   constructor() {
     const storeCwd = this.resolveStoreCwd();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- electron-store requires Record<string, any>
     const storeOptions: any = {
       name: 'plugin-registry',
       projectName: 'open-cowork',
