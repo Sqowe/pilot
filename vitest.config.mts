@@ -5,6 +5,11 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    // Global setup: mocks `electron` before every test file so that modules
+    // importing electron do not throw "Electron failed to install correctly"
+    // when running in CI (where npm ci --ignore-scripts skips the electron
+    // postinstall that creates node_modules/electron/path.txt).
+    setupFiles: ['./tests/setup.ts'],
     include: ['src/**/*.{test,spec}.{js,ts}', 'tests/**/*.{test,spec}.{js,ts}'],
     exclude: ['node_modules', 'dist', 'dist-electron', '.claude'],
     coverage: {
