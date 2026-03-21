@@ -1,12 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('electron', () => ({
-  app: {
-    isPackaged: false,
-    getPath: () => '/tmp',
-    getVersion: () => '0.0.0',
-  },
-}));
+vi.mock('electron', () => {
+  const electron = {
+    app: {
+      isPackaged: false,
+      getPath: () => '/tmp',
+      getVersion: () => '0.0.0',
+    },
+  };
+
+  return {
+    ...electron,
+    default: electron,
+  };
+});
 
 vi.mock('../src/main/claude/agent-runner', () => ({
   ClaudeAgentRunner: class {

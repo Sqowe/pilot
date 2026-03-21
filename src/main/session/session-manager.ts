@@ -731,7 +731,8 @@ export class SessionManager {
       // activeSessions the entire time, preventing enqueuePrompt from
       // spawning a duplicate processQueue during the gap that previously
       // existed between activeSessions.delete and the restart call.
-      while (true) {
+      let shouldContinue = true;
+      while (shouldContinue) {
         while (!controller.signal.aborted) {
           const queue = this.promptQueues.get(session.id);
           if (!queue || queue.length === 0) break;
@@ -751,17 +752,24 @@ export class SessionManager {
         }
 
         // If aborted, exit immediately — finally handles cleanup.
-        if (controller.signal.aborted) break;
+        if (controller.signal.aborted) {
+          shouldContinue = false;
+          continue;
+        }
 
         // Re-check: items may have been enqueued during the last processPrompt await.
         const pendingQueue = this.promptQueues.get(session.id);
-        if (!pendingQueue || pendingQueue.length === 0) break;
+        if (!pendingQueue || pendingQueue.length === 0) {
+          shouldContinue = false;
+          continue;
+        }
 
         // Reload session before continuing with newly arrived prompts.
         const latestSession = this.loadSession(session.id);
         if (!latestSession) {
           this.promptQueues.delete(session.id);
-          break;
+          shouldContinue = false;
+          continue;
         }
         session = latestSession;
         log('[SessionManager] Continuing queue with newly arrived prompts:', session.id);
