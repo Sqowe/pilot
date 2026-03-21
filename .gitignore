@@ -99,3 +99,5 @@ DEV_LOG.md
 
 # Screenshots (debug/review)
 *.png
+!src/renderer/assets/*.png
+!public/*.png

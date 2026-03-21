@@ -24,7 +24,7 @@ type AttachedFile = {
   inlineDataBase64?: string;
 };
 
-import welcomeLogoSrc from '/logo.png';
+import welcomeLogoSrc from '../assets/logo.png';
 
 export function WelcomeView() {
   const { t } = useTranslation();

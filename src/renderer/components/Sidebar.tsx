@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import type { Session } from '../types';
 
-import sidebarLogoSrc from '/logo.png';
+import sidebarLogoSrc from '../assets/logo.png';
 
 type SessionGroup = {
   key: string;
