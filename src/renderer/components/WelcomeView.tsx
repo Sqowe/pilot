@@ -24,8 +24,7 @@ type AttachedFile = {
   inlineDataBase64?: string;
 };
 
-// Served from public/ as a static asset — works in both dev and packaged builds
-const welcomeLogoSrc = '/logo.png';
+import welcomeLogoSrc from '/logo.png';
 
 export function WelcomeView() {
   const { t } = useTranslation();

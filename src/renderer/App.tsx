@@ -166,13 +166,13 @@ function App() {
         {/* Main Content Area */}
         <main className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden bg-background">
           {showSettings ? (
-            <PanelErrorBoundary name="SettingsPanel" fallback={<MainPanelFallback />}>
+            <PanelErrorBoundary name="SettingsPanel" resetKey="settings" fallback={<MainPanelFallback />}>
               <Suspense fallback={<MainPanelFallback />}>
                 <SettingsPanel onClose={() => setShowSettings(false)} />
               </Suspense>
             </PanelErrorBoundary>
           ) : activeSessionId ? (
-            <PanelErrorBoundary name="ChatView" fallback={<MainPanelFallback />}>
+            <PanelErrorBoundary name="ChatView" resetKey={activeSessionId} fallback={<MainPanelFallback />}>
               <Suspense fallback={<MainPanelFallback />}>
                 <ChatView />
               </Suspense>
@@ -184,7 +184,7 @@ function App() {
 
         {/* Context Panel - only show when in session and not in settings */}
         {activeSessionId && !showSettings && (
-          <PanelErrorBoundary name="ContextPanel" fallback={<ContextPanelFallback />}>
+          <PanelErrorBoundary name="ContextPanel" resetKey={activeSessionId} fallback={<ContextPanelFallback />}>
             <Suspense fallback={<ContextPanelFallback />}>
               <ContextPanel />
             </Suspense>
