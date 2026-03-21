@@ -54,11 +54,12 @@ jobs:
       - name: Vite build
         run: npx vite build
 
-      - name: Electron Builder (signed)
-        run: npx electron-builder --mac dmg
+      - name: Electron Builder
+        run: npx electron-builder --mac dmg --publish never
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK && 'true' || 'false' }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -108,7 +109,7 @@ jobs:
         run: npx vite build
 
       - name: Electron Builder
-        run: npx electron-builder --win nsis
+        run: npx electron-builder --win nsis --publish never
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
