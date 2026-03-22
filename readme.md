@@ -86,7 +86,16 @@ https://github.com/user-attachments/assets/05a703de-c0f5-407b-9a43-18b6a172fd74
 <a id="installation"></a>
 ## 📦 Installation
 
-### Option 1: Download Installer (Recommended)
+### Option 1: Homebrew (macOS, Recommended)
+
+```bash
+brew tap OpenCoworkAI/tap
+brew install --cask --no-quarantine open-cowork
+```
+
+> The `--no-quarantine` flag bypasses macOS Gatekeeper, so you won't see the "Apple cannot verify this app" warning.
+
+### Option 2: Download Installer
 
 Get the latest version from our [Releases Page](https://github.com/OpenCoworkAI/open-cowork/releases).
 
@@ -95,7 +104,7 @@ Get the latest version from our [Releases Page](https://github.com/OpenCoworkAI/
 | **Windows** | `.exe` |
 | **macOS** (Apple Silicon) | `.dmg` |
 
-### Option 2: Build from Source
+### Option 3: Build from Source
 
 For developers who want to contribute or modify the codebase:
 
@@ -163,11 +172,10 @@ You need an API key to power the agent. We support **OpenRouter**, **Anthropic**
 
 ### 📝 Important Notes
 
-1.  **macOS Installation**: If you see a security warning when opening the app, go to **System Settings > Privacy & Security** and click **Open Anyway**. If it is still blocked, run:
-
-```bash
-sudo xattr -rd com.apple.quarantine "/Applications/Open Cowork.app"
-```
+1.  **macOS Installation**: If you downloaded the DMG directly (not via Homebrew) and see a security warning, go to **System Settings > Privacy & Security** and click **Open Anyway**. Or install via Homebrew to avoid this entirely:
+    ```bash
+    brew tap OpenCoworkAI/tap && brew install --cask --no-quarantine open-cowork
+    ```
 2.  **Network Access**: For tools like `WebSearch`, you may need to enable "Virtual Network Interface" (TUN Mode) in your proxy settings to ensure connectivity.
 3. **Notion Connector**: Besides setting the integration token, you also need to add connections in a root page. See https://www.notion.com/help/add-and-manage-connections-with-the-api for more details.
 ---
