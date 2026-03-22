@@ -58,18 +58,18 @@ fi
 
 echo "==> Downloading macOS artifact from CI run $RUN_ID..."
 
-TMPDIR=$(mktemp -d)
-trap "rm -rf $TMPDIR" EXIT
+WORK_DIR=$(mktemp -d)
+trap "rm -rf $WORK_DIR" EXIT
 
-gh run download "$RUN_ID" -n "$ARTIFACT_NAME" -D "$TMPDIR"
+gh run download "$RUN_ID" -n "$ARTIFACT_NAME" -D "$WORK_DIR"
 
 # Find the .app bundle
-APP_BUNDLE=$(find "$TMPDIR" -name "*.app" -maxdepth 3 -type d | head -1)
+APP_BUNDLE=$(find "$WORK_DIR" -name "*.app" -maxdepth 3 -type d | head -1)
 
 if [ -z "$APP_BUNDLE" ]; then
   echo "ERROR: No .app bundle found in downloaded artifact"
   echo "Contents of download:"
-  ls -R "$TMPDIR"
+  ls -R "$WORK_DIR"
   exit 1
 fi
 

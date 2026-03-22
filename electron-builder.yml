@@ -55,7 +55,7 @@ extraResources:
 
 # Unpack skills so they can be read/written at runtime
 # Sharp native modules must also be unpacked for image processing
-# Note: MCP servers are now bundled with TypeScript compiler API, so no need to unpack MCP SDK
+# Note: MCP servers are bundled with esbuild (all deps inlined), so no need to unpack MCP SDK
 asarUnpack:
   - node_modules/@img/**/*.node
   - node_modules/@img/**/*.dll
