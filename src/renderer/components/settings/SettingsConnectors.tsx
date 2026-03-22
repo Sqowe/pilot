@@ -420,8 +420,8 @@ function ServerCard({
     <div className="rounded-lg border border-border bg-surface overflow-hidden">
       <div className="p-4">
         <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <div className="flex items-center gap-3 mb-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
               <div
                 className={`w-3 h-3 rounded-full ${isConnected ? 'bg-success' : 'bg-text-muted'}`}
               />
@@ -451,7 +451,7 @@ function ServerCard({
               )}
               {/* Status hint — consistent for all servers */}
               <div
-                className={`text-xs px-2 py-1.5 rounded-lg ${
+                className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md w-fit ${
                   isConnected
                     ? 'bg-success/10 text-success'
                     : server.enabled
@@ -478,12 +478,6 @@ function ServerCard({
                     <ChevronRight className="w-3 h-3" />
                   )}
                 </button>
-                {isConnected && (
-                  <span className="flex items-center gap-1 text-success">
-                    <CheckCircle className="w-3 h-3" />
-                    {t('mcp.connected')}
-                  </span>
-                )}
               </div>
 
               {/* Tools List */}
