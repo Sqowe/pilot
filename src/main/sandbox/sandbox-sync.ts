@@ -5,7 +5,7 @@
  * 1. Copying files from Windows to an isolated WSL directory (~/.claude/sandbox/{sessionId})
  * 2. Running all operations within the isolated directory
  * 3. Syncing changes back to Windows when requested
- * 
+ *
  * Lifecycle:
  * - Sandbox is created when a conversation starts (first message)
  * - Sandbox persists across multiple messages in the same conversation
@@ -14,20 +14,33 @@
  *   - App is closed/shutdown
  */
 
-import { execFileSync } from 'child_process';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { log, logError } from '../utils/logger';
 import { pathConverter } from './wsl-bridge';
 import { isPathWithinRoot } from '../tools/path-containment';
 
+const execFileAsync = promisify(execFile);
+
+/** Validate sessionId to prevent command injection via path traversal */
+function validateSessionId(sessionId: string): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+    throw new Error(`Invalid sessionId: ${sessionId}`);
+  }
+}
+
+/** Expected sandbox root suffix — all sandbox paths must resolve within this */
+const SANDBOX_ROOT_SUFFIX = '/.claude/sandbox';
+
 export interface SyncSession {
   sessionId: string;
-  windowsPath: string;         // Original Windows path (e.g., D:\project)
-  sandboxPath: string;         // WSL sandbox path (e.g., ~/.claude/sandbox/{sessionId})
-  distro: string;              // WSL distro name
+  windowsPath: string; // Original Windows path (e.g., D:\project)
+  sandboxPath: string; // WSL sandbox path (e.g., ~/.claude/sandbox/{sessionId})
+  distro: string; // WSL distro name
   initialized: boolean;
   fileCount?: number;
   totalSize?: number;
-  lastSyncTime?: number;       // Last sync timestamp
+  lastSyncTime?: number; // Last sync timestamp
 }
 
 export interface SyncResult {
@@ -63,7 +76,6 @@ const SYNC_EXCLUDES = [
 const sessions = new Map<string, SyncSession>();
 
 export class SandboxSync {
-
   /**
    * Check if a sandbox session already exists for the given session ID
    */
@@ -87,12 +99,14 @@ export class SandboxSync {
     sessionId: string,
     distro: string
   ): Promise<SyncResult> {
+    validateSessionId(sessionId);
+
     // Check if session already exists (sandbox persists across messages)
     const existingSession = sessions.get(sessionId);
     if (existingSession && existingSession.initialized) {
       log(`[SandboxSync] Reusing existing sandbox for session ${sessionId}`);
       log(`[SandboxSync]   Sandbox path: ${existingSession.sandboxPath}`);
-      
+
       // Verify sandbox still exists in WSL
       try {
         await this.wslExec(distro, `test -d "${existingSession.sandboxPath}"`);
@@ -128,7 +142,7 @@ export class SandboxSync {
       log(`[SandboxSync]   WSL source path: ${wslSourcePath}`);
 
       // Build rsync exclude arguments
-      const excludeArgs = SYNC_EXCLUDES.map(e => `--exclude="${e}"`).join(' ');
+      const excludeArgs = SYNC_EXCLUDES.map((e) => `--exclude="${e}"`).join(' ');
 
       // Sync files from Windows to sandbox
       const rsyncCmd = `rsync -av --delete ${excludeArgs} "${wslSourcePath}/" "${sandboxPath}/"`;
@@ -201,7 +215,7 @@ export class SandboxSync {
       const wslDestPath = pathConverter.toWSL(session.windowsPath);
 
       // Build rsync exclude arguments
-      const excludeArgs = SYNC_EXCLUDES.map(e => `--exclude="${e}"`).join(' ');
+      const excludeArgs = SYNC_EXCLUDES.map((e) => `--exclude="${e}"`).join(' ');
 
       // Sync back to Windows (via /mnt/)
       // NOTE: We use --delete to ensure files deleted/moved in sandbox are also deleted locally
@@ -254,6 +268,21 @@ export class SandboxSync {
     log(`[SandboxSync] Cleaning up session ${sessionId}`);
 
     try {
+      // Verify the sandbox path resolves to a location within the sandbox root
+      // to prevent rm -rf from following symlinks outside the sandbox
+      const realPathResult = await this.wslExec(
+        session.distro,
+        `realpath "${session.sandboxPath}" 2>/dev/null || echo "${session.sandboxPath}"`
+      );
+      const realPath = realPathResult.stdout.trim();
+      if (!realPath.includes(SANDBOX_ROOT_SUFFIX + '/')) {
+        logError(
+          `[SandboxSync] Refusing to delete: real path "${realPath}" is not within sandbox root`
+        );
+        sessions.delete(sessionId);
+        return;
+      }
+
       await this.wslExec(session.distro, `rm -rf "${session.sandboxPath}"`);
       sessions.delete(sessionId);
       log(`[SandboxSync] Cleanup complete for session ${sessionId}`);
@@ -268,13 +297,13 @@ export class SandboxSync {
    */
   static async syncAndCleanup(sessionId: string): Promise<SyncResult> {
     log(`[SandboxSync] Sync and cleanup for session ${sessionId}`);
-    
+
     // First sync changes back to Windows
     const syncResult = await this.syncToWindows(sessionId);
-    
+
     // Then cleanup the sandbox
     await this.cleanup(sessionId);
-    
+
     return syncResult;
   }
 
@@ -350,7 +379,7 @@ export class SandboxSync {
    */
   static async cleanupAllSessions(): Promise<void> {
     const sessionIds = Array.from(sessions.keys());
-    
+
     if (sessionIds.length === 0) {
       log('[SandboxSync] No active sessions to cleanup');
       return;
@@ -374,7 +403,7 @@ export class SandboxSync {
       })
     );
 
-    const succeeded = results.filter(r => r.status === 'fulfilled' && r.value.success).length;
+    const succeeded = results.filter((r) => r.status === 'fulfilled' && r.value.success).length;
     const failed = results.length - succeeded;
 
     log(`[SandboxSync] Cleanup complete: ${succeeded} succeeded, ${failed} failed`);
@@ -456,7 +485,7 @@ export class SandboxSync {
   }
 
   /**
-   * Execute a command in WSL
+   * Execute a command in WSL (async, captures both stdout and stderr)
    */
   private static async wslExec(
     distro: string,
@@ -464,12 +493,15 @@ export class SandboxSync {
     timeout = 60000
   ): Promise<{ stdout: string; stderr: string }> {
     const bashScript = `source ~/.nvm/nvm.sh 2>/dev/null; ${command}`;
-    const result = execFileSync('wsl', ['-d', distro, '-e', 'bash', '-c', bashScript], {
+    const result = await execFileAsync('wsl', ['-d', distro, '-e', 'bash', '-c', bashScript], {
       timeout,
       encoding: 'utf-8',
       maxBuffer: 10 * 1024 * 1024,
     });
-    return { stdout: result, stderr: '' };
+    if (result.stderr) {
+      log(`[SandboxSync] wslExec stderr: ${result.stderr.substring(0, 500)}`);
+    }
+    return { stdout: result.stdout, stderr: result.stderr };
   }
 
   /**

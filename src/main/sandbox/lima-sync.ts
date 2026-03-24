@@ -19,14 +19,24 @@ import { isPathWithinRoot } from '../tools/path-containment';
 
 const LIMA_INSTANCE_NAME = 'claude-sandbox';
 
+/** Validate sessionId to prevent command injection via path traversal */
+function validateSessionId(sessionId: string): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+    throw new Error(`Invalid sessionId: ${sessionId}`);
+  }
+}
+
+/** Expected sandbox root suffix — all sandbox paths must resolve within this */
+const SANDBOX_ROOT_SUFFIX = '/.claude/sandbox';
+
 export interface LimaSyncSession {
   sessionId: string;
-  macPath: string;              // Original macOS path (e.g., /Users/username/project)
-  sandboxPath: string;          // Lima sandbox path (e.g., ~/.claude/sandbox/{sessionId})
+  macPath: string; // Original macOS path (e.g., /Users/username/project)
+  sandboxPath: string; // Lima sandbox path (e.g., ~/.claude/sandbox/{sessionId})
   initialized: boolean;
   fileCount?: number;
   totalSize?: number;
-  lastSyncTime?: number;        // Last sync timestamp
+  lastSyncTime?: number; // Last sync timestamp
 }
 
 export interface LimaSyncResult {
@@ -62,7 +72,6 @@ const SYNC_EXCLUDES = [
 const sessions = new Map<string, LimaSyncSession>();
 
 export class LimaSync {
-
   /**
    * Check if a sandbox session already exists for the given session ID
    */
@@ -80,10 +89,9 @@ export class LimaSync {
   /**
    * Initialize sync session - copy files from macOS to Lima sandbox
    */
-  static async initSync(
-    macPath: string,
-    sessionId: string
-  ): Promise<LimaSyncResult> {
+  static async initSync(macPath: string, sessionId: string): Promise<LimaSyncResult> {
+    validateSessionId(sessionId);
+
     // Check if session already exists
     if (sessions.has(sessionId)) {
       const existingSession = sessions.get(sessionId)!;
@@ -100,7 +108,9 @@ export class LimaSync {
           totalSize: existingSession.totalSize || 0,
         };
       } catch {
-        log(`[LimaSync] Sandbox ${existingSession.sandboxPath} no longer exists, reinitializing...`);
+        log(
+          `[LimaSync] Sandbox ${existingSession.sandboxPath} no longer exists, reinitializing...`
+        );
         sessions.delete(sessionId);
       }
     }
@@ -123,7 +133,7 @@ export class LimaSync {
       log(`[LimaSync]   Lima source path: ${limaSourcePath}`);
 
       // Build rsync exclude arguments
-      const excludeArgs = SYNC_EXCLUDES.map(e => `--exclude="${e}"`).join(' ');
+      const excludeArgs = SYNC_EXCLUDES.map((e) => `--exclude="${e}"`).join(' ');
 
       // Sync files from macOS to sandbox (within Lima VM)
       // Paths are single-quote escaped to prevent shell injection
@@ -133,8 +143,12 @@ export class LimaSync {
       await this.limaExec(rsyncCmd, 300000); // 5 min timeout
 
       // Count files and get size (single-quote escaped sandbox path)
-      const countResult = await this.limaExec(`find '${this.shellEscapePath(sandboxPath)}' -type f | wc -l`);
-      const sizeResult = await this.limaExec(`du -sb '${this.shellEscapePath(sandboxPath)}' | cut -f1`);
+      const countResult = await this.limaExec(
+        `find '${this.shellEscapePath(sandboxPath)}' -type f | wc -l`
+      );
+      const sizeResult = await this.limaExec(
+        `du -sb '${this.shellEscapePath(sandboxPath)}' | cut -f1`
+      );
 
       const fileCount = parseInt(countResult.stdout.trim()) || 0;
       const totalSize = parseInt(sizeResult.stdout.trim()) || 0;
@@ -196,13 +210,14 @@ export class LimaSync {
       const limaDestPath = session.macPath;
 
       // Build rsync exclude arguments
-      const excludeArgs = SYNC_EXCLUDES.map(e => `--exclude="${e}"`).join(' ');
+      const excludeArgs = SYNC_EXCLUDES.map((e) => `--exclude="${e}"`).join(' ');
 
       // Sync back to macOS (Lima mounts /Users directly)
       // NOTE: We use --delete to ensure files deleted/moved in sandbox are also deleted locally
       // This is important for file organization tasks where files are moved to new locations
       // Paths are single-quote escaped to prevent shell injection
-      const rsyncCmd = `rsync -av --delete ${excludeArgs} '${LimaSync.shellEscapePath(session.sandboxPath)}/' '${LimaSync.shellEscapePath(limaDestPath)}/'`;      log(`[LimaSync] Running: ${rsyncCmd}`);
+      const rsyncCmd = `rsync -av --delete ${excludeArgs} '${LimaSync.shellEscapePath(session.sandboxPath)}/' '${LimaSync.shellEscapePath(limaDestPath)}/'`;
+      log(`[LimaSync] Running: ${rsyncCmd}`);
 
       await this.limaExec(rsyncCmd, 300000); // 5 min timeout
 
@@ -244,6 +259,20 @@ export class LimaSync {
     try {
       // First sync back to macOS
       await this.syncToMac(sessionId);
+
+      // Verify the sandbox path resolves to a location within the sandbox root
+      // to prevent rm -rf from following symlinks outside the sandbox
+      const realPathResult = await this.limaExec(
+        `realpath '${LimaSync.shellEscapePath(session.sandboxPath)}' 2>/dev/null || echo '${LimaSync.shellEscapePath(session.sandboxPath)}'`
+      );
+      const realPath = realPathResult.stdout.trim();
+      if (!realPath.includes(SANDBOX_ROOT_SUFFIX + '/')) {
+        logError(
+          `[LimaSync] Refusing to delete: real path "${realPath}" is not within sandbox root`
+        );
+        sessions.delete(sessionId);
+        return;
+      }
 
       // Then delete sandbox directory (single-quote escaped to prevent shell injection)
       await this.limaExec(`rm -rf '${LimaSync.shellEscapePath(session.sandboxPath)}'`);
@@ -355,11 +384,9 @@ export class LimaSync {
     log(`[LimaSync] Cleaning up ${sessionIds.length} active session(s)...`);
 
     // Sync and cleanup all sessions in parallel
-    const results = await Promise.allSettled(
-      sessionIds.map(id => this.cleanup(id))
-    );
+    const results = await Promise.allSettled(sessionIds.map((id) => this.cleanup(id)));
 
-    const succeeded = results.filter(r => r.status === 'fulfilled').length;
+    const succeeded = results.filter((r) => r.status === 'fulfilled').length;
     const failed = results.length - succeeded;
 
     log(`[LimaSync] Cleanup complete: ${succeeded} succeeded, ${failed} failed`);

@@ -8,7 +8,7 @@
  * - Path handling (minimal conversion - Lima mounts /Users directly)
  */
 
-import { spawn, exec, ChildProcess } from 'child_process';
+import { spawn, exec, execFile, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { v4 as uuidv4 } from 'uuid';
 import * as path from 'path';
@@ -37,6 +37,7 @@ async function loadBootstrap() {
 }
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 const LIMA_INSTANCE_NAME = 'claude-sandbox';
 const LIMA_SHELL_RETRY_DELAY_MS = 1000;
@@ -69,7 +70,11 @@ const execLimaShellWithRetry = async (
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
-      return await execAsync(`limactl shell ${LIMA_INSTANCE_NAME} -- ${command}`, { timeout });
+      return await execFileAsync(
+        'limactl',
+        ['shell', LIMA_INSTANCE_NAME, '--', 'bash', '-c', command],
+        { timeout, encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 }
+      );
     } catch (error) {
       lastError = error;
       if (!isLimaShellConnectionError(error) || attempt === retries) {
@@ -361,8 +366,8 @@ export class LimaBridge implements SandboxExecutor {
         try {
           const { stdout } = await execAsync('limactl list', { timeout: 5000 });
           const lines = stdout.trim().split(/\r?\n/);
-          return lines.some((line) =>
-            line.includes(LIMA_INSTANCE_NAME) && line.includes('Running')
+          return lines.some(
+            (line) => line.includes(LIMA_INSTANCE_NAME) && line.includes('Running')
           );
         } catch {
           return false;
@@ -500,10 +505,10 @@ export class LimaBridge implements SandboxExecutor {
 
       const { stdout } = await execLimaShellWithRetry('python3 --version', 10000);
       log('[Lima] Python installed:', stdout.trim());
-      
+
       // Install commonly needed packages for skills (PDF, PPTX processing)
       await LimaBridge.installSkillDependencies();
-      
+
       return true;
     } catch (error) {
       logError('[Lima] Failed to install Python:', error);
@@ -516,28 +521,31 @@ export class LimaBridge implements SandboxExecutor {
    */
   static async installSkillDependencies(): Promise<void> {
     log('[Lima] Installing skill dependencies (markitdown, pypdf, etc.)...');
-    
+
     // These packages are required by the built-in PDF and PPTX skills
     const packages = [
-      'markitdown[pptx]',  // PDF/PPTX text extraction
-      'pypdf',             // PDF manipulation
-      'pdfplumber',        // PDF table extraction  
-      'reportlab',         // PDF creation
-      'defusedxml',        // Secure XML parsing for OOXML
-      'python-pptx',       // PPTX manipulation
+      'markitdown[pptx]', // PDF/PPTX text extraction
+      'pypdf', // PDF manipulation
+      'pdfplumber', // PDF table extraction
+      'reportlab', // PDF creation
+      'defusedxml', // Secure XML parsing for OOXML
+      'python-pptx', // PPTX manipulation
     ];
-    
+
     try {
       // Install packages with pip (user install to avoid permission issues)
-      const packagesStr = packages.map(p => `"${p}"`).join(' ');
+      const packagesStr = packages.map((p) => `"${p}"`).join(' ');
       await execLimaShellWithRetry(
         `python3 -m pip install --user ${packagesStr} 2>&1 | tail -5`,
-        300000  // 5 min timeout for package install
+        300000 // 5 min timeout for package install
       );
       log('[Lima] Skill dependencies installed successfully');
     } catch (error) {
       // Non-critical - Claude can install packages on demand
-      log('[Lima] Failed to pre-install skill dependencies (will install on demand):', (error as Error).message);
+      log(
+        '[Lima] Failed to pre-install skill dependencies (will install on demand):',
+        (error as Error).message
+      );
     }
   }
 
