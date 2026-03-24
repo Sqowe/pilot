@@ -5,6 +5,7 @@
  * in an isolated environment (WSL on Windows, native on Mac/Linux).
  */
 
+import * as fs from 'fs';
 import * as path from 'path';
 import { glob } from 'glob';
 import { SandboxAdapter, getSandboxAdapter } from '../sandbox/sandbox-adapter';
@@ -67,8 +68,17 @@ export class SandboxToolExecutor {
     const normalizedTarget = path.normalize(targetPath);
     const isWindows = process.platform === 'win32';
 
+    // Resolve symlinks if the path exists to prevent symlink escape attacks
+    let realPath: string;
+    try {
+      realPath = fs.realpathSync(normalizedTarget);
+    } catch {
+      // Path doesn't exist yet (e.g. write target), use normalized path
+      realPath = normalizedTarget;
+    }
+
     // Compare paths (case-insensitive on Windows)
-    const targetLower = isWindows ? normalizedTarget.toLowerCase() : normalizedTarget;
+    const targetLower = isWindows ? realPath.toLowerCase() : realPath;
 
     const allowed = mounts.some((m) => {
       const mountRoot = path.normalize(m.real);
@@ -79,7 +89,7 @@ export class SandboxToolExecutor {
       throw new Error('Path is outside the mounted workspace');
     }
 
-    return normalizedTarget;
+    return realPath;
   }
 
   /**
