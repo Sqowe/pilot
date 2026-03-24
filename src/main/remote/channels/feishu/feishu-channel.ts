@@ -228,6 +228,7 @@ export class FeishuChannel extends ChannelBase {
       if (this.config.encryptKey && data.encrypt) {
         log('[Feishu] Encrypted message received, decryption not yet implemented');
         // TODO: Implement message decryption
+        return { status: 501, data: { code: 1, msg: 'Encrypted webhook not yet supported' } };
       }
 
       log('[Feishu] Unknown webhook format, returning OK');

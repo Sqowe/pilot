@@ -530,12 +530,16 @@ export function initDatabase(): DatabaseInstance {
       },
 
       update: (id: string, updates: Partial<SessionRow>) => {
+        // Columns that must never be overwritten after insert
+        const IMMUTABLE_COLUMNS = new Set(['id', 'created_at']);
+
         // Build dynamic update query
         const setClauses: string[] = [];
         const values: unknown[] = [];
 
         for (const [key, value] of Object.entries(updates)) {
           if (value !== undefined) {
+            if (IMMUTABLE_COLUMNS.has(key)) continue;
             validateIdentifier(key);
             setClauses.push(`${key} = ?`);
             values.push(value);

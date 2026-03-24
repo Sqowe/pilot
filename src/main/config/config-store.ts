@@ -365,7 +365,7 @@ function normalizeCustomProtocol(
   value: CustomProtocolType | undefined,
   fallback: CustomProtocolType = 'anthropic'
 ): CustomProtocolType {
-  if (value === 'openai' || value === 'gemini') {
+  if (value === 'openai' || value === 'gemini' || value === 'anthropic') {
     return value;
   }
   return fallback;

@@ -6608,7 +6608,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           display_index?: number;
           region?: { x: number; y: number; width: number; height: number };
         };
-        result = await takeScreenshot(output_path, display_index, region);
+        // Validate output_path is within SCREENSHOTS_DIR to prevent path traversal
+        let safeOutputPath = output_path;
+        if (output_path) {
+          const resolved = path.resolve(output_path);
+          const screenshotsDirResolved = path.resolve(SCREENSHOTS_DIR);
+          if (
+            !resolved.startsWith(screenshotsDirResolved + path.sep) &&
+            resolved !== screenshotsDirResolved
+          ) {
+            throw new Error(
+              `output_path must be within the screenshots directory: ${SCREENSHOTS_DIR}`
+            );
+          }
+          safeOutputPath = resolved;
+        }
+        result = await takeScreenshot(safeOutputPath, display_index, region);
         break;
       }
 
@@ -6656,7 +6671,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           duration: number;
           reason?: string;
         };
-        result = await performWait(duration, reason);
+        const MAX_WAIT_MS = 60000;
+        const cappedDuration = Math.min(duration, MAX_WAIT_MS);
+        result = await performWait(cappedDuration, reason);
         break;
       }
 

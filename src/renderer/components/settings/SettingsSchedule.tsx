@@ -1,14 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
-import {
-  AlertCircle,
-  CheckCircle,
-  ChevronDown,
-  Plus,
-  X,
-  Check,
-} from 'lucide-react';
+import { AlertCircle, CheckCircle, ChevronDown, Plus, X, Check } from 'lucide-react';
 import type {
   ScheduleConfig,
   ScheduleTask,
@@ -19,11 +12,7 @@ import type {
 } from '../../types';
 import { useAppStore } from '../../store';
 import { formatAppDateTime, joinAppList } from '../../utils/i18n-format';
-import {
-  renderLocalizedBannerMessage,
-  getWeekdayOptions,
-  getScheduleModeOptions,
-} from './shared';
+import { renderLocalizedBannerMessage, getWeekdayOptions, getScheduleModeOptions } from './shared';
 import type { LocalizedBanner, ScheduleFormMode } from './shared';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
@@ -256,6 +245,7 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
       await loadTasks();
     } catch (err) {
       setError(err instanceof Error ? { text: err.message } : { key: 'schedule.toggleFailed' });
+    } finally {
       setIsLoading(false);
     }
   }
@@ -274,6 +264,7 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
       await loadTasks();
     } catch (err) {
       setError(err instanceof Error ? { text: err.message } : { key: 'schedule.runNowFailed' });
+    } finally {
       setIsLoading(false);
     }
   }
@@ -452,9 +443,7 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
                 placeholder={t('schedule.timePlaceholder')}
                 summary={selectedTimeLabels}
                 onAdd={(value) => setSelectedTimes((current) => toggleTimeValue(current, value))}
-                onRemove={(value) =>
-                  setSelectedTimes((current) => toggleTimeValue(current, value))
-                }
+                onRemove={(value) => setSelectedTimes((current) => toggleTimeValue(current, value))}
               />
             )}
           </div>

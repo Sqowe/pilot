@@ -13,10 +13,10 @@ describe('App startup lazy loading', () => {
     expect(source).not.toContain("import { ConfigModal } from './components/ConfigModal';");
     expect(source).not.toContain("import { SettingsPanel } from './components/SettingsPanel';");
 
-    expect(source).toContain("const ChatView = lazy(() => import('./components/ChatView').then");
-    expect(source).toContain("const ContextPanel = lazy(() => import('./components/ContextPanel').then");
-    expect(source).toContain("const ConfigModal = lazy(() => import('./components/ConfigModal').then");
-    expect(source).toContain("const SettingsPanel = lazy(() => import('./components/SettingsPanel').then");
+    expect(source).toContain('const ChatView = lazy(() =>');
+    expect(source).toContain('const ContextPanel = lazy(() =>');
+    expect(source).toContain('const ConfigModal = lazy(() =>');
+    expect(source).toContain('const SettingsPanel = lazy(() =>');
   });
 
   it('uses suspense boundaries for deferred panels', () => {

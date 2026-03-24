@@ -428,8 +428,8 @@ export class SessionManager {
       return;
     }
 
-    // Check if already initialized with this workspace
-    if (this.sandboxAdapter.initialized) {
+    // Check if already initialized with this exact workspace
+    if (this.sandboxAdapter.initialized && this.sandboxAdapter.workspacePath === session.cwd) {
       return;
     }
 

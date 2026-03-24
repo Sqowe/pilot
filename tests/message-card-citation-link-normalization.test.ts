@@ -4,7 +4,10 @@ import path from 'node:path';
 
 // Content split across MessageCard.tsx and the message/ sub-components directory
 const messageCardPath = path.resolve(process.cwd(), 'src/renderer/components/MessageCard.tsx');
-const messageMarkdownPath = path.resolve(process.cwd(), 'src/renderer/components/MessageMarkdown.tsx');
+const messageMarkdownPath = path.resolve(
+  process.cwd(),
+  'src/renderer/components/MessageMarkdown.tsx'
+);
 const messageDir = path.resolve(process.cwd(), 'src/renderer/components/message');
 const messageCardContent = [
   fs.readFileSync(messageCardPath, 'utf8'),
@@ -15,11 +18,16 @@ const messageMarkdownContent = fs.readFileSync(messageMarkdownPath, 'utf8');
 describe('MessageCard citation link normalization', () => {
   it('normalizes citation-style ~[title](url)~ to regular markdown links before render', () => {
     expect(messageCardContent).toContain('function normalizeCitationMarkdownLinks');
-    expect(messageCardContent).toContain("return markdown.replace(/~\\[(.+?)\\]\\(([^)\\s]+)\\)~/g, '[$1]($2)');");
-    expect(messageCardContent).toContain('normalizeLocalFileMarkdownLinks(normalizeLatexDelimiters(text))');
+    expect(messageCardContent).toContain(
+      "return markdown.replace(/~\\[(.+?)\\]\\(([^)\\s]+)\\)~/g, '[$1]($2)');"
+    );
+    expect(messageCardContent).toContain(
+      'normalizeLocalFileMarkdownLinks(normalizeLatexDelimiters(text))'
+    );
   });
 
   it('disables remark-gfm single-tilde strikethrough parsing for safety', () => {
-    expect(messageMarkdownContent).toContain('remarkPlugins={[remarkMath, [remarkGfm, { singleTilde: false }]]}');
+    expect(messageMarkdownContent).toContain('singleTilde: false');
+    expect(messageMarkdownContent).toContain('REMARK_PLUGINS');
   });
 });

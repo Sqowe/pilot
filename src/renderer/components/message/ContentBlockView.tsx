@@ -307,6 +307,10 @@ export const ContentBlockView = memo(function ContentBlockView({
       if (!imageBlock.source?.media_type || !imageBlock.source?.data) {
         return null;
       }
+      const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+      if (!ALLOWED_IMAGE_TYPES.has(imageBlock.source.media_type)) {
+        return null;
+      }
       const { source } = imageBlock;
       const imageSrc = `data:${source.media_type};base64,${source.data}`;
 
