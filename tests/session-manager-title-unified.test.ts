@@ -141,7 +141,7 @@ describe('SessionManager unified title generation', () => {
       expect.objectContaining({
         provider: 'gemini',
         customProtocol: 'gemini',
-        model: 'gemini/gemini-2.5-flash',
+        model: 'gemini-2.5-flash',
       }),
       undefined
     );

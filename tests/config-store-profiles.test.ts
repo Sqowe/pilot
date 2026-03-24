@@ -81,31 +81,26 @@ describe('ConfigStore provider profiles', () => {
           apiKey: 'sk-openai',
           baseUrl: 'https://api.openai.com/v1',
           model: 'gpt-5.2',
-
         },
         openrouter: {
           apiKey: 'sk-openrouter',
           baseUrl: 'https://openrouter.ai/api',
           model: 'anthropic/claude-sonnet-4.5',
-
         },
         anthropic: {
           apiKey: 'sk-ant',
           baseUrl: 'https://api.anthropic.com',
           model: 'claude-sonnet-4-5',
-
         },
         'custom:anthropic': {
           apiKey: 'sk-custom-ant',
           baseUrl: 'https://custom.example/anthropic',
           model: 'glm-4.7',
-
         },
         'custom:openai': {
           apiKey: 'sk-custom-openai',
           baseUrl: 'https://custom.example/openai/v1',
           model: 'gpt-5.2',
-
         },
       },
       enableDevLogs: true,
@@ -177,7 +172,7 @@ describe('ConfigStore provider profiles', () => {
     const geminiView = store.getAll();
     expect(geminiView.provider).toBe('gemini');
     expect(geminiView.apiKey).toBe('AIza-official');
-    expect(geminiView.model).toBe('gemini/gemini-2.5-flash');
+    expect(geminiView.model).toBe('gemini-2.5-flash');
   });
 
   it('treats global configured state as any set usable while active set can still be unusable', () => {
