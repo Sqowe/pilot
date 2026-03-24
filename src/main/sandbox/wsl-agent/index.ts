@@ -76,12 +76,29 @@ class SandboxAgent {
     }
 
     const resolved = path.resolve(targetPath);
-    
+
     if (!isPathWithinRoot(resolved, this.workspacePath)) {
       throw new Error(`Path is outside workspace: ${resolved}`);
     }
 
-    return resolved;
+    // Resolve symlinks to prevent symlink escape attacks
+    let realPath: string;
+    try {
+      realPath = fs.realpathSync(resolved);
+    } catch (err: unknown) {
+      // ENOENT is acceptable for paths that don't exist yet (e.g. write targets)
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return resolved;
+      }
+      throw err;
+    }
+
+    // Re-check containment after symlink resolution
+    if (!isPathWithinRoot(realPath, this.workspacePath)) {
+      throw new Error(`Resolved path is outside workspace: ${realPath}`);
+    }
+
+    return realPath;
   }
 
   /**

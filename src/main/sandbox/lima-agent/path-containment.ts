@@ -4,7 +4,7 @@ export function normalizePathForContainment(pathValue: string, caseInsensitive =
     .replace(/\/+$/, '');
 
   if (!normalized) {
-    return '';
+    return pathValue.includes('/') || pathValue.includes('\\') ? '/' : '';
   }
 
   return caseInsensitive ? normalized.toLowerCase() : normalized;
@@ -22,5 +22,6 @@ export function isPathWithinRoot(
     return false;
   }
 
-  return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}/`);
+  const prefix = normalizedRoot === '/' ? '/' : `${normalizedRoot}/`;
+  return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(prefix);
 }

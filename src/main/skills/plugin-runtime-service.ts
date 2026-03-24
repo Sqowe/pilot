@@ -704,21 +704,15 @@ export class PluginRuntimeService {
   }
 
   private resolveSafePath(rootPath: string, relativePath: string): string | null {
-    // Check for path traversal variants
-    // eslint-disable-next-line no-useless-escape
-    if (/(\.\.[\/\\]|%2e%2e)/i.test(relativePath)) {
-      throw new Error('Path traversal detected');
-    }
     const normalized = relativePath.trim().replace(/\\/g, '/').replace(/^\.\//, '');
-    if (
-      !normalized ||
-      normalized.startsWith('/') ||
-      normalized.startsWith('../') ||
-      normalized.includes('/../')
-    ) {
+    if (!normalized || normalized.startsWith('/')) {
       return null;
     }
-    return path.join(rootPath, normalized);
+    const resolved = path.resolve(rootPath, normalized);
+    if (!isPathWithinRoot(resolved, rootPath)) {
+      return null;
+    }
+    return resolved;
   }
 
   private collectMarkdownFiles(targetPath: string, output: Set<string>): void {

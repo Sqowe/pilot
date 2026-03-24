@@ -21,6 +21,16 @@ import { log, logError, logWarn } from '../utils/logger';
 import { isPathWithinRoot } from '../tools/path-containment';
 
 /**
+ * Validate that a skill name is safe for use as a directory name.
+ * Rejects names containing path separators or parent directory references.
+ */
+function validateSkillName(name: string): void {
+  if (!name || /[/\\]|\.\./.test(name)) {
+    throw new Error(`Invalid skill name: ${name}`);
+  }
+}
+
+/**
  * Check if a path is a dangling symlink (symlink whose target no longer exists).
  */
 function isDanglingSymlink(filePath: string): boolean {
@@ -529,6 +539,11 @@ export class SkillsManager {
         if (!entry.isDirectory()) {
           continue;
         }
+        // Validate entry name does not contain path traversal characters
+        if (/[/\\]|\.\./.test(entry.name)) {
+          logWarn(`[Skills] Skipping migration of entry with unsafe name: ${entry.name}`);
+          continue;
+        }
         const sourceEntryPath = path.join(sourcePath, entry.name);
         const targetEntryPath = path.join(targetPath, entry.name);
         if (fs.existsSync(targetEntryPath)) {
@@ -831,8 +846,11 @@ export class SkillsManager {
     // Parse SKILL.md frontmatter
     try {
       const content = fs.readFileSync(skillMdPath, 'utf-8');
-      const nameMatch = content.match(/name:\s*["']?([^"'\r\n]+)["']?/);
-      const descMatch = content.match(/description:\s*["']?([^"'\r\n]+)["']?/);
+      const frontMatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+      const frontMatter = frontMatterMatch ? frontMatterMatch[1] : content;
+
+      const nameMatch = frontMatter.match(/name:\s*["']?([^"'\r\n]+)["']?/);
+      const descMatch = frontMatter.match(/description:\s*["']?([^"'\r\n]+)["']?/);
 
       if (!nameMatch) {
         errors.push('SKILL.md missing "name" in frontmatter');
@@ -859,15 +877,23 @@ export class SkillsManager {
 
     try {
       const content = fs.readFileSync(skillMdPath, 'utf-8');
-      const nameMatch = content.match(/name:\s*["']?([^"'\r\n]+)["']?/);
-      const descMatch = content.match(/description:\s*["']?([^"'\r\n]+)["']?/);
+
+      // Limit regex matching to the YAML front-matter block (between --- markers)
+      const frontMatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+      const frontMatter = frontMatterMatch ? frontMatterMatch[1] : content;
+
+      const nameMatch = frontMatter.match(/name:\s*["']?([^"'\r\n]+)["']?/);
+      const descMatch = frontMatter.match(/description:\s*["']?([^"'\r\n]+)["']?/);
 
       if (!nameMatch || !descMatch) {
         return null;
       }
 
+      const name = nameMatch[1].trim();
+      validateSkillName(name);
+
       return {
-        name: nameMatch[1].trim(),
+        name,
         description: descMatch[1].trim(),
       };
     } catch (error) {
@@ -918,9 +944,29 @@ export class SkillsManager {
     for (const file of files) {
       const sourcePath = path.join(source, file);
       const targetPath = path.join(target, file);
-      const stat = fs.statSync(sourcePath);
+      const lstat = fs.lstatSync(sourcePath);
 
-      if (stat.isDirectory()) {
+      if (lstat.isSymbolicLink()) {
+        // Resolve symlink and check it stays within source directory
+        let realTarget: string;
+        try {
+          realTarget = fs.realpathSync(sourcePath);
+        } catch {
+          logWarn(`[Skills] Skipping unresolvable symlink: ${sourcePath}`);
+          continue;
+        }
+        if (!isPathWithinRoot(realTarget, source)) {
+          logWarn(`[Skills] Skipping symlink escaping source directory: ${sourcePath} -> ${realTarget}`);
+          continue;
+        }
+        // Copy the target content instead of recreating the symlink
+        const realStat = fs.statSync(sourcePath);
+        if (realStat.isDirectory()) {
+          await this.copyDirectory(realTarget, targetPath);
+        } else {
+          fs.copyFileSync(sourcePath, targetPath);
+        }
+      } else if (lstat.isDirectory()) {
         await this.copyDirectory(sourcePath, targetPath);
       } else {
         fs.copyFileSync(sourcePath, targetPath);
@@ -943,6 +989,9 @@ export class SkillsManager {
     if (!metadata) {
       throw new Error('Failed to read skill metadata from SKILL.md');
     }
+
+    // Validate skill name is safe for filesystem operations
+    validateSkillName(metadata.name);
 
     // Load global skills to check for existing
     await this.loadGlobalSkills();
@@ -1133,6 +1182,9 @@ export class SkillsManager {
 
     // Remove from filesystem (only for custom skills in global directory)
     if (skill.type === 'custom') {
+      // Validate skill name before using it in path construction
+      validateSkillName(skill.name);
+
       // Use app-specific skills directory to avoid conflicts with user settings
       const globalSkillsPath = this.getGlobalSkillsPath();
       const skillDir = path.join(globalSkillsPath, skill.name);

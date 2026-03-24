@@ -437,7 +437,15 @@ export class ToolExecutor {
       if (contentSearch) {
         // Search file contents
         const results: string[] = [];
-        const regex = new RegExp(pattern, 'gi');
+        if (pattern.length > 1000) {
+          throw new Error('Pattern too long (max 1000 characters)');
+        }
+        let regex: RegExp;
+        try {
+          regex = new RegExp(pattern, 'gi');
+        } catch (regexError) {
+          throw new Error(`Invalid regex pattern: ${regexError instanceof Error ? regexError.message : 'unknown error'}`);
+        }
         await this.searchDirectoryContents(pathToSearch, regex, results);
         return results.length > 0 ? results.slice(0, 50).join('\n') : 'No matches found';
       } else {
@@ -476,7 +484,7 @@ export class ToolExecutor {
         throw new Error(`String not found in file: "${oldString.slice(0, 50)}..."`);
       }
 
-      const newContent = content.replace(oldString, newString);
+      const newContent = content.split(oldString).join(newString);
       fs.writeFileSync(resolvedPath, newContent, 'utf-8');
     } catch (error) {
       throw new Error(`Edit failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -526,7 +534,15 @@ export class ToolExecutor {
       }
 
       const results: string[] = [];
-      const regex = new RegExp(pattern, 'gi');
+      if (pattern.length > 1000) {
+        throw new Error('Pattern too long (max 1000 characters)');
+      }
+      let regex: RegExp;
+      try {
+        regex = new RegExp(pattern, 'gi');
+      } catch (regexError) {
+        throw new Error(`Invalid regex pattern: ${regexError instanceof Error ? regexError.message : 'unknown error'}`);
+      }
       await this.searchDirectoryContents(pathToSearch, regex, results);
       
       return results.length > 0 ? results.slice(0, 50).join('\n') : 'No matches found';
@@ -545,6 +561,14 @@ export class ToolExecutor {
     maxResults: number = 50
   ): Promise<void> {
     if (results.length >= maxResults) return;
+
+    // Cap total output at 10MB to prevent memory exhaustion
+    const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
+    let totalBytes = 0;
+    for (const r of results) {
+      totalBytes += r.length;
+    }
+    if (totalBytes >= MAX_OUTPUT_BYTES) return;
 
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
 
@@ -698,7 +722,7 @@ export class ToolExecutor {
         return { success: false, error: 'Old string not found in file' };
       }
 
-      const newContent = content.replace(oldString, newString);
+      const newContent = content.split(oldString).join(newString);
       fs.writeFileSync(realPath, newContent, 'utf-8');
 
       return { success: true, output: `File edited: ${virtualPath}` };
@@ -764,7 +788,15 @@ export class ToolExecutor {
         return { success: false, error: 'No mounted directories' };
       }
 
-      const regex = new RegExp(pattern, 'gm');
+      if (pattern.length > 1000) {
+        return { success: false, error: 'Pattern too long (max 1000 characters)' };
+      }
+      let regex: RegExp;
+      try {
+        regex = new RegExp(pattern, 'gm');
+      } catch (regexError) {
+        return { success: false, error: `Invalid regex pattern: ${regexError instanceof Error ? regexError.message : 'unknown error'}` };
+      }
       const results: string[] = [];
 
       if (virtualPath) {
