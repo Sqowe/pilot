@@ -39,7 +39,13 @@ export function Sidebar() {
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const setShowSettings = useAppStore((s) => s.setShowSettings);
-  const { deleteSession, batchDeleteSessions, getSessionMessages, getSessionTraceSteps, isElectron } = useIPC();
+  const {
+    deleteSession,
+    batchDeleteSessions,
+    getSessionMessages,
+    getSessionTraceSteps,
+    isElectron,
+  } = useIPC();
   const [hoveredSession, setHoveredSession] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSelectMode, setIsSelectMode] = useState(false);
@@ -106,12 +112,10 @@ export function Sidebar() {
     });
   }, []);
 
-  const visibleSessionIds = useMemo(
-    () => filteredSessions.map((s) => s.id),
-    [filteredSessions]
-  );
+  const visibleSessionIds = useMemo(() => filteredSessions.map((s) => s.id), [filteredSessions]);
 
-  const allVisibleSelected = visibleSessionIds.length > 0 && visibleSessionIds.every((id) => selectedIds.has(id));
+  const allVisibleSelected =
+    visibleSessionIds.length > 0 && visibleSessionIds.every((id) => selectedIds.has(id));
 
   const toggleSelectAll = useCallback(() => {
     if (allVisibleSelected) {
@@ -136,11 +140,12 @@ export function Sidebar() {
   }, [allVisibleSelected, visibleSessionIds]);
 
   const handleBatchDelete = useCallback(() => {
-    const ids = Array.from(selectedIds);
+    const visibleSet = new Set(visibleSessionIds);
+    const ids = Array.from(selectedIds).filter((id) => visibleSet.has(id));
     if (ids.length === 0) return;
     batchDeleteSessions(ids);
     exitSelectMode();
-  }, [selectedIds, batchDeleteSessions, exitSelectMode]);
+  }, [selectedIds, visibleSessionIds, batchDeleteSessions, exitSelectMode]);
 
   const handleSessionClick = useCallback(
     async (sessionId: string) => {
@@ -196,15 +201,19 @@ export function Sidebar() {
   };
 
   const toggleTheme = () => {
-    const next = settings.theme === 'dark' ? 'light' : settings.theme === 'light' ? 'system' : 'dark';
+    const next =
+      settings.theme === 'dark' ? 'light' : settings.theme === 'light' ? 'system' : 'dark';
     updateSettings({ theme: next });
   };
 
-  const themeIcon = settings.theme === 'dark'
-    ? <Sun className="w-4 h-4" />
-    : settings.theme === 'light'
-      ? <Moon className="w-4 h-4" />
-      : <Monitor className="w-4 h-4" />;
+  const themeIcon =
+    settings.theme === 'dark' ? (
+      <Sun className="w-4 h-4" />
+    ) : settings.theme === 'light' ? (
+      <Moon className="w-4 h-4" />
+    ) : (
+      <Monitor className="w-4 h-4" />
+    );
 
   if (sidebarCollapsed) {
     return (
@@ -455,32 +464,32 @@ export function Sidebar() {
           )}
         </div>
       ) : (
-      <div className="px-3 py-3 border-t border-border-muted">
-        <div className="flex items-center gap-2 rounded-2xl bg-background/50 px-3 py-2.5">
-          <button
-            onClick={() => setShowSettings(true)}
-            className="flex-1 min-w-0 flex items-center gap-2 text-left text-text-secondary hover:text-text-primary transition-colors"
-          >
-            <Settings className="w-4 h-4 flex-shrink-0" />
-            <div className="min-w-0">
-              <div className="text-[13px] font-medium text-text-primary">
-                {t('sidebar.settings')}
+        <div className="px-3 py-3 border-t border-border-muted">
+          <div className="flex items-center gap-2 rounded-2xl bg-background/50 px-3 py-2.5">
+            <button
+              onClick={() => setShowSettings(true)}
+              className="flex-1 min-w-0 flex items-center gap-2 text-left text-text-secondary hover:text-text-primary transition-colors"
+            >
+              <Settings className="w-4 h-4 flex-shrink-0" />
+              <div className="min-w-0">
+                <div className="text-[13px] font-medium text-text-primary">
+                  {t('sidebar.settings')}
+                </div>
+                <div className="text-[11px] text-text-muted truncate">
+                  {isConfigured ? t('sidebar.apiConfigured') : t('sidebar.apiNotConfigured')}
+                </div>
               </div>
-              <div className="text-[11px] text-text-muted truncate">
-                {isConfigured ? t('sidebar.apiConfigured') : t('sidebar.apiNotConfigured')}
-              </div>
-            </div>
-          </button>
+            </button>
 
-          <button
-            onClick={toggleTheme}
-            className="w-8 h-8 rounded-xl flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors flex-shrink-0"
-            title={t('sidebar.themeToggle')}
-          >
-            {themeIcon}
-          </button>
+            <button
+              onClick={toggleTheme}
+              className="w-8 h-8 rounded-xl flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors flex-shrink-0"
+              title={t('sidebar.themeToggle')}
+            >
+              {themeIcon}
+            </button>
+          </div>
         </div>
-      </div>
       )}
     </aside>
   );

@@ -472,10 +472,16 @@ export const useAppStore = create<AppState>((set) => ({
         }
         return message;
       });
+      // Also remove any queued message IDs from pendingTurns
+      const queuedIds = new Set(
+        ss.messages.filter((m) => m.localStatus === 'queued').map((m) => m.id)
+      );
+      const updatedPendingTurns = ss.pendingTurns.filter((id) => !queuedIds.has(id));
       if (!hasQueued) return {};
       return {
         sessionStates: patchSession(state.sessionStates, sessionId, {
           messages: updatedMessages,
+          pendingTurns: updatedPendingTurns,
         }),
       };
     }),

@@ -64,5 +64,19 @@ function joinRelativePath(basePath: string, relativePath: string): string {
     }
   }
 
-  return resolved.join(sep);
+  const result = resolved.join(sep);
+
+  // Post-resolve prefix check: ensure the path root prefix is preserved.
+  // For POSIX paths the root is '/', for Windows drives it's 'X:', for UNC it's '\\\\server\\share'.
+  const rootPrefix = isUncPath(basePath)
+    ? parts.slice(0, 4).join(sep)
+    : isWindowsDrivePath(basePath)
+      ? parts[0] // e.g. 'C:'
+      : ''; // POSIX: empty string is a valid prefix check; resolved always starts with '/'
+  if (rootPrefix && !result.startsWith(rootPrefix)) {
+    // Root prefix was stripped — traversal escaped the filesystem root; clamp to base
+    return base;
+  }
+
+  return result;
 }

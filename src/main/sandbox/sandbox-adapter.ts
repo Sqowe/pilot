@@ -90,6 +90,13 @@ export class SandboxAdapter implements SandboxExecutor {
   }
 
   /**
+   * Get the workspace path used during initialization
+   */
+  get workspacePath(): string {
+    return this.state.workspacePath;
+  }
+
+  /**
    * Get WSL status (if applicable)
    */
   get wslStatus(): WSLStatus | undefined {

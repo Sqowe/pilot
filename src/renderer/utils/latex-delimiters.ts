@@ -29,7 +29,7 @@ export function normalizeLatexDelimiters(text: string): string {
   out = out.replace(/`[^`\n]+`/g, protect);
 
   // 3. \(…\) → $…$  (inline math)
-  out = out.replace(/\\\((.+?)\\\)/g, (_, c) => `$${c}$`);
+  out = out.replace(/\\\(([\s\S]+?)\\\)/g, (_, c) => `$${c}$`);
 
   // 4. \[…\] → $$…$$ (display math, may span lines)
   out = out.replace(/\\\[([\s\S]+?)\\\]/g, (_, c) => `$$${c}$$`);

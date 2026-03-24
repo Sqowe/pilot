@@ -289,7 +289,11 @@ export function SettingsConnectors({ isActive }: { isActive: boolean }) {
             </button>
             <button
               onClick={() =>
-                addPresetServer(configuringPreset.key, configuringPreset.preset, presetEnvValues)
+                void addPresetServer(
+                  configuringPreset.key,
+                  configuringPreset.preset,
+                  presetEnvValues
+                )
               }
               disabled={
                 isLoading ||

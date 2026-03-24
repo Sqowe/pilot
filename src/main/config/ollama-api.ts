@@ -167,6 +167,7 @@ export async function fetchOllamaModelIndex(input: {
     return result;
   })();
 
+  // Register inflight BEFORE awaiting so concurrent callers can deduplicate
   modelIndexInflight.set(cacheKey, request);
   try {
     return await request;

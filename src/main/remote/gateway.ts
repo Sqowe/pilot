@@ -453,7 +453,7 @@ export class RemoteGateway extends EventEmitter {
       replyTo: message.id,
     });
 
-    log('[Gateway] Generated pairing code for user:', userKey, code);
+    log('[Gateway] Generated pairing code for user:', userKey);
 
     // Emit pairing event for UI notification
     this.emitEvent('gateway.pairing_request', {

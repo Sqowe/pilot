@@ -26,7 +26,9 @@ export function isLikelyOAuthAccessToken(token: string | undefined | null): bool
   return !API_KEY_PREFIX_RE.test(value);
 }
 
-export function shouldUseAnthropicAuthToken(config: Pick<AppConfig, 'provider' | 'customProtocol' | 'apiKey'>): boolean {
+export function shouldUseAnthropicAuthToken(
+  config: Pick<AppConfig, 'provider' | 'customProtocol' | 'apiKey'>
+): boolean {
   if (config.provider === 'openrouter') {
     return true;
   }
@@ -37,9 +39,11 @@ export function shouldUseAnthropicAuthToken(config: Pick<AppConfig, 'provider' |
 }
 
 export function isOpenAIProvider(config: Pick<AppConfig, 'provider' | 'customProtocol'>): boolean {
-  return config.provider === 'openai'
-    || config.provider === 'ollama'
-    || (config.provider === 'custom' && config.customProtocol === 'openai');
+  return (
+    config.provider === 'openai' ||
+    config.provider === 'ollama' ||
+    (config.provider === 'custom' && config.customProtocol === 'openai')
+  );
 }
 
 export function sanitizeOpenAIAccountId(raw: string | undefined): string | undefined {
@@ -120,9 +124,7 @@ export function isOfficialOpenAIBaseUrl(baseUrl: string | undefined): boolean {
   return false;
 }
 
-export function getUnifiedUnsupportedCustomOpenAIBaseUrl(
-  config: OpenAIConfigLike
-): string | null {
+export function getUnifiedUnsupportedCustomOpenAIBaseUrl(config: OpenAIConfigLike): string | null {
   if (!(config.provider === 'custom' && config.customProtocol === 'openai')) {
     return null;
   }
@@ -149,11 +151,8 @@ export function resolveOpenAICredentials(
   config: OpenAIConfigLike
 ): ResolvedOpenAICredentials | null {
   const trimmedApiKey = config.apiKey?.trim();
-  const effectiveApiKey = trimmedApiKey || (
-    shouldAllowEmptyOpenAIApiKey(config)
-      ? LOCAL_OPENAI_PLACEHOLDER_KEY
-      : ''
-  );
+  const effectiveApiKey =
+    trimmedApiKey || (shouldAllowEmptyOpenAIApiKey(config) ? LOCAL_OPENAI_PLACEHOLDER_KEY : '');
   if (effectiveApiKey) {
     return {
       apiKey: effectiveApiKey,
@@ -190,23 +189,27 @@ export function isLoopbackBaseUrl(baseUrl: string | undefined): boolean {
 export function shouldAllowEmptyAnthropicApiKey(
   config: Pick<AppConfig, 'provider' | 'customProtocol' | 'baseUrl'>
 ): boolean {
-  return config.provider === 'custom'
-    && (config.customProtocol ?? 'anthropic') === 'anthropic'
-    && isLoopbackBaseUrl(config.baseUrl);
+  return (
+    config.provider === 'custom' &&
+    (config.customProtocol ?? 'anthropic') === 'anthropic' &&
+    isLoopbackBaseUrl(config.baseUrl)
+  );
 }
 
 export function shouldAllowEmptyOpenAIApiKey(
   config: Pick<AppConfig, 'provider' | 'customProtocol' | 'baseUrl'>
 ): boolean {
-  return config.provider === 'custom'
-    && config.customProtocol === 'openai'
-    && isLoopbackBaseUrl(config.baseUrl);
+  return (
+    config.provider === 'custom' &&
+    config.customProtocol === 'openai' &&
+    isLoopbackBaseUrl(config.baseUrl)
+  );
 }
 
 export function isOllamaLegacyCustomOpenAIConfig(
   config: Pick<AppConfig, 'provider' | 'customProtocol' | 'baseUrl'>
 ): boolean {
-  if (!(config.provider === 'custom' && (config.customProtocol ?? 'anthropic') === 'openai')) {
+  if (!(config.provider === 'custom' && config.customProtocol === 'openai')) {
     return false;
   }
   const normalized = normalizeBaseUrl(config.baseUrl);
@@ -226,7 +229,9 @@ export function isOllamaLegacyCustomOpenAIConfig(
 export function shouldAllowEmptyGeminiApiKey(
   config: Pick<AppConfig, 'provider' | 'customProtocol' | 'baseUrl'>
 ): boolean {
-  return config.provider === 'custom'
-    && (config.customProtocol ?? 'anthropic') === 'gemini'
-    && isLoopbackBaseUrl(config.baseUrl);
+  return (
+    config.provider === 'custom' &&
+    (config.customProtocol ?? 'anthropic') === 'gemini' &&
+    isLoopbackBaseUrl(config.baseUrl)
+  );
 }
