@@ -24,7 +24,6 @@ function isInsertableSessionUpdate(updates: Partial<Session>): updates is Sessio
     typeof updates.status === 'string' &&
     typeof updates.createdAt === 'number' &&
     typeof updates.updatedAt === 'number' &&
-    typeof updates.cwd === 'string' &&
     Array.isArray(updates.mountedPaths) &&
     Array.isArray(updates.allowedTools) &&
     typeof updates.memoryEnabled === 'boolean'

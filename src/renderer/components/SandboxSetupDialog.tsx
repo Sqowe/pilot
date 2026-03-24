@@ -3,7 +3,7 @@
  * Supports light/dark theme
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SandboxSetupProgress, SandboxSetupPhase } from '../types';
 import { getSandboxSetupDisplayText } from '../utils/sandbox-i18n';

@@ -258,8 +258,13 @@ export class MCPManager {
         'powershell.exe'
       );
       try {
-        const { stdout } = await execAsync(
-          `"${psExe}" -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine')"`,
+        const { stdout } = await execFileAsync(
+          psExe,
+          [
+            '-NoProfile',
+            '-Command',
+            "[Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine')",
+          ],
           { timeout: 5000 }
         );
         if (stdout.trim()) {
