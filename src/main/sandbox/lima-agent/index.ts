@@ -90,7 +90,24 @@ class SandboxAgent {
       realPath = fs.realpathSync(resolved);
     } catch (err: unknown) {
       // ENOENT is acceptable for paths that don't exist yet (e.g. write targets)
+      // but we must still verify containment of the nearest existing ancestor
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        let ancestor = resolved;
+        while (ancestor !== path.dirname(ancestor)) {
+          ancestor = path.dirname(ancestor);
+          try {
+            const realAncestor = fs.realpathSync(ancestor);
+            if (!isPathWithinRoot(realAncestor, this.workspacePath)) {
+              throw new Error(`Resolved ancestor path is outside workspace: ${realAncestor}`);
+            }
+            return resolved;
+          } catch (ancestorErr: unknown) {
+            if ((ancestorErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+              throw ancestorErr;
+            }
+            // Keep walking up
+          }
+        }
         return resolved;
       }
       throw err;
@@ -138,8 +155,12 @@ class SandboxAgent {
     const pathMatches = command.match(/\/[\w/-]+/g) || [];
     for (const p of pathMatches) {
       // Skip system paths that are commonly used
-      if (p.startsWith('/usr/') || p.startsWith('/bin/') ||
-          p.startsWith('/tmp/') || p.startsWith('/dev/null')) {
+      if (
+        p.startsWith('/usr/') ||
+        p.startsWith('/bin/') ||
+        p.startsWith('/tmp/') ||
+        p.startsWith('/dev/null')
+      ) {
         continue;
       }
 
@@ -251,12 +272,10 @@ class SandboxAgent {
     const entries = fs.readdirSync(validPath, { withFileTypes: true });
 
     return {
-      entries: entries.map(entry => ({
+      entries: entries.map((entry) => ({
         name: entry.name,
         isDirectory: entry.isDirectory(),
-        size: entry.isFile()
-          ? fs.statSync(path.join(validPath, entry.name)).size
-          : undefined,
+        size: entry.isFile() ? fs.statSync(path.join(validPath, entry.name)).size : undefined,
       })),
     };
   }
@@ -374,7 +393,7 @@ class SandboxAgent {
             const messages = output
               .split(/\r?\n/)
               .filter(Boolean)
-              .map(line => {
+              .map((line) => {
                 try {
                   return JSON.parse(line);
                 } catch {
@@ -423,7 +442,7 @@ class SandboxAgent {
       case 'setWorkspace':
         this.setWorkspace(
           params.path as string,
-          (params.macPath || params.windowsPath) as string  // Support both macPath and windowsPath for compatibility
+          (params.macPath || params.windowsPath) as string // Support both macPath and windowsPath for compatibility
         );
         return { success: true };
 

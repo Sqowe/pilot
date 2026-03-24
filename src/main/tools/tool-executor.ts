@@ -416,9 +416,18 @@ export class ToolExecutor {
           })()
         : ['-c', command];
 
+      const safeEnv = {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        LANG: process.env.LANG,
+        TERM: process.env.TERM,
+        SHELL: process.env.SHELL,
+        TMPDIR: process.env.TMPDIR,
+        USER: process.env.USER,
+      };
       const proc = spawn(shell, args, {
         cwd,
-        env: { ...process.env },
+        env: { ...safeEnv },
         timeout: 60000, // 60 second timeout
       });
 
@@ -908,9 +917,18 @@ export class ToolExecutor {
           })()
         : ['-c', command];
 
+      const safeEnv2 = {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        LANG: process.env.LANG,
+        TERM: process.env.TERM,
+        SHELL: process.env.SHELL,
+        TMPDIR: process.env.TMPDIR,
+        USER: process.env.USER,
+      };
       const proc = spawn(shell, args, {
         cwd,
-        env: { ...process.env },
+        env: { ...safeEnv2 },
         timeout: 30000,
       });
 

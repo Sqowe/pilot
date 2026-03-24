@@ -10,13 +10,13 @@ import { getLegacyDerivedKeyBuffers, getStableDerivedKeyBuffer } from '../utils/
  */
 export interface UserCredential {
   id: string;
-  name: string;           // Friendly name, e.g., "Work Gmail"
+  name: string; // Friendly name, e.g., "Work Gmail"
   type: 'email' | 'website' | 'api' | 'other';
-  service?: string;       // gmail, outlook, github, etc.
+  service?: string; // gmail, outlook, github, etc.
   username: string;
-  password: string;       // Encrypted in storage
-  url?: string;           // Optional: login URL
-  notes?: string;         // Optional: additional notes
+  password: string; // Encrypted in storage
+  url?: string; // Optional: login URL
+  notes?: string; // Optional: additional notes
   createdAt: string;
   updatedAt: string;
 }
@@ -75,10 +75,24 @@ function getMachineBoundKey(): Buffer {
     // safeStorage unavailable (e.g., no keychain/keyring, CI, or app not ready)
   }
 
-  // Fallback: derive from machine identity
+  // Fallback: derive from machine identity with a per-installation random salt
+  const saltStore = new Store<{ fallbackSalt?: string }>({
+    name: 'credentials-fallback-salt',
+    projectName: 'open-cowork',
+    defaults: {},
+  } as StoreOptions<{ fallbackSalt?: string }> & { projectName?: string });
+
+  let salt = saltStore.get('fallbackSalt');
+  if (!salt) {
+    salt = crypto.randomBytes(32).toString('hex');
+    saltStore.set('fallbackSalt', salt);
+  }
+
   const seed = `${os.hostname()}:${os.userInfo().username}:open-cowork-credentials-stable-v1`;
-  _machineBoundKeyCache = crypto.scryptSync(seed, 'open-cowork-salt', 32, { N: 65536, r: 8, p: 1 });
-  log('[CredentialsStore] Derived machine-bound key from hostname and username (safeStorage unavailable)');
+  _machineBoundKeyCache = crypto.scryptSync(seed, salt, 32, { N: 65536, r: 8, p: 1 });
+  log(
+    '[CredentialsStore] Derived machine-bound key from hostname and username (safeStorage unavailable)'
+  );
   return _machineBoundKeyCache;
 }
 
@@ -99,7 +113,9 @@ class CredentialsStore {
   private legacyKeyStore: Store<{ key?: string }>;
 
   constructor() {
-    const storeOptions: StoreOptions<{ credentials: StoredCredential[] }> & { projectName?: string } = {
+    const storeOptions: StoreOptions<{ credentials: StoredCredential[] }> & {
+      projectName?: string;
+    } = {
       name: 'credentials',
       projectName: 'open-cowork',
       defaults: {
@@ -120,20 +136,24 @@ class CredentialsStore {
 
     // Old hardcoded stable key (backward compat with data encrypted before
     // machine-bound key was introduced).
-    keys.push(getStableDerivedKeyBuffer({
-      moduleDirname: __dirname,
-      stableSeed: 'open-cowork-credentials-stable-v1',
-      legacySeed: 'open-cowork-credentials',
-      salt: 'open-cowork-salt',
-    }));
+    keys.push(
+      getStableDerivedKeyBuffer({
+        moduleDirname: __dirname,
+        stableSeed: 'open-cowork-credentials-stable-v1',
+        legacySeed: 'open-cowork-credentials',
+        salt: 'open-cowork-salt',
+      })
+    );
 
     // Legacy hostname-derived keys.
-    keys.push(...getLegacyDerivedKeyBuffers({
-      moduleDirname: __dirname,
-      stableSeed: 'open-cowork-credentials-stable-v1',
-      legacySeed: 'open-cowork-credentials',
-      salt: 'open-cowork-salt',
-    }));
+    keys.push(
+      ...getLegacyDerivedKeyBuffers({
+        moduleDirname: __dirname,
+        stableSeed: 'open-cowork-credentials-stable-v1',
+        legacySeed: 'open-cowork-credentials',
+        salt: 'open-cowork-salt',
+      })
+    );
 
     return keys;
   }
@@ -156,7 +176,10 @@ class CredentialsStore {
   // AES-256-GCM encryption (with CBC fallback for legacy data)
   // ---------------------------------------------------------------------------
 
-  private encryptWithKey(text: string, key: Buffer): { encrypted: string; iv: string; authTag: string } {
+  private encryptWithKey(
+    text: string,
+    key: Buffer
+  ): { encrypted: string; iv: string; authTag: string } {
     const iv = crypto.randomBytes(12); // 96-bit IV recommended for GCM
     const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
     let encrypted = cipher.update(text, 'utf8', 'hex');
@@ -189,7 +212,7 @@ class CredentialsStore {
   private decryptWithFallback(
     encrypted: string,
     iv: string,
-    authTag?: string,
+    authTag?: string
   ): { decrypted: string; needsRewrite: boolean } {
     try {
       return {
@@ -236,7 +259,7 @@ class CredentialsStore {
         const { decrypted, needsRewrite } = this.decryptWithFallback(
           cred.encryptedPassword,
           cred.iv,
-          cred.authTag,
+          cred.authTag
         );
         if (!needsRewrite) {
           return cred;
@@ -352,9 +375,7 @@ class CredentialsStore {
    * Get credentials by service name
    */
   getByService(service: string): UserCredential[] {
-    return this.getAll().filter(
-      (c) => c.service?.toLowerCase() === service.toLowerCase()
-    );
+    return this.getAll().filter((c) => c.service?.toLowerCase() === service.toLowerCase());
   }
 
   /**
@@ -398,7 +419,10 @@ class CredentialsStore {
   /**
    * Update an existing credential
    */
-  update(id: string, updates: Partial<Omit<UserCredential, 'id' | 'createdAt' | 'updatedAt'>>): UserCredential | undefined {
+  update(
+    id: string,
+    updates: Partial<Omit<UserCredential, 'id' | 'createdAt' | 'updatedAt'>>
+  ): UserCredential | undefined {
     const credentials = this.store.get('credentials', []);
     const index = credentials.findIndex((c) => c.id === id);
 

@@ -2191,11 +2191,11 @@ public class WinClick {
         public IntPtr dwExtraInfo;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Explicit)]
     public struct INPUT {
-        public int type;
-        public MOUSEINPUT mi;
-        public KEYBDINPUT ki;
+        [FieldOffset(0)] public int type;
+        [FieldOffset(4)] public MOUSEINPUT mi;
+        [FieldOffset(4)] public KEYBDINPUT ki;
     }
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -2517,11 +2517,11 @@ public class WinScroll {
         public IntPtr dwExtraInfo;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Explicit)]
     public struct INPUT {
-        public int type;
-        public MOUSEINPUT mi;
-        public KEYBDINPUT ki;
+        [FieldOffset(0)] public int type;
+        [FieldOffset(4)] public MOUSEINPUT mi;
+        [FieldOffset(4)] public KEYBDINPUT ki;
     }
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -4737,11 +4737,12 @@ async function annotateScreenshotWithClickHistory(
   // Pass image dimensions and scale factor to Python
   const pythonScript = `
 import sys
+import json
 from PIL import Image, ImageDraw, ImageFont
 
 try:
     # Load image
-    img = Image.open('${screenshotPath.replace(/\\/g, '/').replace(/'/g, "\\'")}')
+    img = Image.open(json.loads(${JSON.stringify(JSON.stringify(screenshotPath.replace(/\\/g, '/')))}))
     img_width, img_height = img.size
     scale_factor = ${scaleFactor}
     
