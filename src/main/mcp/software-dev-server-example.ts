@@ -1675,7 +1675,11 @@ async function executeGUIInteractionWithVision(
           await new Promise((resolve) => setTimeout(resolve, 200));
 
           // Escape special characters for cliclick
-          const escapedValue = value.replace(/"/g, '\\"');
+          const escapedValue = value
+            .replace(/\\/g, '\\\\')
+            .replace(/"/g, '\\"')
+            .replace(/`/g, '\\`')
+            .replace(/\$\(/g, '\\$(');
           await executeCliclick(`t:"${escapedValue}"`);
           await new Promise((resolve) => setTimeout(resolve, 500));
 

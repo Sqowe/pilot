@@ -340,8 +340,8 @@ export class RemoteGateway extends EventEmitter {
 
     switch (mode) {
       case 'token':
-        // Token auth is for WebSocket clients, not channel messages
-        return true;
+        // Token auth is for WebSocket clients only, deny channel messages
+        return false;
 
       case 'allowlist':
         if (!allowlist || allowlist.length === 0) {

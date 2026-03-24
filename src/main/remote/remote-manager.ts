@@ -691,7 +691,7 @@ export class RemoteManager extends EventEmitter {
 
         if (channelInfo.channelType === channelType && channelInfo.channelId === channelId) {
           // Verify that the responder is the session owner to prevent hijacking
-          if (interaction.ownerSenderId && senderId !== interaction.ownerSenderId) {
+          if (!interaction.ownerSenderId || senderId !== interaction.ownerSenderId) {
             log('[RemoteManager] Ignoring interaction response from non-owner sender:', senderId);
             continue;
           }

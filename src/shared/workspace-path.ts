@@ -64,5 +64,13 @@ function joinRelativePath(basePath: string, relativePath: string): string {
     }
   }
 
-  return resolved.join(sep);
+  const result = resolved.join(sep);
+
+  // Verify result is still within the base path to prevent traversal escape
+  const normalizedBase = basePath.replace(/[/\\]+$/, '');
+  if (!result.startsWith(normalizedBase + sep) && result !== normalizedBase) {
+    return basePath;
+  }
+
+  return result;
 }

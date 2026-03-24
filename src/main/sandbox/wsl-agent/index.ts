@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
  * WSL Sandbox Agent
- * 
+ *
  * This script runs inside WSL2 and handles:
  * - Command execution in isolated environment
  * - File operations with path validation
  * - Claude-code execution
- * 
+ *
  * Communication is via stdin/stdout JSON-RPC.
  */
 
@@ -87,7 +87,24 @@ class SandboxAgent {
       realPath = fs.realpathSync(resolved);
     } catch (err: unknown) {
       // ENOENT is acceptable for paths that don't exist yet (e.g. write targets)
+      // but we must still verify containment of the nearest existing ancestor
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        let ancestor = resolved;
+        while (ancestor !== path.dirname(ancestor)) {
+          ancestor = path.dirname(ancestor);
+          try {
+            const realAncestor = fs.realpathSync(ancestor);
+            if (!isPathWithinRoot(realAncestor, this.workspacePath)) {
+              throw new Error(`Resolved ancestor path is outside workspace: ${realAncestor}`);
+            }
+            return resolved;
+          } catch (ancestorErr: unknown) {
+            if ((ancestorErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+              throw ancestorErr;
+            }
+            // Keep walking up
+          }
+        }
         return resolved;
       }
       throw err;
@@ -135,11 +152,15 @@ class SandboxAgent {
     const pathMatches = command.match(/\/[\w/-]+/g) || [];
     for (const p of pathMatches) {
       // Skip system paths that are commonly used
-      if (p.startsWith('/usr/') || p.startsWith('/bin/') || 
-          p.startsWith('/tmp/') || p.startsWith('/dev/null')) {
+      if (
+        p.startsWith('/usr/') ||
+        p.startsWith('/bin/') ||
+        p.startsWith('/tmp/') ||
+        p.startsWith('/dev/null')
+      ) {
         continue;
       }
-      
+
       // Check if it's a path in /mnt/ (Windows paths)
       if (p.startsWith('/mnt/')) {
         const resolved = path.resolve(p);
@@ -210,7 +231,7 @@ class SandboxAgent {
    */
   async readFile(params: { path: string }): Promise<{ content: string }> {
     const validPath = this.validatePath(params.path);
-    
+
     if (!fs.existsSync(validPath)) {
       throw new Error(`File not found: ${params.path}`);
     }
@@ -224,7 +245,7 @@ class SandboxAgent {
    */
   async writeFile(params: { path: string; content: string }): Promise<{ success: boolean }> {
     const validPath = this.validatePath(params.path);
-    
+
     // Ensure directory exists
     const dir = path.dirname(validPath);
     if (!fs.existsSync(dir)) {
@@ -240,20 +261,18 @@ class SandboxAgent {
    */
   async listDirectory(params: { path: string }): Promise<{ entries: DirectoryEntry[] }> {
     const validPath = this.validatePath(params.path);
-    
+
     if (!fs.existsSync(validPath)) {
       throw new Error(`Directory not found: ${params.path}`);
     }
 
     const entries = fs.readdirSync(validPath, { withFileTypes: true });
-    
+
     return {
-      entries: entries.map(entry => ({
+      entries: entries.map((entry) => ({
         name: entry.name,
         isDirectory: entry.isDirectory(),
-        size: entry.isFile() 
-          ? fs.statSync(path.join(validPath, entry.name)).size 
-          : undefined,
+        size: entry.isFile() ? fs.statSync(path.join(validPath, entry.name)).size : undefined,
       })),
     };
   }
@@ -275,11 +294,11 @@ class SandboxAgent {
    */
   async deleteFile(params: { path: string }): Promise<{ success: boolean }> {
     const validPath = this.validatePath(params.path);
-    
+
     if (fs.existsSync(validPath)) {
       fs.unlinkSync(validPath);
     }
-    
+
     return { success: true };
   }
 
@@ -288,11 +307,11 @@ class SandboxAgent {
    */
   async createDirectory(params: { path: string }): Promise<{ success: boolean }> {
     const validPath = this.validatePath(params.path);
-    
+
     if (!fs.existsSync(validPath)) {
       fs.mkdirSync(validPath, { recursive: true });
     }
-    
+
     return { success: true };
   }
 
@@ -302,7 +321,7 @@ class SandboxAgent {
   async copyFile(params: { src: string; dest: string }): Promise<{ success: boolean }> {
     const validSrc = this.validatePath(params.src);
     const validDest = this.validatePath(params.dest);
-    
+
     // Ensure destination directory exists
     const destDir = path.dirname(validDest);
     if (!fs.existsSync(destDir)) {
@@ -371,7 +390,7 @@ class SandboxAgent {
             const messages = output
               .split(/\r?\n/)
               .filter(Boolean)
-              .map(line => {
+              .map((line) => {
                 try {
                   return JSON.parse(line);
                 } catch {
@@ -418,10 +437,7 @@ class SandboxAgent {
         return this.ping();
 
       case 'setWorkspace':
-        this.setWorkspace(
-          params.path as string,
-          params.windowsPath as string
-        );
+        this.setWorkspace(params.path as string, params.windowsPath as string);
         return { success: true };
 
       case 'executeCommand':
@@ -483,7 +499,7 @@ async function main(): Promise<void> {
     if (!line.trim()) return;
 
     let request: JSONRPCRequest | null = null;
-    
+
     try {
       request = JSON.parse(line) as JSONRPCRequest;
 
@@ -493,7 +509,7 @@ async function main(): Promise<void> {
       }
 
       const result = await agent.handleRequest(request);
-      
+
       sendResponse({
         jsonrpc: '2.0',
         id: request.id,

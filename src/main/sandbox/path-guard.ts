@@ -7,6 +7,7 @@
  * - Only allows access to /sandbox/workspace/{sessionId}/
  */
 
+import * as fs from 'fs';
 import { log, logError } from '../utils/logger';
 import { SandboxSync } from './sandbox-sync';
 import { isPathWithinRoot } from '../tools/path-containment';
@@ -93,6 +94,19 @@ export class PathGuard {
 
     // Check if path is within sandbox
     if (isPathWithinRoot(normalizedPath, session.sandboxPath)) {
+      // Resolve symlinks to prevent escape attacks
+      try {
+        const realPath = fs.realpathSync(normalizedPath);
+        const normalizedRealPath = realPath.replace(/\\/g, '/');
+        if (!isPathWithinRoot(normalizedRealPath, session.sandboxPath)) {
+          return {
+            allowed: false,
+            reason: `Symlink escape detected: ${normalizedPath} resolves to ${normalizedRealPath}`,
+          };
+        }
+      } catch {
+        // Path does not exist yet (e.g. write target) — allow based on lexical check
+      }
       return { allowed: true };
     }
 
