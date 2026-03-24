@@ -40,17 +40,27 @@ function buildLegacyDirCandidates(moduleDirname: string): string[] {
   return uniqueValues(candidates);
 }
 
-function deriveKeyBuffer(seed: string, salt: string): Buffer {
-  return crypto.scryptSync(seed, salt, 32);
+/** Secure scrypt parameters for new key derivation. */
+const SECURE_SCRYPT_OPTIONS: crypto.ScryptOptions = { N: 65536, r: 8, p: 1 };
+
+/** Legacy scrypt parameters — Node.js defaults used by earlier releases. */
+const LEGACY_SCRYPT_OPTIONS: crypto.ScryptOptions = { N: 16384, r: 8, p: 1 };
+
+function deriveKeyBuffer(
+  seed: string,
+  salt: string,
+  options: crypto.ScryptOptions = SECURE_SCRYPT_OPTIONS,
+): Buffer {
+  return crypto.scryptSync(seed, salt, 32, options);
 }
 
-function deriveKeyHex(seed: string, salt: string): string {
-  return deriveKeyBuffer(seed, salt).toString('hex');
+function deriveKeyHex(seed: string, salt: string, options?: crypto.ScryptOptions): string {
+  return deriveKeyBuffer(seed, salt, options).toString('hex');
 }
 
 function isLikelyKeyMismatch(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /Unexpected token|valid JSON|bad decrypt|decrypt|JSON/i.test(message);
+  return /\bUnexpected token\b|\bvalid JSON\b|\bbad decrypt\b|\bdecrypt\b|\bJSON\b/i.test(message);
 }
 
 function buildBackupPath(storePath: string, reason: string = 'pre-key-rotation'): string {
@@ -105,17 +115,17 @@ function moveUnreadableStoreToBackup(storePath: string): string {
 
 export function getLegacyDerivedKeyHexes(options: KeyMaterialOptions): string[] {
   return buildLegacyDirCandidates(options.moduleDirname).map((dir) =>
-    deriveKeyHex(`${os.hostname()}:${dir}:${options.legacySeed}`, options.salt)
+    deriveKeyHex(`${os.hostname()}:${dir}:${options.legacySeed}`, options.salt, LEGACY_SCRYPT_OPTIONS)
   );
 }
 
 export function getStableDerivedKeyBuffer(options: KeyMaterialOptions): Buffer {
-  return deriveKeyBuffer(options.stableSeed, options.salt);
+  return deriveKeyBuffer(options.stableSeed, options.salt, LEGACY_SCRYPT_OPTIONS);
 }
 
 export function getLegacyDerivedKeyBuffers(options: KeyMaterialOptions): Buffer[] {
   return buildLegacyDirCandidates(options.moduleDirname).map((dir) =>
-    deriveKeyBuffer(`${os.hostname()}:${dir}:${options.legacySeed}`, options.salt)
+    deriveKeyBuffer(`${os.hostname()}:${dir}:${options.legacySeed}`, options.salt, LEGACY_SCRYPT_OPTIONS)
   );
 }
 
@@ -134,6 +144,10 @@ export function createEncryptedStoreWithKeyRotation<T extends Record<string, unk
     if (!isLikelyKeyMismatch(error)) {
       throw error;
     }
+
+    const failedAttempts: string[] = [
+      `stable key: ${error instanceof Error ? error.message : String(error)}`,
+    ];
 
     for (const legacyKey of legacyKeys) {
       try {
@@ -176,6 +190,9 @@ export function createEncryptedStoreWithKeyRotation<T extends Record<string, unk
         if (!isLikelyKeyMismatch(legacyError)) {
           throw legacyError;
         }
+        failedAttempts.push(
+          `legacy key: ${legacyError instanceof Error ? legacyError.message : String(legacyError)}`
+        );
       }
     }
 
@@ -193,9 +210,12 @@ export function createEncryptedStoreWithKeyRotation<T extends Record<string, unk
       });
     }
 
+    const aggregated = failedAttempts.join('; ');
     options.warn?.(
-      `${options.logPrefix} Failed to read encrypted store with both stable and legacy keys`
+      `${options.logPrefix} Failed to read encrypted store with all keys: ${aggregated}`
     );
-    throw error;
+    throw new Error(
+      `${options.logPrefix} All decryption keys failed: ${aggregated}`
+    );
   }
 }

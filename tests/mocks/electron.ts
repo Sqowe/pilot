@@ -125,6 +125,25 @@ export const contextBridge = {
   exposeInMainWorld: noop,
 };
 
+// In-memory storage for safeStorage mock — encrypts by base64-encoding the
+// plaintext with a static prefix so that encryptString/decryptString are
+// deterministic across calls within a single test run.
+const _safeStoragePrefix = 'safe:';
+
+export const safeStorage = {
+  isEncryptionAvailable: () => true,
+  encryptString: (plainText: string): Buffer => {
+    return Buffer.from(_safeStoragePrefix + plainText, 'utf8');
+  },
+  decryptString: (encrypted: Buffer): string => {
+    const raw = encrypted.toString('utf8');
+    if (!raw.startsWith(_safeStoragePrefix)) {
+      throw new Error('Failed to decrypt string');
+    }
+    return raw.slice(_safeStoragePrefix.length);
+  },
+};
+
 const electron = {
   app,
   ipcMain,
@@ -136,6 +155,7 @@ const electron = {
   BrowserWindow,
   Tray,
   contextBridge,
+  safeStorage,
 };
 
 export default electron;
