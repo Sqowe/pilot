@@ -39,7 +39,9 @@ export function ChatView() {
   const { continueSession, stopSession, isElectron } = useIPC();
   const [prompt, setPrompt] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeConnectors, setActiveConnectors] = useState<{ id: string; name: string; connected: boolean; toolCount: number }[]>([]);
+  const [activeConnectors, setActiveConnectors] = useState<
+    { id: string; name: string; connected: boolean; toolCount: number }[]
+  >([]);
   const [showConnectorLabel, setShowConnectorLabel] = useState(true);
   const headerRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -209,7 +211,7 @@ export function ChatView() {
 
     prevMessageCountRef.current = messageCount;
     prevPartialLengthRef.current = partialLength;
-  }, [messages.length, partialMessage, partialThinking]);
+  }, [messages.length, partialMessage.length, partialThinking.length]);
 
   // Additional scroll trigger for content height changes (e.g., TodoWrite expand/collapse)
   useEffect(() => {
@@ -230,7 +232,7 @@ export function ChatView() {
     return () => {
       resizeObserver.disconnect();
     };
-  }, [displayedMessages.length]); // Re-create observer when message count changes
+  }, []); // ResizeObserver is stable — no need to recreate on message count changes
 
   // Cleanup scroll timeouts on unmount
   useEffect(() => {
@@ -501,7 +503,10 @@ export function ChatView() {
       const loadConnectors = async () => {
         try {
           const statuses = await window.electronAPI.mcp.getServerStatus();
-          const active = (statuses as Array<{ id: string; name: string; connected: boolean; toolCount: number }>)?.filter((s) => s.connected && s.toolCount > 0) || [];
+          const active =
+            (
+              statuses as Array<{ id: string; name: string; connected: boolean; toolCount: number }>
+            )?.filter((s) => s.connected && s.toolCount > 0) || [];
           setActiveConnectors(active);
         } catch (err) {
           console.error('Failed to load MCP connectors:', err);
@@ -693,11 +698,11 @@ export function ChatView() {
           {hasActiveTurn &&
             (!partialMessage || partialMessage.trim() === '') &&
             !partialThinking && (
-            <div className="flex items-center gap-3 px-4 py-3 rounded-full bg-background/80 border border-border-subtle max-w-fit">
-              <Loader2 className="w-4 h-4 text-accent animate-spin" />
-              <span className="text-sm text-text-secondary">{t('chat.processing')}</span>
-            </div>
-          )}
+              <div className="flex items-center gap-3 px-4 py-3 rounded-full bg-background/80 border border-border-subtle max-w-fit">
+                <Loader2 className="w-4 h-4 text-accent animate-spin" />
+                <span className="text-sm text-text-secondary">{t('chat.processing')}</span>
+              </div>
+            )}
 
           {/* Real-time execution timer */}
           {liveElapsed > 0 && (

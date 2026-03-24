@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback } from 'react';
 import { useAppStore } from '../store';
 import type {
   AppConfig,
@@ -16,15 +16,6 @@ import i18n from '../i18n/config';
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
 export function useIPC() {
-  // Use refs to store stable references to store actions
-  // This prevents useEffect from re-running when actions change
-  const storeRef = useRef(useAppStore.getState());
-
-  // Update ref on every render to always have latest actions
-  useEffect(() => {
-    storeRef.current = useAppStore.getState();
-  });
-
   // Handle incoming server events - only setup once
   useEffect(() => {
     if (!isElectron) {
@@ -43,7 +34,7 @@ export function useIPC() {
 
     const flushPartials = () => {
       partialRafId = null;
-      const store = storeRef.current;
+      const store = useAppStore.getState();
       for (const sessionId in pendingPartials) {
         const chunks = pendingPartials[sessionId];
         if (chunks.length > 0) {
@@ -63,7 +54,7 @@ export function useIPC() {
 
     const flushThinking = () => {
       thinkingRafId = null;
-      const store = storeRef.current;
+      const store = useAppStore.getState();
       for (const sessionId in pendingThinking) {
         const chunks = pendingThinking[sessionId];
         if (chunks.length > 0) {
@@ -89,7 +80,7 @@ export function useIPC() {
 
     const flushTraces = () => {
       traceRafId = null;
-      const store = storeRef.current;
+      const store = useAppStore.getState();
       for (const action of pendingTraces) {
         if (action.kind === 'add') {
           store.addTraceStep(action.sessionId, action.step);
@@ -108,7 +99,7 @@ export function useIPC() {
     };
 
     const applyConfigSnapshot = (config: AppConfig, isConfigured: boolean) => {
-      const store = storeRef.current;
+      const store = useAppStore.getState();
       const isInitialConfigStatus = !store.hasSeenInitialConfigStatus;
       store.setIsConfigured(isConfigured);
       store.setAppConfig(config);
@@ -119,189 +110,203 @@ export function useIPC() {
     };
 
     const cleanup = window.electronAPI.on((event: ServerEvent) => {
-      const store = storeRef.current;
+      const store = useAppStore.getState();
       console.log('[useIPC] Received event:', event.type);
 
       try {
-      switch (event.type) {
-        case 'session.list':
-          store.setSessions(event.payload.sessions);
-          break;
+        switch (event.type) {
+          case 'session.list':
+            store.setSessions(event.payload.sessions);
+            break;
 
-        case 'session.status':
-          store.updateSession(event.payload.sessionId, {
-            status: event.payload.status,
-          });
-          if (event.payload.status !== 'running') {
-            store.finishExecutionClock(event.payload.sessionId);
-            store.setLoading(false);
-            store.clearActiveTurn(event.payload.sessionId);
-            store.clearPendingTurns(event.payload.sessionId);
-            store.clearQueuedMessages(event.payload.sessionId);
-          }
-          break;
-
-        case 'session.update':
-          store.updateSession(event.payload.sessionId, event.payload.updates);
-          break;
-
-        case 'stream.message':
-          console.log(
-            '[useIPC] stream.message received:',
-            event.payload.message.role,
-            'content:',
-            JSON.stringify(event.payload.message.content)
-          );
-          // Clear pending partial buffer to prevent RAF from appending stale chunks
-          delete pendingPartials[event.payload.sessionId];
-          // Clear thinking buffer too — final thinking is in the message content blocks
-          delete pendingThinking[event.payload.sessionId];
-          store.addMessage(event.payload.sessionId, event.payload.message);
-          break;
-
-        case 'stream.partial':
-          bufferPartial(event.payload.sessionId, event.payload.delta);
-          break;
-
-        case 'stream.thinking':
-          bufferThinking(event.payload.sessionId, event.payload.delta);
-          break;
-
-        case 'trace.step': {
-          if (event.payload.step.type === 'thinking' && event.payload.step.status === 'running') {
-            const currentState = useAppStore.getState();
-            const ss = currentState.sessionStates[event.payload.sessionId];
-            const pending = ss?.pendingTurns || [];
-            const activeTurn = ss?.activeTurn;
-            if (pending.length > 0) {
-              store.activateNextTurn(event.payload.sessionId, event.payload.step.id);
-            } else if (activeTurn) {
-              // 绑定真实 stepId，避免 mock stepId 导致无法清理
-              store.updateActiveTurnStep(event.payload.sessionId, event.payload.step.id);
+          case 'session.status':
+            store.updateSession(event.payload.sessionId, {
+              status: event.payload.status,
+            });
+            if (event.payload.status !== 'running') {
+              store.finishExecutionClock(event.payload.sessionId);
+              store.setLoading(false);
+              store.clearActiveTurn(event.payload.sessionId);
+              store.clearPendingTurns(event.payload.sessionId);
+              store.clearQueuedMessages(event.payload.sessionId);
             }
-          }
-          bufferTrace({
-            kind: 'add',
-            sessionId: event.payload.sessionId,
-            step: event.payload.step,
-          });
-          break;
-        }
+            break;
 
-        case 'trace.update':
-          if (
-            event.payload.updates.status &&
-            (event.payload.updates.status === 'completed' ||
-              event.payload.updates.status === 'error')
-          ) {
-            store.clearActiveTurn(event.payload.sessionId, event.payload.stepId);
-          }
-          bufferTrace({
-            kind: 'update',
-            sessionId: event.payload.sessionId,
-            stepId: event.payload.stepId,
-            updates: event.payload.updates,
-          });
-          break;
+          case 'session.update':
+            store.updateSession(event.payload.sessionId, event.payload.updates);
+            break;
 
-        case 'permission.request':
-          store.setPendingPermission(event.payload);
-          break;
+          case 'stream.message':
+            console.log(
+              '[useIPC] stream.message received:',
+              event.payload.message.role,
+              'content:',
+              JSON.stringify(event.payload.message.content)
+            );
+            // Clear pending partial buffer to prevent RAF from appending stale chunks
+            delete pendingPartials[event.payload.sessionId];
+            // Clear thinking buffer too — final thinking is in the message content blocks
+            delete pendingThinking[event.payload.sessionId];
+            store.addMessage(event.payload.sessionId, event.payload.message);
+            break;
 
-        case 'sudo.password.request':
-          store.setPendingSudoPassword(event.payload);
-          break;
+          case 'stream.partial':
+            bufferPartial(event.payload.sessionId, event.payload.delta);
+            break;
 
-        case 'sudo.password.dismiss': {
-          const currentSudo = useAppStore.getState().pendingSudoPassword;
-          if (currentSudo?.toolUseId === event.payload.toolUseId) {
-            store.setPendingSudoPassword(null);
-          }
-          break;
-        }
+          case 'stream.thinking':
+            bufferThinking(event.payload.sessionId, event.payload.delta);
+            break;
 
-        case 'config.status': {
-          console.log('[useIPC] config.status received:', event.payload.isConfigured);
-          applyConfigSnapshot(event.payload.config, event.payload.isConfigured);
-          break;
-        }
-
-        case 'sandbox.progress':
-          console.log(
-            '[useIPC] sandbox.progress received:',
-            event.payload.phase,
-            event.payload.message
-          );
-          store.setSandboxSetupProgress(event.payload);
-          break;
-
-        case 'sandbox.sync':
-          console.log(
-            '[useIPC] sandbox.sync received:',
-            event.payload.phase,
-            event.payload.message
-          );
-          store.setSandboxSyncStatus(event.payload);
-          break;
-
-        case 'skills.storageChanged':
-          console.log(
-            '[useIPC] skills.storageChanged received:',
-            event.payload.path,
-            event.payload.reason
-          );
-          store.setSkillsStorageChangeEvent(event.payload);
-          store.setSkillsStorageChangedAt(Date.now());
-          break;
-
-        case 'workdir.changed':
-          console.log('[useIPC] workdir.changed received:', event.payload.path);
-          store.setWorkingDir(event.payload.path || null);
-          break;
-
-        case 'session.contextInfo':
-          store.setSessionContextWindow(event.payload.sessionId, event.payload.contextWindow);
-          break;
-
-        case 'error':
-          console.error('[useIPC] Server error:', event.payload.message);
-          store.setLoading(false);
-          if (event.payload.code === 'CONFIG_REQUIRED_ACTIVE_SET') {
-            store.setGlobalNotice({
-              id: `notice-config-required-${Date.now()}`,
-              type: 'warning',
-              message: i18n.t('api.configRequiredActiveSet'),
-              messageKey: 'api.configRequiredActiveSet',
-              action:
-                event.payload.action === 'open_api_settings' ? 'open_api_settings' : undefined,
+          case 'trace.step': {
+            if (event.payload.step.type === 'thinking' && event.payload.step.status === 'running') {
+              const currentState = useAppStore.getState();
+              const ss = currentState.sessionStates[event.payload.sessionId];
+              const pending = ss?.pendingTurns || [];
+              const activeTurn = ss?.activeTurn;
+              if (pending.length > 0) {
+                store.activateNextTurn(event.payload.sessionId, event.payload.step.id);
+              } else if (activeTurn) {
+                // 绑定真实 stepId，避免 mock stepId 导致无法清理
+                store.updateActiveTurnStep(event.payload.sessionId, event.payload.step.id);
+              }
+            }
+            bufferTrace({
+              kind: 'add',
+              sessionId: event.payload.sessionId,
+              step: event.payload.step,
             });
-          } else {
-            store.setGlobalNotice({
-              id: `notice-error-${Date.now()}`,
-              type: 'error',
-              message: event.payload.message,
+            break;
+          }
+
+          case 'trace.update':
+            if (
+              event.payload.updates.status &&
+              (event.payload.updates.status === 'completed' ||
+                event.payload.updates.status === 'error')
+            ) {
+              store.clearActiveTurn(event.payload.sessionId, event.payload.stepId);
+            }
+            bufferTrace({
+              kind: 'update',
+              sessionId: event.payload.sessionId,
+              stepId: event.payload.stepId,
+              updates: event.payload.updates,
             });
+            break;
+
+          case 'permission.request':
+            store.setPendingPermission(event.payload);
+            break;
+
+          case 'permission.dismiss': {
+            const currentPermission = useAppStore.getState().pendingPermission;
+            if (currentPermission?.toolUseId === event.payload.toolUseId) {
+              store.setPendingPermission(null);
+            }
+            break;
           }
-          break;
 
-        case 'native-theme.changed':
-          store.setSystemDarkMode(event.payload.shouldUseDarkColors);
-          break;
+          case 'stream.executionTime':
+            store.updateMessage(event.payload.sessionId, event.payload.messageId, {
+              executionTimeMs: event.payload.executionTimeMs,
+            });
+            break;
 
-        case 'new-session':
-          store.setActiveSession(null);
-          store.setShowSettings(false);
-          break;
+          case 'sudo.password.request':
+            store.setPendingSudoPassword(event.payload);
+            break;
 
-        case 'navigate':
-          if (event.payload === 'settings') {
-            store.setShowSettings(true);
+          case 'sudo.password.dismiss': {
+            const currentSudo = useAppStore.getState().pendingSudoPassword;
+            if (currentSudo?.toolUseId === event.payload.toolUseId) {
+              store.setPendingSudoPassword(null);
+            }
+            break;
           }
-          break;
 
-        default:
-          console.log('[useIPC] Unknown server event:', event);
-      }
+          case 'config.status': {
+            console.log('[useIPC] config.status received:', event.payload.isConfigured);
+            applyConfigSnapshot(event.payload.config, event.payload.isConfigured);
+            break;
+          }
+
+          case 'sandbox.progress':
+            console.log(
+              '[useIPC] sandbox.progress received:',
+              event.payload.phase,
+              event.payload.message
+            );
+            store.setSandboxSetupProgress(event.payload);
+            break;
+
+          case 'sandbox.sync':
+            console.log(
+              '[useIPC] sandbox.sync received:',
+              event.payload.phase,
+              event.payload.message
+            );
+            store.setSandboxSyncStatus(event.payload);
+            break;
+
+          case 'skills.storageChanged':
+            console.log(
+              '[useIPC] skills.storageChanged received:',
+              event.payload.path,
+              event.payload.reason
+            );
+            store.setSkillsStorageChangeEvent(event.payload);
+            store.setSkillsStorageChangedAt(Date.now());
+            break;
+
+          case 'workdir.changed':
+            console.log('[useIPC] workdir.changed received:', event.payload.path);
+            store.setWorkingDir(event.payload.path || null);
+            break;
+
+          case 'session.contextInfo':
+            store.setSessionContextWindow(event.payload.sessionId, event.payload.contextWindow);
+            break;
+
+          case 'error':
+            console.error('[useIPC] Server error:', event.payload.message);
+            store.setLoading(false);
+            if (event.payload.code === 'CONFIG_REQUIRED_ACTIVE_SET') {
+              store.setGlobalNotice({
+                id: `notice-config-required-${Date.now()}`,
+                type: 'warning',
+                message: i18n.t('api.configRequiredActiveSet'),
+                messageKey: 'api.configRequiredActiveSet',
+                action:
+                  event.payload.action === 'open_api_settings' ? 'open_api_settings' : undefined,
+              });
+            } else {
+              store.setGlobalNotice({
+                id: `notice-error-${Date.now()}`,
+                type: 'error',
+                message: event.payload.message,
+              });
+            }
+            break;
+
+          case 'native-theme.changed':
+            store.setSystemDarkMode(event.payload.shouldUseDarkColors);
+            break;
+
+          case 'new-session':
+            store.setActiveSession(null);
+            store.setShowSettings(false);
+            break;
+
+          case 'navigate':
+            if (event.payload === 'settings') {
+              store.setShowSettings(true);
+            }
+            break;
+
+          default:
+            console.log('[useIPC] Unknown server event:', event);
+        }
       } catch (err) {
         console.error('[useIPC] Error handling server event:', event.type, err);
       }
@@ -318,7 +323,7 @@ export function useIPC() {
         if (disposed) {
           return;
         }
-        const store = storeRef.current;
+        const store = useAppStore.getState();
         store.setSystemDarkMode(Boolean(systemTheme?.shouldUseDarkColors));
         applyConfigSnapshot(config, Boolean(isConfigured));
       } catch (error) {
@@ -330,9 +335,19 @@ export function useIPC() {
     return () => {
       disposed = true;
       console.log('[useIPC] Cleaning up IPC listener');
-      if (partialRafId !== null) cancelAnimationFrame(partialRafId);
-      if (thinkingRafId !== null) cancelAnimationFrame(thinkingRafId);
-      if (traceRafId !== null) cancelAnimationFrame(traceRafId);
+      // Flush any pending RAF batches before cancelling to avoid lost updates
+      if (partialRafId !== null) {
+        cancelAnimationFrame(partialRafId);
+        flushPartials();
+      }
+      if (thinkingRafId !== null) {
+        cancelAnimationFrame(thinkingRafId);
+        flushThinking();
+      }
+      if (traceRafId !== null) {
+        cancelAnimationFrame(traceRafId);
+        flushTraces();
+      }
       cleanup?.();
     };
   }, []); // Empty deps - setup listener only once!
@@ -486,7 +501,16 @@ export function useIPC() {
         return null;
       }
     },
-    [invoke, addSession, addMessage, updateSession, setLoading, activateNextTurn, clearActiveTurn, startExecutionClock]
+    [
+      invoke,
+      addSession,
+      addMessage,
+      updateSession,
+      setLoading,
+      activateNextTurn,
+      clearActiveTurn,
+      startExecutionClock,
+    ]
   );
 
   // Continue an existing session
@@ -601,7 +625,15 @@ export function useIPC() {
       send({ type: 'session.stop', payload: { sessionId } });
       setLoading(false);
     },
-    [send, updateSession, setLoading, cancelQueuedMessages, clearPendingTurns, clearActiveTurn, finishExecutionClock]
+    [
+      send,
+      updateSession,
+      setLoading,
+      cancelQueuedMessages,
+      clearPendingTurns,
+      clearActiveTurn,
+      finishExecutionClock,
+    ]
   );
 
   const deleteSession = useCallback(
@@ -652,7 +684,9 @@ export function useIPC() {
         console.log('[useIPC] Browser mode - no persistent trace steps');
         return [];
       }
-      return (await invoke<TraceStep[]>({ type: 'session.getTraceSteps', payload: { sessionId } })) || [];
+      return (
+        (await invoke<TraceStep[]>({ type: 'session.getTraceSteps', payload: { sessionId } })) || []
+      );
     },
     [invoke]
   );
