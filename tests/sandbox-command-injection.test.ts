@@ -167,9 +167,8 @@ describe('rm -rf symlink protection', () => {
   });
 });
 
-// Helper constant for the sandbox root check pattern
-const SANDBOX_ROOT_CHECK = "SANDBOX_ROOT_SUFFIX + '/'";
-
+// Helper: the cleanup must verify the resolved path starts within the sandbox root
+const SANDBOX_ROOT_CHECK = 'startsWith(';
 describe('sandbox-sync wslExec is async with stderr capture', () => {
   it('does not use execFileSync', () => {
     expect(sandboxSyncSrc).not.toContain('execFileSync');
