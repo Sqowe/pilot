@@ -1,5 +1,5 @@
 // Fallback ToolResultBlock — only renders for truly orphan results (no matching tool_use anywhere)
-import { useState, memo } from 'react';
+import { useState, memo, useMemo } from 'react';
 import { ChevronDown, ChevronRight, XCircle, CheckCircle2 } from 'lucide-react';
 import { useAppStore } from '../../store';
 import { shouldUseScreenshotSummary } from '../../utils/tool-result-summary';
@@ -25,15 +25,19 @@ export const ToolResultBlock = memo(function ToolResultBlock({
   const [expanded, setExpanded] = useState(false);
 
   // If a ToolUseBlock in any message already merges this result, hide this block
-  if (message?.sessionId) {
+  const isOrphan = useMemo(() => {
+    if (!message?.sessionId) return true;
     for (const msg of allMessages) {
       if (!Array.isArray(msg.content)) continue;
       const hasMatchingToolUse = (msg.content as ContentBlock[]).some(
         (b) => b.type === 'tool_use' && (b as ToolUseContent).id === block.toolUseId
       );
-      if (hasMatchingToolUse) return null;
+      if (hasMatchingToolUse) return false;
     }
-  }
+    return true;
+  }, [allMessages, block.toolUseId, message?.sessionId]);
+
+  if (!isOrphan) return null;
 
   // Try to find the tool name from trace steps
   let toolName: string | undefined;

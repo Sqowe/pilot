@@ -68,10 +68,7 @@ function patchSession(
 }
 
 // Helper to get a session's state with safe defaults
-function getSession(
-  states: Record<string, SessionState>,
-  sessionId: string
-): SessionState {
+function getSession(states: Record<string, SessionState>, sessionId: string): SessionState {
   return states[sessionId] ?? DEFAULT_SESSION_STATE;
 }
 
@@ -130,6 +127,7 @@ interface AppState {
   setActiveSession: (sessionId: string | null) => void;
 
   addMessage: (sessionId: string, message: Message) => void;
+  updateMessage: (sessionId: string, messageId: string, updates: Partial<Message>) => void;
   startExecutionClock: (sessionId: string, startAt: number) => void;
   finishExecutionClock: (sessionId: string, endAt?: number) => void;
   clearExecutionClock: (sessionId: string) => void;
@@ -284,9 +282,7 @@ export const useAppStore = create<AppState>((set) => ({
         sessions: state.sessions.filter((s) => !idSet.has(s.id)),
         sessionStates: newSessionStates,
         activeSessionId:
-          state.activeSessionId && idSet.has(state.activeSessionId)
-            ? null
-            : state.activeSessionId,
+          state.activeSessionId && idSet.has(state.activeSessionId) ? null : state.activeSessionId,
       };
     }),
 
@@ -333,6 +329,19 @@ export const useAppStore = create<AppState>((set) => ({
           pendingTurns: updatedPendingTurns,
           ...(shouldClearPartial ? { partialMessage: '', partialThinking: '' } : {}),
         }),
+      };
+    }),
+
+  updateMessage: (sessionId, messageId, updates) =>
+    set((state) => {
+      const ss = getSession(state.sessionStates, sessionId);
+      const idx = ss.messages.findIndex((m) => m.id === messageId);
+      if (idx === -1) return {};
+      const updatedMessages = ss.messages.map((m) =>
+        m.id === messageId ? { ...m, ...updates } : m
+      );
+      return {
+        sessionStates: patchSession(state.sessionStates, sessionId, { messages: updatedMessages }),
       };
     }),
 
@@ -539,18 +548,17 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => ({
       settings: { ...state.settings, ...updates },
     })),
-  updateSettings: (updates) =>
-    set((state) => {
-      if (typeof window !== 'undefined' && window.electronAPI) {
-        window.electronAPI.send({
-          type: 'settings.update',
-          payload: updates as Record<string, unknown>,
-        });
-      }
-      return {
-        settings: { ...state.settings, ...updates },
-      };
-    }),
+  updateSettings: (updates) => {
+    if (typeof window !== 'undefined' && window.electronAPI) {
+      window.electronAPI.send({
+        type: 'settings.update',
+        payload: updates as Record<string, unknown>,
+      });
+    }
+    set((state) => ({
+      settings: { ...state.settings, ...updates },
+    }));
+  },
 
   // Config actions
   setAppConfig: (config) => set({ appConfig: config }),
@@ -603,7 +611,10 @@ if (typeof window !== 'undefined') {
     } else if (page === 'settings') {
       store.setSettingsTab(tab || 'api');
       store.setShowSettings(true);
-    } else if (page === 'session' && sessionId) {
+    } else if (page === 'session') {
+      if (!sessionId || typeof sessionId !== 'string') return false;
+      const exists = store.sessions.some((s) => s.id === sessionId);
+      if (!exists) return false;
       store.setShowSettings(false);
       store.setActiveSession(sessionId);
     }
