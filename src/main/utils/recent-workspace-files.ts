@@ -19,12 +19,7 @@ const EXCLUDED_DIRS = new Set([
   '.turbo',
 ]);
 
-const EXCLUDED_FILES = new Set([
-  '.DS_Store',
-  'Thumbs.db',
-  'desktop.ini',
-  '.localized',
-]);
+const EXCLUDED_FILES = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini', '.localized']);
 
 const EXCLUDED_FILE_PATTERNS = [
   /^\._/, // macOS resource fork sidecar files
@@ -57,6 +52,11 @@ export async function listRecentWorkspaceFiles(
 
     for (const entry of entries) {
       const fullPath = path.join(currentDir, entry.name);
+
+      // Use lstat-based type checks: skip symlinks to avoid cycles.
+      if (entry.isSymbolicLink()) {
+        continue;
+      }
 
       if (entry.isDirectory()) {
         if (!EXCLUDED_DIRS.has(entry.name)) {
@@ -91,9 +91,7 @@ export async function listRecentWorkspaceFiles(
     }
   }
 
-  return results
-    .sort((a, b) => b.modifiedAt - a.modifiedAt)
-    .slice(0, limit);
+  return results.sort((a, b) => b.modifiedAt - a.modifiedAt).slice(0, limit);
 }
 
 function shouldIgnoreFile(fileName: string): boolean {

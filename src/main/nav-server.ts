@@ -19,8 +19,14 @@ const PORT = 19888;
 const HOST = '127.0.0.1';
 const EXEC_TIMEOUT_MS = 3000;
 const VALID_TABS = new Set([
-  'api', 'sandbox', 'connectors',
-  'skills', 'schedule', 'remote', 'logs', 'general',
+  'api',
+  'sandbox',
+  'connectors',
+  'skills',
+  'schedule',
+  'remote',
+  'logs',
+  'general',
 ]);
 
 let server: http.Server | null = null;
@@ -63,13 +69,21 @@ export function startNavServer(getMainWindow: () => BrowserWindow | null): void 
       const url = new URL(req.url || '/', `http://${HOST}:${PORT}`);
       const pathname = url.pathname;
 
+      // Only GET is supported
+      if (req.method !== 'GET') {
+        return json(res, 405, { ok: false, error: 'Method Not Allowed. Use GET.' });
+      }
+
       if (pathname === '/navigate') {
         const page = url.searchParams.get('page');
         const tab = url.searchParams.get('tab') || undefined;
         const sessionId = url.searchParams.get('id') || undefined;
 
         if (!page || !['welcome', 'settings', 'session'].includes(page)) {
-          return json(res, 400, { ok: false, error: 'Invalid page. Use: welcome, settings, session' });
+          return json(res, 400, {
+            ok: false,
+            error: 'Invalid page. Use: welcome, settings, session',
+          });
         }
 
         if (page === 'settings' && tab && !VALID_TABS.has(tab)) {
@@ -93,11 +107,12 @@ export function startNavServer(getMainWindow: () => BrowserWindow | null): void 
         // JSON.stringify the args to avoid string interpolation injection.
         const args = JSON.stringify([page, tab ?? null, sessionId ?? null]);
         try {
-          const result = await execJS(win,
-            `window.__navigate && window.__navigate(...${args})`
-          );
+          const result = await execJS(win, `window.__navigate && window.__navigate(...${args})`);
           if (!result) {
-            return json(res, 503, { ok: false, error: 'Renderer not ready (window.__navigate not available)' });
+            return json(res, 503, {
+              ok: false,
+              error: 'Renderer not ready (window.__navigate not available)',
+            });
           }
         } catch (err) {
           logError('[NavServer] /navigate executeJavaScript error:', err);
@@ -114,9 +129,10 @@ export function startNavServer(getMainWindow: () => BrowserWindow | null): void 
         }
 
         try {
-          const state = await execJS(win,
+          const state = (await execJS(
+            win,
             `JSON.stringify(window.__getNavStatus ? window.__getNavStatus() : {})`
-          ) as string;
+          )) as string;
           const parsed = JSON.parse(state);
           let currentPage = 'welcome';
           if (parsed.showSettings) currentPage = 'settings';

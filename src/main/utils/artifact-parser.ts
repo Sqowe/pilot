@@ -12,13 +12,14 @@ export type ArtifactParseResult = {
   artifacts: ArtifactInfo[];
 };
 
-const artifactBlockRegex = /```artifact\s*([\s\S]*?)```/g;
-
 export function extractArtifactsFromText(text: string): ArtifactParseResult {
   if (!text) {
     return { cleanText: text, artifacts: [] };
   }
 
+  // Create a fresh regex instance each call to avoid lastIndex state issues
+  // with the stateful global flag across successive calls.
+  const artifactBlockRegex = /```artifact\s*([\s\S]*?)```/g;
   const artifacts: ArtifactInfo[] = [];
   const cleanText = text.replace(artifactBlockRegex, (_match, jsonText: string) => {
     try {

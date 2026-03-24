@@ -50,6 +50,10 @@ let logStream: fs.WriteStream | null = null;
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_LOG_FILES = 5; // Keep last 5 log files
 let logFileSequence = 0;
+/** Number of log entries written since last rotation check. */
+let logWriteCounter = 0;
+/** Check rotation every N entries (deterministic). */
+const LOG_ROTATION_CHECK_INTERVAL = 100;
 const MAX_LOG_STRING_LENGTH = 4000;
 const MAX_LOG_OBJECT_DEPTH = 4;
 const MAX_LOG_OBJECT_KEYS = 40;
@@ -62,6 +66,7 @@ const ALWAYS_PERSIST_LOG_LEVELS = new Set(['WARN', 'ERROR']);
 function clearLogStreamState(): void {
   logStream = null;
   logFilePath = null;
+  logWriteCounter = 0;
 }
 
 function attachLogStreamErrorHandler(stream: fs.WriteStream, filePath: string): void {
@@ -368,9 +373,10 @@ function writeToFile(level: string, ...args: unknown[]): void {
 
       logStream.write(`[${timestamp}] [${level}] ${ctxPrefix}${message}\n`);
 
-      // Check if rotation is needed (every 100 log entries)
-      if (Math.random() < 0.01) {
-        // 1% chance to check
+      // Check if rotation is needed every LOG_ROTATION_CHECK_INTERVAL entries
+      logWriteCounter += 1;
+      if (logWriteCounter >= LOG_ROTATION_CHECK_INTERVAL) {
+        logWriteCounter = 0;
         rotateLogIfNeeded();
       }
     } catch (error) {
@@ -463,15 +469,15 @@ export function getAllLogFiles(): Array<{ name: string; path: string; size: numb
     return fs
       .readdirSync(logsDir)
       .filter((f) => f.startsWith('app-') && f.endsWith('.log'))
-      .map((f) => {
+      .flatMap((f) => {
         const filePath = path.join(logsDir, f);
-        const stats = fs.statSync(filePath);
-        return {
-          name: f,
-          path: filePath,
-          size: stats.size,
-          mtime: stats.mtime,
-        };
+        try {
+          const stats = fs.statSync(filePath);
+          return [{ name: f, path: filePath, size: stats.size, mtime: stats.mtime }];
+        } catch {
+          // File disappeared between readdir and stat (ENOENT) or is unreadable; skip.
+          return [];
+        }
       })
       .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
   } catch (error) {
