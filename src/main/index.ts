@@ -1113,7 +1113,11 @@ app.on('before-quit', async (event) => {
       return;
     }
     event.preventDefault();
-    await cleanupSandboxResources();
+    try {
+      await cleanupSandboxResources();
+    } catch (error) {
+      logError('[App] before-quit cleanup failed, forcing quit:', error);
+    }
     app.quit();
   }
 });

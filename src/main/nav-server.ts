@@ -69,6 +69,11 @@ export function startNavServer(getMainWindow: () => BrowserWindow | null): void 
       const url = new URL(req.url || '/', `http://${HOST}:${PORT}`);
       const pathname = url.pathname;
 
+      // Only GET is supported
+      if (req.method !== 'GET') {
+        return json(res, 405, { ok: false, error: 'Method Not Allowed. Use GET.' });
+      }
+
       if (pathname === '/navigate') {
         const page = url.searchParams.get('page');
         const tab = url.searchParams.get('tab') || undefined;
