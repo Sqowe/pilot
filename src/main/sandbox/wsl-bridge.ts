@@ -1,6 +1,6 @@
 /**
  * WSL Bridge - Communication bridge between Windows and WSL2
- * 
+ *
  * Handles:
  * - WSL2 detection and initialization
  * - Node.js and claude-code installation in WSL
@@ -53,13 +53,13 @@ export const pathConverter: PathConverter = {
    */
   toWSL(windowsPath: string): string {
     if (!windowsPath) return windowsPath;
-    
+
     // Handle UNC paths (\\server\share)
     if (windowsPath.startsWith('\\\\')) {
       logWarn('[WSL] UNC paths are not supported in WSL');
       return windowsPath;
     }
-    
+
     // Convert drive letter path
     const match = windowsPath.match(/^([A-Za-z]):(.*)/);
     if (match) {
@@ -67,7 +67,7 @@ export const pathConverter: PathConverter = {
       const restPath = match[2].replace(/\\/g, '/');
       return `/mnt/${driveLetter}${restPath}`;
     }
-    
+
     // Already a Unix path or relative path
     return windowsPath.replace(/\\/g, '/');
   },
@@ -78,7 +78,7 @@ export const pathConverter: PathConverter = {
    */
   toWindows(wslPath: string): string {
     if (!wslPath) return wslPath;
-    
+
     // Convert /mnt/X/... to X:\...
     const match = wslPath.match(/^\/mnt\/([a-z])(\/.*)?$/i);
     if (match) {
@@ -86,7 +86,7 @@ export const pathConverter: PathConverter = {
       const restPath = (match[2] || '').replace(/\//g, '\\');
       return `${driveLetter}:${restPath || '\\'}`;
     }
-    
+
     // Not a /mnt path, return as-is
     return wslPath;
   },
@@ -105,11 +105,14 @@ export class WSLBridge implements SandboxExecutor {
   }
 
   private wslProcess: ChildProcess | null = null;
-  private pendingRequests: Map<string, {
-    resolve: (value: unknown) => void;
-    reject: (reason: Error) => void;
-    timeout: NodeJS.Timeout;
-  }> = new Map();
+  private pendingRequests: Map<
+    string,
+    {
+      resolve: (value: unknown) => void;
+      reject: (reason: Error) => void;
+      timeout: NodeJS.Timeout;
+    }
+  > = new Map();
   private buffer: string = '';
   private config: SandboxConfig | null = null;
   private distro: string = 'Ubuntu';
@@ -122,16 +125,13 @@ export class WSLBridge implements SandboxExecutor {
   private static decodeWSLOutput(buffer: Buffer | string): string {
     if (typeof buffer === 'string') {
       // Already a string, but may have null chars from UTF-16
-      return buffer
-        .replace(/\0/g, '')
-        .replace(/\r\n/g, '\n')
-        .replace(/\r/g, '\n')
-        .trim();
+      return buffer.replace(/\0/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
     }
-    
+
     // Try UTF-16LE first (Windows default for WSL commands)
     try {
-      const decoded = buffer.toString('utf16le')
+      const decoded = buffer
+        .toString('utf16le')
         .replace(/\0/g, '')
         .replace(/\r\n/g, '\n')
         .replace(/\r/g, '\n')
@@ -140,10 +140,13 @@ export class WSLBridge implements SandboxExecutor {
       if (decoded && /^[\x20-\x7E\n\-_.]+$/.test(decoded)) {
         return decoded;
       }
-    } catch { /* ignore */ }
-    
+    } catch {
+      /* ignore */
+    }
+
     // Fallback to UTF-8
-    return buffer.toString('utf-8')
+    return buffer
+      .toString('utf-8')
       .replace(/\0/g, '')
       .replace(/\r\n/g, '\n')
       .replace(/\r/g, '\n')
@@ -172,12 +175,12 @@ export class WSLBridge implements SandboxExecutor {
       // Decode the output properly (Windows uses UTF-16LE for WSL output)
       const rawBuffer = stdout as unknown as Buffer;
       const decodedOutput = WSLBridge.decodeWSLOutput(rawBuffer);
-      
+
       // Parse available distros - filter out empty lines and garbage
       const distros = decodedOutput
         .split(/\r?\n/)
-        .map(d => d.trim())
-        .filter(d => d && d.length > 0 && /^[a-zA-Z0-9\-_.]+$/.test(d));
+        .map((d) => d.trim())
+        .filter((d) => d && d.length > 0 && /^[a-zA-Z0-9\-_.]+$/.test(d));
 
       log('[WSL] Raw output (hex):', rawBuffer.slice(0, 100).toString('hex'));
       log('[WSL] Decoded output:', JSON.stringify(decodedOutput));
@@ -188,7 +191,7 @@ export class WSLBridge implements SandboxExecutor {
       }
 
       // Prefer Ubuntu, otherwise use first available
-      const ubuntu = distros.find(d => d.toLowerCase().includes('ubuntu'));
+      const ubuntu = distros.find((d) => d.toLowerCase().includes('ubuntu'));
       const selectedDistro = ubuntu || distros[0];
       WSLBridge.validateDistroName(selectedDistro);
       log('[WSL] Selected distro:', selectedDistro);
@@ -261,22 +264,22 @@ export class WSLBridge implements SandboxExecutor {
       let pipAvailable = false;
       let pythonVersion = '';
       try {
-        const pythonResult = await execAsync(
-          `wsl -d ${selectedDistro} -e python3 --version`,
-          { timeout: 10000, encoding: 'utf-8' }
-        );
+        const pythonResult = await execAsync(`wsl -d ${selectedDistro} -e python3 --version`, {
+          timeout: 10000,
+          encoding: 'utf-8',
+        });
         const output = pythonResult.stdout.trim();
         if (output.startsWith('Python')) {
           pythonAvailable = true;
           pythonVersion = output;
           log('[WSL] Python found:', pythonVersion);
-          
+
           // Also check if pip is available
           try {
-            await execAsync(
-              `wsl -d ${selectedDistro} -e python3 -m pip --version`,
-              { timeout: 10000, encoding: 'utf-8' }
-            );
+            await execAsync(`wsl -d ${selectedDistro} -e python3 -m pip --version`, {
+              timeout: 10000,
+              encoding: 'utf-8',
+            });
             pipAvailable = true;
             log('[WSL] pip is available');
           } catch {
@@ -299,7 +302,7 @@ export class WSLBridge implements SandboxExecutor {
         version: nodeVersion,
         pythonVersion,
       };
-      
+
       log('[WSL] Status check complete:', JSON.stringify(status));
       return status;
     } catch (error) {
@@ -333,8 +336,9 @@ export class WSLBridge implements SandboxExecutor {
    * Note: Prefers nvm (no sudo required) over apt (requires sudo)
    */
   static async installNodeInWSL(distro: string): Promise<boolean> {
+    WSLBridge.validateDistroName(distro);
     log('[WSL] Installing Node.js in WSL...');
-    
+
     // First, test if WSL distro is working at all
     const distroWorks = await WSLBridge.testDistro(distro);
     if (!distroWorks) {
@@ -342,7 +346,7 @@ export class WSLBridge implements SandboxExecutor {
       logError('[WSL] Try running: wsl --shutdown  (in PowerShell as Admin)');
       return false;
     }
-    
+
     // Try nvm first - no sudo required, works for all users
     try {
       log('[WSL] Trying nvm installation (no sudo required)...');
@@ -392,14 +396,22 @@ export class WSLBridge implements SandboxExecutor {
    * Install Node.js via nvm (no sudo required)
    */
   static async installNodeViaNvm(distro: string): Promise<boolean> {
+    WSLBridge.validateDistroName(distro);
     log('[WSL] Installing Node.js via nvm (no sudo required)...');
-    
+
     try {
       // Step 1: Install nvm
       log('[WSL] Step 1: Installing nvm...');
       await execFileAsync(
         'wsl',
-        ['-d', distro, '-e', 'bash', '-c', 'curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash'],
+        [
+          '-d',
+          distro,
+          '-e',
+          'bash',
+          '-c',
+          'curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash',
+        ],
         { timeout: 120000, encoding: 'utf-8' }
       );
 
@@ -407,7 +419,14 @@ export class WSLBridge implements SandboxExecutor {
       log('[WSL] Step 2: Installing Node.js 20 via nvm...');
       await execFileAsync(
         'wsl',
-        ['-d', distro, '-e', 'bash', '-c', 'source ~/.nvm/nvm.sh && nvm install 20 && nvm alias default 20'],
+        [
+          '-d',
+          distro,
+          '-e',
+          'bash',
+          '-c',
+          'source ~/.nvm/nvm.sh && nvm install 20 && nvm alias default 20',
+        ],
         { timeout: 180000, encoding: 'utf-8' }
       );
 
@@ -418,7 +437,7 @@ export class WSLBridge implements SandboxExecutor {
         ['-d', distro, '-e', 'bash', '-c', 'source ~/.nvm/nvm.sh && node --version'],
         { timeout: 10000, encoding: 'utf-8' }
       );
-      
+
       const version = verifyResult.stdout.trim();
       if (version.startsWith('v')) {
         log('[WSL] Node.js installed via nvm:', version);
@@ -437,8 +456,9 @@ export class WSLBridge implements SandboxExecutor {
    * Install Python in WSL
    */
   static async installPythonInWSL(distro: string): Promise<boolean> {
+    WSLBridge.validateDistroName(distro);
     log('[WSL] Installing Python in WSL...');
-    
+
     try {
       // Try apt installation (Python is usually pre-installed or easily installable)
       // First check if we can run sudo
@@ -449,7 +469,7 @@ export class WSLBridge implements SandboxExecutor {
         // Python might already be installed, just not python3
         // Try to use python3.x directly
       }
-      
+
       // Install python3 and pip
       log('[WSL] Installing python3 and pip via apt...');
       await execAsync(
@@ -470,18 +490,18 @@ export class WSLBridge implements SandboxExecutor {
       }
 
       // Verify installation
-      const verifyResult = await execAsync(
-        `wsl -d ${distro} -e python3 --version`,
-        { timeout: 10000, encoding: 'utf-8' }
-      );
-      
+      const verifyResult = await execAsync(`wsl -d ${distro} -e python3 --version`, {
+        timeout: 10000,
+        encoding: 'utf-8',
+      });
+
       const version = verifyResult.stdout.trim();
       if (version.startsWith('Python')) {
         log('[WSL] Python installed:', version);
-        
+
         // Install commonly needed packages for skills (PDF, PPTX processing)
         await WSLBridge.installSkillDependencies(distro);
-        
+
         return true;
       } else {
         log('[WSL] Python installation verification failed:', version);
@@ -499,28 +519,31 @@ export class WSLBridge implements SandboxExecutor {
   static async installSkillDependencies(distro: string): Promise<void> {
     WSLBridge.validateDistroName(distro);
     log('[WSL] Installing skill dependencies (markitdown, pypdf, etc.)...');
-    
+
     // These packages are required by the built-in PDF and PPTX skills
     const packages = [
-      'markitdown[pptx]',  // PDF/PPTX text extraction
-      'pypdf',             // PDF manipulation
-      'pdfplumber',        // PDF table extraction  
-      'reportlab',         // PDF creation
-      'defusedxml',        // Secure XML parsing for OOXML
-      'python-pptx',       // PPTX manipulation
+      'markitdown[pptx]', // PDF/PPTX text extraction
+      'pypdf', // PDF manipulation
+      'pdfplumber', // PDF table extraction
+      'reportlab', // PDF creation
+      'defusedxml', // Secure XML parsing for OOXML
+      'python-pptx', // PPTX manipulation
     ];
-    
+
     try {
       // Install packages with pip (user install to avoid permission issues)
-      const packagesStr = packages.map(p => `"${p}"`).join(' ');
+      const packagesStr = packages.map((p) => `"${p}"`).join(' ');
       await execAsync(
         `wsl -d ${distro} -e bash -c "python3 -m pip install --user ${packagesStr} 2>&1 | tail -5"`,
-        { timeout: 300000, encoding: 'utf-8' }  // 5 min timeout for package install
+        { timeout: 300000, encoding: 'utf-8' } // 5 min timeout for package install
       );
       log('[WSL] Skill dependencies installed successfully');
     } catch (error) {
       // Non-critical - Claude can install packages on demand
-      log('[WSL] Failed to pre-install skill dependencies (will install on demand):', (error as Error).message);
+      log(
+        '[WSL] Failed to pre-install skill dependencies (will install on demand):',
+        (error as Error).message
+      );
     }
   }
 
@@ -530,7 +553,7 @@ export class WSLBridge implements SandboxExecutor {
   static async installPipInWSL(distro: string): Promise<boolean> {
     WSLBridge.validateDistroName(distro);
     log('[WSL] Installing pip in WSL...');
-    
+
     try {
       // Method 1: Try apt-get (requires sudo)
       try {
@@ -550,11 +573,11 @@ export class WSLBridge implements SandboxExecutor {
       }
 
       // Verify installation
-      const verifyResult = await execAsync(
-        `wsl -d ${distro} -e python3 -m pip --version`,
-        { timeout: 10000, encoding: 'utf-8' }
-      );
-      
+      const verifyResult = await execAsync(`wsl -d ${distro} -e python3 -m pip --version`, {
+        timeout: 10000,
+        encoding: 'utf-8',
+      });
+
       const version = verifyResult.stdout.trim();
       if (version.includes('pip')) {
         log('[WSL] pip installed:', version);
@@ -573,8 +596,9 @@ export class WSLBridge implements SandboxExecutor {
    * Install claude-code in WSL
    */
   static async installClaudeCodeInWSL(distro: string): Promise<boolean> {
+    WSLBridge.validateDistroName(distro);
     log('[WSL] Installing claude-code in WSL...');
-    
+
     try {
       // Install with nvm environment (most common setup)
       log('[WSL] Installing claude-code via npm...');
@@ -588,20 +612,20 @@ export class WSLBridge implements SandboxExecutor {
         `wsl -d ${distro} -e bash -c "source ~/.nvm/nvm.sh 2>/dev/null; claude --version"`,
         { timeout: 10000, encoding: 'utf-8' }
       );
-      
+
       const version = verifyResult.stdout.trim();
       log('[WSL] claude-code installed:', version);
       return true;
     } catch (error) {
       logError('[WSL] Failed to install claude-code:', error);
-      
+
       // Try with sudo as fallback (for system-installed node)
       try {
         log('[WSL] Trying claude-code install with sudo...');
-        await execAsync(
-          `wsl -d ${distro} -e sudo npm install -g @anthropic-ai/claude-code`,
-          { timeout: 180000, encoding: 'utf-8' }
-        );
+        await execAsync(`wsl -d ${distro} -e sudo npm install -g @anthropic-ai/claude-code`, {
+          timeout: 180000,
+          encoding: 'utf-8',
+        });
         return true;
       } catch (sudoError) {
         logError('[WSL] Failed to install claude-code with sudo:', sudoError);
@@ -615,7 +639,7 @@ export class WSLBridge implements SandboxExecutor {
    */
   private getAgentScriptPath(): string {
     const isPackaged = app.isPackaged;
-    
+
     if (isPackaged) {
       // Production: in resources folder
       return path.join(process.resourcesPath || '', 'wsl-agent', 'index.js');
@@ -656,7 +680,7 @@ export class WSLBridge implements SandboxExecutor {
       log('[WSL] Bootstrap not available, checking WSL...');
       status = await WSLBridge.checkWSLStatus();
     }
-    
+
     if (!status.available) {
       throw new Error('WSL2 is not available on this system');
     }
@@ -694,7 +718,7 @@ export class WSLBridge implements SandboxExecutor {
 
     // Start the WSL agent process
     await this.startAgent();
-    
+
     // Configure workspace
     const wslWorkspacePath = pathConverter.toWSL(config.workspacePath);
     await this.sendRequest('setWorkspace', {
@@ -711,7 +735,7 @@ export class WSLBridge implements SandboxExecutor {
    */
   private async startAgent(): Promise<void> {
     const agentPath = this.getAgentScriptPath();
-    
+
     // Check if agent script exists
     if (!fs.existsSync(agentPath)) {
       // Copy agent to WSL-accessible location
@@ -725,13 +749,14 @@ export class WSLBridge implements SandboxExecutor {
 
     // Start WSL process with the agent
     // Need to source nvm.sh first since node is installed via nvm
+    // Validate agentPath doesn't contain shell metacharacters
+    if (/[;&|`$(){}]/.test(wslAgentPath)) {
+      throw new Error(`Invalid agent path: ${wslAgentPath}`);
+    }
     const nodeCommand = `source ~/.nvm/nvm.sh 2>/dev/null; node "${escapeForDoubleQuotes(wslAgentPath)}"`;
     log('[WSL] Agent command:', nodeCommand);
-    
-    this.wslProcess = spawn('wsl', [
-      '-d', this.distro,
-      '--', 'bash', '-c', nodeCommand,
-    ], {
+
+    this.wslProcess = spawn('wsl', ['-d', this.distro, '--', 'bash', '-c', nodeCommand], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -762,7 +787,7 @@ export class WSLBridge implements SandboxExecutor {
       log('[WSL] Agent process exited:', { code, signal });
       this.wslProcess = null;
       this.isInitialized = false;
-      
+
       // Reject all pending requests
       for (const [_id, pending] of this.pendingRequests) {
         pending.reject(new Error('WSL agent process exited'));
@@ -810,7 +835,7 @@ export class WSLBridge implements SandboxExecutor {
       try {
         const response = JSON.parse(line) as JSONRPCResponse;
         const pending = this.pendingRequests.get(response.id);
-        
+
         if (pending) {
           clearTimeout(pending.timeout);
           this.pendingRequests.delete(response.id);
@@ -882,11 +907,15 @@ export class WSLBridge implements SandboxExecutor {
       code: number;
       stdout: string;
       stderr: string;
-    }>('executeCommand', {
-      command,
-      cwd: wslCwd,
-      env,
-    }, this.config?.timeout || 60000);
+    }>(
+      'executeCommand',
+      {
+        command,
+        cwd: wslCwd,
+        env,
+      },
+      this.config?.timeout || 60000
+    );
 
     return {
       success: result.code === 0,
@@ -1016,19 +1045,23 @@ export class WSLBridge implements SandboxExecutor {
     const wslCwd = options.cwd ? pathConverter.toWSL(options.cwd) : undefined;
 
     // Streaming request support can be added here using uuidv4() for request tracking
-    
+
     // This returns an async iterable that yields claude-code messages
     // Implementation would involve streaming responses from the agent
     // For now, we use a simple request/response pattern
-    
-    const result = await this.sendRequest<{ messages: unknown[] }>('runClaudeCode', {
-      prompt,
-      cwd: wslCwd,
-      model: options.model,
-      maxTurns: options.maxTurns,
-      systemPrompt: options.systemPrompt,
-      env: options.env,
-    }, 300000); // 5 minute timeout for claude-code
+
+    const result = await this.sendRequest<{ messages: unknown[] }>(
+      'runClaudeCode',
+      {
+        prompt,
+        cwd: wslCwd,
+        model: options.model,
+        maxTurns: options.maxTurns,
+        systemPrompt: options.systemPrompt,
+        env: options.env,
+      },
+      300000
+    ); // 5 minute timeout for claude-code
 
     // Convert to async iterable
     return (async function* () {
@@ -1079,4 +1112,3 @@ export class WSLBridge implements SandboxExecutor {
     return this.distro;
   }
 }
-
