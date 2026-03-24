@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ThinkTagStreamParser, extractThinkTags, splitThinkTagBlocks } from '../src/main/claude/think-tag-parser';
+import { ThinkTagStreamParser, splitThinkTagBlocks } from '../src/main/claude/think-tag-parser';
 
 describe('ThinkTagStreamParser', () => {
   it('should separate thinking from text in a single chunk', () => {
@@ -123,6 +123,21 @@ describe('ThinkTagStreamParser', () => {
     expect(r.thinking).toBe('');
   });
 });
+
+// Helper: re-implement extractThinkTags locally since it was removed from exports as dead code
+function extractThinkTags(input: string): { thinking: string; text: string } {
+  const blocks = splitThinkTagBlocks(input);
+  return {
+    thinking: blocks
+      .filter((b): b is Extract<typeof b, { type: 'thinking' }> => b.type === 'thinking')
+      .map((b) => b.thinking)
+      .join(''),
+    text: blocks
+      .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
+      .map((b) => b.text)
+      .join(''),
+  };
+}
 
 describe('extractThinkTags', () => {
   it('should extract thinking and text from a complete string', () => {
