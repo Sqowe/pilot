@@ -1081,6 +1081,7 @@ export class RemoteManager extends EventEmitter {
    * Load paired users from config
    */
   private loadPairedUsers(): void {
+    if (!this.gateway) return;
     const users = remoteConfigStore.getPairedUsers();
 
     for (const user of users) {
