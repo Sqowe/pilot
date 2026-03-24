@@ -14,12 +14,7 @@ import {
   RefreshCw,
   X,
 } from 'lucide-react';
-import type {
-  Skill,
-  PluginCatalogItemV2,
-  InstalledPlugin,
-  PluginComponentKind,
-} from '../../types';
+import type { Skill, PluginCatalogItemV2, InstalledPlugin, PluginComponentKind } from '../../types';
 import { useAppStore } from '../../store';
 import { SettingsContentSection } from './shared';
 import type { LocalizedBanner } from './shared';
@@ -31,7 +26,7 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
   const tRef = useRef(t);
   useEffect(() => {
     tRef.current = t;
-  });
+  }, [t]);
   const skillsStorageChangedAt = useAppStore((state) => state.skillsStorageChangedAt);
   const skillsStorageChangeEvent = useAppStore((state) => state.skillsStorageChangeEvent);
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -115,55 +110,52 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
     }, 5000);
   }
 
-  const loadSkills = useCallback(
-    async (silent = false) => {
-      try {
-        const [skillsResult, storagePathResult] = await Promise.allSettled([
-          window.electronAPI.skills.getAll(),
-          window.electronAPI.skills.getStoragePath(),
-        ]);
-        const errors: string[] = [];
+  const loadSkills = useCallback(async (silent = false) => {
+    try {
+      const [skillsResult, storagePathResult] = await Promise.allSettled([
+        window.electronAPI.skills.getAll(),
+        window.electronAPI.skills.getStoragePath(),
+      ]);
+      const errors: string[] = [];
 
-        if (skillsResult.status === 'fulfilled') {
-          setSkills(skillsResult.value || []);
-        } else {
-          errors.push(
-            skillsResult.reason instanceof Error
-              ? skillsResult.reason.message
-              : tRef.current('skills.failedToLoad')
-          );
-        }
-        if (storagePathResult.status === 'fulfilled') {
-          setStoragePath(storagePathResult.value || '');
-        } else {
-          errors.push(
-            storagePathResult.reason instanceof Error
-              ? storagePathResult.reason.message
-              : tRef.current('skills.storagePathUnavailable')
-          );
-        }
-
-        if (errors.length > 0) {
-          throw new Error(errors.join(' | '));
-        }
-
-        if (!silent) {
-          setError(null);
-        }
-      } catch (err) {
-        console.error('Failed to load skills:', err);
-        if (!silent) {
-          setError({
-            text:
-              err instanceof Error && err.message
-                ? `${tRef.current('skills.failedToLoad')}: ${err.message}`
-                : tRef.current('skills.failedToLoad'),
-          });
-        }
+      if (skillsResult.status === 'fulfilled') {
+        setSkills(skillsResult.value || []);
+      } else {
+        errors.push(
+          skillsResult.reason instanceof Error
+            ? skillsResult.reason.message
+            : tRef.current('skills.failedToLoad')
+        );
       }
-    },
-    []
-  );
+      if (storagePathResult.status === 'fulfilled') {
+        setStoragePath(storagePathResult.value || '');
+      } else {
+        errors.push(
+          storagePathResult.reason instanceof Error
+            ? storagePathResult.reason.message
+            : tRef.current('skills.storagePathUnavailable')
+        );
+      }
+
+      if (errors.length > 0) {
+        throw new Error(errors.join(' | '));
+      }
+
+      if (!silent) {
+        setError(null);
+      }
+    } catch (err) {
+      console.error('Failed to load skills:', err);
+      if (!silent) {
+        setError({
+          text:
+            err instanceof Error && err.message
+              ? `${tRef.current('skills.failedToLoad')}: ${err.message}`
+              : tRef.current('skills.failedToLoad'),
+        });
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (!isElectron || !isActive) {

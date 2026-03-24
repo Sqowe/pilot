@@ -12,9 +12,7 @@ interface ParseResult {
   text: string;
 }
 
-export type ThinkTagBlock =
-  | { type: 'text'; text: string }
-  | { type: 'thinking'; thinking: string };
+export type ThinkTagBlock = { type: 'text'; text: string } | { type: 'thinking'; thinking: string };
 
 /**
  * Stateful stream parser that splits `<think>` tagged content from normal text.
@@ -164,23 +162,4 @@ export function splitThinkTagBlocks(input: string): ThinkTagBlock[] {
   }
 
   return blocks;
-}
-
-/**
- * Static extraction for fully-buffered text (used at message_end assembly).
- * Strips all `<think>...</think>` blocks and returns separated content.
- */
-export function extractThinkTags(input: string): ParseResult {
-  const blocks = splitThinkTagBlocks(input);
-
-  return {
-    thinking: blocks
-      .filter((block): block is Extract<ThinkTagBlock, { type: 'thinking' }> => block.type === 'thinking')
-      .map((block) => block.thinking)
-      .join(''),
-    text: blocks
-      .filter((block): block is Extract<ThinkTagBlock, { type: 'text' }> => block.type === 'text')
-      .map((block) => block.text)
-      .join(''),
-  };
 }

@@ -47,9 +47,13 @@ export const MessageCard = memo(function MessageCard({ message, isStreaming }: M
   const handleCopy = async () => {
     const text = getTextContent();
     if (text) {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      try {
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Clipboard unavailable
+      }
     }
   };
 
@@ -80,7 +84,9 @@ export const MessageCard = memo(function MessageCard({ message, isStreaming }: M
             ) : (
               contentBlocks.map((block, index) => (
                 <ContentBlockView
-                  key={'id' in block ? (block as { id: string }).id : `block-${block.type}-${index}`}
+                  key={
+                    'id' in block ? (block as { id: string }).id : `block-${block.type}-${index}`
+                  }
                   block={block}
                   isUser={isUser}
                   isStreaming={isStreaming}

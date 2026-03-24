@@ -95,7 +95,7 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
     if (!viewedTabs.has(activeTab)) {
       setViewedTabs((prev) => new Set([...prev, activeTab]));
     }
-  }, [activeTab, viewedTabs]);
+  }, [activeTab]);
 
   const tabs = [
     {
@@ -254,9 +254,7 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
                 )}
               </div>
               <div className={activeTab === 'skills' ? '' : 'hidden'}>
-                {viewedTabs.has('skills') && (
-                  <SettingsSkills isActive={activeTab === 'skills'} />
-                )}
+                {viewedTabs.has('skills') && <SettingsSkills isActive={activeTab === 'skills'} />}
               </div>
               <div className={activeTab === 'schedule' ? '' : 'hidden'}>
                 {viewedTabs.has('schedule') && (

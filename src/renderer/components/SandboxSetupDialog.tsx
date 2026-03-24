@@ -27,27 +27,28 @@ const phaseConfig: Record<SandboxSetupPhase, { icon: string }> = {
   error: { icon: '❌' },
 };
 
-// Sanitize error messages before rendering to prevent XSS
-const sanitizeErrorMessage = (msg: string): string => {
-  return msg.replace(/[<>&"']/g, (c) => {
-    const entities: Record<string, string> = { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' };
-    return entities[c] || c;
-  });
-};
-
 export function SandboxSetupDialog({ progress, onComplete }: Props) {
   const { t } = useTranslation();
   const [isVisible, setIsVisible] = useState(true);
   const [fadeOut, setFadeOut] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
 
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const handleClose = useCallback(() => {
     setFadeOut(true);
-    setTimeout(() => {
+    closeTimerRef.current = setTimeout(() => {
       setIsVisible(false);
       onComplete?.();
     }, 500);
   }, [onComplete]);
+
+  // Cleanup close timer on unmount
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    };
+  }, []);
 
   const handleRetryLima = async () => {
     if (!window.electronAPI?.sandbox?.retryLimaSetup) {
@@ -153,7 +154,7 @@ export function SandboxSetupDialog({ progress, onComplete }: Props) {
           {/* Error Display */}
           {isError && progress.error && (
             <div className="mt-4 p-3 bg-error/10 border border-error/30 rounded-xl">
-              <p className="text-sm text-error">{sanitizeErrorMessage(progress.error)}</p>
+              <p className="text-sm text-error">{progress.error}</p>
               <p className="text-xs text-text-muted mt-2">{t('sandbox.continuingNative')}</p>
             </div>
           )}

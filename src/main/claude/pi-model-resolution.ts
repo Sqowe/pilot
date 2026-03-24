@@ -3,7 +3,8 @@ import { isOfficialOpenAIBaseUrl } from '../config/auth-utils';
 
 const COMMON_FALLBACK_PROVIDERS = ['openai', 'anthropic', 'google'] as const;
 const INVALID_REGISTRY_PROVIDERS = new Set(['', 'custom']);
-const REASONING_MODEL_PATTERN = /\bthinking\b|\breasoner\b|deepseek-r1|kimi-k2|qwen3(?:\.5)?(?=[:/-]|$)/i;
+const REASONING_MODEL_PATTERN =
+  /\bthinking\b|\breasoner\b|deepseek-r1|kimi-k2|qwen3(?:\.5)?(?=[:/-]|$)/i;
 type PiRegistryProvider = Parameters<typeof getModel>[0];
 
 export interface PiModelStringInput {
@@ -38,10 +39,7 @@ export interface SyntheticPiModelFallback {
   modelId: string;
 }
 
-export function resolvePiRouteProtocol(
-  provider?: string,
-  customProtocol?: string,
-): string {
+export function resolvePiRouteProtocol(provider?: string, customProtocol?: string): string {
   if (provider === 'custom') {
     if (customProtocol === 'openai' || customProtocol === 'gemini') {
       return customProtocol;
@@ -57,7 +55,7 @@ export function resolvePiRouteProtocol(
 
 function shouldDisableDeveloperRoleForEndpoint(
   model: Model<Api>,
-  options: PiModelLookupOptions,
+  options: PiModelLookupOptions
 ): boolean {
   if (model.api !== 'openai-completions' && model.api !== 'openai-responses') {
     return false;
@@ -89,26 +87,28 @@ export function inferPiApi(protocol: string): string {
  * Used as a middle layer between user config overrides and the hardcoded default.
  */
 const KNOWN_MODEL_SPECS: Record<string, { contextWindow: number; maxTokens: number }> = {
-  'qwen3.5':      { contextWindow: 258048, maxTokens: 32768 },
-  'qwen3':        { contextWindow: 40960,  maxTokens: 8192 },
-  'qwen2.5':      { contextWindow: 131072, maxTokens: 8192 },
-  'llama3':       { contextWindow: 131072, maxTokens: 4096 },
-  'llama3.1':     { contextWindow: 131072, maxTokens: 4096 },
-  'llama3.2':     { contextWindow: 131072, maxTokens: 4096 },
-  'llama3.3':     { contextWindow: 131072, maxTokens: 4096 },
-  'deepseek-r1':  { contextWindow: 65536,  maxTokens: 8192 },
-  'deepseek-v3':  { contextWindow: 65536,  maxTokens: 8192 },
-  'gemma2':       { contextWindow: 8192,   maxTokens: 4096 },
-  'gemma3':       { contextWindow: 131072, maxTokens: 8192 },
-  'phi3':         { contextWindow: 131072, maxTokens: 4096 },
-  'phi4':         { contextWindow: 16384,  maxTokens: 4096 },
-  'mistral':      { contextWindow: 32768,  maxTokens: 4096 },
-  'mixtral':      { contextWindow: 32768,  maxTokens: 4096 },
-  'codellama':    { contextWindow: 16384,  maxTokens: 4096 },
-  'command-r':    { contextWindow: 131072, maxTokens: 4096 },
+  'qwen3.5': { contextWindow: 258048, maxTokens: 32768 },
+  qwen3: { contextWindow: 40960, maxTokens: 8192 },
+  'qwen2.5': { contextWindow: 131072, maxTokens: 8192 },
+  llama3: { contextWindow: 131072, maxTokens: 4096 },
+  'llama3.1': { contextWindow: 131072, maxTokens: 4096 },
+  'llama3.2': { contextWindow: 131072, maxTokens: 4096 },
+  'llama3.3': { contextWindow: 131072, maxTokens: 4096 },
+  'deepseek-r1': { contextWindow: 65536, maxTokens: 8192 },
+  'deepseek-v3': { contextWindow: 65536, maxTokens: 8192 },
+  gemma2: { contextWindow: 8192, maxTokens: 4096 },
+  gemma3: { contextWindow: 131072, maxTokens: 8192 },
+  phi3: { contextWindow: 131072, maxTokens: 4096 },
+  phi4: { contextWindow: 16384, maxTokens: 4096 },
+  mistral: { contextWindow: 32768, maxTokens: 4096 },
+  mixtral: { contextWindow: 32768, maxTokens: 4096 },
+  codellama: { contextWindow: 16384, maxTokens: 4096 },
+  'command-r': { contextWindow: 131072, maxTokens: 4096 },
 };
 
-function lookupModelSpecs(modelId: string): { contextWindow: number; maxTokens: number } | undefined {
+function lookupModelSpecs(
+  modelId: string
+): { contextWindow: number; maxTokens: number } | undefined {
   const lower = modelId.toLowerCase();
   // Match by prefix: "qwen3.5:0.8b" → "qwen3.5", "deepseek-r1-distill" → "deepseek-r1"
   for (const [key, specs] of Object.entries(KNOWN_MODEL_SPECS)) {
@@ -127,7 +127,7 @@ export function buildSyntheticPiModel(
   apiOverride?: string,
   reasoning?: boolean,
   contextWindow?: number,
-  maxTokens?: number,
+  maxTokens?: number
 ): Model<Api> {
   const api = apiOverride || inferPiApi(protocol);
   const autoReasoning = reasoning ?? REASONING_MODEL_PATTERN.test(modelId);
@@ -141,13 +141,13 @@ export function buildSyntheticPiModel(
     reasoning: autoReasoning,
     input: ['text', 'image'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: contextWindow || knownSpecs?.contextWindow || 128000,
-    maxTokens: maxTokens || knownSpecs?.maxTokens || 16384,
+    contextWindow: contextWindow ?? knownSpecs?.contextWindow ?? 128000,
+    maxTokens: maxTokens ?? knownSpecs?.maxTokens ?? 16384,
   } as Model<Api>;
 }
 
 export function resolveSyntheticPiModelFallback(
-  input: SyntheticPiModelFallbackInput,
+  input: SyntheticPiModelFallbackInput
 ): SyntheticPiModelFallback {
   const rawModel = input.rawModel?.trim() || '';
   const modelString = input.resolvedModelString.trim();
@@ -156,13 +156,11 @@ export function resolveSyntheticPiModelFallback(
   const strippedModelId = parts.length >= 2 ? parts.slice(1).join('/') : modelString;
   const baseUrl = input.baseUrl?.trim() || '';
   const preservesExplicitPrefixedId =
-    rawModel.includes('/')
-    && (
-      input.rawProvider === 'openrouter'
-      || input.rawProvider === 'custom'
-      || (input.rawProvider === 'openai' && !!baseUrl && !isOfficialOpenAIBaseUrl(baseUrl))
-    )
-    && input.routeProtocol === 'openai';
+    rawModel.includes('/') &&
+    (input.rawProvider === 'openrouter' ||
+      input.rawProvider === 'custom' ||
+      (input.rawProvider === 'openai' && !!baseUrl && !isOfficialOpenAIBaseUrl(baseUrl))) &&
+    input.routeProtocol === 'openai';
 
   if (input.rawProvider === 'openrouter') {
     return {
@@ -171,12 +169,13 @@ export function resolveSyntheticPiModelFallback(
     };
   }
 
-  const fallbackProvider = input.rawProvider === 'custom' || input.rawProvider === 'ollama'
-    ? (input.routeProtocol || 'anthropic')
-    : (parsedProvider || input.rawProvider || input.routeProtocol || 'anthropic');
+  const fallbackProvider =
+    input.rawProvider === 'custom' || input.rawProvider === 'ollama'
+      ? input.routeProtocol || 'anthropic'
+      : parsedProvider || input.rawProvider || input.routeProtocol || 'anthropic';
 
   return {
-    provider: preservesExplicitPrefixedId ? (parsedProvider || fallbackProvider) : fallbackProvider,
+    provider: preservesExplicitPrefixedId ? parsedProvider || fallbackProvider : fallbackProvider,
     modelId: preservesExplicitPrefixedId ? modelString : strippedModelId,
   };
 }
@@ -198,11 +197,15 @@ function addLookupCandidate(
   candidates: PiModelLookupCandidate[],
   seen: Set<string>,
   provider: string | undefined,
-  model: string | undefined,
+  model: string | undefined
 ): void {
   const normalizedProvider = provider?.trim() || '';
   const normalizedModel = model?.trim() || '';
-  if (!normalizedProvider || !normalizedModel || INVALID_REGISTRY_PROVIDERS.has(normalizedProvider)) {
+  if (
+    !normalizedProvider ||
+    !normalizedModel ||
+    INVALID_REGISTRY_PROVIDERS.has(normalizedProvider)
+  ) {
     return;
   }
 
@@ -216,11 +219,10 @@ function addLookupCandidate(
 
 export function buildPiModelLookupCandidates(
   modelString: string,
-  options: Pick<PiModelLookupOptions, 'configProvider' | 'rawProvider'> = {},
+  options: Pick<PiModelLookupOptions, 'configProvider' | 'rawProvider'> = {}
 ): PiModelLookupCandidate[] {
-  const keyProvider = options.configProvider === 'custom'
-    ? 'anthropic'
-    : (options.configProvider || 'anthropic');
+  const keyProvider =
+    options.configProvider === 'custom' ? 'anthropic' : options.configProvider || 'anthropic';
   const rawProvider = options.rawProvider?.trim() || '';
   const trimmedModel = modelString.trim();
   const parts = trimmedModel.split('/');
@@ -253,7 +255,7 @@ export function buildPiModelLookupCandidates(
 
 export function applyPiModelRuntimeOverrides(
   model: Model<Api>,
-  options: PiModelLookupOptions = {},
+  options: PiModelLookupOptions = {}
 ): Model<Api> {
   let nextModel = model;
   const isCustomProvider = options.rawProvider === 'custom' || options.configProvider === 'custom';
@@ -265,11 +267,7 @@ export function applyPiModelRuntimeOverrides(
   }
 
   const effectiveProvider = options.rawProvider || options.configProvider;
-  if (
-    options.customBaseUrl &&
-    isCustomProvider &&
-    nextModel.api === 'openai-responses'
-  ) {
+  if (options.customBaseUrl && isCustomProvider && nextModel.api === 'openai-responses') {
     // Most custom OpenAI-compatible relays only implement chat/completions.
     nextModel = { ...nextModel, api: 'openai-completions' } as typeof nextModel;
   }
@@ -288,9 +286,9 @@ export function applyPiModelRuntimeOverrides(
   }
 
   if (
-    options.rawProvider === 'ollama'
-    && nextModel.reasoning
-    && nextModel.api === 'openai-completions'
+    options.rawProvider === 'ollama' &&
+    nextModel.reasoning &&
+    nextModel.api === 'openai-completions'
   ) {
     const currentCompat = (nextModel.compat || {}) as Record<string, unknown>;
     const currentReasoningEffortMap = (
@@ -324,11 +322,14 @@ export function applyPiModelRuntimeOverrides(
 
 export function resolvePiRegistryModel(
   modelString: string,
-  options: PiModelLookupOptions = {},
+  options: PiModelLookupOptions = {}
 ): Model<Api> | undefined {
   for (const candidate of buildPiModelLookupCandidates(modelString, options)) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const model = (getModel as (...args: unknown[]) => Model<Api> | undefined)(candidate.provider as PiRegistryProvider, candidate.model);
+    const model = (getModel as (...args: unknown[]) => Model<Api> | undefined)(
+      candidate.provider as PiRegistryProvider,
+      candidate.model
+    );
     if (model) {
       return applyPiModelRuntimeOverrides(model, options);
     }
