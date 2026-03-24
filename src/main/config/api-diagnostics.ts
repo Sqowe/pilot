@@ -119,22 +119,40 @@ function isGeminiProtocol(input: DiagnosticInput): boolean {
   );
 }
 
-/**
- * Run a callback with ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN temporarily
- * removed from process.env, then restore them. Prevents SDK from reading
- * stale env vars during diagnostics.
- */
-async function withSuppressedAnthropicEnv<T>(fn: () => Promise<T>): Promise<T> {
-  const savedApiKey = process.env.ANTHROPIC_API_KEY;
-  const savedAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
-  delete process.env.ANTHROPIC_API_KEY;
-  delete process.env.ANTHROPIC_AUTH_TOKEN;
-  try {
-    return await fn();
-  } finally {
-    if (savedApiKey !== undefined) process.env.ANTHROPIC_API_KEY = savedApiKey;
-    if (savedAuthToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = savedAuthToken;
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function getApiErrorInfo(err: unknown): { status?: number; message: string } {
+  if (err instanceof Error) {
+    const apiErr = err as Error & { status?: number };
+    return { status: apiErr.status, message: apiErr.message };
   }
+  if (typeof err === 'object' && err !== null) {
+    const obj = err as { status?: number; message?: unknown };
+    return {
+      status: typeof obj.status === 'number' ? obj.status : undefined,
+      message: typeof obj.message === 'string' ? obj.message : String(err),
+    };
+  }
+  return { message: String(err) };
+}
+
+/**
+ * Build an Anthropic client with credentials passed explicitly.
+ * baseURL and apiKey/authToken are always provided directly so the SDK
+ * never falls back to reading process.env, avoiding race conditions in
+ * concurrent diagnostic runs.
+ */
+function makeAnthropicClient(opts: {
+  effectiveKey: string;
+  useAuthToken: boolean;
+  baseUrl: string | undefined;
+}): Anthropic {
+  const base = { baseURL: opts.baseUrl, timeout: 15000 };
+  return opts.useAuthToken
+    ? new Anthropic({ ...base, authToken: opts.effectiveKey })
+    : new Anthropic({ ...base, apiKey: opts.effectiveKey });
 }
 
 /**
@@ -188,7 +206,7 @@ async function stepDns(hostname: string, step: DiagnosticStep): Promise<void> {
     step.status = 'ok';
   } catch (err) {
     step.status = 'fail';
-    step.error = (err as Error).message;
+    step.error = getErrorMessage(err);
     step.fix = `dns_resolve_failed:${hostname}`;
   }
   step.latencyMs = Date.now() - start;
@@ -215,7 +233,7 @@ async function stepTcp(hostname: string, port: number, step: DiagnosticStep): Pr
     step.status = 'ok';
   } catch (err) {
     step.status = 'fail';
-    step.error = (err as Error).message;
+    step.error = getErrorMessage(err);
     step.fix = `tcp_connect_failed:${hostname}:${port}`;
   }
   step.latencyMs = Date.now() - start;
@@ -278,7 +296,7 @@ async function stepTls(
     step.status = 'ok';
   } catch (err) {
     step.status = 'fail';
-    step.error = (err as Error).message;
+    step.error = getErrorMessage(err);
     step.fix = 'tls_handshake_failed';
   }
   step.latencyMs = Date.now() - start;
@@ -350,20 +368,16 @@ async function stepAuth(input: DiagnosticInput, step: DiagnosticStep): Promise<v
         apiKey: effectiveKey,
       });
 
-      // Temporarily clear env vars to prevent SDK from reading them
-      await withSuppressedAnthropicEnv(async () => {
-        const client = useAuthToken
-          ? new Anthropic({ authToken: effectiveKey, baseURL: clientBaseUrl, timeout: 15000 })
-          : new Anthropic({ apiKey: effectiveKey, baseURL: clientBaseUrl, timeout: 15000 });
-        await client.models.list();
-      });
+      // Credentials are passed explicitly so the SDK never reads process.env
+      const client = makeAnthropicClient({ effectiveKey, useAuthToken, baseUrl: clientBaseUrl });
+      await client.models.list();
     }
 
     step.status = 'ok';
   } catch (err) {
     step.status = 'fail';
-    const e = err as { status?: number; message?: string };
-    step.error = e.message ?? String(err);
+    const e = getApiErrorInfo(err);
+    step.error = e.message;
 
     if (e.status === 401 || e.status === 403) {
       step.fix = 'auth_invalid_key';
@@ -416,27 +430,31 @@ async function stepModel(input: DiagnosticInput, step: DiagnosticStep): Promise<
     }
 
     const config = configStore.getAll();
-    const result = await probeWithClaudeSdk({
-      provider: input.provider,
-      apiKey: input.apiKey,
-      baseUrl: input.baseUrl,
-      customProtocol: input.customProtocol,
-      model: input.model,
-      verificationLevel,
-    }, config);
+    const result = await probeWithClaudeSdk(
+      {
+        provider: input.provider,
+        apiKey: input.apiKey,
+        baseUrl: input.baseUrl,
+        customProtocol: input.customProtocol,
+        model: input.model,
+        verificationLevel,
+      },
+      config
+    );
 
     if (result.ok) {
       step.status = 'ok';
     } else {
       step.status = 'fail';
       step.error = result.details;
-      step.fix = result.errorType === 'ollama_loading'
-        ? `ollama_model_loading:${input.model}`
-        : `model_unavailable:${input.model}`;
+      step.fix =
+        result.errorType === 'ollama_loading'
+          ? `ollama_model_loading:${input.model}`
+          : `model_unavailable:${input.model}`;
     }
   } catch (err) {
     step.status = 'fail';
-    step.error = (err as Error).message;
+    step.error = getErrorMessage(err);
     step.fix = `model_unavailable:${input.model}`;
   }
   step.latencyMs = Date.now() - start;
@@ -553,7 +571,8 @@ async function runDiagnosticsImpl(input: DiagnosticInput): Promise<DiagnosticRes
 
   if (overallOk && input.provider === 'ollama' && verificationLevel === 'fast') {
     result.advisoryCode = 'not_deep_verified';
-    result.advisoryText = 'Endpoint is reachable and the selected model is listed, but no live inference was performed.';
+    result.advisoryText =
+      'Endpoint is reachable and the selected model is listed, but no live inference was performed.';
   }
 
   if (
@@ -564,7 +583,8 @@ async function runDiagnosticsImpl(input: DiagnosticInput): Promise<DiagnosticRes
     failedStep.fix?.startsWith('ollama_model_loading:')
   ) {
     result.advisoryCode = 'model_loading';
-    result.advisoryText = 'The endpoint is reachable, but the model may still be loading into memory.';
+    result.advisoryText =
+      'The endpoint is reachable, but the model may still be loading into memory.';
   }
 
   if (overallOk) {
@@ -588,9 +608,10 @@ export async function discoverLocalOllama(input?: {
   baseUrl?: string;
 }): Promise<LocalOllamaDiscoveryResult> {
   const preferredBaseUrl = input?.baseUrl?.trim();
-  const baseUrl = preferredBaseUrl && isLoopbackBaseUrl(preferredBaseUrl)
-    ? (normalizeOllamaBaseUrl(preferredBaseUrl) || DEFAULT_OLLAMA_BASE_URL)
-    : DEFAULT_OLLAMA_BASE_URL;
+  const baseUrl =
+    preferredBaseUrl && isLoopbackBaseUrl(preferredBaseUrl)
+      ? normalizeOllamaBaseUrl(preferredBaseUrl) || DEFAULT_OLLAMA_BASE_URL
+      : DEFAULT_OLLAMA_BASE_URL;
 
   try {
     const result = await fetchOllamaModelIndex({ baseUrl });

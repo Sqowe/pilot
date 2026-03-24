@@ -1,4 +1,5 @@
 import type { ApiTestInput, ApiTestResult, ProviderModelInfo } from '../../renderer/types';
+import * as crypto from 'crypto';
 import { isLoopbackBaseUrl } from '../../shared/network/loopback';
 import { normalizeOllamaBaseUrl } from './auth-utils';
 import { ollamaNativeBaseUrl } from '../../shared/ollama-base-url';
@@ -26,7 +27,12 @@ function buildBaseUrl(baseUrl: string | undefined): string {
 }
 
 function buildCacheKey(baseUrl: string, apiKey: string | undefined): string {
-  return `${baseUrl}::${apiKey?.trim() || ''}`;
+  const trimmedKey = apiKey?.trim() || '';
+  // Hash the API key so it is never stored in plain text in the cache key
+  const keyHash = trimmedKey
+    ? crypto.createHash('sha256').update(trimmedKey).digest('hex').slice(0, 16)
+    : '';
+  return `${baseUrl}::${keyHash}`;
 }
 
 function resolveModelsTimeoutMs(baseUrl: string): number {
@@ -223,10 +229,7 @@ export interface OllamaModelInfo {
 }
 
 const MODEL_INFO_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const modelInfoCache = new Map<
-  string,
-  { expiresAt: number; result: OllamaModelInfo }
->();
+const modelInfoCache = new Map<string, { expiresAt: number; result: OllamaModelInfo }>();
 
 export function resetOllamaModelInfoCache(): void {
   modelInfoCache.clear();
@@ -261,10 +264,7 @@ export async function fetchOllamaModelInfo(input: {
     if (modelInfo) {
       // The key varies by architecture, e.g. "llama.context_length", "qwen2.context_length"
       for (const key of Object.keys(modelInfo)) {
-        if (
-          key.endsWith('.context_length') &&
-          typeof modelInfo[key] === 'number'
-        ) {
+        if (key.endsWith('.context_length') && typeof modelInfo[key] === 'number') {
           contextWindow = modelInfo[key] as number;
           break;
         }
@@ -281,9 +281,7 @@ export async function fetchOllamaModelInfo(input: {
 
     const parameterSize =
       typeof data.details === 'object' && data.details !== null
-        ? ((data.details as Record<string, unknown>).parameter_size as
-            | string
-            | undefined)
+        ? ((data.details as Record<string, unknown>).parameter_size as string | undefined)
         : undefined;
 
     const result: OllamaModelInfo = { contextWindow, parameterSize };
