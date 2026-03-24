@@ -12,7 +12,7 @@ type TitleFlowDeps = {
   currentTitle: string;
   hasAttempted: boolean;
   generateTitle: (titlePrompt: string) => Promise<string | null>;
-  updateTitle: (title: string) => Promise<void> | void;
+  updateTitle: (title: string) => Promise<boolean> | boolean;
   getLatestTitle: () => string | null;
   markAttempt: () => void;
   shouldAbort?: () => boolean;
@@ -72,7 +72,11 @@ export async function maybeGenerateSessionTitle(deps: TitleFlowDeps): Promise<vo
     return;
   }
 
-  await deps.updateTitle(generatedTitle);
-  deps.markAttempt();
-  deps.log('[SessionTitle] Title updated', deps.sessionId, generatedTitle);
+  const updated = await deps.updateTitle(generatedTitle);
+  if (updated) {
+    deps.markAttempt();
+    deps.log('[SessionTitle] Title updated', deps.sessionId, generatedTitle);
+  } else {
+    deps.log('[SessionTitle] Title update no-op (session may have been deleted)', deps.sessionId);
+  }
 }

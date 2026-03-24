@@ -24,4 +24,16 @@ describe('session title flow', () => {
     expect(harness.updatedTitle).toBe(null);
     expect(harness.hasAttempted).toBe(false);
   });
+
+  it('does not mark attempt when updateTitle returns false (session deleted during generation)', async () => {
+    const harness = createTitleFlowHarness({
+      generatedTitle: '简短标题',
+      updateTitleResult: false,
+    });
+    await harness.runFirstMessage('帮我做一个PPT');
+    // updatedTitle is null because updateTitle returned false
+    expect(harness.updatedTitle).toBe(null);
+    // hasAttempted must be false so next session start can retry
+    expect(harness.hasAttempted).toBe(false);
+  });
 });

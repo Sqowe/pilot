@@ -4,14 +4,17 @@ import { maybeGenerateSessionTitle } from '../../src/main/session/session-title-
 type HarnessOptions = {
   generatedTitle: string | null;
   latestTitle?: string;
+  /** Controls what updateTitle returns; defaults to true */
+  updateTitleResult?: boolean;
 };
 
 export function createTitleFlowHarness(options: HarnessOptions) {
   let updatedTitle: string | null = null;
   let currentTitle = '';
-  let latestTitle = options.latestTitle ?? null;
+  const latestTitle = options.latestTitle ?? null;
   const attemptedSessions = new Set<string>();
   const sessionId = 'session-1';
+  const updateTitleResult = options.updateTitleResult ?? true;
 
   const runFirstMessage = async (prompt: string) => {
     currentTitle = getDefaultTitleFromPrompt(prompt);
@@ -27,8 +30,11 @@ export function createTitleFlowHarness(options: HarnessOptions) {
         attemptedSessions.add(sessionId);
       },
       updateTitle: async (title) => {
-        updatedTitle = title;
-        currentTitle = title;
+        if (updateTitleResult) {
+          updatedTitle = title;
+          currentTitle = title;
+        }
+        return updateTitleResult;
       },
       log: () => undefined,
     });
