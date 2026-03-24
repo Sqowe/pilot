@@ -128,7 +128,7 @@ function sanitizeDiagnosticBaseUrl(value: string | undefined): string | null {
 
 async function resolveScheduledTaskTitle(
   prompt: string,
-  cwd?: string,
+  _cwd?: string,
   fallbackTitle?: string
 ): Promise<string> {
   const normalizedPrompt = prompt.trim();
@@ -139,7 +139,7 @@ async function resolveScheduledTaskTitle(
     return fallback;
   }
   try {
-    return await sessionManager.generateScheduledTaskTitle(normalizedPrompt, cwd);
+    return await sessionManager.generateScheduledTaskTitle(normalizedPrompt);
   } catch (error) {
     logWarn('[Schedule] Failed to generate title via session title flow, using fallback', error);
     return fallback;

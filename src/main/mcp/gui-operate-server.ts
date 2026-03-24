@@ -1562,53 +1562,6 @@ async function macWriteClipboardBytes(bytes: Buffer, timeoutMs: number = 5000): 
 }
 
 /**
- * Execute a command with timeout using execFile (no shell interpolation).
- * The command string is parsed into executable + arguments respecting quotes.
- * @deprecated Use executeCommandSafe or executeAppleScript instead.
- */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function executeCommand(
-  command: string,
-  timeout: number = 10000
-): Promise<{ stdout: string; stderr: string }> {
-  // Parse command into executable and arguments, respecting quotes
-  const tokens: string[] = [];
-  let current = '';
-  let inSingle = false;
-  let inDouble = false;
-  for (let i = 0; i < command.length; i++) {
-    const ch = command[i];
-    if (ch === "'" && !inDouble) {
-      inSingle = !inSingle;
-    } else if (ch === '"' && !inSingle) {
-      inDouble = !inDouble;
-    } else if (ch === ' ' && !inSingle && !inDouble) {
-      if (current) {
-        tokens.push(current);
-        current = '';
-      }
-    } else {
-      current += ch;
-    }
-  }
-  if (current) tokens.push(current);
-
-  const [executable, ...args] = tokens;
-
-  try {
-    const result = await execFileAsync(executable, args, { timeout });
-    return {
-      stdout: typeof result.stdout === 'string' ? result.stdout : '',
-      stderr: typeof result.stderr === 'string' ? result.stderr : '',
-    };
-  } catch (error: unknown) {
-    throw new Error(
-      `Command execution failed: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-}
-
-/**
  * Execute a command safely using execFileAsync (no shell interpolation).
  * Prefer this over executeCommand when the executable and arguments are known.
  */

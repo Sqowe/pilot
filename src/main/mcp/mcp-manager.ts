@@ -16,7 +16,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { app, BrowserWindow } from 'electron';
-import type { ChildProcess } from 'child_process';
+
 import path from 'path';
 import { log, logError, logWarn, logCtx, logCtxError, logTiming } from '../utils/logger';
 import { getDefaultShell } from '../utils/shell-resolver';
@@ -1106,35 +1106,6 @@ export class MCPManager {
         log(`[MCPManager] stderr: ${spawnErr.stderr}`);
       }
     }
-  }
-
-  /**
-   * Gracefully kill a child process.
-   * Unix: SIGTERM first, then SIGKILL after timeout.
-   * Windows: proc.kill() (TerminateProcess) — SIGTERM/SIGKILL are unreliable on Windows.
-   */
-  private async gracefulKill(proc: ChildProcess, timeoutMs = 5000): Promise<void> {
-    return new Promise((resolve) => {
-      if (process.platform === 'win32') {
-        proc.kill(); // Windows: TerminateProcess
-      } else {
-        proc.kill('SIGTERM'); // Unix: graceful shutdown
-      }
-      const timer = setTimeout(() => {
-        if (!proc.killed) {
-          if (process.platform === 'win32') {
-            proc.kill();
-          } else {
-            proc.kill('SIGKILL');
-          }
-        }
-        resolve();
-      }, timeoutMs);
-      proc.once('exit', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
   }
 
   /**

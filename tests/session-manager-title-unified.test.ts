@@ -115,8 +115,7 @@ describe('SessionManager unified title generation', () => {
       expect.objectContaining({
         provider: 'openai',
         model: 'gpt-4.1',
-      }),
-      undefined
+      })
     );
   });
 
@@ -142,8 +141,7 @@ describe('SessionManager unified title generation', () => {
         provider: 'gemini',
         customProtocol: 'gemini',
         model: 'gemini-2.5-flash',
-      }),
-      undefined
+      })
     );
   });
 });

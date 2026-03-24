@@ -399,14 +399,14 @@ export class SessionManager {
     this.enqueuePrompt(session, prompt, content);
   }
 
-  async generateSessionTitleFromPrompt(prompt: string, cwd?: string): Promise<string> {
+  async generateSessionTitleFromPrompt(prompt: string): Promise<string> {
     const normalizedPrompt = prompt.trim();
     if (!normalizedPrompt) {
       return 'New Session';
     }
 
     const generated = await this.withTimeout(
-      this.generateTitleWithConfig(buildTitlePrompt(normalizedPrompt), cwd),
+      this.generateTitleWithConfig(buildTitlePrompt(normalizedPrompt)),
       TITLE_GENERATION_TIMEOUT_MS,
       'session-title-preview'
     );
@@ -414,8 +414,8 @@ export class SessionManager {
     return normalizedGenerated ?? getDefaultTitleFromPrompt(normalizedPrompt);
   }
 
-  async generateScheduledTaskTitle(prompt: string, cwd?: string): Promise<string> {
-    const sessionTitle = await this.generateSessionTitleFromPrompt(prompt, cwd);
+  async generateScheduledTaskTitle(prompt: string): Promise<string> {
+    const sessionTitle = await this.generateSessionTitleFromPrompt(prompt);
     return buildScheduledTaskTitle(sessionTitle);
   }
 
@@ -737,7 +737,7 @@ export class SessionManager {
             return null;
           }
           const title = await this.withTimeout(
-            this.generateTitleWithConfig(titlePrompt, session.cwd),
+            this.generateTitleWithConfig(titlePrompt),
             TITLE_GENERATION_TIMEOUT_MS,
             session.id
           );
@@ -793,10 +793,10 @@ export class SessionManager {
     });
   }
 
-  private async generateTitleWithConfig(titlePrompt: string, cwd?: string): Promise<string | null> {
+  private async generateTitleWithConfig(titlePrompt: string): Promise<string | null> {
     // Always use pi-ai SDK for title generation
     return normalizeGeneratedTitle(
-      await generateTitleWithClaudeSdk(titlePrompt, configStore.getAll(), cwd)
+      await generateTitleWithClaudeSdk(titlePrompt, configStore.getAll())
     );
   }
 
