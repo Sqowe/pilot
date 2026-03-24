@@ -14,7 +14,7 @@ function makeDeps(overrides: Partial<Parameters<typeof maybeGenerateSessionTitle
     generateTitle: vi.fn(async () => '总结报告'),
     getLatestTitle: () => getDefaultTitleFromPrompt(prompt),
     markAttempt: vi.fn(),
-    updateTitle: vi.fn(),
+    updateTitle: vi.fn(async () => true),
     log: vi.fn(),
     ...overrides,
   };
