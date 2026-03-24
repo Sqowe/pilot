@@ -150,7 +150,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       sinceMs: number,
       limit = 50
     ): Promise<Array<{ path: string; modifiedAt: number; size: number }>> =>
-      ipcRenderer.invoke('artifacts.listRecentFiles', cwd, sinceMs, limit),
+      ipcRenderer.invoke('artifacts.listRecentFiles', cwd, sinceMs, Math.min(limit, 500)),
   },
 
   // Config methods
