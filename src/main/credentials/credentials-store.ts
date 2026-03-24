@@ -1,5 +1,7 @@
 import Store, { type Options as StoreOptions } from 'electron-store';
 import * as crypto from 'crypto';
+import * as os from 'os';
+import { safeStorage } from 'electron';
 import { log, logWarn } from '../utils/logger';
 import { getLegacyDerivedKeyBuffers, getStableDerivedKeyBuffer } from '../utils/store-encryption';
 
@@ -25,7 +27,69 @@ export interface UserCredential {
 interface StoredCredential extends Omit<UserCredential, 'password'> {
   encryptedPassword: string;
   iv: string;
+  authTag?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Machine-bound key derivation
+// ---------------------------------------------------------------------------
+
+let _machineBoundKeyCache: Buffer | null = null;
+
+/**
+ * Derive a machine-bound encryption key.
+ *
+ * Primary strategy: generate a random 256-bit key once and protect it with
+ * Electron's safeStorage (macOS Keychain / Windows DPAPI / Linux libsecret).
+ *
+ * Fallback (safeStorage unavailable): derive key from hostname + username so
+ * the key is at least unique per OS installation.
+ */
+function getMachineBoundKey(): Buffer {
+  if (_machineBoundKeyCache) return _machineBoundKeyCache;
+
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      const keyStore = new Store<{ encryptedMasterKey?: string }>({
+        name: 'credentials-master-key',
+        projectName: 'open-cowork',
+        defaults: {},
+      } as StoreOptions<{ encryptedMasterKey?: string }> & { projectName?: string });
+
+      const stored = keyStore.get('encryptedMasterKey');
+      if (stored) {
+        const decrypted = safeStorage.decryptString(Buffer.from(stored, 'base64'));
+        _machineBoundKeyCache = Buffer.from(decrypted, 'hex');
+        return _machineBoundKeyCache;
+      }
+
+      // First run: generate and protect a new master key
+      const masterKey = crypto.randomBytes(32);
+      const encrypted = safeStorage.encryptString(masterKey.toString('hex'));
+      keyStore.set('encryptedMasterKey', encrypted.toString('base64'));
+      _machineBoundKeyCache = masterKey;
+      log('[CredentialsStore] Generated machine-bound master key via safeStorage');
+      return _machineBoundKeyCache;
+    }
+  } catch {
+    // safeStorage unavailable (e.g., no keychain/keyring, CI, or app not ready)
+  }
+
+  // Fallback: derive from machine identity
+  const seed = `${os.hostname()}:${os.userInfo().username}:open-cowork-credentials-stable-v1`;
+  _machineBoundKeyCache = crypto.scryptSync(seed, 'open-cowork-salt', 32, { N: 65536, r: 8, p: 1 });
+  log('[CredentialsStore] Derived machine-bound key from hostname and username (safeStorage unavailable)');
+  return _machineBoundKeyCache;
+}
+
+/** Visible for testing — resets the cached machine-bound key. */
+export function _resetMachineBoundKeyCache(): void {
+  _machineBoundKeyCache = null;
+}
+
+// ---------------------------------------------------------------------------
+// CredentialsStore
+// ---------------------------------------------------------------------------
 
 /**
  * Credentials Store - Securely stores user credentials with encryption
@@ -48,21 +112,30 @@ class CredentialsStore {
   }
 
   private static getPrimaryKey(): Buffer {
-    return getStableDerivedKeyBuffer({
-      moduleDirname: __dirname,
-      stableSeed: 'open-cowork-credentials-stable-v1',
-      legacySeed: 'open-cowork-credentials',
-      salt: 'open-cowork-salt',
-    });
+    return getMachineBoundKey();
   }
 
   private static getFallbackKeys(): Buffer[] {
-    return getLegacyDerivedKeyBuffers({
+    const keys: Buffer[] = [];
+
+    // Old hardcoded stable key (backward compat with data encrypted before
+    // machine-bound key was introduced).
+    keys.push(getStableDerivedKeyBuffer({
       moduleDirname: __dirname,
       stableSeed: 'open-cowork-credentials-stable-v1',
       legacySeed: 'open-cowork-credentials',
       salt: 'open-cowork-salt',
-    });
+    }));
+
+    // Legacy hostname-derived keys.
+    keys.push(...getLegacyDerivedKeyBuffers({
+      moduleDirname: __dirname,
+      stableSeed: 'open-cowork-credentials-stable-v1',
+      legacySeed: 'open-cowork-credentials',
+      salt: 'open-cowork-salt',
+    }));
+
+    return keys;
   }
 
   private getLegacyStoredKey(): Buffer | null {
@@ -79,18 +152,34 @@ class CredentialsStore {
     }
   }
 
-  private encryptWithKey(text: string, key: Buffer): { encrypted: string; iv: string } {
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+  // ---------------------------------------------------------------------------
+  // AES-256-GCM encryption (with CBC fallback for legacy data)
+  // ---------------------------------------------------------------------------
+
+  private encryptWithKey(text: string, key: Buffer): { encrypted: string; iv: string; authTag: string } {
+    const iv = crypto.randomBytes(12); // 96-bit IV recommended for GCM
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
     let encrypted = cipher.update(text, 'utf8', 'hex');
     encrypted += cipher.final('hex');
+    const authTag = cipher.getAuthTag().toString('hex');
     return {
       encrypted,
       iv: iv.toString('hex'),
+      authTag,
     };
   }
 
-  private decryptWithKey(encrypted: string, iv: string, key: Buffer): string {
+  private decryptWithKey(encrypted: string, iv: string, key: Buffer, authTag?: string): string {
+    if (authTag) {
+      // GCM decryption
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'hex'));
+      decipher.setAuthTag(Buffer.from(authTag, 'hex'));
+      let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+      decrypted += decipher.final('utf8');
+      return decrypted;
+    }
+
+    // CBC fallback for legacy data (no authTag stored)
     const decipher = crypto.createDecipheriv('aes-256-cbc', key, Buffer.from(iv, 'hex'));
     let decrypted = decipher.update(encrypted, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
@@ -99,19 +188,22 @@ class CredentialsStore {
 
   private decryptWithFallback(
     encrypted: string,
-    iv: string
+    iv: string,
+    authTag?: string,
   ): { decrypted: string; needsRewrite: boolean } {
     try {
       return {
-        decrypted: this.decryptWithKey(encrypted, iv, CredentialsStore.getPrimaryKey()),
-        needsRewrite: false,
+        decrypted: this.decryptWithKey(encrypted, iv, CredentialsStore.getPrimaryKey(), authTag),
+        // Re-encrypt if the data was stored with CBC (no authTag) so it is
+        // upgraded to GCM on next save.
+        needsRewrite: !authTag,
       };
     } catch {
       const storedLegacyKey = this.getLegacyStoredKey();
       if (storedLegacyKey) {
         try {
           return {
-            decrypted: this.decryptWithKey(encrypted, iv, storedLegacyKey),
+            decrypted: this.decryptWithKey(encrypted, iv, storedLegacyKey, authTag),
             needsRewrite: true,
           };
         } catch {
@@ -122,7 +214,7 @@ class CredentialsStore {
       for (const key of CredentialsStore.getFallbackKeys()) {
         try {
           return {
-            decrypted: this.decryptWithKey(encrypted, iv, key),
+            decrypted: this.decryptWithKey(encrypted, iv, key, authTag),
             needsRewrite: true,
           };
         } catch {
@@ -141,7 +233,11 @@ class CredentialsStore {
 
     const migrated = credentials.map((cred) => {
       try {
-        const { decrypted, needsRewrite } = this.decryptWithFallback(cred.encryptedPassword, cred.iv);
+        const { decrypted, needsRewrite } = this.decryptWithFallback(
+          cred.encryptedPassword,
+          cred.iv,
+          cred.authTag,
+        );
         if (!needsRewrite) {
           return cred;
         }
@@ -152,6 +248,7 @@ class CredentialsStore {
           ...cred,
           encryptedPassword: next.encrypted,
           iv: next.iv,
+          authTag: next.authTag,
         };
       } catch (error) {
         logWarn('[CredentialsStore] Failed to migrate credential encryption', {
@@ -171,15 +268,15 @@ class CredentialsStore {
   /**
    * Encrypt a password
    */
-  private encrypt(text: string): { encrypted: string; iv: string } {
+  private encrypt(text: string): { encrypted: string; iv: string; authTag: string } {
     return this.encryptWithKey(text, CredentialsStore.getPrimaryKey());
   }
 
   /**
    * Decrypt a password
    */
-  private decrypt(encrypted: string, iv: string): string {
-    return this.decryptWithFallback(encrypted, iv).decrypted;
+  private decrypt(encrypted: string, iv: string, authTag?: string): string {
+    return this.decryptWithFallback(encrypted, iv, authTag).decrypted;
   }
 
   /**
@@ -200,7 +297,7 @@ class CredentialsStore {
           type: cred.type,
           service: cred.service,
           username: cred.username,
-          password: this.decrypt(cred.encryptedPassword, cred.iv),
+          password: this.decrypt(cred.encryptedPassword, cred.iv, cred.authTag),
           url: cred.url,
           notes: cred.notes,
           createdAt: cred.createdAt,
@@ -265,10 +362,10 @@ class CredentialsStore {
    */
   save(credential: Omit<UserCredential, 'id' | 'createdAt' | 'updatedAt'>): UserCredential {
     const now = new Date().toISOString();
-    const id = `cred-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    const { encrypted, iv } = this.encrypt(credential.password);
-    
+    const id = `cred-${Date.now()}-${crypto.randomUUID().slice(0, 9)}`;
+
+    const { encrypted, iv, authTag } = this.encrypt(credential.password);
+
     const stored: StoredCredential = {
       id,
       name: credential.name,
@@ -277,6 +374,7 @@ class CredentialsStore {
       username: credential.username,
       encryptedPassword: encrypted,
       iv,
+      authTag,
       url: credential.url,
       notes: credential.notes,
       createdAt: now,
@@ -303,7 +401,7 @@ class CredentialsStore {
   update(id: string, updates: Partial<Omit<UserCredential, 'id' | 'createdAt' | 'updatedAt'>>): UserCredential | undefined {
     const credentials = this.store.get('credentials', []);
     const index = credentials.findIndex((c) => c.id === id);
-    
+
     if (index === -1) {
       return undefined;
     }
@@ -311,13 +409,15 @@ class CredentialsStore {
     const existing = credentials[index];
     const now = new Date().toISOString();
 
-    // Handle password update
+    // Handle password update — use !== undefined so empty string is accepted.
     let encryptedPassword = existing.encryptedPassword;
     let iv = existing.iv;
-    if (updates.password) {
+    let authTag = existing.authTag;
+    if (updates.password !== undefined) {
       const encrypted = this.encrypt(updates.password);
       encryptedPassword = encrypted.encrypted;
       iv = encrypted.iv;
+      authTag = encrypted.authTag;
     }
 
     const updated: StoredCredential = {
@@ -328,6 +428,7 @@ class CredentialsStore {
       username: updates.username ?? existing.username,
       encryptedPassword,
       iv,
+      authTag,
       url: updates.url ?? existing.url,
       notes: updates.notes ?? existing.notes,
       updatedAt: now,
@@ -344,7 +445,7 @@ class CredentialsStore {
       type: updated.type,
       service: updated.service,
       username: updated.username,
-      password: this.decrypt(updated.encryptedPassword, updated.iv),
+      password: this.decrypt(updated.encryptedPassword, updated.iv, updated.authTag),
       url: updated.url,
       notes: updated.notes,
       createdAt: updated.createdAt,
@@ -358,7 +459,7 @@ class CredentialsStore {
   delete(id: string): boolean {
     const credentials = this.store.get('credentials', []);
     const index = credentials.findIndex((c) => c.id === id);
-    
+
     if (index === -1) {
       return false;
     }
