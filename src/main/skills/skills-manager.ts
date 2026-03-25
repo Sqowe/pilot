@@ -183,15 +183,13 @@ export class SkillsManager {
     const possiblePaths = [
       // Development
       path.join(__dirname, '..', '..', '..', '.claude', 'skills'),
-      // Production (unpacked) — only if the physical directory truly exists.
-      // Electron patches fs.existsSync to read from inside .asar, which gives
-      // false positives for .asar.unpacked paths. Use a stat check on the
-      // parent to verify the unpacked directory was actually created by
-      // electron-builder's asarUnpack.
+      // Production: extraResources extracts .claude/skills → resources/skills
+      path.join(process.resourcesPath || '', 'skills'),
+      // Legacy: in app.asar.unpacked (for older builds with asarUnpack)
       ...(this.physicalDirExists(path.join(unpackedPath, '.claude', 'skills'))
         ? [path.join(unpackedPath, '.claude', 'skills')]
         : []),
-      // Fallback: read from inside the asar archive (Electron intercepts this)
+      // Last resort: read from inside the asar archive (Electron intercepts this)
       path.join(appPath, '.claude', 'skills'),
     ];
 
@@ -956,7 +954,9 @@ export class SkillsManager {
           continue;
         }
         if (!isPathWithinRoot(realTarget, source)) {
-          logWarn(`[Skills] Skipping symlink escaping source directory: ${sourcePath} -> ${realTarget}`);
+          logWarn(
+            `[Skills] Skipping symlink escaping source directory: ${sourcePath} -> ${realTarget}`
+          );
           continue;
         }
         // Copy the target content instead of recreating the symlink
