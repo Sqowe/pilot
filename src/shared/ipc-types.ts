@@ -60,44 +60,6 @@ export type McpPresetsMap = Record<
 >;
 
 // ---------------------------------------------------------------------------
-// Credentials
-// ---------------------------------------------------------------------------
-
-/**
- * A user credential as returned by the IPC handlers.
- *
- * NOTE: The IPC handlers deliberately strip the `password` field before
- * sending credentials to the renderer (see credentials.getAll / getById
- * handlers in main/index.ts). The renderer therefore only ever sees the
- * password-free shape.
- */
-export interface CredentialRecord {
-  id: string;
-  name: string;
-  type: 'email' | 'website' | 'api' | 'other';
-  service?: string;
-  username: string;
-  url?: string;
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Input shape for credentials.save — password required on create. */
-export interface CredentialSaveInput {
-  name: string;
-  type: 'email' | 'website' | 'api' | 'other';
-  service?: string;
-  username: string;
-  password?: string;
-  url?: string;
-  notes?: string;
-}
-
-/** Partial update input for credentials.update. */
-export type CredentialUpdateInput = Partial<CredentialSaveInput>;
-
-// ---------------------------------------------------------------------------
 // Remote
 // ---------------------------------------------------------------------------
 
@@ -116,10 +78,7 @@ export interface FeishuChannelConfig {
     policy: 'open' | 'pairing' | 'allowlist';
     allowFrom?: string[];
   };
-  groups?: Record<
-    string,
-    { requireMention: boolean; allowFrom?: string[] }
-  >;
+  groups?: Record<string, { requireMention: boolean; allowFrom?: string[] }>;
   defaultGroupSettings?: { requireMention: boolean };
 }
 

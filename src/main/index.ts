@@ -32,7 +32,6 @@ import {
 import { runConfigApiTest } from './config/config-test-routing';
 import { listOllamaModels } from './config/ollama-api';
 import { mcpConfigStore } from './mcp/mcp-config-store';
-import { credentialsStore, type UserCredential } from './credentials/credentials-store';
 import { getSandboxAdapter, shutdownSandbox } from './sandbox/sandbox-adapter';
 import { SandboxSync } from './sandbox/sandbox-sync';
 import { WSLBridge } from './sandbox/wsl-bridge';
@@ -1617,94 +1616,6 @@ ipcMain.handle('mcp.getPresets', () => {
   } catch (error) {
     logError('[MCP] Error getting presets:', error);
     return {};
-  }
-});
-
-// Credentials IPC handlers
-ipcMain.handle('credentials.getAll', () => {
-  try {
-    // Return credentials without passwords for UI display
-    return credentialsStore.getAllSafe();
-  } catch (error) {
-    logError('[Credentials] Error getting credentials:', error);
-    return [];
-  }
-});
-
-ipcMain.handle('credentials.getById', (_event, id: string) => {
-  try {
-    const cred = credentialsStore.getById(id);
-    if (!cred) return undefined;
-    // Strip password field before sending to renderer
-    const safeCred = { ...cred, password: undefined };
-    return safeCred;
-  } catch (error) {
-    logError('[Credentials] Error getting credential:', error);
-    return undefined;
-  }
-});
-
-ipcMain.handle('credentials.getByType', (_event, type: UserCredential['type']) => {
-  try {
-    const creds = credentialsStore.getByType(type);
-    // Strip password field before sending to renderer
-    return creds.map((c) => ({ ...c, password: undefined }));
-  } catch (error) {
-    logError('[Credentials] Error getting credentials by type:', error);
-    return [];
-  }
-});
-
-ipcMain.handle('credentials.getByService', (_event, service: string) => {
-  try {
-    const creds = credentialsStore.getByService(service);
-    // Strip password field before sending to renderer
-    return creds.map((c) => ({ ...c, password: undefined }));
-  } catch (error) {
-    logError('[Credentials] Error getting credentials by service:', error);
-    return [];
-  }
-});
-
-ipcMain.handle(
-  'credentials.save',
-  (_event, credential: Omit<UserCredential, 'id' | 'createdAt' | 'updatedAt'>) => {
-    try {
-      const saved = credentialsStore.save(credential);
-      const { password: _pw, ...safe } = saved;
-      return safe;
-    } catch (error) {
-      logError('[Credentials] Error saving credential:', error);
-      throw error;
-    }
-  }
-);
-
-ipcMain.handle(
-  'credentials.update',
-  (
-    _event,
-    id: string,
-    updates: Partial<Omit<UserCredential, 'id' | 'createdAt' | 'updatedAt'>>
-  ) => {
-    try {
-      const updated = credentialsStore.update(id, updates);
-      if (!updated) return undefined;
-      const { password: _pw, ...safe } = updated;
-      return safe;
-    } catch (error) {
-      logError('[Credentials] Error updating credential:', error);
-      throw error;
-    }
-  }
-);
-
-ipcMain.handle('credentials.delete', (_event, id: string) => {
-  try {
-    return credentialsStore.delete(id);
-  } catch (error) {
-    logError('[Credentials] Error deleting credential:', error);
-    return false;
   }
 });
 

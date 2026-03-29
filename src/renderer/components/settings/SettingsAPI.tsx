@@ -1,4 +1,3 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Key,
@@ -7,26 +6,14 @@ import {
   Cpu,
   Loader2,
   Edit3,
-  Save,
-  Mail,
-  Globe,
-  Lock,
   AlertCircle,
   CheckCircle,
-  Eye,
-  EyeOff,
-  Trash2,
-  Plus,
   RefreshCw,
 } from 'lucide-react';
 import { useApiConfigState } from '../../hooks/useApiConfigState';
 import { ApiConfigSetManager } from '../ApiConfigSetManager';
 import { CommonProviderSetupsCard, GuidanceInlineHint } from '../ProviderGuidance';
 import ApiDiagnosticsPanel from '../ApiDiagnosticsPanel';
-import { SettingsContentSection, SERVICE_OPTIONS } from './shared';
-import type { UserCredential, CredentialDraft } from './shared';
-
-const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
 interface ModelOptionItem {
   id: string;
@@ -162,7 +149,10 @@ export function SettingsAPI() {
 
       {/* API Key */}
       <div className="space-y-3 py-5 border-b border-border-muted">
-        <label htmlFor="api-key-input" className="flex items-center gap-2 text-sm font-medium text-text-primary">
+        <label
+          htmlFor="api-key-input"
+          className="flex items-center gap-2 text-sm font-medium text-text-primary"
+        >
           <Key className="w-4 h-4" />
           {t('api.apiKey')}
         </label>
@@ -183,7 +173,10 @@ export function SettingsAPI() {
       {/* Custom Protocol */}
       {provider === 'custom' && (
         <div className="space-y-3 py-5 border-b border-border-muted">
-          <label id="api-protocol-label" className="flex items-center gap-2 text-sm font-medium text-text-primary">
+          <label
+            id="api-protocol-label"
+            className="flex items-center gap-2 text-sm font-medium text-text-primary"
+          >
             <Server className="w-4 h-4" />
             {t('api.protocol')}
           </label>
@@ -216,7 +209,10 @@ export function SettingsAPI() {
       {(provider === 'custom' || provider === 'ollama') && (
         <div className="space-y-3 py-5 border-b border-border-muted">
           <div className="flex items-center justify-between gap-2">
-            <label htmlFor="api-base-url-input" className="flex items-center gap-2 text-sm font-medium text-text-primary">
+            <label
+              htmlFor="api-base-url-input"
+              className="flex items-center gap-2 text-sm font-medium text-text-primary"
+            >
               <Server className="w-4 h-4" />
               {t('api.baseUrl')}
             </label>
@@ -271,7 +267,10 @@ export function SettingsAPI() {
       {/* Model Selection */}
       <div className="space-y-3 py-5 border-b border-border-muted">
         <div className="flex items-center justify-between">
-          <label htmlFor="api-model-input" className="flex items-center gap-2 text-sm font-medium text-text-primary">
+          <label
+            htmlFor="api-model-input"
+            className="flex items-center gap-2 text-sm font-medium text-text-primary"
+          >
             <Cpu className="w-4 h-4" />
             {t('api.model')}
           </label>
@@ -301,8 +300,12 @@ export function SettingsAPI() {
               >
                 <Edit3 className="w-3 h-3" />
                 {isOllamaMode
-                  ? (useCustomModel ? t('api.useDetectedModels') : t('api.manualModel'))
-                  : (useCustomModel ? t('api.usePreset') : t('api.custom'))}
+                  ? useCustomModel
+                    ? t('api.useDetectedModels')
+                    : t('api.manualModel')
+                  : useCustomModel
+                    ? t('api.usePreset')
+                    : t('api.custom')}
               </button>
             )}
           </div>
@@ -342,7 +345,10 @@ export function SettingsAPI() {
         {(provider === 'ollama' || provider === 'custom') && (
           <div className="grid grid-cols-2 gap-3 pt-2">
             <div>
-              <label htmlFor="api-context-window-input" className="block text-xs font-medium text-text-secondary mb-1">
+              <label
+                htmlFor="api-context-window-input"
+                className="block text-xs font-medium text-text-secondary mb-1"
+              >
                 {t('api.contextWindow')}
               </label>
               <input
@@ -357,7 +363,10 @@ export function SettingsAPI() {
               />
             </div>
             <div>
-              <label htmlFor="api-max-tokens-input" className="block text-xs font-medium text-text-secondary mb-1">
+              <label
+                htmlFor="api-max-tokens-input"
+                className="block text-xs font-medium text-text-secondary mb-1"
+              >
                 {t('api.maxOutputTokens')}
               </label>
               <input
@@ -452,388 +461,5 @@ export function SettingsAPI() {
         </div>
       </div>
     </div>
-  );
-}
-
-// ==================== Credentials Tab ====================
-
-export function CredentialsTab() {
-  const { t } = useTranslation();
-  const tRef = useRef(t);
-  useEffect(() => {
-    tRef.current = t;
-  }, [t]);
-  const [credentials, setCredentials] = useState<UserCredential[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [showForm, setShowForm] = useState(false);
-  const [editingCredential, setEditingCredential] = useState<UserCredential | null>(null);
-
-  const loadCredentials = useCallback(async () => {
-    try {
-      const loaded = await window.electronAPI.credentials.getAll();
-      setCredentials(loaded || []);
-      setError('');
-    } catch (err) {
-      console.error('Failed to load credentials:', err);
-      setError(tRef.current('credentials.failedToLoad'));
-    }
-  }, []);
-
-  useEffect(() => {
-    if (isElectron) {
-      void loadCredentials();
-    }
-  }, [loadCredentials]);
-
-  async function handleSave(credential: CredentialDraft) {
-    if (!isElectron) return;
-    setIsLoading(true);
-    setError('');
-    try {
-      if (editingCredential) {
-        await window.electronAPI.credentials.update(editingCredential.id, credential);
-      } else {
-        await window.electronAPI.credentials.save(credential);
-      }
-      await loadCredentials();
-      setShowForm(false);
-      setEditingCredential(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('credentials.failedToSave'));
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  async function handleDelete(id: string) {
-    if (!confirm(t('credentials.deleteConfirm'))) return;
-    setIsLoading(true);
-    try {
-      await window.electronAPI.credentials.delete(id);
-      await loadCredentials();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('credentials.failedToDelete'));
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  function getTypeIcon(type: string) {
-    switch (type) {
-      case 'email':
-        return <Mail className="w-4 h-4" />;
-      case 'website':
-        return <Globe className="w-4 h-4" />;
-      case 'api':
-        return <Key className="w-4 h-4" />;
-      default:
-        return <Lock className="w-4 h-4" />;
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      {error && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-error/10 text-error text-sm">
-          <AlertCircle className="w-4 h-4" />
-          {error}
-        </div>
-      )}
-
-      {/* Form */}
-      {showForm && (
-        <div className="rounded-lg border border-border-subtle bg-background px-4 py-4">
-          <CredentialForm
-            credential={editingCredential || undefined}
-            onSave={handleSave}
-            onCancel={() => {
-              setShowForm(false);
-              setEditingCredential(null);
-            }}
-            isLoading={isLoading}
-          />
-        </div>
-      )}
-
-      {/* List */}
-      {!showForm && (
-        <SettingsContentSection
-          title={t('credentials.title')}
-          description={t('credentials.addCredential')}
-        >
-          {credentials.length === 0 ? (
-            <div className="rounded-lg border border-border-subtle bg-background text-center py-8 text-text-muted">
-              <Key className="w-10 h-10 mx-auto mb-3 opacity-50" />
-              <p>{t('credentials.noCredentials')}</p>
-              <p className="text-sm mt-1">{t('credentials.addCredential')}</p>
-            </div>
-          ) : (
-            credentials.map((cred) => (
-              <div
-                key={cred.id}
-                className="rounded-lg border border-border-subtle bg-background p-4"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start gap-3">
-                    <div
-                      className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                        cred.type === 'email'
-                          ? 'bg-accent/10 text-accent'
-                          : cred.type === 'website'
-                            ? 'bg-success/10 text-success'
-                            : cred.type === 'api'
-                              ? 'bg-mcp/10 text-mcp'
-                              : 'bg-surface-muted text-text-muted'
-                      }`}
-                    >
-                      {getTypeIcon(cred.type)}
-                    </div>
-                    <div>
-                      <h3 className="font-medium text-text-primary">{cred.name}</h3>
-                      <p className="text-sm text-text-secondary">{cred.username}</p>
-                      {cred.service && (
-                        <span className="inline-block mt-1 px-2 py-0.5 text-xs rounded bg-surface-muted text-text-muted">
-                          {SERVICE_OPTIONS.find((s) => s.value === cred.service)?.label ||
-                            cred.service}
-                        </span>
-                      )}
-                      {cred.url && <p className="text-xs text-text-muted mt-1">{cred.url}</p>}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setEditingCredential(cred);
-                        setShowForm(true);
-                      }}
-                      disabled={isLoading}
-                      className="p-2 rounded-lg bg-surface-muted text-text-secondary hover:bg-surface-active transition-colors"
-                      title={t('common.edit')}
-                    >
-                      <Edit3 className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(cred.id)}
-                      disabled={isLoading}
-                      className="p-2 rounded-lg bg-error/10 text-error hover:bg-error/20 transition-colors"
-                      title={t('common.delete')}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </SettingsContentSection>
-      )}
-
-      {/* Add Button */}
-      {!showForm && (
-        <button
-          onClick={() => setShowForm(true)}
-          className="w-full py-3 px-4 rounded-lg border-2 border-dashed border-border-subtle hover:border-accent hover:bg-accent/5 transition-all flex items-center justify-center gap-2 text-text-secondary hover:text-accent"
-        >
-          <Plus className="w-5 h-5" />
-          {t('credentials.addNewCredential')}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function CredentialForm({
-  credential,
-  onSave,
-  onCancel,
-  isLoading,
-}: {
-  credential?: UserCredential;
-  onSave: (c: CredentialDraft) => void;
-  onCancel: () => void;
-  isLoading: boolean;
-}) {
-  const { t } = useTranslation();
-  const [name, setName] = useState(credential?.name || '');
-  const [type, setType] = useState<UserCredential['type']>(credential?.type || 'email');
-  const [service, setService] = useState(credential?.service || '');
-  const [username, setUsername] = useState(credential?.username || '');
-  const [password, setPassword] = useState('');
-  const [url, setUrl] = useState(credential?.url || '');
-  const [notes, setNotes] = useState(credential?.notes || '');
-  const [showPassword, setShowPassword] = useState(false);
-  const [formError, setFormError] = useState('');
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim() || !username.trim()) {
-      setFormError(t('credentials.nameRequired'));
-      return;
-    }
-    if (!credential && !password.trim()) {
-      setFormError(t('credentials.passwordRequired'));
-      return;
-    }
-    setFormError('');
-
-    onSave({
-      name: name.trim(),
-      type,
-      service: service || undefined,
-      username: username.trim(),
-      ...(password.trim() ? { password } : {}),
-      url: url.trim() || undefined,
-      notes: notes.trim() || undefined,
-    });
-  }
-
-  return (
-    <form
-      onSubmit={handleSubmit}
-      className="rounded-lg border border-border-subtle bg-background p-4 space-y-4"
-    >
-      <h3 className="font-medium text-text-primary">
-        {credential ? t('credentials.editCredential') : t('credentials.addNewCredential')}
-      </h3>
-
-      {formError && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-error/10 text-error text-sm">
-          <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          {formError}
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-text-primary mb-2">
-            {t('credentials.name')} *
-          </label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={t('credentials.namePlaceholder')}
-            className="w-full px-4 py-2 rounded-lg bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30"
-            required
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-text-primary mb-2">
-            {t('credentials.type')}
-          </label>
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value as UserCredential['type'])}
-            className="w-full px-4 py-2 rounded-lg bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30"
-          >
-            <option value="email">{t('credentials.typeEmail')}</option>
-            <option value="website">{t('credentials.typeWebsite')}</option>
-            <option value="api">{t('credentials.typeApi')}</option>
-            <option value="other">{t('credentials.typeOther')}</option>
-          </select>
-        </div>
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-text-primary mb-2">
-          {t('credentials.service')}
-        </label>
-        <select
-          value={service}
-          onChange={(e) => setService(e.target.value)}
-          className="w-full px-4 py-2 rounded-lg bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30"
-        >
-          <option value="">{t('credentials.selectService')}</option>
-          {SERVICE_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-text-primary mb-2">
-          {t('credentials.username')} *
-        </label>
-        <input
-          type="text"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          placeholder={t('credentials.usernamePlaceholder')}
-          className="w-full px-4 py-2 rounded-lg bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30"
-          required
-        />
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-text-primary mb-2">
-          {t('credentials.password')} {credential ? t('credentials.passwordKeepCurrent') : '*'}
-        </label>
-        <div className="relative">
-          <input
-            type={showPassword ? 'text' : 'password'}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder={credential ? '••••••••' : t('credentials.passwordPlaceholder')}
-            className="w-full px-4 py-2 pr-10 rounded-lg bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30"
-            required={!credential}
-          />
-          <button
-            type="button"
-            onClick={() => setShowPassword(!showPassword)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
-          >
-            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
-        </div>
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-text-primary mb-2">
-          {t('credentials.loginUrl')}
-        </label>
-        <input
-          type="url"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder={t('credentials.loginUrlPlaceholder')}
-          className="w-full px-4 py-2 rounded-lg bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30"
-        />
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-text-primary mb-2">
-          {t('credentials.notes')}
-        </label>
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder={t('credentials.notesPlaceholder')}
-          rows={2}
-          className="w-full px-4 py-2 rounded-lg bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30 resize-none"
-        />
-      </div>
-
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={isLoading}
-          className="flex-1 py-2 px-4 rounded-lg bg-accent text-white hover:bg-accent-hover disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-        >
-          <Save className="w-4 h-4" />
-          {isLoading ? t('common.saving') : t('common.save')}
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={isLoading}
-          className="px-4 py-2 rounded-lg bg-surface-muted text-text-secondary hover:bg-surface-active transition-colors"
-        >
-          {t('common.cancel')}
-        </button>
-      </div>
-    </form>
   );
 }

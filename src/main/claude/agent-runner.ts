@@ -27,7 +27,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { PathResolver } from '../sandbox/path-resolver';
 import { MCPManager } from '../mcp/mcp-manager';
 import { mcpConfigStore } from '../mcp/mcp-config-store';
-// credentials-store import removed: credentials should not be injected into prompts
 import {
   log,
   logWarn,

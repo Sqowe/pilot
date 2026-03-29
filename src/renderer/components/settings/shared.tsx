@@ -5,19 +5,6 @@ import type { ScheduleWeekday } from '../../types';
 
 // ==================== Shared Types ====================
 
-export interface UserCredential {
-  id: string;
-  name: string;
-  type: 'email' | 'website' | 'api' | 'other';
-  service?: string;
-  username: string;
-  password?: string;
-  url?: string;
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface MCPServerConfig {
   id: string;
   name: string;
@@ -36,8 +23,6 @@ export interface MCPServerStatus {
   connected: boolean;
   toolCount: number;
 }
-
-export type CredentialDraft = Omit<UserCredential, 'id' | 'createdAt' | 'updatedAt'>;
 
 export interface MCPToolInfo {
   serverId: string;
@@ -60,23 +45,6 @@ export interface MCPPreset {
 export type LocalizedBanner = { key?: string; text?: string };
 
 export type ScheduleFormMode = 'once' | 'daily' | 'weekly' | 'legacy-interval';
-
-// ==================== Shared Constants ====================
-
-export const SERVICE_OPTIONS = [
-  { value: 'gmail', label: 'Gmail' },
-  { value: 'outlook', label: 'Outlook / Hotmail' },
-  { value: 'yahoo', label: 'Yahoo Mail' },
-  { value: 'netease', label: 'NetEase Mail (163/126)' },
-  { value: 'qq', label: 'QQ Mail' },
-  { value: 'icloud', label: 'iCloud Mail' },
-  { value: 'proton', label: 'ProtonMail' },
-  { value: 'github', label: 'GitHub' },
-  { value: 'gitlab', label: 'GitLab' },
-  { value: 'aws', label: 'AWS' },
-  { value: 'azure', label: 'Azure' },
-  { value: 'other', label: 'Other' },
-];
 
 // ==================== Shared Helpers ====================
 

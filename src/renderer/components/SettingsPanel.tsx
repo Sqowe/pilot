@@ -15,7 +15,7 @@ import { useTranslation } from 'react-i18next';
 import { useWindowSize } from '../hooks/useWindowSize';
 import { RemoteControlPanel } from './RemoteControlPanel';
 import { useAppStore } from '../store';
-import { SettingsAPI, CredentialsTab } from './settings/SettingsAPI';
+import { SettingsAPI } from './settings/SettingsAPI';
 import { SettingsSandbox } from './settings/SettingsSandbox';
 import { SettingsConnectors } from './settings/SettingsConnectors';
 import { SettingsSkills } from './settings/SettingsSkills';
@@ -239,9 +239,6 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
                 {viewedTabs.has('api') && (
                   <>
                     <SettingsAPI />
-                    <div className="mt-8 pt-6 border-t border-border">
-                      <CredentialsTab />
-                    </div>
                   </>
                 )}
               </div>

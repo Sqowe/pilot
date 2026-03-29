@@ -25,9 +25,6 @@ import type {
   McpTool,
   McpServerStatus,
   McpPresetsMap,
-  CredentialRecord,
-  CredentialSaveInput,
-  CredentialUpdateInput,
   RemoteConfig,
   GatewayConfig,
   FeishuChannelConfig,
@@ -203,25 +200,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getTools: (): Promise<McpTool[]> => ipcRenderer.invoke('mcp.getTools'),
     getServerStatus: (): Promise<McpServerStatus[]> => ipcRenderer.invoke('mcp.getServerStatus'),
     getPresets: (): Promise<McpPresetsMap> => ipcRenderer.invoke('mcp.getPresets'),
-  },
-
-  // Credentials methods
-  // Security: getById, getByType, and getByService intentionally do NOT return
-  // the password field. Passwords are stripped by the main process IPC handlers
-  // so the renderer process never has access to plaintext passwords.
-  credentials: {
-    getAll: (): Promise<CredentialRecord[]> => ipcRenderer.invoke('credentials.getAll'),
-    getById: (id: string): Promise<CredentialRecord | undefined> =>
-      ipcRenderer.invoke('credentials.getById', id),
-    getByType: (type: string): Promise<CredentialRecord[]> =>
-      ipcRenderer.invoke('credentials.getByType', type),
-    getByService: (service: string): Promise<CredentialRecord[]> =>
-      ipcRenderer.invoke('credentials.getByService', service),
-    save: (credential: CredentialSaveInput): Promise<CredentialRecord> =>
-      ipcRenderer.invoke('credentials.save', credential),
-    update: (id: string, updates: CredentialUpdateInput): Promise<CredentialRecord | undefined> =>
-      ipcRenderer.invoke('credentials.update', id, updates),
-    delete: (id: string): Promise<boolean> => ipcRenderer.invoke('credentials.delete', id),
   },
 
   // Skills methods
@@ -475,18 +453,6 @@ declare global {
         getTools: () => Promise<McpTool[]>;
         getServerStatus: () => Promise<McpServerStatus[]>;
         getPresets: () => Promise<McpPresetsMap>;
-      };
-      credentials: {
-        getAll: () => Promise<CredentialRecord[]>;
-        getById: (id: string) => Promise<CredentialRecord | undefined>;
-        getByType: (type: string) => Promise<CredentialRecord[]>;
-        getByService: (service: string) => Promise<CredentialRecord[]>;
-        save: (credential: CredentialSaveInput) => Promise<CredentialRecord>;
-        update: (
-          id: string,
-          updates: CredentialUpdateInput
-        ) => Promise<CredentialRecord | undefined>;
-        delete: (id: string) => Promise<boolean>;
       };
       skills: {
         getAll: () => Promise<Skill[]>;
