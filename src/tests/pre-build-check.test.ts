@@ -225,7 +225,9 @@ describe('pre-build-check: runChecks', () => {
   it('includes linux-specific check on linux platform', () => {
     const result = runChecks(tmpDir, 'linux', 'x64');
 
-    const linuxCheck = result.results.find((r) => r.relPath === 'resources/node/linux-x64');
+    const linuxCheck = result.results.find(
+      (r: { relPath: string; severity: string }) => r.relPath === 'resources/node/linux-x64'
+    );
     expect(linuxCheck).toBeDefined();
     expect(linuxCheck?.severity).toBe('fatal');
   });
