@@ -32,13 +32,11 @@ export default defineConfig({
         '**/*.config.*',
         '**/mockData',
       ],
-      // Starting thresholds — intentionally low to avoid blocking CI on day one.
-      // Raise these incrementally as test coverage improves.
       thresholds: {
-        lines: 10,
-        functions: 10,
-        branches: 10,
-        statements: 10,
+        lines: 30,
+        functions: 35,
+        branches: 28,
+        statements: 30,
       },
     },
     mockReset: true,

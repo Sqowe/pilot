@@ -13,7 +13,8 @@ release/
 resources/node/
 
 # IDE
-.vscode/
+.vscode/*
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo
