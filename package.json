@@ -2,6 +2,26 @@
   "name": "open-cowork",
   "version": "3.3.0-beta.8",
   "description": "Desktop Agent application with sandboxed environment for AI Agent interaction",
+  "keywords": [
+    "ai-agent",
+    "claude",
+    "electron",
+    "desktop-app",
+    "mcp",
+    "sandbox",
+    "open-source"
+  ],
+  "homepage": "https://github.com/OpenCoworkAI/open-cowork",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OpenCoworkAI/open-cowork.git"
+  },
+  "bugs": {
+    "url": "https://github.com/OpenCoworkAI/open-cowork/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "main": "dist-electron/main/index.js",
   "scripts": {
     "dev": "npm run download:node && npm run build:wsl-agent && npm run build:lima-agent && npm run build:mcp && vite",
