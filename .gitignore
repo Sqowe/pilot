@@ -64,9 +64,7 @@ dist*
 resources/node
 resources/tools
 resources/python
-docs/plans/
-docs/bench/
-/docs/ui-review/
+docs/
 /.mcp.json
 /eng.traineddata
 /jpn.traineddata
