@@ -161,10 +161,11 @@ describe('MCPManager', () => {
       let statuses = manager.getServerStatus();
       expect(statuses[0].status).toBe('failed');
 
-      // After disconnect, status should be removed (falls back to disabled since no connection)
+      // After disconnect, status entry is removed; enabled server with no tracked status
+      // falls back to 'connecting' (transient state)
       await manager.disconnectServer('disc-test');
       statuses = manager.getServerStatus();
-      expect(statuses[0].status).toBe('disabled');
+      expect(statuses[0].status).toBe('connecting');
     });
   });
 });

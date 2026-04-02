@@ -152,6 +152,8 @@ export function SettingsConnectors({ isActive }: { isActive: boolean }) {
       const result = await window.electronAPI.mcp.saveServer(server);
       if (result && !result.success && result.error) {
         setError(result.error);
+        // Keep form open so the user can see and act on the error
+        return;
       }
       await loadAll();
       setEditingServer(null);
@@ -420,7 +422,8 @@ function ServerCard({
   isLoading: boolean;
 }) {
   const { t } = useTranslation();
-  const serverStatus = status?.status;
+  // Fall back to 'connecting' for enabled servers when status poll hasn't returned yet
+  const serverStatus = status?.status ?? (server.enabled ? 'connecting' : 'disabled');
   const [showTools, setShowTools] = useState(false);
 
   return (

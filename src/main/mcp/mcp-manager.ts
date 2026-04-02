@@ -802,6 +802,9 @@ export class MCPManager {
         clearTimeout(connectTimeoutId!);
       } catch (error) {
         clearTimeout(connectTimeoutId!);
+        // Prevent UnhandledPromiseRejection from the orphaned connectPromise
+        // when timeout wins the race and transport is closed beneath it.
+        connectPromise.catch(() => {});
         throw error;
       }
       log(`[MCPManager] Client.connect() completed successfully`);
@@ -1448,6 +1451,8 @@ export class MCPManager {
     }
 
     this.reconnectingServers.add(serverId);
+    // Pre-set 'connecting' before disconnect to avoid status flickering to 'disabled'
+    this.connectionStatus.set(serverId, 'connecting');
     try {
       await this.disconnectServer(serverId);
       await this.connectServer(config);
@@ -1496,7 +1501,9 @@ export class MCPManager {
       } else if (connected) {
         serverStatus = 'connected';
       } else {
-        serverStatus = 'disabled';
+        // Enabled server with no tracked status and no client — likely transient
+        // (e.g. during reconnect after disconnectServer deleted the entry).
+        serverStatus = 'connecting';
       }
 
       status.push({
