@@ -688,9 +688,8 @@ export class MCPManager {
           });
           log(`[MCPManager] npx test successful: ${testResult.stdout.trim()}`);
         } catch (testError: unknown) {
-          logError(
-            `[MCPManager] npx test failed: ${testError instanceof Error ? testError.message : String(testError)}`
-          );
+          const errorMsg = testError instanceof Error ? testError.message : String(testError);
+          logError(`[MCPManager] npx test failed: ${errorMsg}`);
           if (
             testError instanceof Error &&
             (testError as NodeJS.ErrnoException & { stderr?: string }).stderr
@@ -699,7 +698,10 @@ export class MCPManager {
               `[MCPManager] npx test stderr: ${(testError as NodeJS.ErrnoException & { stderr?: string }).stderr}`
             );
           }
-          logError(`[MCPManager] This indicates npx cannot run with the current environment`);
+          throw new Error(
+            `npx is not available or cannot execute (${errorMsg}). ` +
+              `Please ensure Node.js is installed and npx is accessible in your PATH.`
+          );
         }
       }
 
