@@ -415,6 +415,7 @@
     "connected": "Connected",
     "notConnected": "Not connected",
     "connecting": "Connecting...",
+    "failed": "Connection failed",
     "chromeHint": "A new Chrome debug window will open automatically if port is unavailable",
     "quickAddPresets": "Quick Add Presets",
     "show": "Show",

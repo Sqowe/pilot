@@ -415,6 +415,7 @@
     "connected": "已连接",
     "notConnected": "未连接",
     "connecting": "连接中...",
+    "failed": "连接失败",
     "chromeHint": "如果端口不可用，将自动打开新的 Chrome 调试窗口",
     "quickAddPresets": "快速添加预设",
     "show": "显示",
