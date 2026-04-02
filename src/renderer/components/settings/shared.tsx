@@ -21,6 +21,7 @@ export interface MCPServerStatus {
   id: string;
   name: string;
   connected: boolean;
+  status: 'connecting' | 'connected' | 'failed' | 'disabled';
   toolCount: number;
 }
 

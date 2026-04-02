@@ -1563,6 +1563,13 @@ ipcMain.handle('mcp.saveServer', async (_event, config: MCPServerConfig) => {
       log(`[MCP] Server ${config.name} updated successfully`);
     } catch (err) {
       logError('[MCP] Failed to update server:', err);
+      // Roll back: save the config with enabled=false so a broken connector
+      // is not retried on next app startup
+      if (config.enabled) {
+        mcpConfigStore.saveServer({ ...config, enabled: false });
+      }
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      return { success: false, error: errorMessage };
     }
   }
   return { success: true };

@@ -73,6 +73,8 @@ export class MCPManager {
   private pendingInitConfigs: MCPServerConfig[] | null = null;
   // Guards against concurrent reconnect/update operations on the same server
   private reconnectingServers: Set<string> = new Set();
+  // Tracks per-server connection status for UI display
+  private connectionStatus = new Map<string, 'connecting' | 'connected' | 'failed'>();
 
   /**
    * Get bundled Node.js path
@@ -530,6 +532,23 @@ export class MCPManager {
   private async connectServer(config: MCPServerConfig): Promise<void> {
     log(`[MCPManager] Connecting to MCP server: ${config.name} (${config.type})`);
 
+    // Mark status as connecting at the very start, before any transport creation
+    this.connectionStatus.set(config.id, 'connecting');
+
+    try {
+      await this.connectServerInternal(config);
+      this.connectionStatus.set(config.id, 'connected');
+    } catch (error) {
+      this.connectionStatus.set(config.id, 'failed');
+      throw error;
+    }
+  }
+
+  /**
+   * Internal connect logic — separated so connectServer can guarantee
+   * connectionStatus is always set to 'connected' or 'failed'.
+   */
+  private async connectServerInternal(config: MCPServerConfig): Promise<void> {
     let transport: StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport;
     let commandForLogging = '';
     let argsForLogging: string[] = [];
@@ -772,8 +791,28 @@ export class MCPManager {
     log(`[MCPManager] MCP client created, attempting to connect...`);
 
     try {
-      // Connect (client.connect() will automatically call transport.start())
-      await client.connect(transport);
+      // Connect with timeout to prevent hanging indefinitely (e.g. npx download stalls)
+      const connectTimeoutMs = 30000; // 30 second timeout
+      const connectPromise = client.connect(transport);
+      let connectTimeoutId: ReturnType<typeof setTimeout>;
+      const connectTimeoutPromise = new Promise<never>((_, reject) => {
+        connectTimeoutId = setTimeout(
+          () =>
+            reject(new Error(`MCP server connection timed out after ${connectTimeoutMs / 1000}s`)),
+          connectTimeoutMs
+        );
+      });
+
+      try {
+        await Promise.race([connectPromise, connectTimeoutPromise]);
+        clearTimeout(connectTimeoutId!);
+      } catch (error) {
+        clearTimeout(connectTimeoutId!);
+        // Prevent UnhandledPromiseRejection from the orphaned connectPromise
+        // when timeout wins the race and transport is closed beneath it.
+        connectPromise.catch(() => {});
+        throw error;
+      }
       log(`[MCPManager] Client.connect() completed successfully`);
 
       // After connect(), the STDIO transport has spawned the child process.
@@ -1162,6 +1201,8 @@ export class MCPManager {
       this.tools.delete(toolName);
     }
 
+    this.connectionStatus.delete(serverId);
+
     log(`[MCPManager] Disconnected from server ${serverId}`);
   }
 
@@ -1416,6 +1457,8 @@ export class MCPManager {
     }
 
     this.reconnectingServers.add(serverId);
+    // Pre-set 'connecting' before disconnect to avoid status flickering to 'disabled'
+    this.connectionStatus.set(serverId, 'connecting');
     try {
       await this.disconnectServer(serverId);
       await this.connectServer(config);
@@ -1433,8 +1476,20 @@ export class MCPManager {
   /**
    * Get server status
    */
-  getServerStatus(): Array<{ id: string; name: string; connected: boolean; toolCount: number }> {
-    const status: Array<{ id: string; name: string; connected: boolean; toolCount: number }> = [];
+  getServerStatus(): Array<{
+    id: string;
+    name: string;
+    connected: boolean;
+    status: 'connecting' | 'connected' | 'failed' | 'disabled';
+    toolCount: number;
+  }> {
+    const status: Array<{
+      id: string;
+      name: string;
+      connected: boolean;
+      status: 'connecting' | 'connected' | 'failed' | 'disabled';
+      toolCount: number;
+    }> = [];
 
     for (const [serverId, config] of this.serverConfigs.entries()) {
       const connected = this.clients.has(serverId);
@@ -1442,10 +1497,26 @@ export class MCPManager {
         (tool) => tool.serverId === serverId
       ).length;
 
+      // Derive status: use connectionStatus map if available, otherwise infer from enabled/connected
+      let serverStatus: 'connecting' | 'connected' | 'failed' | 'disabled';
+      const trackedStatus = this.connectionStatus.get(serverId);
+      if (!config.enabled) {
+        serverStatus = 'disabled';
+      } else if (trackedStatus) {
+        serverStatus = trackedStatus;
+      } else if (connected) {
+        serverStatus = 'connected';
+      } else {
+        // Enabled server with no tracked status and no client — likely transient
+        // (e.g. during reconnect after disconnectServer deleted the entry).
+        serverStatus = 'connecting';
+      }
+
       status.push({
         id: serverId,
         name: config.name,
         connected,
+        status: serverStatus,
         toolCount,
       });
     }

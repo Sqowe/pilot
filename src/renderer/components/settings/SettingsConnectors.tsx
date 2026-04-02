@@ -149,7 +149,12 @@ export function SettingsConnectors({ isActive }: { isActive: boolean }) {
     setIsLoading(true);
     setError('');
     try {
-      await window.electronAPI.mcp.saveServer(server);
+      const result = await window.electronAPI.mcp.saveServer(server);
+      if (result && !result.success && result.error) {
+        setError(result.error);
+        // Keep form open so the user can see and act on the error
+        return;
+      }
       await loadAll();
       setEditingServer(null);
       setShowAddForm(false);
@@ -417,7 +422,8 @@ function ServerCard({
   isLoading: boolean;
 }) {
   const { t } = useTranslation();
-  const isConnected = status?.connected || false;
+  // Fall back to 'connecting' for enabled servers when status poll hasn't returned yet
+  const serverStatus = status?.status ?? (server.enabled ? 'connecting' : 'disabled');
   const [showTools, setShowTools] = useState(false);
 
   return (
@@ -427,7 +433,15 @@ function ServerCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-2 flex-wrap">
               <div
-                className={`w-3 h-3 rounded-full ${isConnected ? 'bg-success' : 'bg-text-muted'}`}
+                className={`w-3 h-3 rounded-full ${
+                  serverStatus === 'connected'
+                    ? 'bg-success'
+                    : serverStatus === 'failed'
+                      ? 'bg-error'
+                      : serverStatus === 'connecting'
+                        ? 'bg-warning'
+                        : 'bg-text-muted'
+                }`}
               />
               <h3 className="font-medium text-text-primary">{server.name}</h3>
               <span className="px-2 py-0.5 text-xs rounded bg-surface-muted text-text-muted">
@@ -456,18 +470,22 @@ function ServerCard({
               {/* Status hint — consistent for all servers */}
               <div
                 className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md w-fit ${
-                  isConnected
+                  serverStatus === 'connected'
                     ? 'bg-success/10 text-success'
-                    : server.enabled
-                      ? 'bg-warning/10 text-warning'
-                      : 'bg-accent/10 text-accent'
+                    : serverStatus === 'failed'
+                      ? 'bg-error/10 text-error'
+                      : serverStatus === 'connecting'
+                        ? 'bg-warning/10 text-warning'
+                        : 'bg-accent/10 text-accent'
                 }`}
               >
-                {isConnected
+                {serverStatus === 'connected'
                   ? `✓ ${t('mcp.connected')}`
-                  : server.enabled
-                    ? `⏳ ${t('mcp.connecting')}`
-                    : t('mcp.disabled', { defaultValue: 'Disabled' })}
+                  : serverStatus === 'failed'
+                    ? t('mcp.failed', { defaultValue: 'Connection failed' })
+                    : serverStatus === 'connecting'
+                      ? `⏳ ${t('mcp.connecting')}`
+                      : t('mcp.disabled', { defaultValue: 'Disabled' })}
               </div>
               <div className="flex items-center gap-4 mt-2">
                 <button

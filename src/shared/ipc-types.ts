@@ -44,6 +44,7 @@ export interface McpServerStatus {
   id: string;
   name: string;
   connected: boolean;
+  status: 'connecting' | 'connected' | 'failed' | 'disabled';
   toolCount: number;
 }
 
