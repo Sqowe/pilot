@@ -212,6 +212,8 @@ const defaultSettings: Settings = {
     { tool: 'edit', action: 'ask' },
     { tool: 'bash', action: 'ask' },
   ],
+  bashTrustedCommands: [],
+  bashDenylist: [],
   globalSkillsPath: '',
   memoryStrategy: 'auto',
   maxContextTokens: 180000,

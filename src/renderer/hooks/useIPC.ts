@@ -344,21 +344,25 @@ export function useIPC() {
         store.setSystemDarkMode(Boolean(systemTheme?.shouldUseDarkColors));
         applyConfigSnapshot(config, Boolean(isConfigured));
 
-        // Hydrate main-process permission rules from the renderer's (possibly
-        // persisted) settings so the agent has them before the first tool call.
-        // Re-read the store after applyConfigSnapshot so we send the latest
-        // persisted rules, not a stale pre-hydration snapshot.
+        // Bootstrap hydration: push the renderer's (possibly persisted)
+        // permission settings to main so the agent has them before the first
+        // tool call. Subsequent changes do NOT need to piggyback here —
+        // `useAppStore.updateSettings()` already fires `settings.update` for
+        // any settings key the UI mutates (see src/renderer/store/index.ts),
+        // so `bashTrustedCommands` / `bashDenylist` edits made through the
+        // settings UI will reach main automatically.
         try {
           const latest = useAppStore.getState();
           window.electronAPI.send({
             type: 'settings.update',
-            payload: { permissionRules: latest.settings.permissionRules } as Record<
-              string,
-              unknown
-            >,
+            payload: {
+              permissionRules: latest.settings.permissionRules,
+              bashTrustedCommands: latest.settings.bashTrustedCommands,
+              bashDenylist: latest.settings.bashDenylist,
+            } as Record<string, unknown>,
           });
         } catch (syncErr) {
-          console.warn('[useIPC] Failed to sync permissionRules to main:', syncErr);
+          console.warn('[useIPC] Failed to sync permission settings to main:', syncErr);
         }
       } catch (error) {
         console.error('[useIPC] Failed to bootstrap config/theme state:', error);

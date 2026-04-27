@@ -31,7 +31,7 @@ import {
 } from './config/config-store';
 import { runConfigApiTest } from './config/config-test-routing';
 import { listOllamaModels } from './config/ollama-api';
-import { setPermissionRules } from './config/permission-rules-store';
+import { setPermissionRules, setBashCommandLists } from './config/permission-rules-store';
 import { mcpConfigStore } from './mcp/mcp-config-store';
 import { getSandboxAdapter, shutdownSandbox } from './sandbox/sandbox-adapter';
 import { SandboxSync } from './sandbox/sandbox-sync';
@@ -46,7 +46,6 @@ import type {
   ApiTestResult,
   DiagnosticInput,
   ProviderModelInfo,
-  PermissionRule,
 } from '../renderer/types';
 import { remoteManager, type AgentExecutor } from './remote/remote-manager';
 import { remoteConfigStore } from './remote/remote-config-store';
@@ -2666,10 +2665,34 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
         });
       }
 
-      if (Array.isArray((event.payload as { permissionRules?: unknown }).permissionRules)) {
-        setPermissionRules(
-          (event.payload as { permissionRules: PermissionRule[] }).permissionRules
-        );
+      // Permission-related settings are gated behind a single object-guard
+      // so a malformed IPC message (null payload, primitive payload) can
+      // never throw inside the property checks below. Each sub-block
+      // decides independently whether the payload carries its field.
+      // We use `Object.prototype.hasOwnProperty.call` instead of the `in`
+      // operator so an inherited / prototype-chain property can never be
+      // mistaken for an intentional update at this trust boundary.
+      if (event.payload && typeof event.payload === 'object') {
+        const payload = event.payload as {
+          permissionRules?: unknown;
+          bashTrustedCommands?: unknown;
+          bashDenylist?: unknown;
+        };
+        const hasOwn = (key: string): boolean => Object.prototype.hasOwnProperty.call(payload, key);
+
+        if (Array.isArray(payload.permissionRules)) {
+          setPermissionRules(payload.permissionRules);
+        }
+
+        // Bash trust list and denylist are handled together so a caller can
+        // send either or both. `undefined` means "leave that list
+        // unchanged" per `setBashCommandLists`'s partial-update semantics.
+        if (hasOwn('bashTrustedCommands') || hasOwn('bashDenylist')) {
+          setBashCommandLists(
+            hasOwn('bashTrustedCommands') ? payload.bashTrustedCommands : undefined,
+            hasOwn('bashDenylist') ? payload.bashDenylist : undefined
+          );
+        }
       }
       return null;
 
