@@ -50,6 +50,7 @@ import { getDefaultShell } from '../utils/shell-resolver';
 import { PluginRuntimeService } from '../skills/plugin-runtime-service';
 import type { SkillsAdapter } from '../skills/skills-adapter';
 import { configStore } from '../config/config-store';
+import { loadWorkspaceSystemPrompt } from '../utils/workspace-system-prompt';
 import { normalizeOpenAICompatibleBaseUrl } from '../config/auth-utils';
 import { resolveMessageEndPayload, toUserFacingErrorText } from './agent-runner-message-end';
 import {
@@ -1487,6 +1488,16 @@ ${hints.join('\n')}
       logCtx('[ClaudeAgentRunner] Enable thinking mode:', enableThinking);
       type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
       const thinkingLevel: PiThinkingLevel = enableThinking ? 'medium' : 'off';
+
+      // Load workspace-level instructions once per query so the fingerprint is
+      // available to the runtime signature below. Reused cached sessions get
+      // invalidated automatically when the file content / chosen filename
+      // changes, which is the whole point of including the fingerprint here.
+      const workspaceInstructions = await loadWorkspaceSystemPrompt(
+        effectiveCwd,
+        configStore.get('systemPromptFile')
+      );
+
       const sessionRuntimeSignature = buildPiSessionRuntimeSignature({
         configProvider: runtimeConfig.provider,
         customProtocol: runtimeConfig.customProtocol,
@@ -1495,6 +1506,7 @@ ${hints.join('\n')}
         modelBaseUrl: piModel.baseUrl,
         effectiveCwd,
         apiKey,
+        workspaceInstructionsFingerprint: workspaceInstructions?.fingerprint,
       });
 
       // Build contextual prompt — if reusing an existing SDK session, the SDK
@@ -1857,10 +1869,25 @@ Tool routing:
         // First query in this session — create new pi-coding-agent session
         // ResourceLoader + ModelRegistry only needed for session creation — skip on reuse
         const { DefaultResourceLoader } = await import('@mariozechner/pi-coding-agent');
+
+        // Workspace-level instructions (loaded earlier in this call for signature
+        // fingerprinting): if present, append to the end of the system prompt so
+        // they act as last-word project guidance (recency-weighted).
+        // Missing file or no choice → appendSystemPrompt stays as coworkAppendPrompt.
+        let appendSystemPrompt = coworkAppendPrompt;
+        if (workspaceInstructions) {
+          appendSystemPrompt = `${coworkAppendPrompt}\n\n<workspace_instructions>\n${workspaceInstructions.text}\n</workspace_instructions>`;
+          log(
+            '[ClaudeAgentRunner] Appended workspace instructions to system prompt (file:',
+            configStore.get('systemPromptFile'),
+            ')'
+          );
+        }
+
         const resourceLoader = new DefaultResourceLoader({
           cwd: effectiveCwd,
           additionalSkillPaths: skillPaths,
-          appendSystemPrompt: coworkAppendPrompt,
+          appendSystemPrompt,
         });
         await resourceLoader.reload();
 

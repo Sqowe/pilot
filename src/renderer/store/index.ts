@@ -213,6 +213,7 @@ const defaultSettings: Settings = {
     { tool: 'bash', action: 'ask' },
   ],
   globalSkillsPath: '',
+  systemPromptFile: '',
   memoryStrategy: 'auto',
   maxContextTokens: 180000,
 };

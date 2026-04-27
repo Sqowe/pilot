@@ -74,7 +74,10 @@
     "themeLight": "浅色",
     "themeDark": "深色",
     "themeSystem": "跟随系统",
-    "language": "语言"
+    "language": "语言",
+    "systemPromptFile": "工作区指令文件",
+    "systemPromptFileDesc": "当会话工作目录中存在该文件时，其内容会作为项目级指令追加到系统提示末尾。文件不存在时回退到默认提示。",
+    "systemPromptFileNone": "无（使用默认）"
   },
   "language": {
     "english": "English",

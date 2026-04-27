@@ -67,8 +67,36 @@ describe('ClaudeAgentRunner pi-coding-agent integration', () => {
 
   it('uses pi DefaultResourceLoader with additionalSkillPaths and appendSystemPrompt', () => {
     expect(agentRunnerContent).toContain('additionalSkillPaths: skillPaths');
-    expect(agentRunnerContent).toContain('appendSystemPrompt: coworkAppendPrompt');
+    // appendSystemPrompt is now a locally-composed variable that may include
+    // optional workspace instructions — still passed as `appendSystemPrompt`.
+    expect(agentRunnerContent).toContain('appendSystemPrompt,');
+    expect(agentRunnerContent).toContain('let appendSystemPrompt = coworkAppendPrompt;');
     expect(agentRunnerContent).not.toContain('systemPromptOverride');
+  });
+
+  it('optionally appends workspace instructions to the system prompt', () => {
+    expect(agentRunnerContent).toContain(
+      "import { loadWorkspaceSystemPrompt } from '../utils/workspace-system-prompt'"
+    );
+    expect(agentRunnerContent).toContain('loadWorkspaceSystemPrompt(');
+    expect(agentRunnerContent).toContain("configStore.get('systemPromptFile')");
+    expect(agentRunnerContent).toContain('<workspace_instructions>');
+    expect(agentRunnerContent).toContain('</workspace_instructions>');
+  });
+
+  it('invalidates cached pi sessions when workspace instructions change', () => {
+    // Fingerprint must be fed into the runtime signature so cached sessions get
+    // recreated whenever the chosen filename / file contents change.
+    expect(agentRunnerContent).toContain(
+      'workspaceInstructionsFingerprint: workspaceInstructions?.fingerprint'
+    );
+    // Loader call must happen before the signature build so the fingerprint is
+    // available; grep the ordering via index comparison.
+    const loadIdx = agentRunnerContent.indexOf('loadWorkspaceSystemPrompt(');
+    const sigIdx = agentRunnerContent.indexOf('buildPiSessionRuntimeSignature({');
+    expect(loadIdx).toBeGreaterThan(-1);
+    expect(sigIdx).toBeGreaterThan(-1);
+    expect(loadIdx).toBeLessThan(sigIdx);
   });
 
   it('recreates cached pi sessions when the runtime signature changes', () => {

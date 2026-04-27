@@ -30,6 +30,10 @@ import {
   shouldUseAnthropicAuthToken,
 } from './auth-utils';
 import { API_PROVIDER_PRESETS, PI_AI_CURATED_PRESETS } from '../../shared/api-model-presets';
+import {
+  isValidSystemPromptFileChoice,
+  type SystemPromptFileChoice,
+} from '../../shared/system-prompt-file-choices';
 
 /**
  * Application configuration schema
@@ -106,6 +110,11 @@ export interface AppConfig {
   // Optional: Global skills storage directory
   globalSkillsPath?: string;
 
+  // Optional: workspace-level instructions file injected as system prompt tail.
+  // Empty string (default) preserves today's behavior. See
+  // `loadWorkspaceSystemPrompt` for the valid choices and safety model.
+  systemPromptFile?: SystemPromptFileChoice;
+
   // Developer logs
   enableDevLogs: boolean;
 
@@ -135,6 +144,7 @@ const DIRECT_READ_KEYS = new Set<keyof AppConfig>([
   'claudeCodePath',
   'defaultWorkdir',
   'globalSkillsPath',
+  'systemPromptFile',
   'enableDevLogs',
   'theme',
   'sandboxEnabled',
@@ -210,6 +220,7 @@ const defaultConfig: AppConfig = {
   claudeCodePath: '',
   defaultWorkdir: '',
   globalSkillsPath: '',
+  systemPromptFile: '',
   enableDevLogs: false,
   theme: 'light',
   sandboxEnabled: false,
@@ -844,6 +855,9 @@ export class ConfigStore {
         typeof raw.globalSkillsPath === 'string'
           ? raw.globalSkillsPath
           : defaultConfig.globalSkillsPath,
+      systemPromptFile: isValidSystemPromptFileChoice(raw.systemPromptFile)
+        ? raw.systemPromptFile
+        : defaultConfig.systemPromptFile,
       enableDevLogs: toBoolean(raw.enableDevLogs, defaultConfig.enableDevLogs),
       theme: isAppTheme(raw.theme) ? raw.theme : defaultConfig.theme,
       sandboxEnabled: toBoolean(raw.sandboxEnabled, defaultConfig.sandboxEnabled),
@@ -1254,6 +1268,10 @@ export class ConfigStore {
         updates.globalSkillsPath !== undefined
           ? updates.globalSkillsPath
           : current.globalSkillsPath,
+      systemPromptFile:
+        updates.systemPromptFile !== undefined
+          ? updates.systemPromptFile
+          : current.systemPromptFile,
       enableDevLogs:
         updates.enableDevLogs !== undefined ? updates.enableDevLogs : current.enableDevLogs,
       theme: updates.theme !== undefined ? updates.theme : current.theme,

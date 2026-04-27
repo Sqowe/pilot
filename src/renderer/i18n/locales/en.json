@@ -74,7 +74,10 @@
     "themeLight": "Light",
     "themeDark": "Dark",
     "themeSystem": "System",
-    "language": "Language"
+    "language": "Language",
+    "systemPromptFile": "Workspace instructions file",
+    "systemPromptFileDesc": "When this file exists at the session working directory, its contents are appended to the system prompt as project-level instructions. Missing file falls back to the default.",
+    "systemPromptFileNone": "None (use default)"
   },
   "language": {
     "english": "English",

@@ -8,6 +8,13 @@ export interface PiSessionRuntimeSignatureInput {
   modelBaseUrl?: string;
   effectiveCwd?: string;
   apiKey?: string;
+  /**
+   * Stable fingerprint of the workspace instructions file content (if any).
+   * Changes here force session recreation so an edited CLAUDE.md / AGENTS.md
+   * / etc. takes effect on the next query without leaving a stale prompt
+   * tail baked into a cached pi session.
+   */
+  workspaceInstructionsFingerprint?: string;
 }
 
 function normalizeText(value: string | undefined): string {
@@ -22,9 +29,7 @@ function fingerprintSecret(value: string | undefined): string {
   return createHash('sha256').update(normalized).digest('hex');
 }
 
-export function buildPiSessionRuntimeSignature(
-  input: PiSessionRuntimeSignatureInput,
-): string {
+export function buildPiSessionRuntimeSignature(input: PiSessionRuntimeSignatureInput): string {
   return JSON.stringify({
     configProvider: normalizeText(input.configProvider),
     customProtocol: normalizeText(input.customProtocol),
@@ -33,5 +38,6 @@ export function buildPiSessionRuntimeSignature(
     modelBaseUrl: normalizeText(input.modelBaseUrl).replace(/\/+$/, ''),
     effectiveCwd: normalizeText(input.effectiveCwd),
     apiKeyFingerprint: fingerprintSecret(input.apiKey),
+    workspaceInstructionsFingerprint: normalizeText(input.workspaceInstructionsFingerprint),
   });
 }
