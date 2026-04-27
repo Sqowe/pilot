@@ -441,6 +441,17 @@ export interface Settings {
   apiKey?: string;
   defaultTools: string[];
   permissionRules: PermissionRule[];
+  /**
+   * Prefix patterns (with `*` wildcard) for bash commands that should be
+   * auto-approved without prompting. Matched against each sub-command in a
+   * chained command individually — see `decideBashPermission`.
+   */
+  bashTrustedCommands: string[];
+  /**
+   * Substring patterns for bash commands that must always require manual
+   * approval, overriding any match in `bashTrustedCommands`.
+   */
+  bashDenylist: string[];
   globalSkillsPath: string;
   systemPromptFile: SystemPromptFileChoice;
   memoryStrategy: 'auto' | 'manual' | 'rolling';
