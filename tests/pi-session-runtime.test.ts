@@ -25,25 +25,33 @@ describe('pi session runtime signature', () => {
   it('changes when base url, api, key, or cwd changes', () => {
     const original = buildPiSessionRuntimeSignature(baseInput);
 
-    expect(buildPiSessionRuntimeSignature({
-      ...baseInput,
-      modelBaseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-    })).not.toBe(original);
+    expect(
+      buildPiSessionRuntimeSignature({
+        ...baseInput,
+        modelBaseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      })
+    ).not.toBe(original);
 
-    expect(buildPiSessionRuntimeSignature({
-      ...baseInput,
-      modelApi: 'openai-responses',
-    })).not.toBe(original);
+    expect(
+      buildPiSessionRuntimeSignature({
+        ...baseInput,
+        modelApi: 'openai-responses',
+      })
+    ).not.toBe(original);
 
-    expect(buildPiSessionRuntimeSignature({
-      ...baseInput,
-      apiKey: 'sk-another-key',
-    })).not.toBe(original);
+    expect(
+      buildPiSessionRuntimeSignature({
+        ...baseInput,
+        apiKey: 'sk-another-key',
+      })
+    ).not.toBe(original);
 
-    expect(buildPiSessionRuntimeSignature({
-      ...baseInput,
-      effectiveCwd: '/workspace/other',
-    })).not.toBe(original);
+    expect(
+      buildPiSessionRuntimeSignature({
+        ...baseInput,
+        effectiveCwd: '/workspace/other',
+      })
+    ).not.toBe(original);
   });
 
   it('normalizes equivalent urls with trailing slashes', () => {
@@ -54,5 +62,35 @@ describe('pi session runtime signature', () => {
     });
 
     expect(normalized).toBe(original);
+  });
+
+  it('changes when workspaceInstructionsFingerprint changes', () => {
+    const withoutInstructions = buildPiSessionRuntimeSignature(baseInput);
+    const withInstructions = buildPiSessionRuntimeSignature({
+      ...baseInput,
+      workspaceInstructionsFingerprint: 'abc123',
+    });
+    const changedInstructions = buildPiSessionRuntimeSignature({
+      ...baseInput,
+      workspaceInstructionsFingerprint: 'def456',
+    });
+
+    expect(withInstructions).not.toBe(withoutInstructions);
+    expect(changedInstructions).not.toBe(withInstructions);
+  });
+
+  it('treats missing and empty workspaceInstructionsFingerprint the same', () => {
+    const implicit = buildPiSessionRuntimeSignature(baseInput);
+    const explicitEmpty = buildPiSessionRuntimeSignature({
+      ...baseInput,
+      workspaceInstructionsFingerprint: '',
+    });
+    const explicitUndefined = buildPiSessionRuntimeSignature({
+      ...baseInput,
+      workspaceInstructionsFingerprint: undefined,
+    });
+
+    expect(explicitEmpty).toBe(implicit);
+    expect(explicitUndefined).toBe(implicit);
   });
 });

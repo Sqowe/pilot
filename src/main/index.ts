@@ -82,6 +82,7 @@ import {
 } from './utils/logger';
 import { listRecentWorkspaceFiles } from './utils/recent-workspace-files';
 import { buildDiagnosticsSummary } from './utils/diagnostics-summary';
+import { isValidSystemPromptFileChoice } from '../shared/system-prompt-file-choices';
 
 // Current working directory (persisted between sessions)
 let currentWorkingDir: string | null = null;
@@ -2662,6 +2663,22 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
             config: configStore.getAll(),
           },
         });
+      }
+
+      if ('systemPromptFile' in event.payload) {
+        const raw = (event.payload as { systemPromptFile?: unknown }).systemPromptFile;
+        if (isValidSystemPromptFileChoice(raw)) {
+          configStore.update({ systemPromptFile: raw });
+          sendToRenderer({
+            type: 'config.status',
+            payload: {
+              isConfigured: configStore.isConfigured(),
+              config: configStore.getAll(),
+            },
+          });
+        } else {
+          logWarn('[settings.update] Ignored invalid systemPromptFile value:', raw);
+        }
       }
       return null;
 
