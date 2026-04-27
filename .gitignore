@@ -101,6 +101,9 @@ website/.vitepress/cache/
 # Temp directories
 .tmp/
 
+# Semantic index cache (per-developer, built by .claude/skills/semantic-index)
+.index/
+
 # Screenshots (debug/review)
 *.png
 !src/renderer/assets/*.png
