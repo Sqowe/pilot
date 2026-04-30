@@ -66,7 +66,9 @@
     "logsDesc": "查看和导出应用日志",
     "panelDesc": "配置工作区、工具以及账号相关行为。",
     "general": "通用",
-    "generalDesc": "外观、语言等通用偏好"
+    "generalDesc": "外观、语言等通用偏好",
+    "bashCommands": "Bash 命令",
+    "bashCommandsDesc": "逐条命令的信任列表和禁止列表"
   },
   "general": {
     "appearance": "外观",
@@ -75,6 +77,15 @@
     "themeDark": "深色",
     "themeSystem": "跟随系统",
     "language": "语言"
+  },
+  "bashCommands": {
+    "modeAuthoritative": "专属策略模式：以下列表就是 Bash 命令的完整策略，未被明确信任的命令都会弹出审批提示。",
+    "modeInactive": "未配置。当前使用默认的 Bash 规则。请至少添加一个信任模式或禁止条目以启用细粒度控制。",
+    "trustedTitle": "信任命令",
+    "trustedDesc": "每行一个模式。按前缀匹配，`*` 作为通配符。匹配到的命令将不再弹出提示。链式命令（&&、||、;、|）中的每个子命令都会单独检查。",
+    "denylistTitle": "禁止列表（强制弹出审批）",
+    "denylistDesc": "每行一个模式。按子串匹配。只要命令包含禁止列表中的任一条目，即使同时匹配信任列表也会弹出提示。",
+    "safetyNote": "无法安全解析的 Shell 扩展（命令替换、进程替换、换行符、孤立的后台 & 等）都会弹出审批提示，即使命中了信任模式。"
   },
   "language": {
     "english": "English",

@@ -101,7 +101,13 @@ export function getPermissionRules(): PermissionRule[] {
 let bashTrustedCommands: string[] = [];
 let bashDenylist: string[] = [];
 
-function sanitizeStringList(input: unknown): string[] {
+/**
+ * Normalize an unknown value into a clean string array: drops non-string
+ * entries, trims whitespace, and filters out empties. Exported so that the
+ * main-process IPC handler, `configStore`, and this module all agree on
+ * exactly what a "bash command list" looks like at the trust boundary.
+ */
+export function sanitizeBashCommandList(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
   const out: string[] = [];
   for (const raw of input) {
@@ -111,6 +117,9 @@ function sanitizeStringList(input: unknown): string[] {
   }
   return out;
 }
+
+// Kept as an internal alias so the rest of this file reads naturally.
+const sanitizeStringList = sanitizeBashCommandList;
 
 /**
  * Update one or both bash command lists. Passing `undefined` for either

@@ -9,6 +9,7 @@ import {
   Wifi,
   AlertCircle,
   Globe,
+  Terminal,
   ChevronRight,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -22,6 +23,7 @@ import { SettingsSkills } from './settings/SettingsSkills';
 import { SettingsSchedule } from './settings/SettingsSchedule';
 import { SettingsGeneral } from './settings/SettingsGeneral';
 import { SettingsLogs } from './settings/SettingsLogs';
+import { SettingsBashCommands } from './settings/SettingsBashCommands';
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -33,7 +35,8 @@ interface SettingsPanelProps {
     | 'schedule'
     | 'remote'
     | 'logs'
-    | 'general';
+    | 'general'
+    | 'bashCommands';
 }
 
 type TabId =
@@ -44,7 +47,8 @@ type TabId =
   | 'schedule'
   | 'remote'
   | 'logs'
-  | 'general';
+  | 'general'
+  | 'bashCommands';
 
 const VALID_TABS = new Set<TabId>([
   'api',
@@ -55,6 +59,7 @@ const VALID_TABS = new Set<TabId>([
   'remote',
   'logs',
   'general',
+  'bashCommands',
 ]);
 
 export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProps) {
@@ -145,6 +150,12 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
       label: t('settings.general'),
       icon: Globe,
       description: t('settings.generalDesc'),
+    },
+    {
+      id: 'bashCommands' as TabId,
+      label: t('settings.bashCommands', 'Bash Commands'),
+      icon: Terminal,
+      description: t('settings.bashCommandsDesc', 'Per-command trust list and denylist'),
     },
   ];
   const activeTabMeta = tabs.find((tab) => tab.id === activeTab);
@@ -268,6 +279,9 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
               </div>
               <div className={activeTab === 'general' ? '' : 'hidden'}>
                 {viewedTabs.has('general') && <SettingsGeneral />}
+              </div>
+              <div className={activeTab === 'bashCommands' ? '' : 'hidden'}>
+                {viewedTabs.has('bashCommands') && <SettingsBashCommands />}
               </div>
             </div>
           </div>

@@ -31,7 +31,11 @@ import {
 } from './config/config-store';
 import { runConfigApiTest } from './config/config-test-routing';
 import { listOllamaModels } from './config/ollama-api';
-import { setPermissionRules, setBashCommandLists } from './config/permission-rules-store';
+import {
+  setPermissionRules,
+  setBashCommandLists,
+  sanitizeBashCommandList,
+} from './config/permission-rules-store';
 import { mcpConfigStore } from './mcp/mcp-config-store';
 import { getSandboxAdapter, shutdownSandbox } from './sandbox/sandbox-adapter';
 import { SandboxSync } from './sandbox/sandbox-sync';
@@ -802,6 +806,12 @@ app
     // Apply dev logs setting from config
     const enableDevLogs = configStore.get('enableDevLogs');
     setDevLogsEnabled(enableDevLogs);
+
+    // Hydrate the bash trust/deny lists from persisted config so the
+    // authoritative-mode policy is active before the renderer has a chance
+    // to send its bootstrap `settings.update`. Closes the startup race
+    // window where list control would otherwise be skipped.
+    setBashCommandLists(configStore.get('bashTrustedCommands'), configStore.get('bashDenylist'));
 
     // Log environment variables for debugging
     log('=== Open Cowork Starting ===');
@@ -2684,14 +2694,30 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
           setPermissionRules(payload.permissionRules);
         }
 
-        // Bash trust list and denylist are handled together so a caller can
-        // send either or both. `undefined` means "leave that list
-        // unchanged" per `setBashCommandLists`'s partial-update semantics.
+        // Bash trust list and denylist. Normalize ONCE at the IPC boundary
+        // using the shared sanitizer, then feed the normalized arrays to
+        // both the runtime policy cache and configStore. This guarantees
+        // the two stay consistent and that no untrusted value crosses into
+        // persistent storage, addressing a prior review finding.
         if (hasOwn('bashTrustedCommands') || hasOwn('bashDenylist')) {
-          setBashCommandLists(
-            hasOwn('bashTrustedCommands') ? payload.bashTrustedCommands : undefined,
-            hasOwn('bashDenylist') ? payload.bashDenylist : undefined
-          );
+          const trustedNext = hasOwn('bashTrustedCommands')
+            ? sanitizeBashCommandList(payload.bashTrustedCommands)
+            : undefined;
+          const deniedNext = hasOwn('bashDenylist')
+            ? sanitizeBashCommandList(payload.bashDenylist)
+            : undefined;
+
+          setBashCommandLists(trustedNext, deniedNext);
+
+          const persistPayload: Partial<{
+            bashTrustedCommands: string[];
+            bashDenylist: string[];
+          }> = {};
+          if (trustedNext !== undefined) persistPayload.bashTrustedCommands = trustedNext;
+          if (deniedNext !== undefined) persistPayload.bashDenylist = deniedNext;
+          if (Object.keys(persistPayload).length > 0) {
+            configStore.update(persistPayload);
+          }
         }
       }
       return null;

@@ -30,6 +30,7 @@ import {
   shouldUseAnthropicAuthToken,
 } from './auth-utils';
 import { API_PROVIDER_PRESETS, PI_AI_CURATED_PRESETS } from '../../shared/api-model-presets';
+import { sanitizeBashCommandList } from './permission-rules-store';
 
 /**
  * Application configuration schema
@@ -105,6 +106,15 @@ export interface AppConfig {
 
   // Optional: Global skills storage directory
   globalSkillsPath?: string;
+
+  // Bash command trust list (prefix patterns with `*` wildcard).
+  // Persisted here so the main process has them at startup, before the
+  // renderer's IPC hydration races with the first tool call.
+  bashTrustedCommands: string[];
+
+  // Bash command denylist (substring patterns). Forces manual approval
+  // even when a matching trust pattern exists.
+  bashDenylist: string[];
 
   // Developer logs
   enableDevLogs: boolean;
@@ -210,6 +220,8 @@ const defaultConfig: AppConfig = {
   claudeCodePath: '',
   defaultWorkdir: '',
   globalSkillsPath: '',
+  bashTrustedCommands: [],
+  bashDenylist: [],
   enableDevLogs: false,
   theme: 'light',
   sandboxEnabled: false,
@@ -348,6 +360,12 @@ function profileKeyToProvider(profileKey: ProviderProfileKey): {
 function toBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
+
+// `toStringArray` is the old internal name used throughout this file; it
+// now forwards to the shared sanitizer in `permission-rules-store` so the
+// IPC handler, runtime policy, and persisted config all normalize
+// identically at the trust boundary.
+const toStringArray = sanitizeBashCommandList;
 
 function toNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') {
@@ -844,6 +862,8 @@ export class ConfigStore {
         typeof raw.globalSkillsPath === 'string'
           ? raw.globalSkillsPath
           : defaultConfig.globalSkillsPath,
+      bashTrustedCommands: toStringArray(raw.bashTrustedCommands),
+      bashDenylist: toStringArray(raw.bashDenylist),
       enableDevLogs: toBoolean(raw.enableDevLogs, defaultConfig.enableDevLogs),
       theme: isAppTheme(raw.theme) ? raw.theme : defaultConfig.theme,
       sandboxEnabled: toBoolean(raw.sandboxEnabled, defaultConfig.sandboxEnabled),
@@ -1254,6 +1274,14 @@ export class ConfigStore {
         updates.globalSkillsPath !== undefined
           ? updates.globalSkillsPath
           : current.globalSkillsPath,
+      bashTrustedCommands:
+        updates.bashTrustedCommands !== undefined
+          ? toStringArray(updates.bashTrustedCommands)
+          : current.bashTrustedCommands,
+      bashDenylist:
+        updates.bashDenylist !== undefined
+          ? toStringArray(updates.bashDenylist)
+          : current.bashDenylist,
       enableDevLogs:
         updates.enableDevLogs !== undefined ? updates.enableDevLogs : current.enableDevLogs,
       theme: updates.theme !== undefined ? updates.theme : current.theme,
