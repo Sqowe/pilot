@@ -34,6 +34,7 @@ import {
   isValidSystemPromptFileChoice,
   type SystemPromptFileChoice,
 } from '../../shared/system-prompt-file-choices';
+import { sanitizeBashCommandList } from './permission-rules-store';
 
 /**
  * Application configuration schema
@@ -114,6 +115,15 @@ export interface AppConfig {
   // Empty string (default) preserves today's behavior. See
   // `loadWorkspaceSystemPrompt` for the valid choices and safety model.
   systemPromptFile?: SystemPromptFileChoice;
+
+  // Bash command trust list (prefix patterns with `*` wildcard).
+  // Persisted here so the main process has them at startup, before the
+  // renderer's IPC hydration races with the first tool call.
+  bashTrustedCommands: string[];
+
+  // Bash command denylist (substring patterns). Forces manual approval
+  // even when a matching trust pattern exists.
+  bashDenylist: string[];
 
   // Developer logs
   enableDevLogs: boolean;
@@ -221,6 +231,8 @@ const defaultConfig: AppConfig = {
   defaultWorkdir: '',
   globalSkillsPath: '',
   systemPromptFile: '',
+  bashTrustedCommands: [],
+  bashDenylist: [],
   enableDevLogs: false,
   theme: 'light',
   sandboxEnabled: false,
@@ -359,6 +371,12 @@ function profileKeyToProvider(profileKey: ProviderProfileKey): {
 function toBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
+
+// `toStringArray` is the old internal name used throughout this file; it
+// now forwards to the shared sanitizer in `permission-rules-store` so the
+// IPC handler, runtime policy, and persisted config all normalize
+// identically at the trust boundary.
+const toStringArray = sanitizeBashCommandList;
 
 function toNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') {
@@ -858,6 +876,8 @@ export class ConfigStore {
       systemPromptFile: isValidSystemPromptFileChoice(raw.systemPromptFile)
         ? raw.systemPromptFile
         : defaultConfig.systemPromptFile,
+      bashTrustedCommands: toStringArray(raw.bashTrustedCommands),
+      bashDenylist: toStringArray(raw.bashDenylist),
       enableDevLogs: toBoolean(raw.enableDevLogs, defaultConfig.enableDevLogs),
       theme: isAppTheme(raw.theme) ? raw.theme : defaultConfig.theme,
       sandboxEnabled: toBoolean(raw.sandboxEnabled, defaultConfig.sandboxEnabled),
@@ -1272,6 +1292,14 @@ export class ConfigStore {
         updates.systemPromptFile !== undefined
           ? updates.systemPromptFile
           : current.systemPromptFile,
+      bashTrustedCommands:
+        updates.bashTrustedCommands !== undefined
+          ? toStringArray(updates.bashTrustedCommands)
+          : current.bashTrustedCommands,
+      bashDenylist:
+        updates.bashDenylist !== undefined
+          ? toStringArray(updates.bashDenylist)
+          : current.bashDenylist,
       enableDevLogs:
         updates.enableDevLogs !== undefined ? updates.enableDevLogs : current.enableDevLogs,
       theme: updates.theme !== undefined ? updates.theme : current.theme,

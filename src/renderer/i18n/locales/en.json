@@ -66,7 +66,9 @@
     "logsDesc": "View and export application logs",
     "panelDesc": "Configure your workspace, tools, and account behavior.",
     "general": "General",
-    "generalDesc": "Appearance, language & preferences"
+    "generalDesc": "Appearance, language & preferences",
+    "bashCommands": "Bash Commands",
+    "bashCommandsDesc": "Per-command trust list and denylist"
   },
   "general": {
     "appearance": "Appearance",
@@ -78,6 +80,15 @@
     "systemPromptFile": "Workspace instructions file",
     "systemPromptFileDesc": "When this file exists at the session working directory, its contents are appended to the system prompt as project-level instructions. Missing file falls back to the default.",
     "systemPromptFileNone": "None (use default)"
+  },
+  "bashCommands": {
+    "modeAuthoritative": "Authoritative mode: these lists are the complete policy for bash commands. Anything not explicitly trusted will prompt for approval.",
+    "modeInactive": "Not configured. The default bash rule applies to all commands. Add at least one trusted pattern or denylist entry to enable fine-grained control.",
+    "trustedTitle": "Trusted commands",
+    "trustedDesc": "One pattern per line. Prefix-matched; use `*` as a wildcard. Matching commands run without a prompt. Each sub-command in a chain (&&, ||, ;, |) is checked independently.",
+    "denylistTitle": "Denylist (force approval)",
+    "denylistDesc": "One pattern per line. Substring-matched. Any command containing a denylist entry always prompts, even if it also matches the trusted list.",
+    "safetyNote": "Shell expansions that cannot be parsed safely (command substitution, process substitution, newlines, lone background &) always prompt, even when a matching trusted pattern exists."
   },
   "language": {
     "english": "English",
