@@ -120,7 +120,14 @@ export function useIPC() {
       const isInitialConfigStatus = !store.hasSeenInitialConfigStatus;
       store.setIsConfigured(isConfigured);
       store.setAppConfig(config);
-      store.setSettings({ theme: config.theme || 'light' });
+      // Hydrate settings fields that are persisted on the main side (AppConfig)
+      // but surfaced through the `settings` slice on the renderer. Without this,
+      // values reset to their hard-coded defaults on every app reboot.
+      store.setSettings({
+        theme: config.theme || 'light',
+        systemPromptFile: config.systemPromptFile ?? '',
+        globalSkillsPath: config.globalSkillsPath ?? '',
+      });
       if (isInitialConfigStatus) {
         store.markInitialConfigStatusSeen();
       }
