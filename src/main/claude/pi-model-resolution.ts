@@ -85,6 +85,13 @@ export function inferPiApi(protocol: string): string {
 /**
  * Known context window / max output specs for common Ollama model families.
  * Used as a middle layer between user config overrides and the hardcoded default.
+ *
+ * NOTE on `maxTokens`: this value is reserved as the output budget on every
+ * request and counts against the provider's context window. The values below
+ * are *practical* caps, not the provider's theoretical maximum — e.g. GLM-4.x
+ * allows 128K output but reserving 128K of a 200K window leaves almost no
+ * room for input. Users who need longer outputs should override via the
+ * profile UI (Settings → API → Max Tokens).
  */
 const KNOWN_MODEL_SPECS: Record<string, { contextWindow: number; maxTokens: number }> = {
   'qwen3.5': { contextWindow: 258048, maxTokens: 32768 },
@@ -104,6 +111,19 @@ const KNOWN_MODEL_SPECS: Record<string, { contextWindow: number; maxTokens: numb
   mixtral: { contextWindow: 32768, maxTokens: 4096 },
   codellama: { contextWindow: 16384, maxTokens: 4096 },
   'command-r': { contextWindow: 131072, maxTokens: 4096 },
+  // Chinese provider families (GLM/MiniMax/Kimi). Context windows reflect
+  // provider-advertised limits; maxTokens is a safer practical cap — users can
+  // override via profile UI when they genuinely need longer outputs.
+  'glm-4.7': { contextWindow: 200000, maxTokens: 8192 },
+  'glm-4.6': { contextWindow: 200000, maxTokens: 8192 },
+  'glm-4.5': { contextWindow: 131072, maxTokens: 8192 },
+  'glm-4': { contextWindow: 131072, maxTokens: 8192 },
+  'minimax-m2': { contextWindow: 204800, maxTokens: 8192 },
+  'minimax-m1': { contextWindow: 204800, maxTokens: 8192 },
+  minimax: { contextWindow: 204800, maxTokens: 8192 },
+  'kimi-k2': { contextWindow: 262144, maxTokens: 8192 },
+  'kimi-k1': { contextWindow: 131072, maxTokens: 8192 },
+  kimi: { contextWindow: 131072, maxTokens: 8192 },
 };
 
 function lookupModelSpecs(

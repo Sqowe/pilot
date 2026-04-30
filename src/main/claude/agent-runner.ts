@@ -67,6 +67,7 @@ import {
   normalizeMcpToolResultForModel,
   normalizeToolExecutionResultForUi,
 } from './tool-result-utils';
+import { selectCompactionSettings } from './compaction-budget';
 import { fetchOllamaModelInfo } from '../config/ollama-api';
 
 // Virtual workspace path shown to the model (hides real sandbox path)
@@ -2003,32 +2004,72 @@ Tool routing:
 
         // Ollama-specific compaction tuning based on actual context window
         const contextWindow = piModel.contextWindow || 128000;
-        let compactionSettings: {
-          enabled: boolean;
-          reserveTokens?: number;
-          keepRecentTokens?: number;
-        };
-        if (provider === 'ollama' && contextWindow < 16384) {
-          // Very small context: disable compaction (weak models produce unreliable summaries)
-          compactionSettings = { enabled: false };
+
+        // Delegate branch selection + budget computation to the pure
+        // selectCompactionSettings helper. This handles:
+        //   - Ollama small (<16K): disables compaction (unreliable summaries)
+        //   - Ollama medium (<64K): proportional heuristic reserves
+        //   - All other cases: tool-aware budget that covers output + tool
+        //     schemas + safety margin, clamped so reserve never exceeds the
+        //     window (prevents provider overflow 400s).
+        const compactionSelection = selectCompactionSettings({
+          provider,
+          contextWindow,
+          modelMaxOutput: piModel.maxTokens,
+          builtInTools: wrappedTools,
+          customTools: mcpCustomTools,
+        });
+        const compactionSettings = compactionSelection.settings;
+
+        // Branch-specific logging.
+        if (compactionSelection.branch === 'ollama_small') {
           log(
             '[ClaudeAgentRunner] Ollama small context model, disabling auto-compaction (contextWindow:',
             contextWindow,
             ')'
           );
-        } else if (provider === 'ollama' && contextWindow < 65536) {
-          // Medium context: scale reserves proportionally
-          compactionSettings = {
-            enabled: true,
-            reserveTokens: Math.floor(contextWindow * 0.15),
-            keepRecentTokens: Math.floor(contextWindow * 0.25),
-          };
+        } else if (compactionSelection.branch === 'ollama_medium') {
           log(
             '[ClaudeAgentRunner] Ollama medium context, scaled compaction:',
             JSON.stringify(compactionSettings)
           );
         } else {
-          compactionSettings = { enabled: true };
+          // tool_aware: log full breakdown + escalate on clamped/unworkable.
+          const budget = compactionSelection.budget!;
+          log(
+            '[ClaudeAgentRunner] Tool-aware compaction:',
+            JSON.stringify({
+              reserveTokens: budget.reserveTokens,
+              keepRecentTokens: budget.keepRecentTokens,
+              ...budget.breakdown,
+            })
+          );
+
+          if (budget.breakdown.unworkable) {
+            logError(
+              '[ClaudeAgentRunner] Unworkable context budget — session will likely fail.',
+              JSON.stringify({
+                contextWindow: budget.breakdown.contextWindow,
+                modelMaxOutput: budget.breakdown.modelMaxOutput,
+                toolSchemaTokens: budget.breakdown.toolSchemaTokens,
+                safetyMargin: budget.breakdown.safetyMargin,
+                rawReserve: budget.breakdown.rawReserve,
+                note: 'Output budget + tool schemas + safety margin meet or exceed the context window. Disable MCP servers or lower maxTokens in your API profile.',
+              })
+            );
+          } else if (budget.breakdown.clamped) {
+            logWarn(
+              '[ClaudeAgentRunner] Tool schemas exceed safe reserve budget — clamped.',
+              JSON.stringify({
+                contextWindow: budget.breakdown.contextWindow,
+                rawReserve: budget.breakdown.rawReserve,
+                clampedReserve: budget.reserveTokens,
+                toolSchemaTokens: budget.breakdown.toolSchemaTokens,
+                modelMaxOutput: budget.breakdown.modelMaxOutput,
+                note: 'Consider disabling unused MCP servers or lowering maxTokens in your API profile.',
+              })
+            );
+          }
         }
 
         const { session: newPiSession } = await createAgentSession({
