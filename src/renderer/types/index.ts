@@ -540,6 +540,11 @@ export interface AppConfig {
   defaultWorkdir?: string;
   globalSkillsPath?: string;
   systemPromptFile?: SystemPromptFileChoice;
+  // Bash command trust list and denylist. Optional on the renderer side
+  // because the Settings bootstrap hydrates them defensively via `?? []`.
+  // Main's `AppConfig` keeps these required and always non-null.
+  bashTrustedCommands?: string[];
+  bashDenylist?: string[];
   theme?: AppTheme;
   sandboxEnabled?: boolean;
   enableThinking?: boolean;
