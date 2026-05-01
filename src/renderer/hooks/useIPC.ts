@@ -120,13 +120,18 @@ export function useIPC() {
       const isInitialConfigStatus = !store.hasSeenInitialConfigStatus;
       store.setIsConfigured(isConfigured);
       store.setAppConfig(config);
-      // Hydrate settings fields that are persisted on the main side (AppConfig)
-      // but surfaced through the `settings` slice on the renderer. Without this,
-      // values reset to their hard-coded defaults on every app reboot.
+      // Hydrate settings fields that are persisted on the main side
+      // (AppConfig) but surfaced through the `settings` slice on the
+      // renderer. Without this, values reset to their hard-coded defaults
+      // on every app reboot — because the bootstrap `settings.update`
+      // below would push those defaults back to main and overwrite
+      // previously-persisted values.
       store.setSettings({
         theme: config.theme || 'light',
         systemPromptFile: config.systemPromptFile ?? '',
         globalSkillsPath: config.globalSkillsPath ?? '',
+        bashTrustedCommands: config.bashTrustedCommands ?? [],
+        bashDenylist: config.bashDenylist ?? [],
       });
       if (isInitialConfigStatus) {
         store.markInitialConfigStatusSeen();

@@ -28,7 +28,13 @@ describe('theme settings persistence', () => {
     expect(source).toContain(
       'const applyConfigSnapshot = (config: AppConfig, isConfigured: boolean) => {'
     );
-    expect(source).toContain("theme: config.theme || 'light',");
+    // The single-liner `store.setSettings({ theme: config.theme || 'light' });`
+    // was expanded to a multi-key call when systemPromptFile / globalSkillsPath
+    // / bash trust-deny lists joined the same bootstrap path. The substring
+    // and regex checks stay scoped to the theme key specifically so we don't
+    // over-specify the formatting as more settings join the hydration.
+    expect(source).toContain("theme: config.theme || 'light'");
+    expect(source).toMatch(/store\.setSettings\(\s*\{[^}]*theme:\s*config\.theme/);
     expect(source).toContain('window.electronAPI.config.get()');
     expect(source).toContain('window.electronAPI.getSystemTheme()');
   });

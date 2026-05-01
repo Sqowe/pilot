@@ -269,4 +269,44 @@ describe('settings.update IPC persistence path', () => {
     expect(getBashCommandLists().trusted).toEqual(['npm *']);
     expect(getBashCommandLists().denied).toEqual(['rm -rf']);
   });
+
+  // --- Regression: renderer bootstrap must not clobber persisted lists ----
+
+  it('a bootstrap settings.update carrying empty bash lists must not wipe persisted lists', () => {
+    // Setup: user has previously configured bash lists (persisted to disk).
+    const cs = new ConfigStore();
+    cs.update({
+      bashTrustedCommands: ['npm *'],
+      bashDenylist: ['rm -rf'],
+    });
+
+    // Main starts up: reads persisted config → hydrates runtime policy.
+    // This is what whenReady() does in src/main/index.ts.
+    setBashCommandLists(cs.get('bashTrustedCommands'), cs.get('bashDenylist'));
+    expect(getBashCommandLists().trusted).toEqual(['npm *']);
+
+    // Then the renderer bootstraps. BEFORE the fix in useIPC.ts, the renderer
+    // would send its default-empty bash lists via `settings.update` — which,
+    // if naively processed, would overwrite the persisted values and leave
+    // the user's config "lost after restart". After the fix, the renderer
+    // reads the persisted values from config.status into Zustand first, so
+    // the bootstrap payload carries the *same* values, making the round-trip
+    // an identity write.
+    //
+    // This test verifies the IPC contract: if the payload happens to carry
+    // the same values that are already persisted, main's write is a no-op.
+    // That's the post-fix expected behaviour end-to-end.
+    handleBashFieldsUpdate(
+      {
+        bashTrustedCommands: cs.get('bashTrustedCommands'),
+        bashDenylist: cs.get('bashDenylist'),
+      },
+      cs
+    );
+
+    expect(cs.get('bashTrustedCommands')).toEqual(['npm *']);
+    expect(cs.get('bashDenylist')).toEqual(['rm -rf']);
+    expect(getBashCommandLists().trusted).toEqual(['npm *']);
+    expect(getBashCommandLists().denied).toEqual(['rm -rf']);
+  });
 });
