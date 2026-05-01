@@ -250,6 +250,14 @@ export function ChatView() {
     textareaRef.current?.focus();
   }, [activeSessionId]);
 
+  // Auto-resize textarea based on content, capped at max-height
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [prompt]);
+
   // Handle paste event for images
   const handlePaste = async (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items;
@@ -604,6 +612,7 @@ export function ChatView() {
       setPrompt('');
       if (textareaRef.current) {
         textareaRef.current.value = '';
+        textareaRef.current.style.height = 'auto';
       }
       pastedImages.forEach((img) => URL.revokeObjectURL(img.url));
       setPastedImages([]);
@@ -813,7 +822,7 @@ export function ChatView() {
                 placeholder={t('chat.typeMessage')}
                 disabled={isSubmitting}
                 rows={1}
-                className="flex-1 resize-none bg-transparent border-none outline-none text-text-primary placeholder:text-text-muted text-[15px] py-2"
+                className="flex-1 resize-none bg-transparent border-none outline-none text-text-primary placeholder:text-text-muted text-[15px] py-2 min-h-[40px] max-h-[200px] overflow-y-auto leading-6"
               />
 
               <div className="flex items-center gap-2">
