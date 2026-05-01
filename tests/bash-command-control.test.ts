@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   decideBashPermission,
   decidePermission,
+  forgetSessionPermissions,
   getBashCommandLists,
+  rememberAlwaysAllow,
   setBashCommandLists,
   setPermissionRules,
   splitBashSubCommands,
@@ -20,6 +22,10 @@ afterEach(() => {
   // Restore defaults so `decidePermission` tests that expect 'ask' for bash
   // aren't poisoned by a prior test that changed the rules.
   setPermissionRules([]);
+  // Clear any session-scoped "always allow" memory left over from tests that
+  // exercise `rememberAlwaysAllow` — the store is a module-level singleton.
+  forgetSessionPermissions('s1');
+  forgetSessionPermissions('s2');
 });
 
 describe('splitBashSubCommands', () => {
@@ -470,5 +476,64 @@ describe('IPC boundary behaviour — hardening against malformed payloads', () =
     setPermissionRules([{ tool: 'bash', action: 'allow-everything' as unknown as 'allow' }]);
     // Falls back to 'ask' per the sanitize fallback — safer than the bogus value.
     expect(decidePermission('s1', 'bash', { command: 'anything' })).toBe('ask');
+  });
+});
+
+describe('session always-allow vs bash trust/deny precedence', () => {
+  // Regression tests for the ordering bug where a single "Allow always" click
+  // on a bash call silently neutered the trust list and denylist for the rest
+  // of the session. The list engine now runs *before* the session memory when
+  // the tool is bash, so authoritative mode keeps working after the user has
+  // approved a one-off bash command.
+
+  it('denylist still blocks even after bash was marked "always allow" in the session', () => {
+    setBashCommandLists(['git *'], ['--force']);
+    // User clicked "Allow always" on an earlier bash call this session.
+    rememberAlwaysAllow('s1', 'bash');
+
+    // Denylist must still take effect — never silently auto-allow `--force`.
+    expect(decidePermission('s1', 'bash', { command: 'git push --force' })).toBe('ask');
+  });
+
+  it('untrusted bash command asks even after "always allow" when authoritative mode is on', () => {
+    // Only a trust list is configured; authoritative mode is active because
+    // the trusted list is non-empty.
+    setBashCommandLists(['npm *'], []);
+    rememberAlwaysAllow('s1', 'bash');
+
+    // Not covered by trust → implicit ask, not a blanket allow.
+    expect(decidePermission('s1', 'bash', { command: 'rm -rf node_modules' })).toBe('ask');
+  });
+
+  it('trusted bash command still allows after "always allow" — no behaviour change on the happy path', () => {
+    setBashCommandLists(['npm *'], []);
+    rememberAlwaysAllow('s1', 'bash');
+    expect(decidePermission('s1', 'bash', { command: 'npm install' })).toBe('allow');
+  });
+
+  it('session "always allow" still works for non-bash tools (scope unchanged)', () => {
+    // The ordering change is bash-specific; other tools must keep their
+    // existing behaviour where "Allow always" short-circuits the rules.
+    setPermissionRules([{ tool: 'write', action: 'ask' }]);
+    rememberAlwaysAllow('s1', 'write');
+    expect(decidePermission('s1', 'write', { path: '/tmp/foo' })).toBe('allow');
+  });
+
+  it('session "always allow" still works for bash when no lists are configured', () => {
+    // With authoritative mode off (both lists empty), decideBashPermission
+    // returns null and the session memory is the next check — so the
+    // pre-existing "Allow always" UX is preserved for users who have not
+    // opted into list-based bash control.
+    setBashCommandLists([], []);
+    rememberAlwaysAllow('s1', 'bash');
+    expect(decidePermission('s1', 'bash', { command: 'anything goes' })).toBe('allow');
+  });
+
+  it('"always allow" memory is scoped to the session that set it', () => {
+    // Sanity check: approving in session s1 must not bleed into s2.
+    rememberAlwaysAllow('s1', 'bash');
+    // s2 has no memory and no lists configured → falls through to the
+    // default bash rule, which is `ask` when no rules are set.
+    expect(decidePermission('s2', 'bash', { command: 'anything' })).toBe('ask');
   });
 });

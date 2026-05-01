@@ -368,19 +368,24 @@ export function decidePermission(
 ): 'allow' | 'deny' | 'ask' {
   const lowered = toolName.toLowerCase();
 
-  const session = alwaysAllowBySession.get(sessionId);
-  if (session?.has(lowered)) return 'allow';
-
-  // Bash commands get a dedicated trust/deny evaluation before the generic
-  // pattern loop. Denylist wins over trust; a null result means "not
-  // decided" and we fall through to the generic rules below (normally the
-  // default bash rule, which is 'ask').
+  // Bash commands get a dedicated trust/deny evaluation BEFORE the session-
+  // scoped "always allow" memory. The session memory is keyed by tool name
+  // only, so without this ordering a single "Allow always" click on any
+  // bash command would silently override the user's denylist and trust list
+  // for the rest of the session — making authoritative mode a no-op once
+  // the user ever approved a bash call. Consulting the list engine first
+  // ensures the denylist is honoured and only commands that fall through
+  // to the generic engine (null decision) can be blanket-allowed for the
+  // session.
   if (lowered === 'bash') {
     const rawCmd = input.command;
     const cmd = typeof rawCmd === 'string' ? rawCmd : '';
     const bashDecision = decideBashPermission(cmd);
     if (bashDecision) return bashDecision;
   }
+
+  const session = alwaysAllowBySession.get(sessionId);
+  if (session?.has(lowered)) return 'allow';
 
   const inputStr = safeStringify(input);
 
