@@ -170,7 +170,6 @@ export async function runPiAiOneShot(
     maxTokens?: number;
   }
 ): Promise<{ text: string; hasThinking: boolean; durationMs: number }> {
-  void options;
   const modelString = resolvePiModelString(config);
   const keyProvider = config.customProtocol || config.provider || 'anthropic';
   const parts = modelString.split('/');
@@ -256,7 +255,7 @@ export async function runPiAiOneShot(
       systemPrompt,
       messages: [userMsg],
     },
-    { apiKey: apiKey || undefined }
+    { ...options, apiKey: apiKey || undefined }
   );
 
   // pi-ai resolves (not rejects) on provider errors — the error details
