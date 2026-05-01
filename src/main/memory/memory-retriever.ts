@@ -40,10 +40,12 @@ export class MemoryRetriever {
       return [];
     }
 
-    const requestedWorkspace =
-      params.sourceWorkspace ?? params.workspaceKey ?? normalizeWorkspaceKey(params.cwd);
-    const normalizedWorkspace = normalizeWorkspaceKey(requestedWorkspace || null);
-    const scope = params.scope || (normalizedWorkspace ? 'workspace' : 'all');
+    const defaultWorkspace = normalizeWorkspaceKey(params.workspaceKey ?? params.cwd ?? null);
+    const explicitSourceWorkspace =
+      params.sourceWorkspace !== undefined ? normalizeWorkspaceKey(params.sourceWorkspace) : null;
+    const scope = params.scope || (defaultWorkspace ? 'workspace' : 'all');
+    const experienceWorkspace =
+      explicitSourceWorkspace ?? (scope === 'workspace' ? defaultWorkspace : null);
     const limit = Math.min(Math.max(params.limit || 8, 1), 50);
     const results: MemorySearchResult[] = [];
 
@@ -51,13 +53,12 @@ export class MemoryRetriever {
       results.push(...this.searchCore(query));
     }
     if (scope !== 'global') {
-      results.push(...this.searchExperience(query, normalizedWorkspace));
+      results.push(...this.searchExperience(query, experienceWorkspace));
     }
 
     return results
       .sort(
-        (a, b) =>
-          b.score - a.score || (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)
+        (a, b) => b.score - a.score || (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)
       )
       .slice(0, limit);
   }
@@ -184,7 +185,10 @@ export class MemoryRetriever {
       if (sourceWorkspace && item.sourceWorkspace !== sourceWorkspace) {
         continue;
       }
-      const score = lexicalScore(query, [item.summary, item.details, item.rawText, ...item.keywords].join(' '));
+      const score = lexicalScore(
+        query,
+        [item.summary, item.details, item.rawText, ...item.keywords].join(' ')
+      );
       if (score <= 0) {
         continue;
       }

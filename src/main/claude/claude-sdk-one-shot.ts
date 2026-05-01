@@ -168,6 +168,7 @@ export async function runPiAiOneShot(
   options?: {
     temperature?: number;
     maxTokens?: number;
+    signal?: AbortSignal;
   }
 ): Promise<{ text: string; hasThinking: boolean; durationMs: number }> {
   const modelString = resolvePiModelString(config);

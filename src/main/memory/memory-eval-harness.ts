@@ -132,16 +132,26 @@ function createMessages(sessionId: string, messages: MemoryEvalMessage[]) {
   }));
 }
 
-function scorePromptPrefix(promptPrefix: string, expectedHits: string[], forbiddenHits: string[]): {
+function scorePromptPrefix(
+  promptPrefix: string,
+  expectedHits: string[],
+  forbiddenHits: string[]
+): {
   deterministicScore: number;
   matchedExpectedHits: string[];
   matchedForbiddenHits: string[];
 } {
   const normalized = promptPrefix.toLowerCase();
-  const matchedExpectedHits = expectedHits.filter((item) => normalized.includes(item.toLowerCase()));
-  const matchedForbiddenHits = forbiddenHits.filter((item) => normalized.includes(item.toLowerCase()));
+  const matchedExpectedHits = expectedHits.filter((item) =>
+    normalized.includes(item.toLowerCase())
+  );
+  const matchedForbiddenHits = forbiddenHits.filter((item) =>
+    normalized.includes(item.toLowerCase())
+  );
   const expectedScore = expectedHits.length ? matchedExpectedHits.length / expectedHits.length : 1;
-  const forbiddenPenalty = forbiddenHits.length ? matchedForbiddenHits.length / forbiddenHits.length : 0;
+  const forbiddenPenalty = forbiddenHits.length
+    ? matchedForbiddenHits.length / forbiddenHits.length
+    : 0;
   return {
     deterministicScore: Math.max(0, expectedScore - forbiddenPenalty),
     matchedExpectedHits,
@@ -162,7 +172,13 @@ export class MemoryEvalHarness {
   }): Promise<MemoryEvalReport> {
     const cases = options?.cases || DEFAULT_EVAL_CASES;
     const runId = `memory-eval-${Date.now()}`;
-    const artifactDir = path.resolve(options!.artifactDir);
+    const artifactRoot =
+      options?.artifactDir ||
+      this.service.listFiles().find((file) => file.kind === 'artifacts')?.filePath ||
+      path.join(process.cwd(), '.memory-eval-artifacts');
+    const artifactDir = path.resolve(
+      options?.artifactDir ? artifactRoot : path.join(artifactRoot, runId)
+    );
     fs.mkdirSync(artifactDir, { recursive: true });
     const startedAt = new Date().toISOString();
     const caseResults: MemoryEvalCaseResult[] = [];
@@ -191,13 +207,24 @@ export class MemoryEvalHarness {
           { cwd: query.workspace || testCase.workspace },
           query.prompt
         );
-        const scoring = scorePromptPrefix(promptPrefix, query.expectedHits, query.forbiddenHits || []);
-        const judgeScore = options?.useModelJudge === false ? null : await this.judgeQuery(query.prompt, promptPrefix);
-        const finalScore = judgeScore === null ? scoring.deterministicScore : (judgeScore + scoring.deterministicScore) / 2;
+        const scoring = scorePromptPrefix(
+          promptPrefix,
+          query.expectedHits,
+          query.forbiddenHits || []
+        );
+        const judgeScore =
+          options?.useModelJudge === false
+            ? null
+            : await this.judgeQuery(query.prompt, promptPrefix);
+        const finalScore =
+          judgeScore === null
+            ? scoring.deterministicScore
+            : (judgeScore + scoring.deterministicScore) / 2;
         const queryResult: MemoryEvalQueryResult = {
           queryId: query.id,
           prompt: query.prompt,
-          workspace: normalizeWorkspaceKey(query.workspace || testCase.workspace || null) || undefined,
+          workspace:
+            normalizeWorkspaceKey(query.workspace || testCase.workspace || null) || undefined,
           promptPrefix,
           deterministicScore: scoring.deterministicScore,
           judgeScore,
@@ -211,7 +238,8 @@ export class MemoryEvalHarness {
       }
 
       const averageScore =
-        queryResults.reduce((sum, item) => sum + item.finalScore, 0) / Math.max(queryResults.length, 1);
+        queryResults.reduce((sum, item) => sum + item.finalScore, 0) /
+        Math.max(queryResults.length, 1);
       const caseResult: MemoryEvalCaseResult = {
         caseId: testCase.id,
         sessionId,
@@ -229,7 +257,8 @@ export class MemoryEvalHarness {
       startedAt,
       completedAt: new Date().toISOString(),
       averageScore:
-        caseResults.reduce((sum, item) => sum + item.averageScore, 0) / Math.max(caseResults.length, 1),
+        caseResults.reduce((sum, item) => sum + item.averageScore, 0) /
+        Math.max(caseResults.length, 1),
       caseResults,
       artifactDir,
     };
@@ -246,7 +275,9 @@ export class MemoryEvalHarness {
           'Return JSON only with shape {"score": number, "reason": string}.',
           'Score must be between 0 and 1.',
         ].join('\n'),
-        userPrompt: [`User prompt: ${prompt}`, '', 'Injected memory context:', promptPrefix].join('\n'),
+        userPrompt: [`User prompt: ${prompt}`, '', 'Injected memory context:', promptPrefix].join(
+          '\n'
+        ),
         temperature: 0,
         maxTokens: 800,
       });

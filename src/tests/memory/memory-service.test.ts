@@ -454,6 +454,51 @@ describe('MemoryService', () => {
     expect(inspected?.sourceWorkspace).toBe('/repo/a');
   });
 
+  it('searches all source workspaces when scope is all even with a current cwd', async () => {
+    await service.enqueueIngestion({
+      session: makeSession('session-a', 'Preference only', '/repo/a'),
+      prompt: '记录偏好',
+      messages: makeMessages('session-a', [
+        { role: 'user', text: '请用中文回答。', timestamp: 1 },
+        { role: 'assistant', text: '好的。', timestamp: 2 },
+      ]),
+    });
+    await service.enqueueIngestion({
+      session: makeSession('session-b', 'Gateway fixes', '/repo/b'),
+      prompt: '修复 gateway token rotation',
+      messages: makeMessages('session-b', [
+        {
+          role: 'user',
+          text: '在 workspace B 里实现 gateway token rotation，并同步 remote gateway。',
+          timestamp: 3,
+        },
+        {
+          role: 'assistant',
+          text: '已在 workspace B 完成 gateway token rotation。',
+          timestamp: 4,
+        },
+      ]),
+    });
+
+    const allResults = service.search({
+      query: 'gateway token rotation',
+      cwd: '/repo/a',
+      scope: 'all',
+      limit: 10,
+    });
+    expect(allResults.some((item) => item.sourceWorkspace === '/repo/b')).toBe(true);
+
+    const workspaceResults = service.search({
+      query: 'gateway token rotation',
+      cwd: '/repo/a',
+      scope: 'workspace',
+      limit: 10,
+    });
+    expect(
+      workspaceResults.every((item) => item.kind === 'core' || item.sourceWorkspace === '/repo/a')
+    ).toBe(true);
+  });
+
   it('rebuilds all memory from persisted sessions and messages', async () => {
     insertSession(rawDb, {
       id: 'session-a',

@@ -89,17 +89,41 @@ export class MemoryLLMClient implements MemoryLLMClientLike {
 
   async complete(request: MemoryCompletionRequest): Promise<MemoryCompletionResponse> {
     const appConfig = this.getConfig();
-    const llmConfig = normalizeModelConfig(appConfig, appConfig.memoryRuntime?.llm, appConfig.model);
-    const result = await runPiAiOneShot(
-      request.userPrompt,
-      request.systemPrompt,
-      buildAppConfig(appConfig, llmConfig),
-      {
-        temperature: request.temperature ?? 0,
-        maxTokens: request.maxTokens ?? 16_000,
-      }
+    const llmConfig = normalizeModelConfig(
+      appConfig,
+      appConfig.memoryRuntime?.llm,
+      appConfig.model
     );
-    return { text: result.text };
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(new Error(`Memory LLM request timed out after ${llmConfig.timeoutMs}ms`));
+        }, llmConfig.timeoutMs);
+        timeout.unref?.();
+      });
+      const result = await Promise.race([
+        runPiAiOneShot(
+          request.userPrompt,
+          request.systemPrompt,
+          buildAppConfig(appConfig, llmConfig),
+          {
+            temperature: request.temperature ?? 0,
+            maxTokens: request.maxTokens ?? 16_000,
+            signal: controller.signal,
+          }
+        ),
+        timeoutPromise,
+      ]);
+      return { text: result.text };
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
   }
 
   async embed(text: string): Promise<number[]> {

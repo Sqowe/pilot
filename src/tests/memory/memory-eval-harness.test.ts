@@ -80,7 +80,10 @@ import os from 'node:os';
 import path from 'node:path';
 import type { DatabaseInstance, MessageRow, SessionRow } from '../../main/db/database';
 import { MemoryEvalHarness } from '../../main/memory/memory-eval-harness';
-import type { MemoryCompletionRequest, MemoryLLMClientLike } from '../../main/memory/memory-llm-client';
+import type {
+  MemoryCompletionRequest,
+  MemoryLLMClientLike,
+} from '../../main/memory/memory-llm-client';
 import { MemoryPromptOptimizer } from '../../main/memory/memory-prompt-optimizer';
 import { MemoryService } from '../../main/memory/memory-service';
 import type { MemoryRuntimeConfig } from '../../main/config/config-store';
@@ -105,7 +108,10 @@ class EvalMockLLM implements MemoryLLMClientLike {
       };
     }
 
-    if (request.systemPrompt.includes('experience memory extraction system') || request.systemPrompt.includes('Given a full user-assistant session')) {
+    if (
+      request.systemPrompt.includes('experience memory extraction system') ||
+      request.systemPrompt.includes('Given a full user-assistant session')
+    ) {
       const transcript = request.userPrompt;
       if (transcript.includes('gateway token rotation')) {
         return {
@@ -216,11 +222,12 @@ function createDatabaseInstance(db: Database.Database): DatabaseInstance {
       update: vi.fn(),
       get: vi.fn(
         (id: string) =>
-          db.prepare('SELECT * FROM sessions WHERE id = ? LIMIT 1').get(id) as SessionRow | undefined
+          db.prepare('SELECT * FROM sessions WHERE id = ? LIMIT 1').get(id) as
+            | SessionRow
+            | undefined
       ),
       getAll: vi.fn(
-        () =>
-          db.prepare('SELECT * FROM sessions ORDER BY created_at ASC').all() as SessionRow[]
+        () => db.prepare('SELECT * FROM sessions ORDER BY created_at ASC').all() as SessionRow[]
       ),
       delete: vi.fn(),
     },
@@ -229,9 +236,9 @@ function createDatabaseInstance(db: Database.Database): DatabaseInstance {
       update: vi.fn(),
       getBySessionId: vi.fn(
         (sessionId: string) =>
-          db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC').all(
-            sessionId
-          ) as MessageRow[]
+          db
+            .prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC')
+            .all(sessionId) as MessageRow[]
       ),
       delete: vi.fn(),
       deleteBySessionId: vi.fn(),
@@ -292,6 +299,15 @@ describe('MemoryEvalHarness and MemoryPromptOptimizer', () => {
     expect(report.caseResults.length).toBeGreaterThan(1);
     expect(report.averageScore).toBeGreaterThan(0.5);
     expect(fs.existsSync(path.join(artifactDir, 'report.json'))).toBe(true);
+  });
+
+  it('uses the configured eval artifacts root when no artifactDir is passed', async () => {
+    const harness = new MemoryEvalHarness(service, llm);
+    const report = await harness.run();
+
+    expect(report.artifactDir).toContain(path.join(tempRoot, 'memory-root', 'artifacts'));
+    expect(path.basename(report.artifactDir)).toMatch(/^memory-eval-/);
+    expect(fs.existsSync(path.join(report.artifactDir, 'report.json'))).toBe(true);
   });
 
   it('iterates prompt candidates and keeps the best score', async () => {
