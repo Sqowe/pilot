@@ -25,6 +25,12 @@ import { getSharedAuthStorage, ModelRegistry } from './shared-auth';
 import type { Session, Message, TraceStep, ServerEvent, ContentBlock } from '../../renderer/types';
 import { v4 as uuidv4 } from 'uuid';
 import { decidePermission, rememberAlwaysAllow } from '../config/permission-rules-store';
+import {
+  type AgentLike,
+  type BeforeToolCallHook,
+  captureExistingHook,
+  installBeforeToolCallHook,
+} from './before-tool-call-hook';
 import { PathResolver } from '../sandbox/path-resolver';
 import { MCPManager } from '../mcp/mcp-manager';
 import { mcpConfigStore } from '../mcp/mcp-config-store';
@@ -736,15 +742,25 @@ ${hints.join('\n')}
   }
 
   /**
-   * Install a permission-gating hook on the pi-coding-agent session via
-   * `agent.setBeforeToolCall`. This is the only interception point that
-   * fires for built-in tools (read, bash, edit, write) — the SDK ignores
-   * wrapped `execute` functions on built-in tools passed via `options.tools`.
+   * Install a permission-gating hook on the pi-coding-agent session by
+   * assigning to `agent.beforeToolCall` (or the legacy `setBeforeToolCall`
+   * setter, whichever the installed SDK supports). This is the only
+   * interception point that fires for built-in tools (read, bash, edit,
+   * write) — the SDK ignores wrapped `execute` functions on built-in
+   * tools passed via `options.tools`.
    *
    * The hook consults `decidePermission` from the main-process rules cache:
-   *  - 'allow' → delegate to SDK's original hook (proceeds normally)
+   *  - 'allow' → delegate to SDK's original hook if any, else return undefined
    *  - 'deny'  → return { block: true, reason } (SDK treats as tool error)
    *  - 'ask'   → await requestPermission() IPC round-trip to PermissionDialog
+   *
+   * History: pi-coding-agent 0.71 removed the `setBeforeToolCall()` setter
+   * in favour of a public `beforeToolCall` property. A `typeof …setter…`
+   * guard silently skipped installation, disabling every permission check
+   * until the log was inspected. Shape detection now lives in
+   * `before-tool-call-hook.ts` and throws rather than logWarning when no
+   * known shape is available, so a future SDK break fails loudly instead
+   * of silently.
    *
    * Known limitation: the async requestPermission wait (user dialog) causes
    * the renderer to miss UI update events. The tool executes correctly on
@@ -757,75 +773,75 @@ ${hints.join('\n')}
       return;
     }
 
-    // Access the Agent instance (public readonly property on AgentSession)
-    // and wrap its beforeToolCall hook with our permission gate.
-    //
-    // We must chain to the SDK's original beforeToolCall hook because it
-    // fires extension tool_call events and manages the _agentEventQueue.
-    // Without chaining, the renderer misses completion events.
+    // Access the Agent instance (public readonly property on AgentSession).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const agent = (piSession as any).agent;
-    if (!agent || typeof agent.setBeforeToolCall !== 'function') {
-      logWarn(
-        '[ClaudeAgentRunner] Cannot access agent.setBeforeToolCall — skipping permission hook'
+    if (!agent) {
+      // Fail closed: without an agent we cannot gate tool calls. Throwing
+      // prevents the caller from starting a session that would silently
+      // bypass every permission rule.
+      throw new Error(
+        '[ClaudeAgentRunner] piSession.agent is missing — cannot install permission hook; refusing to start session'
       );
-      return;
     }
 
-    // Capture the SDK's hook before we overwrite it
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sdkBeforeToolCall: ((ctx: any, signal?: AbortSignal) => Promise<any>) | undefined =
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (agent as any)._beforeToolCall;
+    // Capture the SDK's existing hook before we overwrite it so the new
+    // gate can delegate to it on the allow path — preserving extension
+    // tool_call events and the SDK's internal event queue.
+    const sdkBeforeToolCall = captureExistingHook(agent as AgentLike);
 
     const requestPermission = this.requestPermission;
 
-    agent.setBeforeToolCall(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      async (ctx: any, signal?: AbortSignal): Promise<any> => {
-        const toolName: string = ctx.toolCall?.name ?? '';
-        const input: Record<string, unknown> = ctx.args ?? {};
+    const gate: BeforeToolCallHook = async (ctx, signal) => {
+      const toolName: string = ctx.toolCall?.name ?? '';
+      const input: Record<string, unknown> = ctx.args ?? {};
 
-        const decision = decidePermission(sessionId, toolName, input);
+      const decision = decidePermission(sessionId, toolName, input);
 
-        if (decision === 'deny') {
-          log(`[ClaudeAgentRunner] Tool '${toolName}' denied by rule`);
-          return { block: true, reason: `Tool '${toolName}' is denied by your permission rules.` };
-        }
-
-        if (decision === 'ask') {
-          const toolUseId = `${ctx.toolCall?.id ?? 'unknown'}-perm-${uuidv4().slice(0, 8)}`;
-          let result: 'allow' | 'deny' | 'allow_always';
-          try {
-            result = await requestPermission(sessionId, toolUseId, toolName, input);
-          } catch (permErr) {
-            logError(
-              `[ClaudeAgentRunner] Permission request failed for '${toolName}' — failing closed`,
-              permErr
-            );
-            return {
-              block: true,
-              reason: `Permission request failed for '${toolName}'; tool not executed.`,
-            };
-          }
-
-          if (result === 'deny') {
-            log(`[ClaudeAgentRunner] Tool '${toolName}' denied by user`);
-            return { block: true, reason: `User denied permission for '${toolName}'.` };
-          }
-
-          if (result === 'allow_always') {
-            rememberAlwaysAllow(sessionId, toolName);
-          }
-        }
-
-        // Allowed — delegate to SDK's original hook for event pipeline
-        return sdkBeforeToolCall ? sdkBeforeToolCall(ctx, signal) : undefined;
+      if (decision === 'deny') {
+        log(`[ClaudeAgentRunner] Tool '${toolName}' denied by rule`);
+        return { block: true, reason: `Tool '${toolName}' is denied by your permission rules.` };
       }
-    );
 
+      if (decision === 'ask') {
+        const toolUseId = `${ctx.toolCall?.id ?? 'unknown'}-perm-${uuidv4().slice(0, 8)}`;
+        let result: 'allow' | 'deny' | 'allow_always';
+        try {
+          result = await requestPermission(sessionId, toolUseId, toolName, input);
+        } catch (permErr) {
+          logError(
+            `[ClaudeAgentRunner] Permission request failed for '${toolName}' — failing closed`,
+            permErr
+          );
+          return {
+            block: true,
+            reason: `Permission request failed for '${toolName}'; tool not executed.`,
+          };
+        }
+
+        if (result === 'deny') {
+          log(`[ClaudeAgentRunner] Tool '${toolName}' denied by user`);
+          return { block: true, reason: `User denied permission for '${toolName}'.` };
+        }
+
+        if (result === 'allow_always') {
+          rememberAlwaysAllow(sessionId, toolName);
+        }
+      }
+
+      // Allowed — delegate to SDK's original hook for event pipeline
+      return sdkBeforeToolCall ? sdkBeforeToolCall(ctx, signal) : undefined;
+    };
+
+    // Install via the first supported shape — modern property preferred,
+    // legacy setter as fallback. Throws on neither supported.
+    const shape = installBeforeToolCallHook(agent as AgentLike, gate);
     log(
-      `[ClaudeAgentRunner] Permission hook installed on session ${sessionId} via agent.setBeforeToolCall`
+      `[ClaudeAgentRunner] Permission hook installed on session ${sessionId} via ${
+        shape === 'property'
+          ? 'agent.beforeToolCall assignment'
+          : 'agent.setBeforeToolCall (legacy)'
+      }`
     );
   }
 
