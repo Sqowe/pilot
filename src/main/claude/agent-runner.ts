@@ -20,7 +20,7 @@ import {
   type AgentSession as PiAgentSession,
   type ToolDefinition,
 } from '@mariozechner/pi-coding-agent';
-import { Type, type TSchema } from '@sinclair/typebox';
+import { Type, type TSchema } from 'typebox';
 import { getSharedAuthStorage, ModelRegistry } from './shared-auth';
 import type { Session, Message, TraceStep, ServerEvent, ContentBlock } from '../../renderer/types';
 import { v4 as uuidv4 } from 'uuid';
@@ -1995,12 +1995,13 @@ Tool routing:
 
         const resourceLoader = new DefaultResourceLoader({
           cwd: effectiveCwd,
+          agentDir: userClaudeDir,
           additionalSkillPaths: skillPaths,
-          appendSystemPrompt,
+          appendSystemPrompt: appendSystemPrompt ? [appendSystemPrompt] : undefined,
         });
         await resourceLoader.reload();
 
-        const modelRegistry = new ModelRegistry(authStorage);
+        const modelRegistry = ModelRegistry.inMemory(authStorage);
 
         // Ollama-specific compaction tuning based on actual context window
         const contextWindow = piModel.contextWindow || 128000;
@@ -2077,8 +2078,8 @@ Tool routing:
           thinkingLevel,
           authStorage,
           modelRegistry,
-          tools: wrappedTools as unknown as ReturnType<typeof createCodingTools>,
-          customTools: mcpCustomTools,
+          noTools: 'builtin',
+          customTools: [...(wrappedTools as ToolDefinition[]), ...mcpCustomTools],
           sessionManager: PiSessionManager.inMemory(),
           settingsManager: PiSettingsManager.inMemory({
             compaction: compactionSettings,
@@ -2499,7 +2500,7 @@ Tool routing:
               break;
             }
 
-            case 'auto_compaction_start': {
+            case 'compaction_start': {
               log('[ClaudeAgentRunner] Auto-compaction started, reason:', event.reason);
               compactionStepId = `compaction-${Date.now()}`;
               this.sendTraceStep(session.id, {
@@ -2512,7 +2513,7 @@ Tool routing:
               break;
             }
 
-            case 'auto_compaction_end': {
+            case 'compaction_end': {
               const status = event.aborted ? 'error' : event.errorMessage ? 'error' : 'completed';
               const title = event.aborted
                 ? 'Context compaction aborted'

@@ -67,9 +67,8 @@ describe('ClaudeAgentRunner pi-coding-agent integration', () => {
 
   it('uses pi DefaultResourceLoader with additionalSkillPaths and appendSystemPrompt', () => {
     expect(agentRunnerContent).toContain('additionalSkillPaths: skillPaths');
-    // appendSystemPrompt is now a locally-composed variable that may include
-    // optional workspace instructions — still passed as `appendSystemPrompt`.
-    expect(agentRunnerContent).toContain('appendSystemPrompt,');
+    // appendSystemPrompt is now wrapped in an array for the new pi-coding-agent API
+    expect(agentRunnerContent).toContain('appendSystemPrompt: appendSystemPrompt ?');
     expect(agentRunnerContent).toContain('let appendSystemPrompt = coworkAppendPrompt;');
     expect(agentRunnerContent).not.toContain('systemPromptOverride');
   });
