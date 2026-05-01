@@ -120,7 +120,17 @@ export function useIPC() {
       const isInitialConfigStatus = !store.hasSeenInitialConfigStatus;
       store.setIsConfigured(isConfigured);
       store.setAppConfig(config);
-      store.setSettings({ theme: config.theme || 'light' });
+      // Hydrate renderer-side Settings from main's persisted AppConfig so
+      // the Zustand store reflects what's on disk, not the renderer's
+      // `defaultSettings` stub. Without this, the bootstrap `settings.update`
+      // below would push renderer defaults back to main and overwrite
+      // previously-persisted values (observed bug: bash trust/deny lists
+      // disappeared after an app restart).
+      store.setSettings({
+        theme: config.theme || 'light',
+        bashTrustedCommands: config.bashTrustedCommands ?? [],
+        bashDenylist: config.bashDenylist ?? [],
+      });
       if (isInitialConfigStatus) {
         store.markInitialConfigStatusSeen();
       }
