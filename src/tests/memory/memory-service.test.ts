@@ -74,7 +74,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { DatabaseInstance, MessageRow, SessionRow } from '../../main/db/database';
-import type { MemoryCompletionRequest, MemoryLLMClientLike } from '../../main/memory/memory-llm-client';
+import type {
+  MemoryCompletionRequest,
+  MemoryLLMClientLike,
+} from '../../main/memory/memory-llm-client';
 import { MemoryService } from '../../main/memory/memory-service';
 import { configStore } from '../../main/config/config-store';
 
@@ -208,11 +211,12 @@ function createDatabaseInstance(db: Database.Database): DatabaseInstance {
       update: vi.fn(),
       get: vi.fn(
         (id: string) =>
-          db.prepare('SELECT * FROM sessions WHERE id = ? LIMIT 1').get(id) as SessionRow | undefined
+          db.prepare('SELECT * FROM sessions WHERE id = ? LIMIT 1').get(id) as
+            | SessionRow
+            | undefined
       ),
       getAll: vi.fn(
-        () =>
-          db.prepare('SELECT * FROM sessions ORDER BY created_at ASC').all() as SessionRow[]
+        () => db.prepare('SELECT * FROM sessions ORDER BY created_at ASC').all() as SessionRow[]
       ),
       delete: vi.fn(),
     },
@@ -221,9 +225,9 @@ function createDatabaseInstance(db: Database.Database): DatabaseInstance {
       update: vi.fn(),
       getBySessionId: vi.fn(
         (sessionId: string) =>
-          db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC').all(
-            sessionId
-          ) as MessageRow[]
+          db
+            .prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC')
+            .all(sessionId) as MessageRow[]
       ),
       delete: vi.fn(),
       deleteBySessionId: vi.fn(),
@@ -271,7 +275,13 @@ function insertSession(
 
 function insertMessage(
   db: Database.Database,
-  payload: { id: string; sessionId: string; role: 'user' | 'assistant'; text: string; timestamp: number }
+  payload: {
+    id: string;
+    sessionId: string;
+    role: 'user' | 'assistant';
+    text: string;
+    timestamp: number;
+  }
 ): void {
   db.prepare(
     `
@@ -533,7 +543,9 @@ describe('MemoryService', () => {
     await deletionPromise;
 
     expect(service.inspectSession(sessionId, '/repo/a')).toBeNull();
-    expect(service.search({ query: 'gateway token rotation', scope: 'all', limit: 10 })).toHaveLength(0);
+    expect(
+      service.search({ query: 'gateway token rotation', scope: 'all', limit: 10 })
+    ).toHaveLength(0);
   });
 
   it('rejects reading files that escape the memory allowlist through symlinks', async () => {
@@ -588,13 +600,17 @@ describe('MemoryService', () => {
     });
 
     service = new MemoryService(db, { llmClient: new MockMemoryLLMClient() });
-    expect(() => service.readFile(outsideFile)).toThrow('outside allowed memory files');
+    expect(() => service.readFile(outsideFile)).toThrow(
+      'Memory storageRoot must not be a filesystem root'
+    );
 
     fs.rmSync(outsideDir, { recursive: true, force: true });
   });
 
   it('rejects evalArtifactsRoot values that escape storageRoot before rebuildAll can delete them', async () => {
-    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'open-cowork-memory-artifacts-escape-'));
+    const outsideDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'open-cowork-memory-artifacts-escape-')
+    );
     const markerFile = path.join(outsideDir, 'keep.txt');
     fs.writeFileSync(markerFile, 'keep-me', 'utf8');
 
@@ -623,7 +639,9 @@ describe('MemoryService', () => {
     });
 
     service = new MemoryService(db, { llmClient: new MockMemoryLLMClient() });
-    await expect(service.rebuildAll()).rejects.toThrow('evalArtifactsRoot must stay inside storageRoot');
+    await expect(service.rebuildAll()).rejects.toThrow(
+      'evalArtifactsRoot must stay inside storageRoot'
+    );
     expect(fs.existsSync(markerFile)).toBe(true);
 
     fs.rmSync(outsideDir, { recursive: true, force: true });
@@ -659,7 +677,90 @@ describe('MemoryService', () => {
     });
 
     service = new MemoryService(db, { llmClient: new MockMemoryLLMClient() });
-    expect(() => service.readFile(outsideFile)).toThrow('evalArtifactsRoot must stay inside storageRoot');
+    expect(() => service.readFile(outsideFile)).toThrow(
+      'evalArtifactsRoot must stay inside storageRoot'
+    );
+
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  it('rejects readFile when evalArtifactsRoot is a filesystem root', () => {
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'open-cowork-memory-artifacts-root-'));
+    const outsideFile = path.join(outsideDir, 'secret.json');
+    fs.writeFileSync(outsideFile, '{"secret":true}', 'utf8');
+
+    configStore.update({
+      memoryRuntime: {
+        llm: {
+          inheritFromActive: true,
+          apiKey: '',
+          baseUrl: '',
+          model: '',
+          timeoutMs: 180000,
+        },
+        embedding: {
+          inheritFromActive: true,
+          apiKey: '',
+          baseUrl: '',
+          model: 'text-embedding-3-small',
+          timeoutMs: 180000,
+        },
+        useEmbedding: false,
+        maxNavSteps: 2,
+        ingestionConcurrency: 2,
+        storageRoot: path.parse(outsideDir).root,
+        evalArtifactsRoot: path.parse(outsideDir).root,
+      },
+    });
+
+    service = new MemoryService(db, { llmClient: new MockMemoryLLMClient() });
+    expect(() => service.readFile(outsideFile)).toThrow(
+      'Memory storageRoot must not be a filesystem root'
+    );
+
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  it('rejects readFile when evalArtifactsRoot is a symlink escaping storageRoot', () => {
+    const outsideDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'open-cowork-memory-artifacts-link-target-')
+    );
+    const outsideFile = path.join(outsideDir, 'secret.json');
+    fs.writeFileSync(outsideFile, '{"secret":true}', 'utf8');
+
+    const safeStorageRoot = path.join(storageRoot, 'memory-root');
+    fs.mkdirSync(safeStorageRoot, { recursive: true });
+    const symlinkArtifactsRoot = path.join(safeStorageRoot, 'linked-artifacts');
+    fs.symlinkSync(outsideDir, symlinkArtifactsRoot, 'dir');
+
+    configStore.update({
+      memoryRuntime: {
+        llm: {
+          inheritFromActive: true,
+          apiKey: '',
+          baseUrl: '',
+          model: '',
+          timeoutMs: 180000,
+        },
+        embedding: {
+          inheritFromActive: true,
+          apiKey: '',
+          baseUrl: '',
+          model: 'text-embedding-3-small',
+          timeoutMs: 180000,
+        },
+        useEmbedding: false,
+        maxNavSteps: 2,
+        ingestionConcurrency: 2,
+        storageRoot: safeStorageRoot,
+        evalArtifactsRoot: symlinkArtifactsRoot,
+      },
+    });
+
+    service = new MemoryService(db, { llmClient: new MockMemoryLLMClient() });
+    expect(() => service.readFile(outsideFile)).toThrow(
+      'evalArtifactsRoot must stay inside storageRoot'
+    );
 
     fs.rmSync(outsideDir, { recursive: true, force: true });
   });

@@ -78,6 +78,48 @@ interface ExpandedSessionData {
   chunks: Array<{ chunkId: string; summary: string; keywords: string[] }>;
 }
 
+function isFilesystemRootPath(filePath: string): boolean {
+  const resolvedPath = path.resolve(filePath);
+  return resolvedPath === path.parse(resolvedPath).root;
+}
+
+function resolveExistingRealPath(filePath: string): string {
+  const resolvedPath = path.resolve(filePath);
+  return fs.existsSync(resolvedPath) ? fs.realpathSync(resolvedPath) : resolvedPath;
+}
+
+function assertSafeMemoryPaths(storageRoot: string, artifactsDir: string): void {
+  const resolvedStorageRoot = path.resolve(storageRoot);
+  const resolvedArtifactsDir = path.resolve(artifactsDir);
+
+  if (isFilesystemRootPath(resolvedStorageRoot)) {
+    throw new Error('Memory storageRoot must not be a filesystem root');
+  }
+  if (isFilesystemRootPath(resolvedArtifactsDir)) {
+    throw new Error('Memory evalArtifactsRoot must not be a filesystem root');
+  }
+  if (!isSubPath(resolvedArtifactsDir, resolvedStorageRoot)) {
+    throw new Error('evalArtifactsRoot must stay inside storageRoot');
+  }
+
+  const realStorageRoot = resolveExistingRealPath(resolvedStorageRoot);
+  if (isFilesystemRootPath(realStorageRoot)) {
+    throw new Error('Memory storageRoot must not be a filesystem root');
+  }
+
+  if (!fs.existsSync(resolvedArtifactsDir)) {
+    return;
+  }
+
+  const realArtifactsDir = fs.realpathSync(resolvedArtifactsDir);
+  if (isFilesystemRootPath(realArtifactsDir)) {
+    throw new Error('Memory evalArtifactsRoot must not be a filesystem root');
+  }
+  if (!isSubPath(realArtifactsDir, realStorageRoot)) {
+    throw new Error('evalArtifactsRoot must stay inside storageRoot');
+  }
+}
+
 export class MemoryService {
   private readonly queue = new MemoryIngestionQueue();
   private readonly deletedSessionIds = new Set<string>();
@@ -104,7 +146,10 @@ export class MemoryService {
       ...DEFAULT_MEMORY_PROMPTS,
       ...options?.prompts,
     };
-    this.coreExtractor = new CoreMemoryExtractor(this.llmClient, promptSet.coreMemoryUpdateSystemPrompt);
+    this.coreExtractor = new CoreMemoryExtractor(
+      this.llmClient,
+      promptSet.coreMemoryUpdateSystemPrompt
+    );
     this.experienceExtractor = new ExperienceMemoryExtractor(
       this.llmClient,
       promptSet.sessionChunkExtractionPrompt
@@ -158,7 +203,8 @@ export class MemoryService {
       coreCount: coreEntries.length,
       experienceSessionCount: experienceStore.sessions.length,
       experienceChunkCount: experienceStore.chunks.length,
-      sourceWorkspaceCount: topSourceWorkspaces.filter((item) => item.workspaceKey !== '(none)').length,
+      sourceWorkspaceCount: topSourceWorkspaces.filter((item) => item.workspaceKey !== '(none)')
+        .length,
       failedSessionCount: stateRecords.filter((record) => Boolean(record.lastError)).length,
       latestIngestionAt: stateRecords.reduce<number | null>((latest, record) => {
         if (!record.lastIngestedAt) {
@@ -293,7 +339,10 @@ export class MemoryService {
       sections.push(`<core_memory>\n${corePromptBlock}\n</core_memory>`);
     }
 
-    const experienceContext = await this.buildExperienceContext(prompt, normalizeWorkspaceKey(session.cwd));
+    const experienceContext = await this.buildExperienceContext(
+      prompt,
+      normalizeWorkspaceKey(session.cwd)
+    );
     if (experienceContext.trim()) {
       sections.push(`<experience_memory>\n${experienceContext}\n</experience_memory>`);
     }
@@ -330,7 +379,10 @@ export class MemoryService {
     this.clearWorkspace(cwd);
     const sessionRows = this.db.sessions
       .getAll()
-      .filter((session) => normalizeWorkspaceKey(session.cwd) === workspaceKey && session.memory_enabled === 1)
+      .filter(
+        (session) =>
+          normalizeWorkspaceKey(session.cwd) === workspaceKey && session.memory_enabled === 1
+      )
       .sort((a, b) => a.created_at - b.created_at);
 
     await this.batchRebuild(sessionRows);
@@ -595,7 +647,9 @@ export class MemoryService {
       });
     }
 
-    const sessionSearchable = [input.extracted.sessionSummary, ...input.extracted.sessionKeywords].join(' ').trim();
+    const sessionSearchable = [input.extracted.sessionSummary, ...input.extracted.sessionKeywords]
+      .join(' ')
+      .trim();
     store.replaceSession(
       input.sessionId,
       {
@@ -606,10 +660,9 @@ export class MemoryService {
         sourceSessionTitle: input.sessionTitle,
         sourceSessionDate: input.sessionDate,
         summary: input.extracted.sessionSummary,
-        keywords:
-          input.extracted.sessionKeywords.length
-            ? input.extracted.sessionKeywords
-            : extractKeywords(sessionSearchable),
+        keywords: input.extracted.sessionKeywords.length
+          ? input.extracted.sessionKeywords
+          : extractKeywords(sessionSearchable),
         chunkIds: [],
         rawSession: input.fullTurns,
         sessionDate: input.sessionDate,
@@ -622,7 +675,10 @@ export class MemoryService {
     store.save();
   }
 
-  private async buildExperienceContext(prompt: string, currentWorkspace: string | null): Promise<string> {
+  private async buildExperienceContext(
+    prompt: string,
+    currentWorkspace: string | null
+  ): Promise<string> {
     if (!prompt.trim()) {
       return '';
     }
@@ -647,7 +703,11 @@ export class MemoryService {
     const rawSessions = new Map<string, string>();
 
     for (let step = 0; step < this.getAppConfig().memoryRuntime.maxNavSteps; step += 1) {
-      const decision = await this.navigator.decide(prompt, formatTimestamp(Date.now()), visibleContext);
+      const decision = await this.navigator.decide(
+        prompt,
+        formatTimestamp(Date.now()),
+        visibleContext
+      );
       if (decision.sufficient || decision.actions.length === 0) {
         break;
       }
@@ -694,7 +754,12 @@ export class MemoryService {
           }
         }
       }
-      visibleContext = this.formatFullContext(retrieval, expandedChunks, expandedSessions, rawSessions);
+      visibleContext = this.formatFullContext(
+        retrieval,
+        expandedChunks,
+        expandedSessions,
+        rawSessions
+      );
     }
 
     return visibleContext;
@@ -763,7 +828,9 @@ export class MemoryService {
           )}\n  Chunks:`
         );
         for (const chunk of value.chunks) {
-          parts.push(`    - [chunk_id=${chunk.chunkId}] ${chunk.summary} (keywords: ${chunk.keywords.join(', ')})`);
+          parts.push(
+            `    - [chunk_id=${chunk.chunkId}] ${chunk.summary} (keywords: ${chunk.keywords.join(', ')})`
+          );
         }
       }
     }
@@ -803,7 +870,8 @@ export class MemoryService {
     session: MemoryIngestionInput['session'],
     messages: MemoryIngestionInput['messages']
   ): string {
-    const timestamp = messages[messages.length - 1]?.timestamp || session.updatedAt || session.createdAt;
+    const timestamp =
+      messages[messages.length - 1]?.timestamp || session.updatedAt || session.createdAt;
     return formatTimestamp(timestamp);
   }
 
@@ -863,13 +931,13 @@ export class MemoryService {
   private getPaths(): MemoryPaths {
     const configuredRoot = this.getAppConfig().memoryRuntime.storageRoot?.trim();
     const configuredArtifactsRoot = this.getAppConfig().memoryRuntime.evalArtifactsRoot?.trim();
-    const storageRoot = path.resolve(configuredRoot || path.join(app.getPath('userData'), 'memory'));
+    const storageRoot = path.resolve(
+      configuredRoot || path.join(app.getPath('userData'), 'memory')
+    );
     const safeArtifactsDir = path.join(storageRoot, 'eval-artifacts');
     const artifactsDir = path.resolve(configuredArtifactsRoot || safeArtifactsDir);
 
-    if (!isSubPath(artifactsDir, storageRoot)) {
-      throw new Error('evalArtifactsRoot must stay inside storageRoot');
-    }
+    assertSafeMemoryPaths(storageRoot, artifactsDir);
 
     return {
       storageRoot,
@@ -883,11 +951,17 @@ export class MemoryService {
   private ensureStores(): void {
     const paths = this.getPaths();
     const pathsKey = `${paths.storageRoot}::${paths.artifactsDir}`;
-    if (this.currentPathsKey === pathsKey && this.coreStore && this.stateStore && this.experienceStore) {
+    if (
+      this.currentPathsKey === pathsKey &&
+      this.coreStore &&
+      this.stateStore &&
+      this.experienceStore
+    ) {
       return;
     }
     fs.mkdirSync(paths.storageRoot, { recursive: true });
     fs.mkdirSync(paths.artifactsDir, { recursive: true });
+    assertSafeMemoryPaths(paths.storageRoot, paths.artifactsDir);
     this.currentPathsKey = pathsKey;
     this.coreStore = new CoreMemoryStore(paths.coreFilePath);
     this.stateStore = new MemorySessionStateStore(paths.stateFilePath);
@@ -932,6 +1006,7 @@ export class MemoryService {
 
   private resolveReadablePath(filePath: string): string {
     const paths = this.getPaths();
+    assertSafeMemoryPaths(paths.storageRoot, paths.artifactsDir);
     const requestedPath = path.resolve(filePath);
     if (!fs.existsSync(requestedPath)) {
       throw new Error('Requested file does not exist');
