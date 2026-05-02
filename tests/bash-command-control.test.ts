@@ -537,3 +537,88 @@ describe('session always-allow vs bash trust/deny precedence', () => {
     expect(decidePermission('s2', 'bash', { command: 'anything' })).toBe('ask');
   });
 });
+
+describe('containsUnsupportedShellSyntax — file-descriptor redirection forms', () => {
+  // Regression tests for the over-strict `&` check that rejected safe
+  // redirection syntaxes like `2>&1` and `&> file`. These forms duplicate
+  // or close file descriptors; they don't spawn a subshell or chain a
+  // second command, so they must pass the syntax guard so the trust list
+  // can evaluate them normally.
+
+  afterEach(() => {
+    setBashCommandLists([], []);
+  });
+
+  it('allows `2>&1` stdout-to-stderr redirection', () => {
+    setBashCommandLists(['firecrawl *'], undefined);
+    expect(decideBashPermission('firecrawl search "foo" 2>&1')).toBe('allow');
+  });
+
+  it('allows `1>&2` stderr-to-stdout redirection', () => {
+    setBashCommandLists(['echo *'], undefined);
+    expect(decideBashPermission('echo boom 1>&2')).toBe('allow');
+  });
+
+  it('allows `2>&-` to close stderr', () => {
+    setBashCommandLists(['node *'], undefined);
+    expect(decideBashPermission('node script.js 2>&-')).toBe('allow');
+  });
+
+  it('allows `&> file` combined redirection shorthand', () => {
+    setBashCommandLists(['cmd *'], undefined);
+    expect(decideBashPermission('cmd args &> /tmp/out.log')).toBe('allow');
+  });
+
+  it('allows `&>> file` append combined redirection shorthand', () => {
+    setBashCommandLists(['cmd *'], undefined);
+    expect(decideBashPermission('cmd args &>> /tmp/out.log')).toBe('allow');
+  });
+
+  it('allows `>&2` without a leading fd digit', () => {
+    // `>&2` is equivalent to `1>&2`. Same safety properties.
+    setBashCommandLists(['printf *'], undefined);
+    expect(decideBashPermission('printf oops >&2')).toBe('allow');
+  });
+
+  it('allows multi-digit fd redirections like `10>&11`', () => {
+    // Rare but legal. The scanner should tolerate any-length digit run
+    // preceding the operator.
+    setBashCommandLists(['exec *'], undefined);
+    expect(decideBashPermission('exec 10>&11')).toBe('allow');
+  });
+
+  it('still rejects a genuine lone `&` background operator', () => {
+    // This must still fail closed — a lone trailing `&` is bash's
+    // background operator and detaches the command from our control.
+    setBashCommandLists(['sleep *'], undefined);
+    expect(decideBashPermission('sleep 60 &')).toBe('ask');
+  });
+
+  it('still rejects `&` followed by a non-redirection char (e.g. `cmd & echo`)', () => {
+    setBashCommandLists(['echo *'], undefined);
+    // `cmd & echo x` backgrounds `cmd` then runs `echo x` — two commands,
+    // one backgrounded. Not safe to auto-evaluate.
+    expect(decideBashPermission('slow & echo done')).toBe('ask');
+  });
+
+  it('still rejects command substitution that happens to precede `2>&1`', () => {
+    // The redirection is fine; the `$(...)` is the real risk. Security
+    // posture is preserved even when both are present.
+    setBashCommandLists(['echo *'], undefined);
+    expect(decideBashPermission('echo $(rm -rf /) 2>&1')).toBe('ask');
+  });
+
+  it('handles redirection inside a chained command', () => {
+    // Pipeline splits on `|`; each sub is evaluated independently, and
+    // `2>&1` must not poison the per-sub syntax check. Both subs trusted
+    // → allow.
+    setBashCommandLists(['cat *', 'head *'], undefined);
+    expect(decideBashPermission('cat file.txt 2>&1 | head -100')).toBe('allow');
+  });
+
+  it('denylist still applies to commands that use `2>&1`', () => {
+    setBashCommandLists(['firecrawl *'], ['--force']);
+    // Denylist match wins regardless of redirection.
+    expect(decideBashPermission('firecrawl search "x" --force 2>&1')).toBe('ask');
+  });
+});
