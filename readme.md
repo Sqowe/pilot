@@ -14,7 +14,8 @@
   <a href="#demo">Demo</a> •
   <a href="#installation">Downloads</a> •
   <a href="#quick-start">Quick Start</a> •
-  <a href="#skills">Skills Library</a>
+  <a href="#skills">Skills Library</a> •
+  <a href="#sqowe-specific-features">Sqowe Features</a>
 </p>
 
 <p align="center">
@@ -208,6 +209,16 @@ Open Cowork ships with built-in skills under `.claude/skills/`, and supports use
 - `pdf` for PDF handling and forms
 - `xlsx` for Excel spreadsheet support
 - `skill-creator` for creating custom skills
+
+---
+
+<a id="sqowe-specific-features"></a>
+
+## 🔧 Sqowe-Specific Features
+
+This is the **Sqowe** variant of Open Cowork. It tracks upstream functionality and adds the following on top:
+
+- **Bash Command Restrictions**: A configurable allow/deny engine that gates every bash command the agent runs. Trusted patterns run automatically, denied patterns always prompt, and everything else requires explicit approval. See [BASH_COMMAND_RESTRICTIONS.md](BASH_COMMAND_RESTRICTIONS.md) for configuration details, pattern syntax, and edge cases.
 
 ---
 

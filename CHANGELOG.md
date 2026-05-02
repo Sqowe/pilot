@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0-sqowe.1] - 2026-05-02
+
+Sqowe fork variant based on upstream `3.3.0`. Tracks upstream functionality with fork-specific customizations layered on top. See the [Sqowe-Specific Features](readme.md#sqowe-specific-features) section in the README for details.
+
 ## [3.3.0] - 2026-04-18
 
 First stable release of the 3.3.x series. Graduated from 9 beta releases with 30+ commits since beta.9.
@@ -124,7 +128,8 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-beta.8...HEAD
+[Unreleased]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.1...HEAD
+[3.3.0-sqowe.1]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0...v3.3.0-sqowe.1
 [3.3.0-beta.8]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.2.0...v3.3.0-beta.8
 [3.2.0]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.0.0...v3.1.0
