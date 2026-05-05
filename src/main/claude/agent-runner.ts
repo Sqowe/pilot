@@ -20,6 +20,7 @@ import {
   type AgentSession as PiAgentSession,
   type ToolDefinition,
 } from '@mariozechner/pi-coding-agent';
+import type { ImageContent as PiImageContent } from '@mariozechner/pi-ai';
 import { Type, type TSchema } from 'typebox';
 import { getSharedAuthStorage, ModelRegistry } from './shared-auth';
 import type { Session, Message, TraceStep, ServerEvent, ContentBlock } from '../../renderer/types';
@@ -2598,7 +2599,31 @@ Tool routing:
             })
           );
         }
-        const promptResult = await piSession.prompt(contextualPrompt);
+        // Extract images from the last user message to pass to the SDK
+        const piImages: PiImageContent[] = [];
+        if (hasImages && lastUserMessage) {
+          for (const block of lastUserMessage.content) {
+            const imgBlock = block as {
+              type?: string;
+              source?: { data?: string; media_type?: string };
+            };
+            if (imgBlock.type === 'image' && imgBlock.source?.data && imgBlock.source?.media_type) {
+              piImages.push({
+                type: 'image',
+                data: imgBlock.source.data,
+                mimeType: imgBlock.source.media_type,
+              });
+            }
+          }
+          if (piImages.length > 0) {
+            log('[ClaudeAgentRunner] Passing', piImages.length, 'image(s) to SDK prompt');
+          }
+        }
+
+        const promptResult = await piSession.prompt(
+          contextualPrompt,
+          piImages.length > 0 ? { images: piImages } : undefined
+        );
         log(
           '[ClaudeAgentRunner] prompt() returned:',
           JSON.stringify(promptResult ?? 'void').substring(0, 1000)
