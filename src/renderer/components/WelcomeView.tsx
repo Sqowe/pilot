@@ -14,6 +14,7 @@ import {
   Paperclip,
   BookOpen,
   FileSearch,
+  Layers,
 } from 'lucide-react';
 
 type AttachedFile = {
@@ -45,6 +46,35 @@ export function WelcomeView() {
   const setShowSettings = useAppStore((state) => state.setShowSettings);
   const setSettingsTab = useAppStore((state) => state.setSettingsTab);
   const canSubmit = prompt.trim().length > 0 || pastedImages.length > 0 || attachedFiles.length > 0;
+
+  // Config set selection
+  const appConfig = useAppStore((state) => state.appConfig);
+  const setAppConfig = useAppStore((state) => state.setAppConfig);
+  const setIsConfiguredStore = useAppStore((state) => state.setIsConfigured);
+  const configSets = appConfig?.configSets ?? [];
+  const activeConfigSetId = appConfig?.activeConfigSetId ?? '';
+  const [isSwitchingSet, setIsSwitchingSet] = useState(false);
+  const switchRequestRef = useRef(0);
+
+  const handleConfigSetSwitch = async (setId: string) => {
+    if (!isElectron || !window.electronAPI || setId === activeConfigSetId || isSwitchingSet) return;
+    const requestId = ++switchRequestRef.current;
+    setIsSwitchingSet(true);
+    try {
+      const result = await window.electronAPI.config.switchSet({ id: setId });
+      // Only apply if this is still the latest request (guards against rapid switching)
+      if (switchRequestRef.current === requestId) {
+        setAppConfig(result.config);
+        setIsConfiguredStore(Boolean(result.config?.isConfigured));
+      }
+    } catch (error) {
+      console.error('[WelcomeView] Failed to switch config set:', error);
+    } finally {
+      if (switchRequestRef.current === requestId) {
+        setIsSwitchingSet(false);
+      }
+    }
+  };
 
   const handleSelectFolder = async () => {
     try {
@@ -626,6 +656,28 @@ export function WelcomeView() {
                   <Paperclip className="w-4 h-4" />
                   <span>{t('welcome.attachFiles')}</span>
                 </button>
+              )}
+
+              {/* Config Set Selector — only shown when multiple sets exist */}
+              {configSets.length > 1 && (
+                <div className="flex items-center gap-1.5 text-sm text-text-secondary">
+                  <Layers className="w-4 h-4 text-text-muted shrink-0" />
+                  <select
+                    value={activeConfigSetId}
+                    onChange={(e) => {
+                      void handleConfigSetSwitch(e.target.value);
+                    }}
+                    disabled={isSwitchingSet}
+                    className="bg-transparent border-none outline-none text-sm text-text-secondary hover:text-text-primary cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed max-w-[140px] truncate"
+                    title={t('welcome.configSet')}
+                  >
+                    {configSets.map((set) => (
+                      <option key={set.id} value={set.id}>
+                        {set.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               )}
             </div>
 

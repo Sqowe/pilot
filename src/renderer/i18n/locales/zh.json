@@ -46,7 +46,8 @@
     "quickPromptPapers": "请帮我使用 Chrome 搜索并总结两天内与 [Agent] 相关的论文。\n来源网站：\n1. HuggingFace Daily Papers。请包含投票信息和简短总结。注意周末可能没有新论文，所以你可能需要补看前几天的内容，但总计仍然要覆盖两天。",
     "quickPromptNotion": "帮我调研三篇与 agents 相关、具有代表性的综述论文，并将它们添加到一个名为“Agent Survey”的 Notion 页面下。每篇论文请包含标题、作者、发表 venue/year，以及主要贡献的简短总结。",
     "apiNotConfigured": "API 尚未配置，请前往设置页面填写 API 提供商和密钥。",
-    "goToSettings": "前往设置"
+    "goToSettings": "前往设置",
+    "configSet": "配置方案"
   },
   "settings": {
     "title": "设置",
