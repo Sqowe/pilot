@@ -657,7 +657,9 @@ export function WelcomeView() {
                   <span>{t('welcome.attachFiles')}</span>
                 </button>
               )}
+            </div>
 
+            <div className="flex items-center gap-3">
               {/* Config Set Selector — only shown when multiple sets exist */}
               {configSets.length > 1 && (
                 <div className="flex items-center gap-1.5 text-sm text-text-secondary">
@@ -679,16 +681,16 @@ export function WelcomeView() {
                   </select>
                 </div>
               )}
-            </div>
 
-            <button
-              type="submit"
-              disabled={!canSubmit || isSubmitting}
-              className="btn btn-primary px-5 py-2.5 rounded-2xl disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <span>{isSubmitting ? t('welcome.starting') : t('welcome.letsGo')}</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
+              <button
+                type="submit"
+                disabled={!canSubmit || isSubmitting}
+                className="btn btn-primary px-5 py-2.5 rounded-2xl disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <span>{isSubmitting ? t('welcome.starting') : t('welcome.letsGo')}</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </form>
       </div>
