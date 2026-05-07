@@ -64,7 +64,7 @@ dist*
 resources/node
 resources/tools
 resources/python
-docs/
+
 /.mcp.json
 /eng.traineddata
 /jpn.traineddata
@@ -112,3 +112,6 @@ website/.vitepress/cache/
 !public/*.png
 !website/public/*.png
 !resources/social-preview.png
+
+# SQOWE
+docs/chats/
