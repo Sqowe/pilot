@@ -46,6 +46,14 @@ export interface DatabaseInstance {
     delete: (id: string) => void;
   };
 
+  scheduledTaskRuns: {
+    create: (run: ScheduledTaskRunRow) => void;
+    getByTaskId: (taskId: string, limit?: number) => ScheduledTaskRunRow[];
+    getLatestByTaskId: (taskId: string) => ScheduledTaskRunRow | undefined;
+    deleteByTaskId: (taskId: string) => void;
+    pruneByTaskId: (taskId: string, keepCount: number) => void;
+  };
+
   // For compatibility with old interface
   prepare: (sql: string) => Database.Statement;
   exec: (sql: string) => void;
@@ -109,6 +117,26 @@ export interface ScheduledTaskRow {
   last_error: string | null;
   created_at: number;
   updated_at: number;
+  // v2 fields
+  config_set_id: string;
+  execution_mode: string;
+  time_window: string | null;
+  max_duration_ms: number | null;
+  max_tokens: number | null;
+  sandbox_mode: string;
+}
+
+export interface ScheduledTaskRunRow {
+  id: string;
+  task_id: string;
+  session_id: string | null;
+  status: string;
+  started_at: number;
+  completed_at: number | null;
+  error: string | null;
+  tokens_used: number | null;
+  blocked_commands: string | null;
+  created_at: number;
 }
 
 let db: DatabaseInstance | null = null;
@@ -342,6 +370,55 @@ function initializeSchema(database: Database.Database): void {
   `);
     ensureColumn(database, 'scheduled_tasks', 'schedule_config', 'schedule_config TEXT');
 
+    // Scheduler v2 columns
+    ensureColumn(
+      database,
+      'scheduled_tasks',
+      'config_set_id',
+      "config_set_id TEXT NOT NULL DEFAULT 'default'"
+    );
+    ensureColumn(
+      database,
+      'scheduled_tasks',
+      'execution_mode',
+      "execution_mode TEXT NOT NULL DEFAULT 'ask'"
+    );
+    ensureColumn(database, 'scheduled_tasks', 'time_window', 'time_window TEXT');
+    ensureColumn(database, 'scheduled_tasks', 'max_duration_ms', 'max_duration_ms INTEGER');
+    ensureColumn(database, 'scheduled_tasks', 'max_tokens', 'max_tokens INTEGER');
+    ensureColumn(
+      database,
+      'scheduled_tasks',
+      'sandbox_mode',
+      "sandbox_mode TEXT NOT NULL DEFAULT 'inherit'"
+    );
+
+    database.exec(`
+    CREATE TABLE IF NOT EXISTS scheduled_task_runs (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      session_id TEXT,
+      status TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      completed_at INTEGER,
+      error TEXT,
+      tokens_used INTEGER,
+      blocked_commands TEXT,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id) ON DELETE CASCADE
+    )
+  `);
+
+    database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_task_runs_task_id
+    ON scheduled_task_runs(task_id)
+  `);
+
+    database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_task_runs_started_at
+    ON scheduled_task_runs(started_at)
+  `);
+
     database.exec(`
     CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_next_run
     ON scheduled_tasks(enabled, next_run_at)
@@ -490,10 +567,31 @@ export function initDatabase(): DatabaseInstance {
   `);
 
   const insertScheduledTask = rawDb.prepare(`
-    INSERT OR REPLACE INTO scheduled_tasks (
-      id, title, prompt, cwd, run_at, next_run_at, schedule_config, repeat_every, repeat_unit, enabled, last_run_at, last_run_session_id, last_error, created_at, updated_at
+    INSERT INTO scheduled_tasks (
+      id, title, prompt, cwd, run_at, next_run_at, schedule_config, repeat_every, repeat_unit, enabled, last_run_at, last_run_session_id, last_error, created_at, updated_at,
+      config_set_id, execution_mode, time_window, max_duration_ms, max_tokens, sandbox_mode
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      title = excluded.title,
+      prompt = excluded.prompt,
+      cwd = excluded.cwd,
+      run_at = excluded.run_at,
+      next_run_at = excluded.next_run_at,
+      schedule_config = excluded.schedule_config,
+      repeat_every = excluded.repeat_every,
+      repeat_unit = excluded.repeat_unit,
+      enabled = excluded.enabled,
+      last_run_at = excluded.last_run_at,
+      last_run_session_id = excluded.last_run_session_id,
+      last_error = excluded.last_error,
+      updated_at = excluded.updated_at,
+      config_set_id = excluded.config_set_id,
+      execution_mode = excluded.execution_mode,
+      time_window = excluded.time_window,
+      max_duration_ms = excluded.max_duration_ms,
+      max_tokens = excluded.max_tokens,
+      sandbox_mode = excluded.sandbox_mode
   `);
 
   const getScheduledTaskStmt = rawDb.prepare(`
@@ -506,6 +604,36 @@ export function initDatabase(): DatabaseInstance {
 
   const deleteScheduledTaskStmt = rawDb.prepare(`
     DELETE FROM scheduled_tasks WHERE id = ?
+  `);
+
+  // Scheduled task runs prepared statements
+  const insertScheduledTaskRun = rawDb.prepare(`
+    INSERT INTO scheduled_task_runs (
+      id, task_id, session_id, status, started_at, completed_at, error, tokens_used, blocked_commands, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const getRunsByTaskIdStmt = rawDb.prepare(`
+    SELECT * FROM scheduled_task_runs WHERE task_id = ? ORDER BY started_at DESC, created_at DESC, id DESC LIMIT ?
+  `);
+
+  const getLatestRunByTaskIdStmt = rawDb.prepare(`
+    SELECT * FROM scheduled_task_runs WHERE task_id = ? ORDER BY started_at DESC, created_at DESC, id DESC LIMIT 1
+  `);
+
+  const deleteRunsByTaskIdStmt = rawDb.prepare(`
+    DELETE FROM scheduled_task_runs WHERE task_id = ?
+  `);
+
+  const pruneRunsByTaskIdStmt = rawDb.prepare(`
+    DELETE FROM scheduled_task_runs
+    WHERE task_id = ? AND id NOT IN (
+      SELECT id FROM scheduled_task_runs
+      WHERE task_id = ?
+      ORDER BY started_at DESC, created_at DESC, id DESC
+      LIMIT ?
+    )
   `);
 
   db = {
@@ -666,7 +794,13 @@ export function initDatabase(): DatabaseInstance {
           task.last_run_session_id,
           task.last_error,
           task.created_at,
-          task.updated_at
+          task.updated_at,
+          task.config_set_id,
+          task.execution_mode,
+          task.time_window,
+          task.max_duration_ms,
+          task.max_tokens,
+          task.sandbox_mode
         );
       },
 
@@ -702,6 +836,41 @@ export function initDatabase(): DatabaseInstance {
 
       delete: (id: string) => {
         deleteScheduledTaskStmt.run(id);
+      },
+    },
+
+    scheduledTaskRuns: {
+      create: (run: ScheduledTaskRunRow) => {
+        insertScheduledTaskRun.run(
+          run.id,
+          run.task_id,
+          run.session_id,
+          run.status,
+          run.started_at,
+          run.completed_at,
+          run.error,
+          run.tokens_used,
+          run.blocked_commands,
+          run.created_at
+        );
+      },
+
+      getByTaskId: (taskId: string, limit = 10): ScheduledTaskRunRow[] => {
+        const clampedLimit = Math.max(1, Math.min(Math.floor(limit), 1000));
+        return getRunsByTaskIdStmt.all(taskId, clampedLimit) as ScheduledTaskRunRow[];
+      },
+
+      getLatestByTaskId: (taskId: string): ScheduledTaskRunRow | undefined => {
+        return getLatestRunByTaskIdStmt.get(taskId) as ScheduledTaskRunRow | undefined;
+      },
+
+      deleteByTaskId: (taskId: string) => {
+        deleteRunsByTaskIdStmt.run(taskId);
+      },
+
+      pruneByTaskId: (taskId: string, keepCount: number) => {
+        const safeKeepCount = Math.max(0, Math.floor(keepCount));
+        pruneRunsByTaskIdStmt.run(taskId, taskId, safeKeepCount);
       },
     },
 

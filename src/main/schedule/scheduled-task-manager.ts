@@ -15,7 +15,24 @@ import {
   buildScheduledTaskFallbackTitle,
   buildScheduledTaskTitle,
 } from '../../shared/schedule/task-title';
+import {
+  type TimeWindow,
+  type ExecutionMode,
+  type CatchUpPolicy,
+  type ConflictPolicy,
+  type SandboxMode,
+  type ScheduledTaskRunStatus,
+} from '../../shared/schedule/types';
 import { log, logError } from '../utils/logger';
+
+export type {
+  TimeWindow,
+  ExecutionMode,
+  CatchUpPolicy,
+  ConflictPolicy,
+  SandboxMode,
+  ScheduledTaskRunStatus,
+};
 
 export type ScheduleRepeatUnit = 'minute' | 'hour' | 'day';
 export type ScheduledTaskWeekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
@@ -51,6 +68,32 @@ export interface ScheduledTask {
   lastError: string | null;
   createdAt: number;
   updatedAt: number;
+
+  // --- v2 fields ---
+  configSetId: string;
+  executionMode: ExecutionMode;
+  timeWindow: TimeWindow | null;
+  maxDurationMs: number | null;
+  maxTokens: number | null;
+  sandboxMode: SandboxMode;
+}
+
+export interface ScheduledTaskRun {
+  id: string;
+  taskId: string;
+  sessionId: string | null;
+  status: ScheduledTaskRunStatus;
+  startedAt: number;
+  completedAt: number | null;
+  error: string | null;
+  tokensUsed: number | null;
+  blockedCommands: string[] | null;
+}
+
+export interface SchedulerSettings {
+  catchUpPolicy: CatchUpPolicy;
+  conflictPolicy: ConflictPolicy;
+  runHistoryDepth: number;
 }
 
 export interface ScheduledTaskCreateInput {
@@ -63,6 +106,13 @@ export interface ScheduledTaskCreateInput {
   repeatEvery?: number | null;
   repeatUnit?: ScheduleRepeatUnit | null;
   enabled?: boolean;
+  // v2 fields
+  configSetId?: string;
+  executionMode?: ExecutionMode;
+  timeWindow?: TimeWindow | null;
+  maxDurationMs?: number | null;
+  maxTokens?: number | null;
+  sandboxMode?: SandboxMode;
 }
 
 export interface ScheduledTaskUpdateInput {
@@ -78,6 +128,13 @@ export interface ScheduledTaskUpdateInput {
   lastRunAt?: number | null;
   lastRunSessionId?: string | null;
   lastError?: string | null;
+  // v2 fields
+  configSetId?: string;
+  executionMode?: ExecutionMode;
+  timeWindow?: TimeWindow | null;
+  maxDurationMs?: number | null;
+  maxTokens?: number | null;
+  sandboxMode?: SandboxMode;
 }
 
 export interface ScheduledTaskStore {
@@ -86,6 +143,14 @@ export interface ScheduledTaskStore {
   create(input: ScheduledTaskCreateInput): ScheduledTask;
   update(id: string, updates: ScheduledTaskUpdateInput): ScheduledTask | null;
   delete(id: string): boolean;
+}
+
+export interface ScheduledTaskRunStore {
+  create(run: ScheduledTaskRun): void;
+  getByTaskId(taskId: string, limit?: number): ScheduledTaskRun[];
+  getLatestByTaskId(taskId: string): ScheduledTaskRun | null;
+  deleteByTaskId(taskId: string): void;
+  pruneByTaskId(taskId: string, keepCount: number): void;
 }
 
 export interface ScheduledTaskRunResult {
