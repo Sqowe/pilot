@@ -346,6 +346,136 @@ export interface MemoryMetadata {
   tags: string[];
 }
 
+export type MemorySearchScope = 'workspace' | 'global' | 'all';
+export type MemorySearchKind = 'core' | 'experience_session' | 'experience_chunk' | 'raw_session';
+
+export interface MemoryTranscriptTurn {
+  role: string;
+  content: string;
+  messageId?: string;
+  timestamp?: number;
+}
+
+export interface ChunkMemoryItem {
+  id: string;
+  sessionId: string;
+  sourceWorkspace?: string | null;
+  sourceWorkspaceLabel?: string;
+  sourceSessionId: string;
+  sourceSessionTitle?: string;
+  sourceSessionDate?: string;
+  summary: string;
+  details: string;
+  keywords: string[];
+  sourceTurns: number[];
+  rawText: string;
+  sessionDate: string;
+  createdAt: string;
+  ingestedAt: string;
+  embedding: number[];
+}
+
+export interface SessionMemoryItem {
+  id: string;
+  sessionId: string;
+  sourceWorkspace?: string | null;
+  sourceWorkspaceLabel?: string;
+  sourceSessionId: string;
+  sourceSessionTitle?: string;
+  sourceSessionDate?: string;
+  summary: string;
+  keywords: string[];
+  chunkIds: string[];
+  rawSession: MemoryTranscriptTurn[];
+  sessionDate: string;
+  createdAt: string;
+  ingestedAt: string;
+  embedding: number[];
+}
+
+export interface MemoryDebugFileInfo {
+  kind: 'core' | 'experience' | 'state' | 'artifacts';
+  label: string;
+  filePath: string;
+  exists: boolean;
+  sizeBytes: number;
+  updatedAt: number | null;
+  sessionCount?: number;
+  chunkCount?: number;
+}
+
+export interface MemoryDebugFileContent {
+  kind: MemoryDebugFileInfo['kind'];
+  filePath: string;
+  text: string;
+  parsed: unknown | null;
+  sizeBytes: number;
+  updatedAt: number | null;
+}
+
+export interface MemoryInspectSessionResult {
+  sourceWorkspace?: string | null;
+  filePath: string;
+  session: SessionMemoryItem;
+  chunks: ChunkMemoryItem[];
+}
+
+export interface MemoryOverview {
+  enabled: boolean;
+  storageRoot: string;
+  coreFilePath: string;
+  experienceFilePath: string;
+  stateFilePath: string;
+  coreCount: number;
+  experienceSessionCount: number;
+  experienceChunkCount: number;
+  sourceWorkspaceCount: number;
+  failedSessionCount: number;
+  latestIngestionAt: number | null;
+  latestError: string | null;
+  currentWorkspace?: {
+    workspaceKey: string;
+    experienceSessionCount: number;
+    experienceChunkCount: number;
+  };
+  topSourceWorkspaces: Array<{
+    workspaceKey: string;
+    sessionCount: number;
+    chunkCount: number;
+  }>;
+}
+
+export interface MemorySearchResult {
+  id: string;
+  recordId: string;
+  kind: MemorySearchKind;
+  title: string;
+  summary: string;
+  contentPreview: string;
+  workspaceKey?: string;
+  sourceWorkspace?: string | null;
+  sourceWorkspaceLabel?: string;
+  sourceSessionId?: string;
+  sourceSessionTitle?: string;
+  sessionId?: string;
+  sessionTitle?: string;
+  category?: 'identity' | 'preferences' | 'skills' | 'interests';
+  score: number;
+  createdAt: number;
+  updatedAt?: number;
+  keywords?: string[];
+  sourceFile?: string;
+}
+
+export interface MemoryReadResult extends MemorySearchResult {
+  rawText?: string;
+  details?: string;
+  rawSession?: MemoryTranscriptTurn[];
+  sourceTurns?: number[];
+  chunkIds?: string[];
+  sourceExcerpt?: string;
+}
+
 // Permission types
 export interface PermissionRequest {
   toolUseId: string;
@@ -392,6 +522,7 @@ export type ClientEvent =
         cwd?: string;
         allowedTools?: string[];
         content?: ContentBlock[];
+        memoryEnabled?: boolean;
       };
     }
   | {
@@ -620,6 +751,30 @@ export interface CreateSetPayload {
   fromSetId?: string;
 }
 
+export interface MemoryModelRuntimeConfig {
+  inheritFromActive: boolean;
+  provider?: ProviderType;
+  customProtocol?: CustomProtocolType;
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  timeoutMs: number;
+}
+
+export interface MemoryRuntimeConfig {
+  llm: MemoryModelRuntimeConfig;
+  embedding: MemoryModelRuntimeConfig;
+  useEmbedding: boolean;
+  maxNavSteps: number;
+  ingestionConcurrency: number;
+  storageRoot?: string;
+  evalEnabled?: boolean;
+  evalWorkspaces?: string[];
+  evalMaxRounds?: number;
+  evalArtifactsRoot?: string;
+  promptIterationRounds?: number;
+}
+
 export interface AppConfig {
   provider: ProviderType;
   apiKey: string;
@@ -643,6 +798,8 @@ export interface AppConfig {
   bashDenylist?: string[];
   theme?: AppTheme;
   sandboxEnabled?: boolean;
+  memoryEnabled?: boolean;
+  memoryRuntime?: MemoryRuntimeConfig;
   enableThinking?: boolean;
   isConfigured: boolean;
   // Scheduler settings (v2)

@@ -161,10 +161,15 @@ function mapPiAiError(errorText: string, durationMs: number, provider?: string):
 /**
  * Run a simple one-shot prompt via pi-ai model directly (no agent session needed).
  */
-async function runPiAiOneShot(
+export async function runPiAiOneShot(
   prompt: string,
   systemPrompt: string,
-  config: AppConfig
+  config: AppConfig,
+  options?: {
+    temperature?: number;
+    maxTokens?: number;
+    signal?: AbortSignal;
+  }
 ): Promise<{ text: string; hasThinking: boolean; durationMs: number }> {
   const modelString = resolvePiModelString(config);
   const keyProvider = config.customProtocol || config.provider || 'anthropic';
@@ -251,7 +256,7 @@ async function runPiAiOneShot(
       systemPrompt,
       messages: [userMsg],
     },
-    { apiKey: apiKey || undefined }
+    { ...options, apiKey: apiKey || undefined }
   );
 
   // pi-ai resolves (not rejects) on provider errors — the error details
