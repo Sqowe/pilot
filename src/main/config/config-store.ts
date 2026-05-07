@@ -1351,6 +1351,18 @@ export class ConfigStore {
         updates.sandboxEnabled !== undefined ? updates.sandboxEnabled : current.sandboxEnabled,
       isConfigured:
         updates.isConfigured !== undefined ? updates.isConfigured : current.isConfigured,
+      schedulerCatchUpPolicy:
+        updates.schedulerCatchUpPolicy !== undefined
+          ? updates.schedulerCatchUpPolicy
+          : current.schedulerCatchUpPolicy,
+      schedulerConflictPolicy:
+        updates.schedulerConflictPolicy !== undefined
+          ? updates.schedulerConflictPolicy
+          : current.schedulerConflictPolicy,
+      schedulerRunHistoryDepth:
+        updates.schedulerRunHistoryDepth !== undefined
+          ? updates.schedulerRunHistoryDepth
+          : current.schedulerRunHistoryDepth,
     });
   }
 

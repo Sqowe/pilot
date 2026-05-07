@@ -548,6 +548,10 @@ export interface Settings {
   systemPromptFile: SystemPromptFileChoice;
   memoryStrategy: 'auto' | 'manual' | 'rolling';
   maxContextTokens: number;
+  // Scheduler settings (v2)
+  schedulerCatchUpPolicy?: CatchUpPolicy;
+  schedulerConflictPolicy?: ConflictPolicy;
+  schedulerRunHistoryDepth?: number;
 }
 
 // Tool types

@@ -2790,6 +2790,48 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
         }
       }
 
+      // Scheduler settings — validate and persist to configStore, then
+      // broadcast updated config so the renderer stays in sync.
+      if (event.payload && typeof event.payload === 'object') {
+        const hasOwn = (key: string): boolean =>
+          Object.prototype.hasOwnProperty.call(event.payload, key);
+        const schedulerUpdates: Partial<{
+          schedulerCatchUpPolicy: 'skip' | 'run-once' | 'run-all' | 'ask';
+          schedulerConflictPolicy: 'queue' | 'skip-if-busy';
+          schedulerRunHistoryDepth: number;
+        }> = {};
+
+        if (hasOwn('schedulerCatchUpPolicy')) {
+          const val = (event.payload as Record<string, unknown>).schedulerCatchUpPolicy;
+          if (val === 'skip' || val === 'run-once' || val === 'run-all' || val === 'ask') {
+            schedulerUpdates.schedulerCatchUpPolicy = val;
+          }
+        }
+        if (hasOwn('schedulerConflictPolicy')) {
+          const val = (event.payload as Record<string, unknown>).schedulerConflictPolicy;
+          if (val === 'queue' || val === 'skip-if-busy') {
+            schedulerUpdates.schedulerConflictPolicy = val;
+          }
+        }
+        if (hasOwn('schedulerRunHistoryDepth')) {
+          const val = (event.payload as Record<string, unknown>).schedulerRunHistoryDepth;
+          if (typeof val === 'number' && Number.isFinite(val) && val >= 1 && val <= 100) {
+            schedulerUpdates.schedulerRunHistoryDepth = Math.floor(val);
+          }
+        }
+
+        if (Object.keys(schedulerUpdates).length > 0) {
+          configStore.update(schedulerUpdates);
+          sendToRenderer({
+            type: 'config.status',
+            payload: {
+              isConfigured: configStore.isConfigured(),
+              config: configStore.getAll(),
+            },
+          });
+        }
+      }
+
       // Permission-related settings are gated behind a single object-guard
       // so a malformed IPC message (null payload, primitive payload) can
       // never throw inside the property checks below. Each sub-block

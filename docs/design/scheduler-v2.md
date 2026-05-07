@@ -402,7 +402,7 @@ Modal/panel shown on app open when `catchUpPolicy = 'ask'`:
 ### Phase 4: UI ✅
 
 1. ✅ Extend task creation/edit form
-2. ⏳ Add scheduler settings panel (i18n keys added, UI pending integration)
+2. ✅ Add scheduler settings panel (i18n keys added, UI integrated)
 3. ✅ Add catch-up batch panel (modal)
 4. ✅ Extend task list view with new indicators
 5. ⏳ Add run history expandable section per task

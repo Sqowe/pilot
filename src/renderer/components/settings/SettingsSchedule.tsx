@@ -11,6 +11,8 @@ import type {
   ScheduleUpdateInput,
   TimeWindow,
   ExecutionMode,
+  CatchUpPolicy,
+  ConflictPolicy,
 } from '../../types';
 import { useAppStore } from '../../store';
 import { formatAppDateTime, joinAppList } from '../../utils/i18n-format';
@@ -423,6 +425,8 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
         </div>
       )}
 
+      <SchedulerSettingsPanel />
+
       <div className="rounded-lg border border-border bg-surface p-4 space-y-3">
         <h4 className="text-sm font-medium text-text-primary">
           {editingId ? t('schedule.editTitle') : t('schedule.createTitle')}
@@ -801,6 +805,108 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
             </div>
           ))
         )}
+      </div>
+    </div>
+  );
+}
+
+// ==================== Scheduler Settings Panel ====================
+
+function SchedulerSettingsPanel() {
+  const { t } = useTranslation();
+  const appConfig = useAppStore((state) => state.appConfig);
+  const updateSettings = useAppStore((state) => state.updateSettings);
+
+  const catchUpPolicy: CatchUpPolicy = appConfig?.schedulerCatchUpPolicy ?? 'ask';
+  const conflictPolicy: ConflictPolicy = appConfig?.schedulerConflictPolicy ?? 'queue';
+  const runHistoryDepth: number = appConfig?.schedulerRunHistoryDepth ?? 10;
+
+  const catchUpOptions: Array<{ value: CatchUpPolicy; labelKey: string }> = [
+    { value: 'skip', labelKey: 'schedule.settingsCatchUpSkip' },
+    { value: 'run-once', labelKey: 'schedule.settingsCatchUpRunOnce' },
+    { value: 'ask', labelKey: 'schedule.settingsCatchUpAsk' },
+  ];
+
+  const conflictOptions: Array<{ value: ConflictPolicy; labelKey: string }> = [
+    { value: 'queue', labelKey: 'schedule.settingsConflictQueue' },
+    { value: 'skip-if-busy', labelKey: 'schedule.settingsConflictSkip' },
+  ];
+
+  return (
+    <div className="rounded-lg border border-border bg-surface p-4 space-y-4">
+      <h4 className="text-sm font-medium text-text-primary">{t('schedule.settingsTitle')}</h4>
+
+      {/* Catch-up policy */}
+      <div className="space-y-2">
+        <label className="text-xs font-medium text-text-secondary">
+          {t('schedule.settingsCatchUpPolicy')}
+        </label>
+        <div className="flex flex-col gap-1.5">
+          {catchUpOptions.map((option) => (
+            <label
+              key={option.value}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm cursor-pointer transition-colors hover:bg-surface-hover has-[:checked]:border-accent has-[:checked]:bg-accent/5"
+            >
+              <input
+                type="radio"
+                name="scheduler-catch-up-policy"
+                value={option.value}
+                checked={catchUpPolicy === option.value}
+                onChange={() => updateSettings({ schedulerCatchUpPolicy: option.value })}
+                className="accent-accent"
+              />
+              <span className="text-text-primary">{t(option.labelKey)}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* Conflict policy */}
+      <div className="space-y-2">
+        <label className="text-xs font-medium text-text-secondary">
+          {t('schedule.settingsConflictPolicy')}
+        </label>
+        <div className="flex flex-col gap-1.5">
+          {conflictOptions.map((option) => (
+            <label
+              key={option.value}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm cursor-pointer transition-colors hover:bg-surface-hover has-[:checked]:border-accent has-[:checked]:bg-accent/5"
+            >
+              <input
+                type="radio"
+                name="scheduler-conflict-policy"
+                value={option.value}
+                checked={conflictPolicy === option.value}
+                onChange={() => updateSettings({ schedulerConflictPolicy: option.value })}
+                className="accent-accent"
+              />
+              <span className="text-text-primary">{t(option.labelKey)}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* Run history depth */}
+      <div className="space-y-2">
+        <label
+          htmlFor="scheduler-run-history-depth"
+          className="text-xs font-medium text-text-secondary"
+        >
+          {t('schedule.settingsRunHistoryDepth')}
+        </label>
+        <input
+          id="scheduler-run-history-depth"
+          type="number"
+          min={1}
+          max={100}
+          value={runHistoryDepth}
+          onChange={(e) => {
+            const val = Math.max(1, Math.min(100, Math.floor(Number(e.target.value) || 10)));
+            updateSettings({ schedulerRunHistoryDepth: val });
+          }}
+          className="w-full max-w-[120px] px-3 py-2 rounded-lg bg-background border border-border text-sm"
+        />
+        <p className="text-xs text-text-muted">{t('schedule.settingsRunHistoryDepthHint')}</p>
       </div>
     </div>
   );

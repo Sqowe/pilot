@@ -748,7 +748,17 @@
     "pickerAdd": "添加",
     "pickerSelectedTimes": "已选时段",
     "pickerNone": "还没有选择时段",
-    "pickerSuggestions": "常用建议"
+    "pickerSuggestions": "常用建议",
+    "settingsTitle": "调度器设置",
+    "settingsCatchUpPolicy": "任务错过执行窗口时",
+    "settingsCatchUpSkip": "静默跳过",
+    "settingsCatchUpRunOnce": "下次打开时执行一次",
+    "settingsCatchUpAsk": "每次询问我",
+    "settingsConflictPolicy": "智能体忙碌时",
+    "settingsConflictQueue": "排队（等待当前会话结束）",
+    "settingsConflictSkip": "跳过本次执行",
+    "settingsRunHistoryDepth": "执行历史保留条数",
+    "settingsRunHistoryDepthHint": "每个任务保留的历史执行记录数量"
   },
   "remote": {
     "title": "远程控制",
