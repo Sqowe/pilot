@@ -17,7 +17,7 @@ import { join, resolve, dirname, isAbsolute, basename } from 'path';
 import * as fs from 'fs';
 import { execFileSync } from 'child_process';
 import { config } from 'dotenv';
-import { initDatabase, closeDatabase } from './db/database';
+import { initDatabase, closeDatabase, getDatabase } from './db/database';
 import { SessionManager } from './session/session-manager';
 import { SkillsManager } from './skills/skills-manager';
 import { PluginCatalogService } from './skills/plugin-catalog-service';
@@ -35,6 +35,9 @@ import {
   setPermissionRules,
   setBashCommandLists,
   sanitizeBashCommandList,
+  markSessionAutonomous,
+  setAutonomousBlockCallback,
+  forgetSessionPermissions,
 } from './config/permission-rules-store';
 import { mcpConfigStore } from './mcp/mcp-config-store';
 import { getSandboxAdapter, shutdownSandbox } from './sandbox/sandbox-adapter';
@@ -60,7 +63,10 @@ import {
   type ScheduledTaskCreateInput,
   type ScheduledTaskUpdateInput,
 } from './schedule/scheduled-task-manager';
-import { createScheduledTaskStore } from './schedule/scheduled-task-store';
+import {
+  createScheduledTaskStore,
+  createScheduledTaskRunStore,
+} from './schedule/scheduled-task-store';
 import {
   buildScheduledTaskFallbackTitle,
   buildScheduledTaskTitle,
@@ -116,6 +122,9 @@ let sessionManager: SessionManager | null = null;
 let skillsManager: SkillsManager | null = null;
 let pluginRuntimeService: PluginRuntimeService | null = null;
 let scheduledTaskManager: ScheduledTaskManager | null = null;
+
+/** Maps sessionId → taskId for autonomous scheduled task sessions. */
+const scheduledSessionToTaskId = new Map<string, string>();
 
 function sanitizeDiagnosticBaseUrl(value: string | undefined): string | null {
   if (!value) {
@@ -920,8 +929,10 @@ app
     startNavServer(() => mainWindow);
 
     const scheduledTaskStore = createScheduledTaskStore(db);
+    const scheduledTaskRunStore = createScheduledTaskRunStore(db);
     scheduledTaskManager = new ScheduledTaskManager({
       store: scheduledTaskStore,
+      runStore: scheduledTaskRunStore,
       executeTask: async (task) => {
         if (!sessionManager) {
           throw new Error('Session manager not initialized');
@@ -939,6 +950,11 @@ app
           scheduledTaskStore.update(task.id, { title });
         }
         const started = await sessionManager.startSession(title, task.prompt, task.cwd);
+        // v2: Mark session as autonomous if task uses auto execution mode
+        if (task.executionMode === 'auto') {
+          markSessionAutonomous(started.id);
+          scheduledSessionToTaskId.set(started.id, task.id);
+        }
         // 定时任务创建的新会话需要主动同步到前端会话列表
         sendToRenderer({
           type: 'session.update',
@@ -952,8 +968,78 @@ app
           payload: { taskId, error },
         });
       },
+      getSchedulerSettings: () => ({
+        catchUpPolicy: configStore.get('schedulerCatchUpPolicy') as
+          | 'skip'
+          | 'run-once'
+          | 'run-all'
+          | 'ask',
+        conflictPolicy: configStore.get('schedulerConflictPolicy') as 'queue' | 'skip-if-busy',
+        runHistoryDepth: configStore.get('schedulerRunHistoryDepth') as number,
+      }),
+      isConfigSetValid: (configSetId: string) => {
+        const config = configStore.getAll();
+        return config.configSets.some((set) => set.id === configSetId);
+      },
+      isAgentBusy: () => {
+        return sessionManager?.isAgentActive() ?? false;
+      },
+      onCatchUp: (tasks) => {
+        sendToRenderer({
+          type: 'scheduled-task.catch-up',
+          payload: { tasks },
+        });
+      },
+      onTaskStarted: (taskId, runId, sessionId) => {
+        sendToRenderer({
+          type: 'scheduled-task.started',
+          payload: { taskId, runId, sessionId },
+        });
+      },
+      onTaskCompleted: (taskId, runId, status, tokensUsed) => {
+        sendToRenderer({
+          type: 'scheduled-task.completed',
+          payload: { taskId, runId, status, tokensUsed },
+        });
+        // Clean up all session→task mappings and autonomous state for this completed task
+        for (const [sessionId, mappedTaskId] of scheduledSessionToTaskId.entries()) {
+          if (mappedTaskId === taskId) {
+            forgetSessionPermissions(sessionId);
+            scheduledSessionToTaskId.delete(sessionId);
+          }
+        }
+      },
+      onConfigInvalid: (taskId, configSetId) => {
+        sendToRenderer({
+          type: 'scheduled-task.config-invalid',
+          payload: { taskId, configSetId, error: `Config set '${configSetId}' no longer exists` },
+        });
+      },
+      onBudgetExceeded: (taskId, runId, budgetType) => {
+        sendToRenderer({
+          type: 'scheduled-task.budget-exceeded',
+          payload: { taskId, runId, budgetType },
+        });
+      },
       now: () => Date.now(),
     });
+
+    // v2: Set up autonomous block callback BEFORE starting scheduler
+    // to avoid missing blocked-command events during catch-up runs
+    setAutonomousBlockCallback((sessionId, toolName, command) => {
+      log(`[Scheduler] Autonomous block: session=${sessionId} tool=${toolName} cmd=${command}`);
+      const taskId = scheduledSessionToTaskId.get(sessionId);
+      if (taskId) {
+        sendToRenderer({
+          type: 'scheduled-task.error',
+          payload: {
+            taskId,
+            error: `Command blocked in autonomous mode: ${toolName} — ${command}`,
+          },
+        });
+      }
+    });
+
     scheduledTaskManager.start();
 
     // 初始化远程管理器
@@ -1048,6 +1134,7 @@ async function cleanupSandboxResources(): Promise<void> {
   stopNavServer();
   skillsManager?.stopStorageMonitoring();
   scheduledTaskManager?.stop();
+  scheduledSessionToTaskId.clear();
   tray?.destroy();
   tray = null;
 
@@ -1496,6 +1583,17 @@ ipcMain.handle('config.deleteSet', async (_event, payload: { id: string }) => {
   const previousConfig = configStore.getAll();
   configStore.deleteSet(payload);
   const updatedConfig = await syncConfigAfterMutation(previousConfig);
+
+  // Only invalidate scheduled tasks if the config set actually existed before
+  // and is now gone. This prevents false invalidation for non-existent IDs or
+  // protected/system sets that deleteSet silently refuses to remove.
+  const existedBefore = previousConfig.configSets.some((set) => set.id === payload.id);
+  const existsAfter = updatedConfig.configSets.some((set) => set.id === payload.id);
+  const wasRemoved = existedBefore && !existsAfter;
+  if (wasRemoved && scheduledTaskManager) {
+    scheduledTaskManager.handleConfigSetDeleted(payload.id);
+  }
+
   return { success: true, config: updatedConfig };
 });
 
@@ -2475,6 +2573,17 @@ ipcMain.handle('schedule.runNow', async (_event, id: string) => {
   return scheduledTaskManager.runNow(id);
 });
 
+ipcMain.handle('schedule.getHistory', (_event, taskId: string) => {
+  try {
+    const db = getDatabase();
+    const runStore = createScheduledTaskRunStore(db);
+    return runStore.getByTaskId(taskId);
+  } catch (error) {
+    logError('[Schedule] Error getting run history:', error);
+    return [];
+  }
+});
+
 ipcMain.handle('logs.write', (_event, level: 'info' | 'warn' | 'error', args: unknown[]) => {
   try {
     if (level === 'warn') {
@@ -2692,6 +2801,48 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
         }
       }
 
+      // Scheduler settings — validate and persist to configStore, then
+      // broadcast updated config so the renderer stays in sync.
+      if (event.payload && typeof event.payload === 'object') {
+        const hasOwn = (key: string): boolean =>
+          Object.prototype.hasOwnProperty.call(event.payload, key);
+        const schedulerUpdates: Partial<{
+          schedulerCatchUpPolicy: 'skip' | 'run-once' | 'run-all' | 'ask';
+          schedulerConflictPolicy: 'queue' | 'skip-if-busy';
+          schedulerRunHistoryDepth: number;
+        }> = {};
+
+        if (hasOwn('schedulerCatchUpPolicy')) {
+          const val = (event.payload as Record<string, unknown>).schedulerCatchUpPolicy;
+          if (val === 'skip' || val === 'run-once' || val === 'run-all' || val === 'ask') {
+            schedulerUpdates.schedulerCatchUpPolicy = val;
+          }
+        }
+        if (hasOwn('schedulerConflictPolicy')) {
+          const val = (event.payload as Record<string, unknown>).schedulerConflictPolicy;
+          if (val === 'queue' || val === 'skip-if-busy') {
+            schedulerUpdates.schedulerConflictPolicy = val;
+          }
+        }
+        if (hasOwn('schedulerRunHistoryDepth')) {
+          const val = (event.payload as Record<string, unknown>).schedulerRunHistoryDepth;
+          if (typeof val === 'number' && Number.isFinite(val) && val >= 1 && val <= 100) {
+            schedulerUpdates.schedulerRunHistoryDepth = Math.floor(val);
+          }
+        }
+
+        if (Object.keys(schedulerUpdates).length > 0) {
+          configStore.update(schedulerUpdates);
+          sendToRenderer({
+            type: 'config.status',
+            payload: {
+              isConfigured: configStore.isConfigured(),
+              config: configStore.getAll(),
+            },
+          });
+        }
+      }
+
       // Permission-related settings are gated behind a single object-guard
       // so a malformed IPC message (null payload, primitive payload) can
       // never throw inside the property checks below. Each sub-block
@@ -2736,6 +2887,12 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
             configStore.update(persistPayload);
           }
         }
+      }
+      return null;
+
+    case 'scheduled-task.catch-up-response':
+      if (scheduledTaskManager && Array.isArray(event.payload?.decisions)) {
+        scheduledTaskManager.resolveCatchUp(event.payload.decisions);
       }
       return null;
 

@@ -1,19 +1,25 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
-import { AlertCircle, CheckCircle, ChevronDown, Plus, X, Check } from 'lucide-react';
+import { AlertCircle, CheckCircle, ChevronDown, ChevronRight, Plus, X, Check } from 'lucide-react';
 import type {
   ScheduleConfig,
   ScheduleTask,
+  ScheduleTaskRun,
   ScheduleRepeatUnit,
   ScheduleWeekday,
   ScheduleCreateInput,
   ScheduleUpdateInput,
+  TimeWindow,
+  ExecutionMode,
+  CatchUpPolicy,
+  ConflictPolicy,
 } from '../../types';
 import { useAppStore } from '../../store';
 import { formatAppDateTime, joinAppList } from '../../utils/i18n-format';
 import { renderLocalizedBannerMessage, getWeekdayOptions, getScheduleModeOptions } from './shared';
 import type { LocalizedBanner, ScheduleFormMode } from './shared';
+import { parseBudgetField, resolveConfigSetId } from '../../utils/schedule-helpers';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
@@ -51,6 +57,13 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
   const [enabled, setEnabled] = useState(true);
   const [repeatEvery, setRepeatEvery] = useState(1);
   const [repeatUnit, setRepeatUnit] = useState<ScheduleRepeatUnit>('day');
+  // v2 form state
+  const [configSetId, setConfigSetId] = useState('default');
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('ask');
+  const [timeWindow, setTimeWindow] = useState<TimeWindow | null>(null);
+  const [maxDurationMin, setMaxDurationMin] = useState<string>('');
+  const [maxTokens, setMaxTokens] = useState<string>('');
+  const appConfig = useAppStore((state) => state.appConfig);
   const weekdayOptions = getWeekdayOptions(t);
   const scheduleModeOptions = getScheduleModeOptions(t);
   const promptChangedWhileEditing = Boolean(
@@ -146,6 +159,27 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
       }
     }
     const usesDateTimeInput = scheduleMode === 'once' || scheduleMode === 'legacy-interval';
+
+    // v2: Validate numeric budget fields
+    const parsedMaxDurationMs = parseBudgetField(maxDurationMin, 60_000); // convert minutes to ms
+    const parsedMaxTokens = parseBudgetField(maxTokens, 1);
+    if (maxDurationMin && parsedMaxDurationMs === null) {
+      setError({ key: 'schedule.invalidBudgetDuration' });
+      return;
+    }
+    if (maxTokens && parsedMaxTokens === null) {
+      setError({ key: 'schedule.invalidBudgetTokens' });
+      return;
+    }
+
+    // v2: Validate configSetId against available sets
+    const availableSets = appConfig?.configSets ?? [];
+    const effectiveConfigSetId = resolveConfigSetId(configSetId, availableSets);
+    if (effectiveConfigSetId === null) {
+      setError({ key: 'schedule.invalidConfigSet' });
+      return;
+    }
+
     const runAtValue: number | null = usesDateTimeInput
       ? new Date(runAt).getTime()
       : computeNextScheduledRun(scheduleConfig, Date.now());
@@ -191,6 +225,12 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
           scheduleConfig,
           repeatEvery: scheduleMode === 'legacy-interval' ? repeatEvery : null,
           repeatUnit: scheduleMode === 'legacy-interval' ? repeatUnit : null,
+          // v2 fields
+          configSetId: effectiveConfigSetId,
+          executionMode,
+          timeWindow,
+          maxDurationMs: parsedMaxDurationMs,
+          maxTokens: parsedMaxTokens,
         };
         if (shouldRegenerateTitle) {
           payload.prompt = trimmedPrompt;
@@ -218,6 +258,12 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
           enabled,
           repeatEvery: scheduleMode === 'legacy-interval' ? repeatEvery : null,
           repeatUnit: scheduleMode === 'legacy-interval' ? repeatUnit : null,
+          // v2 fields
+          configSetId: effectiveConfigSetId,
+          executionMode,
+          timeWindow,
+          maxDurationMs: parsedMaxDurationMs,
+          maxTokens: parsedMaxTokens,
         };
         await window.electronAPI.schedule.create(payload);
         setSuccess({ key: 'schedule.created' });
@@ -334,6 +380,12 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
     );
     setRepeatEvery(task.repeatEvery ?? 1);
     setRepeatUnit(task.repeatUnit ?? 'day');
+    // v2 fields
+    setConfigSetId(task.configSetId ?? 'default');
+    setExecutionMode(task.executionMode ?? 'ask');
+    setTimeWindow(task.timeWindow ?? null);
+    setMaxDurationMin(task.maxDurationMs ? String(Math.round(task.maxDurationMs / 60000)) : '');
+    setMaxTokens(task.maxTokens ? String(task.maxTokens) : '');
     setError(null);
     setSuccess(null);
   }
@@ -351,6 +403,12 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
     setEnabled(true);
     setRepeatEvery(1);
     setRepeatUnit('day');
+    // v2 fields
+    setConfigSetId('default');
+    setExecutionMode('ask');
+    setTimeWindow(null);
+    setMaxDurationMin('');
+    setMaxTokens('');
   }
 
   return (
@@ -367,6 +425,8 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
           {renderLocalizedBannerMessage(success, t)}
         </div>
       )}
+
+      <SchedulerSettingsPanel />
 
       <div className="rounded-lg border border-border bg-surface p-4 space-y-3">
         <h4 className="text-sm font-medium text-text-primary">
@@ -390,12 +450,41 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
           rows={3}
           className="w-full px-3 py-2 rounded-lg bg-background border border-border text-sm"
         />
-        <input
-          value={cwd}
-          onChange={(e) => setCwd(e.target.value)}
-          placeholder={t('schedule.cwdPlaceholder')}
-          className="w-full px-3 py-2 rounded-lg bg-background border border-border text-sm"
-        />
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1">
+            {t('schedule.projectDirectory')}
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={cwd}
+              onChange={(e) => setCwd(e.target.value)}
+              placeholder={t('schedule.cwdPlaceholder')}
+              className="flex-1 px-3 py-2 rounded-lg bg-background border border-border text-sm text-text-primary"
+            />
+            {isElectron && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const selected = await window.electronAPI.invoke<string | null>({
+                      type: 'folder.select',
+                      payload: {},
+                    });
+                    if (selected) {
+                      setCwd(selected);
+                    }
+                  } catch (err) {
+                    console.error('[SettingsSchedule] folder.select failed:', err);
+                  }
+                }}
+                className="shrink-0 px-3 py-2 rounded-lg border border-border bg-surface-hover text-sm text-text-secondary hover:text-text-primary hover:border-accent transition-colors"
+              >
+                {t('schedule.browse')}
+              </button>
+            )}
+          </div>
+        </div>
         <div className="rounded-lg border border-border bg-background p-3 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div>
@@ -495,6 +584,89 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
           )}
           <div className="text-xs text-text-muted">{schedulePreview}</div>
         </div>
+
+        {/* v2: Config set, execution mode, time window, budget */}
+        <div className="rounded-lg border border-border bg-background p-3 space-y-3">
+          <div className="grid gap-2 md:grid-cols-2">
+            <div className="space-y-1">
+              <label className="text-xs text-text-muted">{t('schedule.configSet')}</label>
+              <select
+                value={configSetId}
+                onChange={(e) => setConfigSetId(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-sm"
+              >
+                {(appConfig?.configSets ?? []).length === 0 && (
+                  <option value="default">default</option>
+                )}
+                {(appConfig?.configSets ?? []).map((set) => (
+                  <option key={set.id} value={set.id}>
+                    {set.name}
+                  </option>
+                ))}
+              </select>
+              <div className="text-xs text-text-muted">{t('schedule.configSetHint')}</div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-text-muted">{t('schedule.executionMode')}</label>
+              <select
+                value={executionMode}
+                onChange={(e) => setExecutionMode(e.target.value as ExecutionMode)}
+                className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-sm"
+              >
+                <option value="ask">{t('schedule.executionModeAsk')}</option>
+                <option value="auto">{t('schedule.executionModeAuto')}</option>
+              </select>
+              <div className="text-xs text-text-muted">{t('schedule.executionModeHint')}</div>
+            </div>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-text-muted">{t('schedule.timeWindow')}</label>
+            <select
+              value={timeWindow ?? ''}
+              onChange={(e) => setTimeWindow((e.target.value || null) as TimeWindow | null)}
+              className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-sm"
+            >
+              <option value="">{t('schedule.timeWindowNone')}</option>
+              <option value="morning">{t('schedule.timeWindowMorning')}</option>
+              <option value="afternoon">{t('schedule.timeWindowAfternoon')}</option>
+              <option value="evening">{t('schedule.timeWindowEvening')}</option>
+              <option value="night">{t('schedule.timeWindowNight')}</option>
+            </select>
+            <div className="text-xs text-text-muted">{t('schedule.timeWindowHint')}</div>
+          </div>
+          <details className="group">
+            <summary className="text-xs text-text-muted cursor-pointer select-none">
+              {t('schedule.budgetSection')}
+            </summary>
+            <div className="grid gap-2 md:grid-cols-2 mt-2">
+              <div className="space-y-1">
+                <label className="text-xs text-text-muted">{t('schedule.maxDuration')}</label>
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="—"
+                  value={maxDurationMin}
+                  onChange={(e) => setMaxDurationMin(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-sm"
+                />
+                <div className="text-xs text-text-muted">{t('schedule.maxDurationHint')}</div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-text-muted">{t('schedule.maxTokens')}</label>
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="—"
+                  value={maxTokens}
+                  onChange={(e) => setMaxTokens(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-sm"
+                />
+                <div className="text-xs text-text-muted">{t('schedule.maxTokensHint')}</div>
+              </div>
+            </div>
+          </details>
+        </div>
+
         <div className="flex items-center gap-2">
           <button
             onClick={submitTask}
@@ -550,6 +722,35 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
                       >
                         {task.enabled ? t('schedule.taskEnabled') : t('schedule.taskDisabled')}
                       </span>
+                    </div>
+                    {/* v2 badges */}
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {task.configSetId && task.configSetId !== 'default' && (
+                        <span className="text-xs px-2 py-0.5 rounded bg-accent/10 text-accent">
+                          {t('schedule.configSetBadge', {
+                            value:
+                              appConfig?.configSets?.find((s) => s.id === task.configSetId)?.name ??
+                              task.configSetId,
+                          })}
+                        </span>
+                      )}
+                      {task.executionMode === 'auto' && (
+                        <span className="text-xs px-2 py-0.5 rounded bg-warning/10 text-warning">
+                          ⚡{' '}
+                          {t('schedule.executionModeBadge', {
+                            value: t('schedule.executionModeAuto'),
+                          })}
+                        </span>
+                      )}
+                      {task.timeWindow && (
+                        <span className="text-xs px-2 py-0.5 rounded bg-info/10 text-info">
+                          {t('schedule.timeWindowBadge', {
+                            value: t(
+                              `schedule.timeWindow${task.timeWindow.charAt(0).toUpperCase() + task.timeWindow.slice(1)}`
+                            ),
+                          })}
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-text-muted">
                       {task.nextRunAt === null
@@ -628,12 +829,240 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
                         {t('schedule.delete')}
                       </button>
                     </div>
+                    <TaskRunHistory taskId={task.id} />
                   </>
                 );
               })()}
             </div>
           ))
         )}
+      </div>
+    </div>
+  );
+}
+
+// ==================== Task Run History ====================
+
+const RUN_STATUS_STYLES: Record<string, string> = {
+  success: 'bg-success/10 text-success',
+  failed: 'bg-error/10 text-error',
+  timeout: 'bg-warning/10 text-warning',
+  blocked: 'bg-warning/10 text-warning',
+  skipped: 'bg-surface-hover text-text-muted',
+};
+
+function TaskRunHistory({ taskId }: { taskId: string }) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const [runs, setRuns] = useState<ScheduleTaskRun[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!expanded || !isElectron) return;
+    let cancelled = false;
+    setLoading(true);
+    window.electronAPI.schedule
+      .getHistory(taskId)
+      .then((result) => {
+        if (!cancelled) setRuns(result);
+      })
+      .catch(() => {
+        if (!cancelled) setRuns([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, taskId]);
+
+  return (
+    <div className="border-t border-border/50 pt-2 mt-1">
+      <button
+        type="button"
+        onClick={() => setExpanded((prev) => !prev)}
+        className="flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
+      >
+        {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+        {t('schedule.historyToggle')}
+      </button>
+      {expanded && (
+        <div className="mt-2 space-y-1.5">
+          {loading && <div className="text-xs text-text-muted">{t('schedule.historyLoading')}</div>}
+          {!loading && runs.length === 0 && (
+            <div className="text-xs text-text-muted">{t('schedule.historyEmpty')}</div>
+          )}
+          {!loading &&
+            runs.map((run) => (
+              <div
+                key={run.id}
+                className="rounded border border-border/50 bg-background px-2.5 py-2 space-y-1"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    className={`text-xs px-1.5 py-0.5 rounded font-medium ${RUN_STATUS_STYLES[run.status] ?? 'bg-surface-hover text-text-muted'}`}
+                  >
+                    {t(`schedule.historyStatus_${run.status}`, run.status)}
+                  </span>
+                  <span className="text-xs text-text-muted">
+                    {formatAppDateTime(run.startedAt)}
+                  </span>
+                </div>
+                {run.completedAt && (
+                  <div className="text-xs text-text-muted">
+                    {t('schedule.historyDuration', {
+                      value: formatDurationMs(run.completedAt - run.startedAt),
+                    })}
+                  </div>
+                )}
+                {run.tokensUsed != null && run.tokensUsed > 0 && (
+                  <div className="text-xs text-text-muted">
+                    {t('schedule.historyTokens', { value: run.tokensUsed.toLocaleString() })}
+                  </div>
+                )}
+                {run.error && (
+                  <div className="text-xs text-error break-all">
+                    {t('schedule.historyError', { value: run.error })}
+                  </div>
+                )}
+                {run.blockedCommands && run.blockedCommands.length > 0 && (
+                  <div className="space-y-0.5">
+                    <div className="text-xs text-warning">
+                      {t('schedule.historyBlockedCommands')}
+                    </div>
+                    {run.blockedCommands.map((cmd, idx) => (
+                      <div
+                        key={idx}
+                        className="text-xs text-text-muted font-mono bg-surface-hover rounded px-1.5 py-0.5 break-all"
+                      >
+                        {cmd}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {run.sessionId && (
+                  <div className="text-xs text-text-muted break-all">
+                    {t('schedule.historySession', { value: run.sessionId })}
+                  </div>
+                )}
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatDurationMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return `${hours}h ${remainingMinutes}m`;
+}
+
+// ==================== Scheduler Settings Panel ====================
+
+function SchedulerSettingsPanel() {
+  const { t } = useTranslation();
+  const appConfig = useAppStore((state) => state.appConfig);
+  const updateSettings = useAppStore((state) => state.updateSettings);
+
+  const catchUpPolicy: CatchUpPolicy = appConfig?.schedulerCatchUpPolicy ?? 'ask';
+  const conflictPolicy: ConflictPolicy = appConfig?.schedulerConflictPolicy ?? 'queue';
+  const runHistoryDepth: number = appConfig?.schedulerRunHistoryDepth ?? 10;
+
+  const catchUpOptions: Array<{ value: CatchUpPolicy; labelKey: string }> = [
+    { value: 'skip', labelKey: 'schedule.settingsCatchUpSkip' },
+    { value: 'run-once', labelKey: 'schedule.settingsCatchUpRunOnce' },
+    { value: 'ask', labelKey: 'schedule.settingsCatchUpAsk' },
+  ];
+
+  const conflictOptions: Array<{ value: ConflictPolicy; labelKey: string }> = [
+    { value: 'queue', labelKey: 'schedule.settingsConflictQueue' },
+    { value: 'skip-if-busy', labelKey: 'schedule.settingsConflictSkip' },
+  ];
+
+  return (
+    <div className="rounded-lg border border-border bg-surface p-4 space-y-4">
+      <h4 className="text-sm font-medium text-text-primary">{t('schedule.settingsTitle')}</h4>
+
+      {/* Catch-up policy */}
+      <div className="space-y-2">
+        <label className="text-xs font-medium text-text-secondary">
+          {t('schedule.settingsCatchUpPolicy')}
+        </label>
+        <div className="flex flex-col gap-1.5">
+          {catchUpOptions.map((option) => (
+            <label
+              key={option.value}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm cursor-pointer transition-colors hover:bg-surface-hover has-[:checked]:border-accent has-[:checked]:bg-accent/5"
+            >
+              <input
+                type="radio"
+                name="scheduler-catch-up-policy"
+                value={option.value}
+                checked={catchUpPolicy === option.value}
+                onChange={() => updateSettings({ schedulerCatchUpPolicy: option.value })}
+                className="accent-accent"
+              />
+              <span className="text-text-primary">{t(option.labelKey)}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* Conflict policy */}
+      <div className="space-y-2">
+        <label className="text-xs font-medium text-text-secondary">
+          {t('schedule.settingsConflictPolicy')}
+        </label>
+        <div className="flex flex-col gap-1.5">
+          {conflictOptions.map((option) => (
+            <label
+              key={option.value}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm cursor-pointer transition-colors hover:bg-surface-hover has-[:checked]:border-accent has-[:checked]:bg-accent/5"
+            >
+              <input
+                type="radio"
+                name="scheduler-conflict-policy"
+                value={option.value}
+                checked={conflictPolicy === option.value}
+                onChange={() => updateSettings({ schedulerConflictPolicy: option.value })}
+                className="accent-accent"
+              />
+              <span className="text-text-primary">{t(option.labelKey)}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* Run history depth */}
+      <div className="space-y-2">
+        <label
+          htmlFor="scheduler-run-history-depth"
+          className="text-xs font-medium text-text-secondary"
+        >
+          {t('schedule.settingsRunHistoryDepth')}
+        </label>
+        <input
+          id="scheduler-run-history-depth"
+          type="number"
+          min={1}
+          max={100}
+          value={runHistoryDepth}
+          onChange={(e) => {
+            const val = Math.max(1, Math.min(100, Math.floor(Number(e.target.value) || 10)));
+            updateSettings({ schedulerRunHistoryDepth: val });
+          }}
+          className="w-full max-w-[120px] px-3 py-2 rounded-lg bg-background border border-border text-sm"
+        />
+        <p className="text-xs text-text-muted">{t('schedule.settingsRunHistoryDepthHint')}</p>
       </div>
     </div>
   );

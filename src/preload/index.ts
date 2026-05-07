@@ -16,6 +16,7 @@ import type {
   ScheduleTask,
   ScheduleCreateInput,
   ScheduleUpdateInput,
+  ScheduleTaskRun,
   ProviderModelInfo,
   LocalOllamaDiscoveryResult,
 } from '../renderer/types';
@@ -54,6 +55,7 @@ const ALLOWED_CLIENT_EVENTS: ReadonlySet<string> = new Set<ClientEvent['type']>(
   'workdir.get',
   'workdir.set',
   'workdir.select',
+  'scheduled-task.catch-up-response',
 ]);
 
 // Expose protected methods that allow the renderer process to use
@@ -401,6 +403,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     toggle: (id: string, enabled: boolean): Promise<ScheduleTask | null> =>
       ipcRenderer.invoke('schedule.toggle', id, enabled),
     runNow: (id: string): Promise<ScheduleTask | null> => ipcRenderer.invoke('schedule.runNow', id),
+    getHistory: (taskId: string): Promise<ScheduleTaskRun[]> =>
+      ipcRenderer.invoke('schedule.getHistory', taskId),
   },
 });
 
@@ -615,6 +619,7 @@ declare global {
         delete: (id: string) => Promise<{ success: boolean }>;
         toggle: (id: string, enabled: boolean) => Promise<ScheduleTask | null>;
         runNow: (id: string) => Promise<ScheduleTask | null>;
+        getHistory: (taskId: string) => Promise<ScheduleTaskRun[]>;
       };
     };
   }

@@ -35,6 +35,7 @@ import {
   type SystemPromptFileChoice,
 } from '../../shared/system-prompt-file-choices';
 import { sanitizeBashCommandList } from './permission-rules-store';
+import { isValidCatchUpPolicy, isValidConflictPolicy } from '../../shared/schedule/types';
 
 /**
  * Application configuration schema
@@ -139,6 +140,11 @@ export interface AppConfig {
 
   // First run flag
   isConfigured: boolean;
+
+  // Scheduler settings (v2)
+  schedulerCatchUpPolicy: 'skip' | 'run-once' | 'run-all' | 'ask';
+  schedulerConflictPolicy: 'queue' | 'skip-if-busy';
+  schedulerRunHistoryDepth: number;
 }
 
 const DEFAULT_CONFIG_SET_ID = 'default';
@@ -160,6 +166,9 @@ const DIRECT_READ_KEYS = new Set<keyof AppConfig>([
   'sandboxEnabled',
   'enableThinking',
   'isConfigured',
+  'schedulerCatchUpPolicy',
+  'schedulerConflictPolicy',
+  'schedulerRunHistoryDepth',
 ]);
 
 const defaultProfiles: Record<ProviderProfileKey, ProviderProfile> = {
@@ -238,6 +247,9 @@ const defaultConfig: AppConfig = {
   sandboxEnabled: false,
   enableThinking: false,
   isConfigured: false,
+  schedulerCatchUpPolicy: 'ask',
+  schedulerConflictPolicy: 'queue',
+  schedulerRunHistoryDepth: 10,
 };
 
 export const PROVIDER_PRESETS = API_PROVIDER_PRESETS;
@@ -325,6 +337,33 @@ function isProfileKey(value: unknown): value is ProviderProfileKey {
 
 function isAppTheme(value: unknown): value is AppTheme {
   return typeof value === 'string' && VALID_THEMES.includes(value as AppTheme);
+}
+
+function normalizeRunHistoryDepth(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return defaultConfig.schedulerRunHistoryDepth;
+  }
+  const clamped = Math.floor(value);
+  if (clamped < 1) return 1;
+  if (clamped > 100) return 100;
+  return clamped;
+}
+
+/**
+ * Normalize catch-up policy. 'run-all' is not yet implemented and is
+ * coerced to 'run-once' to prevent silent behavior mismatch.
+ */
+function normalizeCatchUpPolicy(value: unknown): AppConfig['schedulerCatchUpPolicy'] {
+  if (!isValidCatchUpPolicy(value)) {
+    return defaultConfig.schedulerCatchUpPolicy;
+  }
+  if (value === 'run-all') {
+    logWarn(
+      '[ConfigStore] schedulerCatchUpPolicy "run-all" is not yet implemented, using "run-once"'
+    );
+    return 'run-once';
+  }
+  return value;
 }
 
 function profileKeyFromProvider(
@@ -883,6 +922,11 @@ export class ConfigStore {
       sandboxEnabled: toBoolean(raw.sandboxEnabled, defaultConfig.sandboxEnabled),
       enableThinking: projected.enableThinking,
       isConfigured: toBoolean(raw.isConfigured, defaultConfig.isConfigured),
+      schedulerCatchUpPolicy: normalizeCatchUpPolicy(raw.schedulerCatchUpPolicy),
+      schedulerConflictPolicy: isValidConflictPolicy(raw.schedulerConflictPolicy)
+        ? raw.schedulerConflictPolicy
+        : defaultConfig.schedulerConflictPolicy,
+      schedulerRunHistoryDepth: normalizeRunHistoryDepth(raw.schedulerRunHistoryDepth),
     };
     this.normalizeModelIds(result);
     return result;
@@ -1307,6 +1351,18 @@ export class ConfigStore {
         updates.sandboxEnabled !== undefined ? updates.sandboxEnabled : current.sandboxEnabled,
       isConfigured:
         updates.isConfigured !== undefined ? updates.isConfigured : current.isConfigured,
+      schedulerCatchUpPolicy:
+        updates.schedulerCatchUpPolicy !== undefined
+          ? updates.schedulerCatchUpPolicy
+          : current.schedulerCatchUpPolicy,
+      schedulerConflictPolicy:
+        updates.schedulerConflictPolicy !== undefined
+          ? updates.schedulerConflictPolicy
+          : current.schedulerConflictPolicy,
+      schedulerRunHistoryDepth:
+        updates.schedulerRunHistoryDepth !== undefined
+          ? updates.schedulerRunHistoryDepth
+          : current.schedulerRunHistoryDepth,
     });
   }
 

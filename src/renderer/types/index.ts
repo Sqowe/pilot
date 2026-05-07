@@ -115,6 +115,24 @@ export type TraceStepStatus = 'pending' | 'running' | 'completed' | 'error';
 export type ScheduleRepeatUnit = 'minute' | 'hour' | 'day';
 export type ScheduleWeekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
+// Scheduler v2 types — imported from shared module for local use and re-exported
+import type {
+  TimeWindow,
+  ExecutionMode,
+  CatchUpPolicy,
+  ConflictPolicy,
+  SandboxMode,
+  ScheduledTaskRunStatus,
+} from '../../shared/schedule/types';
+export type {
+  TimeWindow,
+  ExecutionMode,
+  CatchUpPolicy,
+  ConflictPolicy,
+  SandboxMode,
+  ScheduledTaskRunStatus,
+};
+
 export interface DailyScheduleConfig {
   kind: 'daily';
   times: string[];
@@ -144,6 +162,43 @@ export interface ScheduleTask {
   lastError: string | null;
   createdAt: number;
   updatedAt: number;
+  // v2 fields
+  configSetId: string;
+  executionMode: ExecutionMode;
+  timeWindow: TimeWindow | null;
+  maxDurationMs: number | null;
+  maxTokens: number | null;
+  sandboxMode: SandboxMode;
+}
+
+export interface ScheduleTaskRun {
+  id: string;
+  taskId: string;
+  sessionId: string | null;
+  status: ScheduledTaskRunStatus;
+  startedAt: number;
+  completedAt: number | null;
+  error: string | null;
+  tokensUsed: number | null;
+  blockedCommands: string[] | null;
+}
+
+export interface SchedulerSettings {
+  catchUpPolicy: CatchUpPolicy;
+  conflictPolicy: ConflictPolicy;
+  runHistoryDepth: number;
+}
+
+export interface MissedTaskInfo {
+  taskId: string;
+  title: string;
+  timeWindow: TimeWindow | null;
+  scheduledFor: number;
+}
+
+export interface CatchUpDecision {
+  taskId: string;
+  action: 'run' | 'skip';
 }
 
 export interface ScheduleCreateInput {
@@ -156,6 +211,13 @@ export interface ScheduleCreateInput {
   repeatEvery?: number | null;
   repeatUnit?: ScheduleRepeatUnit | null;
   enabled?: boolean;
+  // v2 fields
+  configSetId?: string;
+  executionMode?: ExecutionMode;
+  timeWindow?: TimeWindow | null;
+  maxDurationMs?: number | null;
+  maxTokens?: number | null;
+  sandboxMode?: SandboxMode;
 }
 
 export interface ScheduleUpdateInput {
@@ -171,6 +233,13 @@ export interface ScheduleUpdateInput {
   lastRunAt?: number | null;
   lastRunSessionId?: string | null;
   lastError?: string | null;
+  // v2 fields
+  configSetId?: string;
+  executionMode?: ExecutionMode;
+  timeWindow?: TimeWindow | null;
+  maxDurationMs?: number | null;
+  maxTokens?: number | null;
+  sandboxMode?: SandboxMode;
 }
 
 // Skills types
@@ -341,7 +410,8 @@ export type ClientEvent =
   | { type: 'folder.select'; payload: Record<string, never> }
   | { type: 'workdir.get'; payload: Record<string, never> }
   | { type: 'workdir.set'; payload: { path: string; sessionId?: string } }
-  | { type: 'workdir.select'; payload: { sessionId?: string; currentPath?: string } };
+  | { type: 'workdir.select'; payload: { sessionId?: string; currentPath?: string } }
+  | { type: 'scheduled-task.catch-up-response'; payload: { decisions: CatchUpDecision[] } };
 
 // Sandbox setup types (app startup)
 export type SandboxSetupPhase =
@@ -423,6 +493,28 @@ export type ServerEvent =
   | { type: 'new-session' }
   | { type: 'navigate'; payload: string }
   | { type: 'scheduled-task.error'; payload: { taskId: string; error: string } }
+  | { type: 'scheduled-task.catch-up'; payload: { tasks: MissedTaskInfo[] } }
+  | {
+      type: 'scheduled-task.started';
+      payload: { taskId: string; runId: string; sessionId: string };
+    }
+  | {
+      type: 'scheduled-task.completed';
+      payload: {
+        taskId: string;
+        runId: string;
+        status: ScheduledTaskRunStatus;
+        tokensUsed: number | null;
+      };
+    }
+  | {
+      type: 'scheduled-task.config-invalid';
+      payload: { taskId: string; configSetId: string; error: string };
+    }
+  | {
+      type: 'scheduled-task.budget-exceeded';
+      payload: { taskId: string; runId: string; budgetType: 'time' | 'tokens' };
+    }
   | {
       type: 'error';
       payload: {
@@ -456,6 +548,10 @@ export interface Settings {
   systemPromptFile: SystemPromptFileChoice;
   memoryStrategy: 'auto' | 'manual' | 'rolling';
   maxContextTokens: number;
+  // Scheduler settings (v2)
+  schedulerCatchUpPolicy?: CatchUpPolicy;
+  schedulerConflictPolicy?: ConflictPolicy;
+  schedulerRunHistoryDepth?: number;
 }
 
 // Tool types
@@ -549,6 +645,10 @@ export interface AppConfig {
   sandboxEnabled?: boolean;
   enableThinking?: boolean;
   isConfigured: boolean;
+  // Scheduler settings (v2)
+  schedulerCatchUpPolicy?: CatchUpPolicy;
+  schedulerConflictPolicy?: ConflictPolicy;
+  schedulerRunHistoryDepth?: number;
 }
 
 export interface ProviderPreset {
