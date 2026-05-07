@@ -24,6 +24,12 @@ import {
   type ScheduledTaskRunStatus,
 } from '../../shared/schedule/types';
 import { log, logError } from '../utils/logger';
+import {
+  computeRandomFiringTime,
+  computeNextWindowStart,
+  isWithinWindow,
+  wasWindowMissed,
+} from './time-window';
 
 export type {
   TimeWindow,
@@ -36,6 +42,16 @@ export type {
 
 export type ScheduleRepeatUnit = 'minute' | 'hour' | 'day';
 export type ScheduledTaskWeekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+/** Internal error used to signal budget exceeded via Promise.race. */
+class BudgetExceededError extends Error {
+  readonly budgetType: 'time' | 'tokens';
+  constructor(budgetType: 'time' | 'tokens') {
+    super(`Budget exceeded: ${budgetType}`);
+    this.budgetType = budgetType;
+    this.name = 'BudgetExceededError';
+  }
+}
 
 export interface ScheduledTaskDailyScheduleConfig {
   kind: 'daily';
@@ -170,6 +186,29 @@ interface ScheduledTaskManagerOptions {
   executeTask: (task: ScheduledTask) => Promise<ScheduledTaskRunResult>;
   onTaskError?: (taskId: string, error: string) => void;
   now?: () => number;
+  // v2 options
+  runStore?: ScheduledTaskRunStore;
+  getSchedulerSettings?: () => SchedulerSettings;
+  isConfigSetValid?: (configSetId: string) => boolean;
+  isAgentBusy?: () => boolean;
+  onCatchUp?: (tasks: MissedTask[]) => void;
+  onTaskStarted?: (taskId: string, runId: string, sessionId: string) => void;
+  onTaskCompleted?: (
+    taskId: string,
+    runId: string,
+    status: ScheduledTaskRunStatus,
+    tokensUsed: number | null
+  ) => void;
+  onConfigInvalid?: (taskId: string, configSetId: string) => void;
+  onBudgetExceeded?: (taskId: string, runId: string, type: 'time' | 'tokens') => void;
+  generateRunId?: () => string;
+}
+
+export interface MissedTask {
+  taskId: string;
+  title: string;
+  timeWindow: TimeWindow | null;
+  scheduledFor: number;
 }
 
 export class ScheduledTaskManager {
@@ -181,19 +220,82 @@ export class ScheduledTaskManager {
   private readonly executingTasks = new Set<string>();
   private running = false;
 
+  // v2 dependencies
+  private readonly runStore?: ScheduledTaskRunStore;
+  private readonly getSchedulerSettings: () => SchedulerSettings;
+  private readonly isConfigSetValid: (configSetId: string) => boolean;
+  private readonly isAgentBusy: () => boolean;
+  private readonly onCatchUp?: (tasks: MissedTask[]) => void;
+  private readonly onTaskStarted?: (taskId: string, runId: string, sessionId: string) => void;
+  private readonly onTaskCompleted?: (
+    taskId: string,
+    runId: string,
+    status: ScheduledTaskRunStatus,
+    tokensUsed: number | null
+  ) => void;
+  private readonly onConfigInvalid?: (taskId: string, configSetId: string) => void;
+  private readonly onBudgetExceeded?: (
+    taskId: string,
+    runId: string,
+    type: 'time' | 'tokens'
+  ) => void;
+  private readonly generateRunId: () => string;
+
   constructor(options: ScheduledTaskManagerOptions) {
     this.store = options.store;
     this.executeTask = options.executeTask;
     this.onTaskError = options.onTaskError;
     this.now = options.now ?? (() => Date.now());
+
+    // v2 options with safe defaults
+    this.runStore = options.runStore;
+    this.getSchedulerSettings =
+      options.getSchedulerSettings ??
+      (() => ({
+        catchUpPolicy: 'ask' as CatchUpPolicy,
+        conflictPolicy: 'queue' as ConflictPolicy,
+        runHistoryDepth: 10,
+      }));
+    this.isConfigSetValid = options.isConfigSetValid ?? (() => true);
+    this.isAgentBusy = options.isAgentBusy ?? (() => false);
+    this.onCatchUp = options.onCatchUp;
+    this.onTaskStarted = options.onTaskStarted;
+    this.onTaskCompleted = options.onTaskCompleted;
+    this.onConfigInvalid = options.onConfigInvalid;
+    this.onBudgetExceeded = options.onBudgetExceeded;
+    this.generateRunId =
+      options.generateRunId ??
+      (() => `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   }
 
   start(): void {
     if (this.running) return;
     this.running = true;
     const tasks = this.store.list();
+    const missedTasks: MissedTask[] = [];
+
     for (const task of tasks) {
+      if (!task.enabled) continue;
+
+      // Check for missed windows (v2 catch-up detection)
+      if (task.timeWindow && task.nextRunAt !== null && task.nextRunAt < this.now()) {
+        if (wasWindowMissed(task.timeWindow, task.nextRunAt, this.now())) {
+          missedTasks.push({
+            taskId: task.id,
+            title: task.title,
+            timeWindow: task.timeWindow,
+            scheduledFor: task.nextRunAt,
+          });
+          continue; // Don't schedule yet — wait for catch-up resolution
+        }
+      }
+
       this.scheduleTask(task);
+    }
+
+    // Handle missed tasks according to catch-up policy
+    if (missedTasks.length > 0) {
+      this.handleCatchUp(missedTasks);
     }
   }
 
@@ -337,6 +439,58 @@ export class ScheduledTaskManager {
     if (!this.running) return;
     if (!task.enabled) return;
     if (task.nextRunAt === null) return;
+
+    // v2: Time window scheduling — compute random firing time within window
+    // Only fire within today's window if nextRunAt is today or in the past.
+    // If nextRunAt is in the future (e.g., tomorrow), wait until that date.
+    if (task.timeWindow) {
+      const nextRunAt = task.nextRunAt!;
+      const nowMs = this.now();
+
+      // If nextRunAt is in the future, wait until that date then re-enter
+      // scheduling logic (which applies randomization within the window).
+      if (nextRunAt > nowMs) {
+        const delay = Math.max(0, nextRunAt - nowMs);
+        const effectiveDelay = Math.min(delay, MAX_TIMER_DELAY_MS);
+        const timer = setTimeout(() => {
+          // Re-enter scheduleTask to apply window randomization, not handleTrigger
+          const current = this.store.get(task.id);
+          if (current && current.enabled) {
+            this.scheduleTask(current);
+          }
+        }, effectiveDelay);
+        this.timers.set(task.id, timer);
+        return;
+      }
+
+      // nextRunAt is now or in the past — try to fire within today's window
+      const firingTime = computeRandomFiringTime(task.timeWindow, nowMs);
+      if (firingTime === null) {
+        // Window passed today — advance to next window occurrence
+        const nextStart = computeNextWindowStart(task.timeWindow, nowMs);
+        this.store.update(task.id, { nextRunAt: nextStart });
+        const updated = this.store.get(task.id);
+        if (updated && updated.enabled) {
+          const delay = Math.max(0, nextStart - nowMs);
+          const effectiveDelay = Math.min(delay, MAX_TIMER_DELAY_MS);
+          const timer = setTimeout(() => {
+            this.handleTrigger(task.id);
+          }, effectiveDelay);
+          this.timers.set(task.id, timer);
+        }
+        return;
+      }
+
+      const delay = Math.max(0, firingTime - nowMs);
+      const effectiveDelay = Math.min(delay, MAX_TIMER_DELAY_MS);
+      const timer = setTimeout(() => {
+        this.handleTrigger(task.id);
+      }, effectiveDelay);
+      this.timers.set(task.id, timer);
+      return;
+    }
+
+    // Original exact-time scheduling
     const delay = Math.max(0, task.nextRunAt - this.now());
     const effectiveDelay = Math.min(delay, MAX_TIMER_DELAY_MS);
     if (effectiveDelay < delay) {
@@ -357,6 +511,52 @@ export class ScheduledTaskManager {
       this.scheduleTask(task);
       return;
     }
+
+    // v2: Time window gate — if task has a window, check if we should execute now
+    if (task.timeWindow) {
+      if (!isWithinWindow(task.timeWindow, this.now())) {
+        // Not within the window — re-schedule to fire within the next window
+        this.scheduleTask(task);
+        return;
+      }
+      // We're within the window — proceed to execute
+    }
+
+    // v2: Config set validation
+    if (!this.isConfigSetValid(task.configSetId)) {
+      log('[Scheduler] Config set invalid for task:', taskId, task.configSetId);
+      this.store.update(taskId, {
+        enabled: false,
+        lastError: `Config set '${task.configSetId}' no longer exists`,
+      });
+      this.onConfigInvalid?.(taskId, task.configSetId);
+      this.recordRun(task, 'blocked', null, `Config set '${task.configSetId}' no longer exists`);
+      return;
+    }
+
+    // v2: Conflict policy
+    const settings = this.getSchedulerSettings();
+    if (this.isAgentBusy()) {
+      if (settings.conflictPolicy === 'skip-if-busy') {
+        log('[Scheduler] Agent busy, skipping task:', taskId);
+        this.recordRun(task, 'skipped', null, 'Agent busy (skip-if-busy policy)');
+        // Advance to next run for repeating tasks
+        if (isRepeatingTask(task)) {
+          const nextRunAt = computeNextRunAt(task, this.now());
+          if (nextRunAt !== null) {
+            this.store.update(taskId, { nextRunAt });
+            const updated = this.store.get(taskId);
+            if (updated) this.scheduleTask(updated);
+          }
+        } else {
+          // One-time task: disable since it can't be rescheduled
+          this.store.update(taskId, { enabled: false, nextRunAt: null });
+        }
+        return;
+      }
+      // 'queue' policy: proceed — the executeTask callback handles queuing
+    }
+
     if (this.executingTasks.has(taskId)) {
       return;
     }
@@ -427,32 +627,118 @@ export class ScheduledTaskManager {
   }
 
   private async executeAndRecord(task: ScheduledTask): Promise<ScheduledTaskExecutionRecord> {
-    try {
-      const result = await this.executeTask(task);
+    const runId = this.generateRunId();
+    const startedAt = this.now();
+
+    // v2: Emit onTaskStarted before execution begins
+    this.onTaskStarted?.(task.id, runId, '');
+
+    // v2: Budget timeout with cooperative cancellation.
+    // After timeout, we mark the run as timed out but the underlying promise
+    // continues to settle — we swallow its result to prevent late state mutations.
+    let budgetTimer: NodeJS.Timeout | null = null;
+    const executionPromise = this.executeTask(task);
+
+    if (task.maxDurationMs) {
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        budgetTimer = setTimeout(() => {
+          reject(new BudgetExceededError('time'));
+        }, task.maxDurationMs!);
+      });
+
       try {
-        this.store.update(task.id, {
-          lastRunAt: this.now(),
-          lastRunSessionId: result.sessionId,
-          lastError: null,
-        });
+        const result = await Promise.race([executionPromise, timeoutPromise]);
+        // Execution completed before timeout — clear the timer
+        if (budgetTimer) clearTimeout(budgetTimer);
+        return this.handleExecutionSuccess(task, result, runId, startedAt);
       } catch (error) {
-        logError('[ScheduledTaskManager] Failed to update store:', error);
+        if (budgetTimer) clearTimeout(budgetTimer);
+
+        if (error instanceof BudgetExceededError) {
+          // Record timeout immediately
+          this.store.update(task.id, {
+            lastRunAt: this.now(),
+            lastRunSessionId: null,
+            lastError: `Budget exceeded: ${error.budgetType}`,
+          });
+          this.recordRun(
+            task,
+            'timeout',
+            null,
+            `Budget exceeded: ${error.budgetType}`,
+            runId,
+            startedAt
+          );
+          this.onBudgetExceeded?.(task.id, runId, error.budgetType);
+          this.onTaskCompleted?.(task.id, runId, 'timeout', null);
+
+          // Swallow late completion/error from the underlying promise to prevent
+          // overlapping state mutations. The execution lock is released by the
+          // caller's .finally() block.
+          executionPromise.then(
+            () => {},
+            () => {}
+          );
+
+          return { success: false, error: `Budget exceeded: ${error.budgetType}` };
+        }
+
+        // Normal execution failure
+        return this.handleExecutionFailure(task, error, runId, startedAt);
       }
-      return { success: true, sessionId: result.sessionId };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      try {
-        this.store.update(task.id, {
-          lastRunAt: this.now(),
-          lastRunSessionId: null,
-          lastError: message,
-        });
-      } catch (updateError) {
-        logError('[ScheduledTaskManager] Failed to update store:', updateError);
-      }
-      this.onTaskError?.(task.id, message);
-      return { success: false, error: message };
     }
+
+    // No budget — simple execution
+    try {
+      const result = await executionPromise;
+      return this.handleExecutionSuccess(task, result, runId, startedAt);
+    } catch (error) {
+      return this.handleExecutionFailure(task, error, runId, startedAt);
+    }
+  }
+
+  private handleExecutionSuccess(
+    task: ScheduledTask,
+    result: ScheduledTaskRunResult,
+    runId: string,
+    startedAt: number
+  ): ScheduledTaskExecutionRecord {
+    try {
+      this.store.update(task.id, {
+        lastRunAt: this.now(),
+        lastRunSessionId: result.sessionId,
+        lastError: null,
+      });
+    } catch (error) {
+      logError('[ScheduledTaskManager] Failed to update store:', error);
+    }
+
+    this.recordRun(task, 'success', result.sessionId, null, runId, startedAt);
+    this.onTaskCompleted?.(task.id, runId, 'success', null);
+    return { success: true, sessionId: result.sessionId };
+  }
+
+  private handleExecutionFailure(
+    task: ScheduledTask,
+    error: unknown,
+    runId: string,
+    startedAt: number
+  ): ScheduledTaskExecutionRecord {
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      this.store.update(task.id, {
+        lastRunAt: this.now(),
+        lastRunSessionId: null,
+        lastError: message,
+      });
+    } catch (updateError) {
+      logError('[ScheduledTaskManager] Failed to update store:', updateError);
+    }
+
+    this.recordRun(task, 'failed', null, message, runId, startedAt);
+    this.onTaskCompleted?.(task.id, runId, 'failed', null);
+    this.onTaskError?.(task.id, message);
+    return { success: false, error: message };
   }
 
   private clearTimer(taskId: string): void {
@@ -460,6 +746,164 @@ export class ScheduledTaskManager {
     if (timer) {
       clearTimeout(timer);
       this.timers.delete(taskId);
+    }
+  }
+
+  // --- v2: Catch-up handling ---
+
+  private handleCatchUp(missedTasks: MissedTask[]): void {
+    const settings = this.getSchedulerSettings();
+
+    switch (settings.catchUpPolicy) {
+      case 'skip':
+        // Advance all missed tasks to next window
+        for (const missed of missedTasks) {
+          this.advanceMissedTask(missed.taskId);
+        }
+        break;
+
+      case 'run-once':
+        // Execute each missed task once immediately (bypass window gate)
+        for (const missed of missedTasks) {
+          const task = this.store.get(missed.taskId);
+          if (task && task.enabled) {
+            this.executeCatchUpTask(task);
+          }
+        }
+        break;
+
+      case 'run-all':
+        // NOTE: True run-all (replaying each missed occurrence) is not yet implemented.
+        // Currently behaves identically to 'run-once' — executes each missed task once.
+        // Full occurrence replay requires tracking how many windows were missed and
+        // sequentially executing that many times, bounded by a safety cap.
+        // TODO: Implement bounded occurrence replay in a future iteration.
+        for (const missed of missedTasks) {
+          const task = this.store.get(missed.taskId);
+          if (task && task.enabled) {
+            this.executeCatchUpTask(task);
+          }
+        }
+        break;
+
+      case 'ask':
+        // Emit event to renderer for user decision
+        if (this.onCatchUp) {
+          this.onCatchUp(missedTasks);
+        } else {
+          // Fallback: skip if no handler registered
+          for (const missed of missedTasks) {
+            this.advanceMissedTask(missed.taskId);
+          }
+        }
+        break;
+    }
+  }
+
+  /** Advance a missed task to its next valid window/schedule slot. */
+  private advanceMissedTask(taskId: string): void {
+    const task = this.store.get(taskId);
+    if (!task || !task.enabled) return;
+
+    let nextRunAt: number | null = null;
+
+    if (task.timeWindow) {
+      nextRunAt = computeNextWindowStart(task.timeWindow, this.now());
+    } else if (isRepeatingTask(task)) {
+      nextRunAt = computeNextRunAt(task, this.now());
+    }
+
+    if (nextRunAt !== null) {
+      this.store.update(taskId, { nextRunAt });
+      const updated = this.store.get(taskId);
+      if (updated) this.scheduleTask(updated);
+    } else {
+      // One-time task that's overdue — disable it
+      this.store.update(taskId, { enabled: false, nextRunAt: null });
+    }
+
+    this.recordRun(task, 'skipped', null, 'Missed window (catch-up: skip)');
+  }
+
+  /**
+   * Resolve catch-up decisions from the user (renderer response).
+   * Called when catchUpPolicy = 'ask' and user responds to the batch panel.
+   */
+  resolveCatchUp(decisions: Array<{ taskId: string; action: 'run' | 'skip' }>): void {
+    for (const { taskId, action } of decisions) {
+      if (action === 'run') {
+        const task = this.store.get(taskId);
+        if (task && task.enabled) {
+          // Direct execution bypassing time window gate (user explicitly chose to run)
+          this.executeCatchUpTask(task);
+        }
+      } else {
+        this.advanceMissedTask(taskId);
+      }
+    }
+  }
+
+  /** Execute a catch-up task immediately, bypassing window/conflict checks. */
+  private executeCatchUpTask(task: ScheduledTask): void {
+    if (this.executingTasks.has(task.id)) return;
+
+    // Validate config set even for catch-up
+    if (!this.isConfigSetValid(task.configSetId)) {
+      this.store.update(task.id, {
+        enabled: false,
+        lastError: `Config set '${task.configSetId}' no longer exists`,
+      });
+      this.onConfigInvalid?.(task.id, task.configSetId);
+      this.recordRun(task, 'blocked', null, `Config set '${task.configSetId}' no longer exists`);
+      return;
+    }
+
+    this.executingTasks.add(task.id);
+    const taskToExecute = this.prepareExecution(task);
+    this.executeAndRecord(taskToExecute)
+      .catch((err) => {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        this.onTaskError?.(taskToExecute.id, errorMessage);
+        logError(`[ScheduledTask] Catch-up execution error for ${taskToExecute.id}:`, err);
+      })
+      .finally(() => {
+        this.executingTasks.delete(task.id);
+      });
+  }
+
+  // --- v2: Run history recording ---
+
+  private recordRun(
+    task: ScheduledTask,
+    status: ScheduledTaskRunStatus,
+    sessionId: string | null,
+    error: string | null,
+    runId?: string,
+    startedAt?: number
+  ): void {
+    if (!this.runStore) return;
+
+    const id = runId ?? this.generateRunId();
+    const started = startedAt ?? this.now();
+    const settings = this.getSchedulerSettings();
+
+    try {
+      this.runStore.create({
+        id,
+        taskId: task.id,
+        sessionId,
+        status,
+        startedAt: started,
+        completedAt: this.now(),
+        error,
+        tokensUsed: null,
+        blockedCommands: null,
+      });
+
+      // Prune old runs
+      this.runStore.pruneByTaskId(task.id, settings.runHistoryDepth);
+    } catch (err) {
+      logError('[Scheduler] Failed to record run:', err);
     }
   }
 }

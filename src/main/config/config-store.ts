@@ -349,6 +349,23 @@ function normalizeRunHistoryDepth(value: unknown): number {
   return clamped;
 }
 
+/**
+ * Normalize catch-up policy. 'run-all' is not yet implemented and is
+ * coerced to 'run-once' to prevent silent behavior mismatch.
+ */
+function normalizeCatchUpPolicy(value: unknown): AppConfig['schedulerCatchUpPolicy'] {
+  if (!isValidCatchUpPolicy(value)) {
+    return defaultConfig.schedulerCatchUpPolicy;
+  }
+  if (value === 'run-all') {
+    logWarn(
+      '[ConfigStore] schedulerCatchUpPolicy "run-all" is not yet implemented, using "run-once"'
+    );
+    return 'run-once';
+  }
+  return value;
+}
+
 function profileKeyFromProvider(
   provider: ProviderType,
   customProtocol: CustomProtocolType = 'anthropic'
@@ -905,9 +922,7 @@ export class ConfigStore {
       sandboxEnabled: toBoolean(raw.sandboxEnabled, defaultConfig.sandboxEnabled),
       enableThinking: projected.enableThinking,
       isConfigured: toBoolean(raw.isConfigured, defaultConfig.isConfigured),
-      schedulerCatchUpPolicy: isValidCatchUpPolicy(raw.schedulerCatchUpPolicy)
-        ? raw.schedulerCatchUpPolicy
-        : defaultConfig.schedulerCatchUpPolicy,
+      schedulerCatchUpPolicy: normalizeCatchUpPolicy(raw.schedulerCatchUpPolicy),
       schedulerConflictPolicy: isValidConflictPolicy(raw.schedulerConflictPolicy)
         ? raw.schedulerConflictPolicy
         : defaultConfig.schedulerConflictPolicy,
