@@ -1583,6 +1583,17 @@ ipcMain.handle('config.deleteSet', async (_event, payload: { id: string }) => {
   const previousConfig = configStore.getAll();
   configStore.deleteSet(payload);
   const updatedConfig = await syncConfigAfterMutation(previousConfig);
+
+  // Only invalidate scheduled tasks if the config set actually existed before
+  // and is now gone. This prevents false invalidation for non-existent IDs or
+  // protected/system sets that deleteSet silently refuses to remove.
+  const existedBefore = previousConfig.configSets.some((set) => set.id === payload.id);
+  const existsAfter = updatedConfig.configSets.some((set) => set.id === payload.id);
+  const wasRemoved = existedBefore && !existsAfter;
+  if (wasRemoved && scheduledTaskManager) {
+    scheduledTaskManager.handleConfigSetDeleted(payload.id);
+  }
+
   return { success: true, config: updatedConfig };
 });
 

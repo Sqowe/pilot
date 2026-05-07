@@ -399,6 +399,50 @@ export class ScheduledTaskManager {
     return this.store.delete(id);
   }
 
+  /**
+   * Scan all tasks referencing the given config set, disable them, and emit
+   * `onConfigInvalid` for each. Called when a config set is deleted via the
+   * API settings UI. Processes both enabled and disabled tasks to prevent
+   * dangling references — a disabled task could be re-enabled later while
+   * still pointing to a non-existent config set.
+   */
+  handleConfigSetDeleted(configSetId: string): void {
+    const tasks = this.store.list();
+    for (const task of tasks) {
+      if (task.configSetId !== configSetId) continue;
+
+      // Clear timer if task was scheduled
+      this.clearTimer(task.id);
+
+      // Mark as invalid regardless of current enabled state.
+      // Clear nextRunAt to normalize disabled-task state and prevent
+      // stale scheduling metadata from causing UI or logic issues.
+      const updated = this.store.update(task.id, {
+        enabled: false,
+        nextRunAt: null,
+        lastError: `Config set '${configSetId}' no longer exists`,
+      });
+
+      // Guard side effects — if the task was removed between list() and
+      // update(), skip callback/history to avoid inconsistent state.
+      if (!updated) continue;
+
+      this.onConfigInvalid?.(task.id, configSetId);
+
+      // Only record a run entry for tasks that were enabled (they had an
+      // active schedule that was interrupted). Disabled tasks just get the
+      // error marker without a spurious history entry.
+      if (task.enabled) {
+        this.recordRun(
+          task,
+          'blocked',
+          null,
+          `Config set '${configSetId}' deleted — task auto-disabled`
+        );
+      }
+    }
+  }
+
   toggle(id: string, enabled: boolean): ScheduledTask | null {
     const current = this.store.get(id);
     if (!current) return null;
