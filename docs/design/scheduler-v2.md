@@ -399,13 +399,13 @@ Modal/panel shown on app open when `catchUpPolicy = 'ask'`:
 3. ✅ Wire config set invalidation notifications
 4. ✅ Wire run history queries
 
-### Phase 4: UI
+### Phase 4: UI ✅
 
-1. Extend task creation/edit form
-2. Add scheduler settings panel
-3. Add catch-up batch panel (modal)
-4. Extend task list view with new indicators
-5. Add run history expandable section per task
+1. ✅ Extend task creation/edit form
+2. ⏳ Add scheduler settings panel (i18n keys added, UI pending integration)
+3. ✅ Add catch-up batch panel (modal)
+4. ✅ Extend task list view with new indicators
+5. ⏳ Add run history expandable section per task
 
 ### Phase 5: Testing ✅ (covered inline with Phases 1–2)
 

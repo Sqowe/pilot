@@ -9,11 +9,14 @@ import type {
   ScheduleWeekday,
   ScheduleCreateInput,
   ScheduleUpdateInput,
+  TimeWindow,
+  ExecutionMode,
 } from '../../types';
 import { useAppStore } from '../../store';
 import { formatAppDateTime, joinAppList } from '../../utils/i18n-format';
 import { renderLocalizedBannerMessage, getWeekdayOptions, getScheduleModeOptions } from './shared';
 import type { LocalizedBanner, ScheduleFormMode } from './shared';
+import { parseBudgetField, resolveConfigSetId } from '../../utils/schedule-helpers';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
@@ -51,6 +54,13 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
   const [enabled, setEnabled] = useState(true);
   const [repeatEvery, setRepeatEvery] = useState(1);
   const [repeatUnit, setRepeatUnit] = useState<ScheduleRepeatUnit>('day');
+  // v2 form state
+  const [configSetId, setConfigSetId] = useState('default');
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('ask');
+  const [timeWindow, setTimeWindow] = useState<TimeWindow | null>(null);
+  const [maxDurationMin, setMaxDurationMin] = useState<string>('');
+  const [maxTokens, setMaxTokens] = useState<string>('');
+  const appConfig = useAppStore((state) => state.appConfig);
   const weekdayOptions = getWeekdayOptions(t);
   const scheduleModeOptions = getScheduleModeOptions(t);
   const promptChangedWhileEditing = Boolean(
@@ -146,6 +156,27 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
       }
     }
     const usesDateTimeInput = scheduleMode === 'once' || scheduleMode === 'legacy-interval';
+
+    // v2: Validate numeric budget fields
+    const parsedMaxDurationMs = parseBudgetField(maxDurationMin, 60_000); // convert minutes to ms
+    const parsedMaxTokens = parseBudgetField(maxTokens, 1);
+    if (maxDurationMin && parsedMaxDurationMs === null) {
+      setError({ key: 'schedule.invalidBudgetDuration' });
+      return;
+    }
+    if (maxTokens && parsedMaxTokens === null) {
+      setError({ key: 'schedule.invalidBudgetTokens' });
+      return;
+    }
+
+    // v2: Validate configSetId against available sets
+    const availableSets = appConfig?.configSets ?? [];
+    const effectiveConfigSetId = resolveConfigSetId(configSetId, availableSets);
+    if (effectiveConfigSetId === null) {
+      setError({ key: 'schedule.invalidConfigSet' });
+      return;
+    }
+
     const runAtValue: number | null = usesDateTimeInput
       ? new Date(runAt).getTime()
       : computeNextScheduledRun(scheduleConfig, Date.now());
@@ -191,6 +222,12 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
           scheduleConfig,
           repeatEvery: scheduleMode === 'legacy-interval' ? repeatEvery : null,
           repeatUnit: scheduleMode === 'legacy-interval' ? repeatUnit : null,
+          // v2 fields
+          configSetId: effectiveConfigSetId,
+          executionMode,
+          timeWindow,
+          maxDurationMs: parsedMaxDurationMs,
+          maxTokens: parsedMaxTokens,
         };
         if (shouldRegenerateTitle) {
           payload.prompt = trimmedPrompt;
@@ -218,6 +255,12 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
           enabled,
           repeatEvery: scheduleMode === 'legacy-interval' ? repeatEvery : null,
           repeatUnit: scheduleMode === 'legacy-interval' ? repeatUnit : null,
+          // v2 fields
+          configSetId: effectiveConfigSetId,
+          executionMode,
+          timeWindow,
+          maxDurationMs: parsedMaxDurationMs,
+          maxTokens: parsedMaxTokens,
         };
         await window.electronAPI.schedule.create(payload);
         setSuccess({ key: 'schedule.created' });
@@ -334,6 +377,12 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
     );
     setRepeatEvery(task.repeatEvery ?? 1);
     setRepeatUnit(task.repeatUnit ?? 'day');
+    // v2 fields
+    setConfigSetId(task.configSetId ?? 'default');
+    setExecutionMode(task.executionMode ?? 'ask');
+    setTimeWindow(task.timeWindow ?? null);
+    setMaxDurationMin(task.maxDurationMs ? String(Math.round(task.maxDurationMs / 60000)) : '');
+    setMaxTokens(task.maxTokens ? String(task.maxTokens) : '');
     setError(null);
     setSuccess(null);
   }
@@ -351,6 +400,12 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
     setEnabled(true);
     setRepeatEvery(1);
     setRepeatUnit('day');
+    // v2 fields
+    setConfigSetId('default');
+    setExecutionMode('ask');
+    setTimeWindow(null);
+    setMaxDurationMin('');
+    setMaxTokens('');
   }
 
   return (
@@ -495,6 +550,89 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
           )}
           <div className="text-xs text-text-muted">{schedulePreview}</div>
         </div>
+
+        {/* v2: Config set, execution mode, time window, budget */}
+        <div className="rounded-lg border border-border bg-background p-3 space-y-3">
+          <div className="grid gap-2 md:grid-cols-2">
+            <div className="space-y-1">
+              <label className="text-xs text-text-muted">{t('schedule.configSet')}</label>
+              <select
+                value={configSetId}
+                onChange={(e) => setConfigSetId(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-sm"
+              >
+                {(appConfig?.configSets ?? []).length === 0 && (
+                  <option value="default">default</option>
+                )}
+                {(appConfig?.configSets ?? []).map((set) => (
+                  <option key={set.id} value={set.id}>
+                    {set.name}
+                  </option>
+                ))}
+              </select>
+              <div className="text-xs text-text-muted">{t('schedule.configSetHint')}</div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-text-muted">{t('schedule.executionMode')}</label>
+              <select
+                value={executionMode}
+                onChange={(e) => setExecutionMode(e.target.value as ExecutionMode)}
+                className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-sm"
+              >
+                <option value="ask">{t('schedule.executionModeAsk')}</option>
+                <option value="auto">{t('schedule.executionModeAuto')}</option>
+              </select>
+              <div className="text-xs text-text-muted">{t('schedule.executionModeHint')}</div>
+            </div>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-text-muted">{t('schedule.timeWindow')}</label>
+            <select
+              value={timeWindow ?? ''}
+              onChange={(e) => setTimeWindow((e.target.value || null) as TimeWindow | null)}
+              className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-sm"
+            >
+              <option value="">{t('schedule.timeWindowNone')}</option>
+              <option value="morning">{t('schedule.timeWindowMorning')}</option>
+              <option value="afternoon">{t('schedule.timeWindowAfternoon')}</option>
+              <option value="evening">{t('schedule.timeWindowEvening')}</option>
+              <option value="night">{t('schedule.timeWindowNight')}</option>
+            </select>
+            <div className="text-xs text-text-muted">{t('schedule.timeWindowHint')}</div>
+          </div>
+          <details className="group">
+            <summary className="text-xs text-text-muted cursor-pointer select-none">
+              {t('schedule.budgetSection')}
+            </summary>
+            <div className="grid gap-2 md:grid-cols-2 mt-2">
+              <div className="space-y-1">
+                <label className="text-xs text-text-muted">{t('schedule.maxDuration')}</label>
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="—"
+                  value={maxDurationMin}
+                  onChange={(e) => setMaxDurationMin(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-sm"
+                />
+                <div className="text-xs text-text-muted">{t('schedule.maxDurationHint')}</div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-text-muted">{t('schedule.maxTokens')}</label>
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="—"
+                  value={maxTokens}
+                  onChange={(e) => setMaxTokens(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-sm"
+                />
+                <div className="text-xs text-text-muted">{t('schedule.maxTokensHint')}</div>
+              </div>
+            </div>
+          </details>
+        </div>
+
         <div className="flex items-center gap-2">
           <button
             onClick={submitTask}
@@ -550,6 +688,35 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
                       >
                         {task.enabled ? t('schedule.taskEnabled') : t('schedule.taskDisabled')}
                       </span>
+                    </div>
+                    {/* v2 badges */}
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {task.configSetId && task.configSetId !== 'default' && (
+                        <span className="text-xs px-2 py-0.5 rounded bg-accent/10 text-accent">
+                          {t('schedule.configSetBadge', {
+                            value:
+                              appConfig?.configSets?.find((s) => s.id === task.configSetId)?.name ??
+                              task.configSetId,
+                          })}
+                        </span>
+                      )}
+                      {task.executionMode === 'auto' && (
+                        <span className="text-xs px-2 py-0.5 rounded bg-warning/10 text-warning">
+                          ⚡{' '}
+                          {t('schedule.executionModeBadge', {
+                            value: t('schedule.executionModeAuto'),
+                          })}
+                        </span>
+                      )}
+                      {task.timeWindow && (
+                        <span className="text-xs px-2 py-0.5 rounded bg-info/10 text-info">
+                          {t('schedule.timeWindowBadge', {
+                            value: t(
+                              `schedule.timeWindow${task.timeWindow.charAt(0).toUpperCase() + task.timeWindow.slice(1)}`
+                            ),
+                          })}
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-text-muted">
                       {task.nextRunAt === null
