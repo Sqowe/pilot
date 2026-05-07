@@ -35,6 +35,9 @@ import {
   setPermissionRules,
   setBashCommandLists,
   sanitizeBashCommandList,
+  markSessionAutonomous,
+  setAutonomousBlockCallback,
+  forgetSessionPermissions,
 } from './config/permission-rules-store';
 import { mcpConfigStore } from './mcp/mcp-config-store';
 import { getSandboxAdapter, shutdownSandbox } from './sandbox/sandbox-adapter';
@@ -119,6 +122,9 @@ let sessionManager: SessionManager | null = null;
 let skillsManager: SkillsManager | null = null;
 let pluginRuntimeService: PluginRuntimeService | null = null;
 let scheduledTaskManager: ScheduledTaskManager | null = null;
+
+/** Maps sessionId → taskId for autonomous scheduled task sessions. */
+const scheduledSessionToTaskId = new Map<string, string>();
 
 function sanitizeDiagnosticBaseUrl(value: string | undefined): string | null {
   if (!value) {
@@ -944,6 +950,11 @@ app
           scheduledTaskStore.update(task.id, { title });
         }
         const started = await sessionManager.startSession(title, task.prompt, task.cwd);
+        // v2: Mark session as autonomous if task uses auto execution mode
+        if (task.executionMode === 'auto') {
+          markSessionAutonomous(started.id);
+          scheduledSessionToTaskId.set(started.id, task.id);
+        }
         // 定时任务创建的新会话需要主动同步到前端会话列表
         sendToRenderer({
           type: 'session.update',
@@ -990,6 +1001,13 @@ app
           type: 'scheduled-task.completed',
           payload: { taskId, runId, status, tokensUsed },
         });
+        // Clean up all session→task mappings and autonomous state for this completed task
+        for (const [sessionId, mappedTaskId] of scheduledSessionToTaskId.entries()) {
+          if (mappedTaskId === taskId) {
+            forgetSessionPermissions(sessionId);
+            scheduledSessionToTaskId.delete(sessionId);
+          }
+        }
       },
       onConfigInvalid: (taskId, configSetId) => {
         sendToRenderer({
@@ -1005,6 +1023,23 @@ app
       },
       now: () => Date.now(),
     });
+
+    // v2: Set up autonomous block callback BEFORE starting scheduler
+    // to avoid missing blocked-command events during catch-up runs
+    setAutonomousBlockCallback((sessionId, toolName, command) => {
+      log(`[Scheduler] Autonomous block: session=${sessionId} tool=${toolName} cmd=${command}`);
+      const taskId = scheduledSessionToTaskId.get(sessionId);
+      if (taskId) {
+        sendToRenderer({
+          type: 'scheduled-task.error',
+          payload: {
+            taskId,
+            error: `Command blocked in autonomous mode: ${toolName} — ${command}`,
+          },
+        });
+      }
+    });
+
     scheduledTaskManager.start();
 
     // 初始化远程管理器
@@ -1099,6 +1134,7 @@ async function cleanupSandboxResources(): Promise<void> {
   stopNavServer();
   skillsManager?.stopStorageMonitoring();
   scheduledTaskManager?.stop();
+  scheduledSessionToTaskId.clear();
   tray?.destroy();
   tray = null;
 

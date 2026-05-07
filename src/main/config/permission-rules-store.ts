@@ -35,6 +35,18 @@ let rules: PermissionRule[] = [...DEFAULT_RULES];
 const alwaysAllowBySession = new Map<string, Set<string>>();
 
 /**
+ * Sessions running in autonomous mode (executionMode: 'auto').
+ * When a session is in this set, 'ask' decisions are converted to blocks
+ * instead of prompting the user. The blocked command is returned to the
+ * caller for logging.
+ */
+const autonomousSessions = new Set<string>();
+
+/** Callback to record blocked commands for autonomous sessions. */
+let onAutonomousBlock: ((sessionId: string, toolName: string, command: string) => void) | null =
+  null;
+
+/**
  * Sanitize an untrusted rules payload from IPC. Drops entries with empty
  * tool names, coerces invalid `action` values to `'ask'`, and preserves
  * optional string `pattern` fields. Returns null for non-array input.
@@ -445,6 +457,43 @@ export function rememberAlwaysAllow(sessionId: string, toolName: string): void {
 
 export function forgetSessionPermissions(sessionId: string): void {
   alwaysAllowBySession.delete(sessionId);
+  autonomousSessions.delete(sessionId);
+}
+
+// --- Autonomous session management ---
+
+/**
+ * Mark a session as running in autonomous mode.
+ * When 'ask' decisions occur for this session, they will be blocked
+ * instead of prompting the user.
+ */
+export function markSessionAutonomous(sessionId: string): void {
+  autonomousSessions.add(sessionId);
+}
+
+/**
+ * Check if a session is in autonomous mode.
+ */
+export function isSessionAutonomous(sessionId: string): boolean {
+  return autonomousSessions.has(sessionId);
+}
+
+/**
+ * Set the callback for when an autonomous session has a command blocked.
+ */
+export function setAutonomousBlockCallback(
+  callback: ((sessionId: string, toolName: string, command: string) => void) | null
+): void {
+  onAutonomousBlock = callback;
+}
+
+/**
+ * Get the autonomous block callback (used by the permission hook).
+ */
+export function getAutonomousBlockCallback():
+  | ((sessionId: string, toolName: string, command: string) => void)
+  | null {
+  return onAutonomousBlock;
 }
 
 function safeStringify(v: unknown): string {

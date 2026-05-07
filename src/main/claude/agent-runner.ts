@@ -25,7 +25,12 @@ import { Type, type TSchema } from 'typebox';
 import { getSharedAuthStorage, ModelRegistry } from './shared-auth';
 import type { Session, Message, TraceStep, ServerEvent, ContentBlock } from '../../renderer/types';
 import { v4 as uuidv4 } from 'uuid';
-import { decidePermission, rememberAlwaysAllow } from '../config/permission-rules-store';
+import {
+  decidePermission,
+  rememberAlwaysAllow,
+  isSessionAutonomous,
+  getAutonomousBlockCallback,
+} from '../config/permission-rules-store';
 import {
   type AgentLike,
   type BeforeToolCallHook,
@@ -805,6 +810,30 @@ ${hints.join('\n')}
       }
 
       if (decision === 'ask') {
+        // v2: Autonomous mode — block instead of prompting
+        if (isSessionAutonomous(sessionId)) {
+          const rawCmd =
+            input != null && typeof (input as Record<string, unknown>).command === 'string'
+              ? ((input as Record<string, unknown>).command as string)
+              : null;
+          const cmdStr = rawCmd ?? safeStringify(input).slice(0, 200);
+          log(
+            `[ClaudeAgentRunner] Tool '${toolName}' blocked in autonomous mode (session ${sessionId})`
+          );
+          const blockCallback = getAutonomousBlockCallback();
+          if (blockCallback) {
+            try {
+              blockCallback(sessionId, toolName, cmdStr);
+            } catch (callbackErr) {
+              logError('[ClaudeAgentRunner] Autonomous block callback failed:', callbackErr);
+            }
+          }
+          return {
+            block: true,
+            reason: `Command blocked by permission policy (autonomous mode). Command: ${cmdStr}`,
+          };
+        }
+
         const toolUseId = `${ctx.toolCall?.id ?? 'unknown'}-perm-${uuidv4().slice(0, 8)}`;
         let result: 'allow' | 'deny' | 'allow_always';
         try {

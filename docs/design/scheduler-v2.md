@@ -389,7 +389,7 @@ Modal/panel shown on app open when `catchUpPolicy = 'ask'`:
 3. ✅ Implement conflict policy (queue/skip-if-busy)
 4. ✅ Implement config set validation (on task fire + on config set delete)
 5. ✅ Implement budget monitoring (duration timeout + token tracking)
-6. ⏳ Implement permission blocking for `executionMode: 'auto'`
+6. ✅ Implement permission blocking for `executionMode: 'auto'`
 7. ✅ Implement run history recording + pruning
 
 ### Phase 3: IPC & Events ✅
@@ -412,7 +412,7 @@ Modal/panel shown on app open when `catchUpPolicy = 'ask'`:
 1. ✅ Unit tests for time window resolution
 2. ✅ Unit tests for catch-up detection logic
 3. ✅ Unit tests for conflict policy
-4. ⏳ Unit tests for permission blocking in auto mode
+4. ✅ Unit tests for permission blocking in auto mode
 5. ✅ Unit tests for budget enforcement
 6. ✅ Unit tests for config set invalidation
 7. ✅ Integration test: full lifecycle (create → fire → record → prune)
