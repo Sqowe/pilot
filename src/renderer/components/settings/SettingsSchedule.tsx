@@ -450,12 +450,41 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
           rows={3}
           className="w-full px-3 py-2 rounded-lg bg-background border border-border text-sm"
         />
-        <input
-          value={cwd}
-          onChange={(e) => setCwd(e.target.value)}
-          placeholder={t('schedule.cwdPlaceholder')}
-          className="w-full px-3 py-2 rounded-lg bg-background border border-border text-sm"
-        />
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1">
+            {t('schedule.projectDirectory')}
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={cwd}
+              onChange={(e) => setCwd(e.target.value)}
+              placeholder={t('schedule.cwdPlaceholder')}
+              className="flex-1 px-3 py-2 rounded-lg bg-background border border-border text-sm text-text-primary"
+            />
+            {isElectron && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const selected = await window.electronAPI.invoke<string | null>({
+                      type: 'folder.select',
+                      payload: {},
+                    });
+                    if (selected) {
+                      setCwd(selected);
+                    }
+                  } catch (err) {
+                    console.error('[SettingsSchedule] folder.select failed:', err);
+                  }
+                }}
+                className="shrink-0 px-3 py-2 rounded-lg border border-border bg-surface-hover text-sm text-text-secondary hover:text-text-primary hover:border-accent transition-colors"
+              >
+                {t('schedule.browse')}
+              </button>
+            )}
+          </div>
+        </div>
         <div className="rounded-lg border border-border bg-background p-3 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div>
