@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
-import { AlertCircle, CheckCircle, ChevronDown, Plus, X, Check } from 'lucide-react';
+import { AlertCircle, CheckCircle, ChevronDown, ChevronRight, Plus, X, Check } from 'lucide-react';
 import type {
   ScheduleConfig,
   ScheduleTask,
+  ScheduleTaskRun,
   ScheduleRepeatUnit,
   ScheduleWeekday,
   ScheduleCreateInput,
@@ -799,6 +800,7 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
                         {t('schedule.delete')}
                       </button>
                     </div>
+                    <TaskRunHistory taskId={task.id} />
                   </>
                 );
               })()}
@@ -808,6 +810,131 @@ export function SettingsSchedule({ isActive }: { isActive: boolean }) {
       </div>
     </div>
   );
+}
+
+// ==================== Task Run History ====================
+
+const RUN_STATUS_STYLES: Record<string, string> = {
+  success: 'bg-success/10 text-success',
+  failed: 'bg-error/10 text-error',
+  timeout: 'bg-warning/10 text-warning',
+  blocked: 'bg-warning/10 text-warning',
+  skipped: 'bg-surface-hover text-text-muted',
+};
+
+function TaskRunHistory({ taskId }: { taskId: string }) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const [runs, setRuns] = useState<ScheduleTaskRun[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!expanded || !isElectron) return;
+    let cancelled = false;
+    setLoading(true);
+    window.electronAPI.schedule
+      .getHistory(taskId)
+      .then((result) => {
+        if (!cancelled) setRuns(result);
+      })
+      .catch(() => {
+        if (!cancelled) setRuns([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, taskId]);
+
+  return (
+    <div className="border-t border-border/50 pt-2 mt-1">
+      <button
+        type="button"
+        onClick={() => setExpanded((prev) => !prev)}
+        className="flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
+      >
+        {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+        {t('schedule.historyToggle')}
+      </button>
+      {expanded && (
+        <div className="mt-2 space-y-1.5">
+          {loading && <div className="text-xs text-text-muted">{t('schedule.historyLoading')}</div>}
+          {!loading && runs.length === 0 && (
+            <div className="text-xs text-text-muted">{t('schedule.historyEmpty')}</div>
+          )}
+          {!loading &&
+            runs.map((run) => (
+              <div
+                key={run.id}
+                className="rounded border border-border/50 bg-background px-2.5 py-2 space-y-1"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    className={`text-xs px-1.5 py-0.5 rounded font-medium ${RUN_STATUS_STYLES[run.status] ?? 'bg-surface-hover text-text-muted'}`}
+                  >
+                    {t(`schedule.historyStatus_${run.status}`, run.status)}
+                  </span>
+                  <span className="text-xs text-text-muted">
+                    {formatAppDateTime(run.startedAt)}
+                  </span>
+                </div>
+                {run.completedAt && (
+                  <div className="text-xs text-text-muted">
+                    {t('schedule.historyDuration', {
+                      value: formatDurationMs(run.completedAt - run.startedAt),
+                    })}
+                  </div>
+                )}
+                {run.tokensUsed != null && run.tokensUsed > 0 && (
+                  <div className="text-xs text-text-muted">
+                    {t('schedule.historyTokens', { value: run.tokensUsed.toLocaleString() })}
+                  </div>
+                )}
+                {run.error && (
+                  <div className="text-xs text-error break-all">
+                    {t('schedule.historyError', { value: run.error })}
+                  </div>
+                )}
+                {run.blockedCommands && run.blockedCommands.length > 0 && (
+                  <div className="space-y-0.5">
+                    <div className="text-xs text-warning">
+                      {t('schedule.historyBlockedCommands')}
+                    </div>
+                    {run.blockedCommands.map((cmd, idx) => (
+                      <div
+                        key={idx}
+                        className="text-xs text-text-muted font-mono bg-surface-hover rounded px-1.5 py-0.5 break-all"
+                      >
+                        {cmd}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {run.sessionId && (
+                  <div className="text-xs text-text-muted break-all">
+                    {t('schedule.historySession', { value: run.sessionId })}
+                  </div>
+                )}
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatDurationMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return `${hours}h ${remainingMinutes}m`;
 }
 
 // ==================== Scheduler Settings Panel ====================

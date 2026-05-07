@@ -758,7 +758,20 @@
     "settingsConflictQueue": "排队（等待当前会话结束）",
     "settingsConflictSkip": "跳过本次执行",
     "settingsRunHistoryDepth": "执行历史保留条数",
-    "settingsRunHistoryDepthHint": "每个任务保留的历史执行记录数量"
+    "settingsRunHistoryDepthHint": "每个任务保留的历史执行记录数量",
+    "historyToggle": "执行历史",
+    "historyLoading": "加载中…",
+    "historyEmpty": "暂无执行记录",
+    "historyStatus_success": "成功",
+    "historyStatus_failed": "失败",
+    "historyStatus_timeout": "超时",
+    "historyStatus_blocked": "被阻止",
+    "historyStatus_skipped": "已跳过",
+    "historyDuration": "耗时：{{value}}",
+    "historyTokens": "Token 用量：{{value}}",
+    "historyError": "错误：{{value}}",
+    "historyBlockedCommands": "被阻止的命令：",
+    "historySession": "会话：{{value}}"
   },
   "remote": {
     "title": "远程控制",

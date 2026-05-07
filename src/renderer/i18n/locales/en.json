@@ -790,7 +790,20 @@
     "settingsConflictQueue": "Queue (wait for current session)",
     "settingsConflictSkip": "Skip this run",
     "settingsRunHistoryDepth": "Run history depth",
-    "settingsRunHistoryDepthHint": "Number of past runs to keep per task"
+    "settingsRunHistoryDepthHint": "Number of past runs to keep per task",
+    "historyToggle": "Run history",
+    "historyLoading": "Loading history…",
+    "historyEmpty": "No runs recorded yet",
+    "historyStatus_success": "Success",
+    "historyStatus_failed": "Failed",
+    "historyStatus_timeout": "Timeout",
+    "historyStatus_blocked": "Blocked",
+    "historyStatus_skipped": "Skipped",
+    "historyDuration": "Duration: {{value}}",
+    "historyTokens": "Tokens: {{value}}",
+    "historyError": "Error: {{value}}",
+    "historyBlockedCommands": "Blocked commands:",
+    "historySession": "Session: {{value}}"
   },
   "remote": {
     "title": "Remote Control",
