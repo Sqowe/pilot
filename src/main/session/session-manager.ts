@@ -896,6 +896,11 @@ export class SessionManager {
     }
   }
 
+  // Check if any session is currently active (agent is busy)
+  isAgentActive(): boolean {
+    return this.activeSessions.size > 0;
+  }
+
   // Stop a running session
   stopSession(sessionId: string): void {
     log('[SessionManager] Stopping session:', sessionId);

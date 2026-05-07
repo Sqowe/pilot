@@ -392,12 +392,12 @@ Modal/panel shown on app open when `catchUpPolicy = 'ask'`:
 6. ⏳ Implement permission blocking for `executionMode: 'auto'`
 7. ✅ Implement run history recording + pruning
 
-### Phase 3: IPC & Events
+### Phase 3: IPC & Events ✅
 
-1. Add new server/client events
-2. Wire catch-up flow to renderer
-3. Wire config set invalidation notifications
-4. Wire run history queries
+1. ✅ Add new server/client events
+2. ✅ Wire catch-up flow to renderer
+3. ✅ Wire config set invalidation notifications
+4. ✅ Wire run history queries
 
 ### Phase 4: UI
 

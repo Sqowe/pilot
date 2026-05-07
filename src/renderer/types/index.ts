@@ -189,6 +189,18 @@ export interface SchedulerSettings {
   runHistoryDepth: number;
 }
 
+export interface MissedTaskInfo {
+  taskId: string;
+  title: string;
+  timeWindow: TimeWindow | null;
+  scheduledFor: number;
+}
+
+export interface CatchUpDecision {
+  taskId: string;
+  action: 'run' | 'skip';
+}
+
 export interface ScheduleCreateInput {
   title?: string;
   prompt: string;
@@ -398,7 +410,8 @@ export type ClientEvent =
   | { type: 'folder.select'; payload: Record<string, never> }
   | { type: 'workdir.get'; payload: Record<string, never> }
   | { type: 'workdir.set'; payload: { path: string; sessionId?: string } }
-  | { type: 'workdir.select'; payload: { sessionId?: string; currentPath?: string } };
+  | { type: 'workdir.select'; payload: { sessionId?: string; currentPath?: string } }
+  | { type: 'scheduled-task.catch-up-response'; payload: { decisions: CatchUpDecision[] } };
 
 // Sandbox setup types (app startup)
 export type SandboxSetupPhase =
@@ -480,6 +493,28 @@ export type ServerEvent =
   | { type: 'new-session' }
   | { type: 'navigate'; payload: string }
   | { type: 'scheduled-task.error'; payload: { taskId: string; error: string } }
+  | { type: 'scheduled-task.catch-up'; payload: { tasks: MissedTaskInfo[] } }
+  | {
+      type: 'scheduled-task.started';
+      payload: { taskId: string; runId: string; sessionId: string };
+    }
+  | {
+      type: 'scheduled-task.completed';
+      payload: {
+        taskId: string;
+        runId: string;
+        status: ScheduledTaskRunStatus;
+        tokensUsed: number | null;
+      };
+    }
+  | {
+      type: 'scheduled-task.config-invalid';
+      payload: { taskId: string; configSetId: string; error: string };
+    }
+  | {
+      type: 'scheduled-task.budget-exceeded';
+      payload: { taskId: string; runId: string; budgetType: 'time' | 'tokens' };
+    }
   | {
       type: 'error';
       payload: {

@@ -17,7 +17,7 @@ import { join, resolve, dirname, isAbsolute, basename } from 'path';
 import * as fs from 'fs';
 import { execFileSync } from 'child_process';
 import { config } from 'dotenv';
-import { initDatabase, closeDatabase } from './db/database';
+import { initDatabase, closeDatabase, getDatabase } from './db/database';
 import { SessionManager } from './session/session-manager';
 import { SkillsManager } from './skills/skills-manager';
 import { PluginCatalogService } from './skills/plugin-catalog-service';
@@ -60,7 +60,10 @@ import {
   type ScheduledTaskCreateInput,
   type ScheduledTaskUpdateInput,
 } from './schedule/scheduled-task-manager';
-import { createScheduledTaskStore } from './schedule/scheduled-task-store';
+import {
+  createScheduledTaskStore,
+  createScheduledTaskRunStore,
+} from './schedule/scheduled-task-store';
 import {
   buildScheduledTaskFallbackTitle,
   buildScheduledTaskTitle,
@@ -920,8 +923,10 @@ app
     startNavServer(() => mainWindow);
 
     const scheduledTaskStore = createScheduledTaskStore(db);
+    const scheduledTaskRunStore = createScheduledTaskRunStore(db);
     scheduledTaskManager = new ScheduledTaskManager({
       store: scheduledTaskStore,
+      runStore: scheduledTaskRunStore,
       executeTask: async (task) => {
         if (!sessionManager) {
           throw new Error('Session manager not initialized');
@@ -950,6 +955,52 @@ app
         sendToRenderer({
           type: 'scheduled-task.error',
           payload: { taskId, error },
+        });
+      },
+      getSchedulerSettings: () => ({
+        catchUpPolicy: configStore.get('schedulerCatchUpPolicy') as
+          | 'skip'
+          | 'run-once'
+          | 'run-all'
+          | 'ask',
+        conflictPolicy: configStore.get('schedulerConflictPolicy') as 'queue' | 'skip-if-busy',
+        runHistoryDepth: configStore.get('schedulerRunHistoryDepth') as number,
+      }),
+      isConfigSetValid: (configSetId: string) => {
+        const config = configStore.getAll();
+        return config.configSets.some((set) => set.id === configSetId);
+      },
+      isAgentBusy: () => {
+        return sessionManager?.isAgentActive() ?? false;
+      },
+      onCatchUp: (tasks) => {
+        sendToRenderer({
+          type: 'scheduled-task.catch-up',
+          payload: { tasks },
+        });
+      },
+      onTaskStarted: (taskId, runId, sessionId) => {
+        sendToRenderer({
+          type: 'scheduled-task.started',
+          payload: { taskId, runId, sessionId },
+        });
+      },
+      onTaskCompleted: (taskId, runId, status, tokensUsed) => {
+        sendToRenderer({
+          type: 'scheduled-task.completed',
+          payload: { taskId, runId, status, tokensUsed },
+        });
+      },
+      onConfigInvalid: (taskId, configSetId) => {
+        sendToRenderer({
+          type: 'scheduled-task.config-invalid',
+          payload: { taskId, configSetId, error: `Config set '${configSetId}' no longer exists` },
+        });
+      },
+      onBudgetExceeded: (taskId, runId, budgetType) => {
+        sendToRenderer({
+          type: 'scheduled-task.budget-exceeded',
+          payload: { taskId, runId, budgetType },
         });
       },
       now: () => Date.now(),
@@ -2475,6 +2526,17 @@ ipcMain.handle('schedule.runNow', async (_event, id: string) => {
   return scheduledTaskManager.runNow(id);
 });
 
+ipcMain.handle('schedule.getHistory', (_event, taskId: string) => {
+  try {
+    const db = getDatabase();
+    const runStore = createScheduledTaskRunStore(db);
+    return runStore.getByTaskId(taskId);
+  } catch (error) {
+    logError('[Schedule] Error getting run history:', error);
+    return [];
+  }
+});
+
 ipcMain.handle('logs.write', (_event, level: 'info' | 'warn' | 'error', args: unknown[]) => {
   try {
     if (level === 'warn') {
@@ -2736,6 +2798,12 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
             configStore.update(persistPayload);
           }
         }
+      }
+      return null;
+
+    case 'scheduled-task.catch-up-response':
+      if (scheduledTaskManager && Array.isArray(event.payload?.decisions)) {
+        scheduledTaskManager.resolveCatchUp(event.payload.decisions);
       }
       return null;
 
