@@ -74,7 +74,7 @@ open-cowork/
 │   │   ├── memory/            # Memory system (experimental)
 │   │   ├── remote/            # Feishu/Slack remote channels
 │   │   ├── sandbox/           # WSL2/Lima/Native execution adapters
-│   │   ├── schedule/          # Cron-like task scheduling
+│   │   ├── schedule/          # Anacron-style task scheduling (v2)
 │   │   ├── session/           # Session lifecycle management
 │   │   ├── skills/            # Skill loader + hot-reload
 │   │   ├── tools/             # Tool executor, path containment
@@ -219,7 +219,7 @@ Environment variables (`.env.example`): `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_
 | 🔄 **Semi-Stable**  | SQLite persistence layer                                                                                                  | Schema may evolve with memory system                         |
 | ⚠️ **Experimental** | Sandbox (WSL2/Lima)                                                                                                       | Code-complete, UI-gated, not user-facing yet                 |
 | ⚠️ **Experimental** | Memory system (`src/main/memory/`)                                                                                        | Under active development (PR #138)                           |
-| ⚠️ **Experimental** | Schedule system (`src/main/schedule/`)                                                                                    | Early implementation                                         |
+| 🔄 **Semi-Stable**  | Schedule system (`src/main/schedule/`)                                                                                    | v2 complete: time windows, catch-up, budgets, run history    |
 | 🔮 **Planned**      | Plugin system, Multi-agent orchestration                                                                                  | See `ROADMAP.md`                                             |
 | 🔮 **Planned**      | Linux first-class support                                                                                                 | Build-from-source only today                                 |
 | 🔮 **Planned**      | Web version (server mode)                                                                                                 | Architecture supports it (clean IPC boundary)                |

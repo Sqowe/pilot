@@ -58,6 +58,7 @@ Open Cowork 是一款免费开源的 AI 智能助手桌面应用，支持 Window
 - **图形界面操作**：可以控制和操作电脑上的各种桌面 GUI 应用程序。**推荐使用 Gemini-3-Pro 模型**以获得最佳的 GUI 理解和控制效果。
 - **智能文件管理**：可以在工作区内读取、写入和整理文件。
 - **Skills 系统**：内置 PPTX、DOCX、PDF、XLSX 生成和处理工作流。**支持自定义技能的添加与删除。**
+- **定时任务调度**：Anacron 风格的应用内任务调度，支持模糊时间窗口（早/午/晚/夜）、自动执行模式、错过任务追赶策略、Token/时间预算控制，以及完整的执行历史记录。
 - **MCP外部服务支持**：通过 **MCP Connectors** 连接器集成浏览器、Notion、自定义等应用，扩展 AI 能力。
 - **多模态交互输入**：支持直接拖拽文件和图片到输入框，实现无缝的多模态交互。
 - **实时追踪**：在 Trace Panel 中观察 AI 推理和工具调用过程。
@@ -222,6 +223,8 @@ open-cowork/
 │   │   │   └── path-resolver.ts # 沙盒化文件访问
 │   │   ├── session/             # 会话管理
 │   │   │   └── session-manager.ts
+│   │   ├── schedule/            # 定时任务调度 (v2)
+│   │   │   └── scheduled-task-manager.ts
 │   │   ├── skills/              # 技能加载与管理
 │   │   │   └── skills-manager.ts
 │   │   └── tools/               # 工具执行
@@ -269,7 +272,7 @@ open-cowork/
 
 详见 **[ROADMAP.md](ROADMAP.md)**。
 
-**已完成：** 安装包 · 文件系统沙盒 · VM 隔离 (WSL2/Lima) · 技能 (PPTX/DOCX/PDF/XLSX) · MCP 连接器 · 多模型支持 · 富文本输入 · 中英文界面
+**已完成：** 安装包 · 文件系统沙盒 · VM 隔离 (WSL2/Lima) · 技能 (PPTX/DOCX/PDF/XLSX) · MCP 连接器 · 多模型支持 · 富文本输入 · 中英文界面 · 定时任务调度 (v2)
 
 **即将推出：** 记忆优化 · Linux 支持 · 插件系统 · Computer Use · 正式版发布
 

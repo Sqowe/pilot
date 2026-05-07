@@ -59,6 +59,7 @@ It provides a sandboxed workspace where AI can manage files, generate profession
 - **GUI Operation**: Control and interact with various desktop GUI applications on your computer. **Recommended model: Gemini-3-Pro** for optimal GUI understanding and control.
 - **Smart File Management**: Read, write, and organize files within your workspace.
 - **Skills System**: Built-in workflows for PPTX, DOCX, PDF, XLSX generation and processing. **Supports custom skill creation and deletion.**
+- **Task Scheduling**: Anacron-style in-app task scheduling with fuzzy time windows (morning/afternoon/evening/night), autonomous execution mode, missed-task catch-up policies, per-run token/time budgets, and full run history tracking.
 - **MCP External Service Support**: Integrate browser, Notion, custom apps and more through **MCP Connectors** to extend AI capabilities.
 - **Multimodal Input**: Drag & drop files and images directly into the chat input for seamless multimodal interaction.
 - **Real-time Trace**: Watch AI reasoning and tool execution in the Trace Panel.
@@ -242,6 +243,8 @@ open-cowork/
 │   │   │   └── path-resolver.ts # Sandboxed file access
 │   │   ├── session/             # Session management
 │   │   │   └── session-manager.ts
+│   │   ├── schedule/            # Task scheduling (v2)
+│   │   │   └── scheduled-task-manager.ts
 │   │   ├── skills/              # Skill Loader & Manager
 │   │   │   └── skills-manager.ts
 │   │   └── tools/               # Tool execution
@@ -289,7 +292,7 @@ open-cowork/
 
 See our full **[ROADMAP.md](ROADMAP.md)** for detailed plans.
 
-**Completed:** Core installers · Filesystem sandboxing · VM isolation (WSL2/Lima) · Skills (PPTX/DOCX/PDF/XLSX) · MCP connectors · Multi-model support · Rich input · i18n
+**Completed:** Core installers · Filesystem sandboxing · VM isolation (WSL2/Lima) · Skills (PPTX/DOCX/PDF/XLSX) · MCP connectors · Multi-model support · Rich input · i18n · Task scheduling (v2)
 
 **Coming next:** Memory optimization · Linux support · Plugin system · Computer use · Stable release
 
