@@ -374,23 +374,23 @@ Modal/panel shown on app open when `catchUpPolicy = 'ask'`:
 
 ## 11. Implementation Plan
 
-### Phase 1: Data Model & Storage (no UI changes)
+### Phase 1: Data Model & Storage (no UI changes) ✅
 
-1. Add new columns to `scheduled_tasks` table (migration)
-2. Create `scheduled_task_runs` table
-3. Extend `ScheduledTask` interface and `ScheduledTaskStore`
-4. Add `SchedulerSettings` to config store
-5. Add run history CRUD to database layer
+1. ✅ Add new columns to `scheduled_tasks` table (migration)
+2. ✅ Create `scheduled_task_runs` table
+3. ✅ Extend `ScheduledTask` interface and `ScheduledTaskStore`
+4. ✅ Add `SchedulerSettings` to config store
+5. ✅ Add run history CRUD to database layer
 
-### Phase 2: Scheduler Engine
+### Phase 2: Scheduler Engine ✅
 
-1. Implement time window resolution (window → random timestamp)
-2. Implement catch-up detection on `start()`
-3. Implement conflict policy (queue/skip-if-busy)
-4. Implement config set validation (on task fire + on config set delete)
-5. Implement budget monitoring (duration timeout + token tracking)
-6. Implement permission blocking for `executionMode: 'auto'`
-7. Implement run history recording + pruning
+1. ✅ Implement time window resolution (window → random timestamp)
+2. ✅ Implement catch-up detection on `start()`
+3. ✅ Implement conflict policy (queue/skip-if-busy)
+4. ✅ Implement config set validation (on task fire + on config set delete)
+5. ✅ Implement budget monitoring (duration timeout + token tracking)
+6. ⏳ Implement permission blocking for `executionMode: 'auto'`
+7. ✅ Implement run history recording + pruning
 
 ### Phase 3: IPC & Events
 
@@ -407,15 +407,15 @@ Modal/panel shown on app open when `catchUpPolicy = 'ask'`:
 4. Extend task list view with new indicators
 5. Add run history expandable section per task
 
-### Phase 5: Testing
+### Phase 5: Testing ✅ (covered inline with Phases 1–2)
 
-1. Unit tests for time window resolution
-2. Unit tests for catch-up detection logic
-3. Unit tests for conflict policy
-4. Unit tests for permission blocking in auto mode
-5. Unit tests for budget enforcement
-6. Unit tests for config set invalidation
-7. Integration test: full lifecycle (create → fire → record → prune)
+1. ✅ Unit tests for time window resolution
+2. ✅ Unit tests for catch-up detection logic
+3. ✅ Unit tests for conflict policy
+4. ⏳ Unit tests for permission blocking in auto mode
+5. ✅ Unit tests for budget enforcement
+6. ✅ Unit tests for config set invalidation
+7. ✅ Integration test: full lifecycle (create → fire → record → prune)
 
 ---
 
