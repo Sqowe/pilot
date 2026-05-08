@@ -277,6 +277,18 @@ export function ChatView() {
     };
   }, []);
 
+  // Scroll to bottom when switching sessions so user sees the latest messages
+  useEffect(() => {
+    if (activeSessionId) {
+      isUserAtBottomRef.current = true;
+      // Use requestAnimationFrame to ensure DOM has rendered the new messages
+      const rafId = requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      });
+      return () => cancelAnimationFrame(rafId);
+    }
+  }, [activeSessionId]);
+
   useEffect(() => {
     textareaRef.current?.focus();
   }, [activeSessionId]);
