@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
@@ -53,6 +53,7 @@ export function Sidebar() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const normalizedQuery = useMemo(() => searchQuery.trim().toLowerCase(), [searchQuery]);
+  const switchRequestRef = useRef(0);
   const filteredSessions = useMemo(() => {
     return normalizedQuery
       ? sessions.filter((session) => session.title.toLowerCase().includes(normalizedQuery))
@@ -151,14 +152,21 @@ export function Sidebar() {
     async (sessionId: string) => {
       setShowSettings(false);
 
-      if (activeSessionId === sessionId) return;
+      if (activeSessionId === sessionId) {
+        // User re-clicked the current session — cancel any pending switch
+        switchRequestRef.current++;
+        return;
+      }
 
-      setActiveSession(sessionId);
+      // Guard against rapid clicks: only the latest selection wins
+      const requestId = ++switchRequestRef.current;
 
+      // Load messages BEFORE activating the session so ChatView has data on first render
       const existingMessages = sessionStates[sessionId]?.messages;
       if ((!existingMessages || existingMessages.length === 0) && isElectron) {
         try {
           const messages = await getSessionMessages(sessionId);
+          if (switchRequestRef.current !== requestId) return; // Stale request, abort
           if (messages && messages.length > 0) {
             setMessages(sessionId, messages);
           }
@@ -167,15 +175,23 @@ export function Sidebar() {
         }
       }
 
+      if (switchRequestRef.current !== requestId) return; // Stale request, abort
+
       const existingSteps = sessionStates[sessionId]?.traceSteps;
       if ((!existingSteps || existingSteps.length === 0) && isElectron) {
         try {
           const steps = await getSessionTraceSteps(sessionId);
+          if (switchRequestRef.current !== requestId) return; // Stale request, abort
           setTraceSteps(sessionId, steps || []);
         } catch (error) {
           console.error('[Sidebar] Failed to load trace steps:', error);
         }
       }
+
+      if (switchRequestRef.current !== requestId) return; // Stale request, abort
+
+      // Activate session AFTER data is loaded so ChatView renders with messages immediately
+      setActiveSession(sessionId);
     },
     [
       activeSessionId,
