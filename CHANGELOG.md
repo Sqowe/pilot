@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0-sqowe.3] - 2026-05-08
+
+### Changed
+
+- Uplift Electron from 35.7.5 to 41.3.0 (Chromium 146, Node 24.14, V8 14.6)
+- Update .nvmrc from 22 to 24 to match host environment
+- Route renderer clipboard writes through main process IPC (Electron 40+ deprecation)
+- Rename readme.md → README.md
+- Document native module rebuild step in README and CONTRIBUTING
+
 ## [3.3.0-sqowe.2] - 2026-05-05
 
 ### Fixed
@@ -134,7 +144,8 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.2...HEAD
+[Unreleased]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.3...HEAD
+[3.3.0-sqowe.3]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.2...v3.3.0-sqowe.3
 [3.3.0-sqowe.2]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.1...v3.3.0-sqowe.2
 [3.3.0-sqowe.1]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0...v3.3.0-sqowe.1
 [3.3.0-beta.8]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.2.0...v3.3.0-beta.8
