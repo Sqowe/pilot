@@ -281,6 +281,112 @@ export function ChatView() {
     textareaRef.current?.focus();
   }, [activeSessionId]);
 
+  // Auto-restore config set when opening an existing session.
+  // A monotonic request token is incremented on EVERY effect run so that
+  // in-flight IPC calls from prior sessions are always invalidated.
+  // Serialization uses a promise chain (not polling) for efficiency.
+  // If a stale IPC call mutates main-process config, a corrective switch
+  // is issued to restore consistency.
+  const lastRestoredSessionRef = useRef<string | null>(null);
+  const restoreRequestRef = useRef(0);
+  const restoreChainRef = useRef<Promise<void>>(Promise.resolve());
+
+  useEffect(() => {
+    // Immediately invalidate any prior in-flight request on every effect run.
+    const requestToken = ++restoreRequestRef.current;
+
+    if (!activeSessionId || !activeSession || !isElectron) return;
+    if (configSets.length <= 1) return;
+
+    // Only restore once per successful session restore
+    if (lastRestoredSessionRef.current === activeSessionId) return;
+
+    // Determine which config set to restore: prefer stored configSetId, fallback to model matching
+    let targetConfigSetId: string | undefined = activeSession.configSetId;
+
+    if (!targetConfigSetId && activeSession.model) {
+      // Fallback: match by model name for sessions created before configSetId was stored.
+      // Only apply when exactly one config set matches to avoid ambiguous selection.
+      const matchingSets = configSets.filter((set) => {
+        const profile = set.profiles?.[set.activeProfileKey];
+        return profile?.model === activeSession.model;
+      });
+      if (matchingSets.length === 1) {
+        targetConfigSetId = matchingSets[0].id;
+      }
+    }
+
+    if (!targetConfigSetId) {
+      // Cannot determine target — do NOT mark as handled so we retry when
+      // configSets update (they may load asynchronously after session data).
+      return;
+    }
+    if (targetConfigSetId === activeConfigSetId) {
+      // Already on the correct set — mark as definitively restored
+      lastRestoredSessionRef.current = activeSessionId;
+      return;
+    }
+    if (!configSets.some((s) => s.id === targetConfigSetId)) {
+      // Target config set not found — do NOT mark as handled; configSets may
+      // still be loading. Will retry on next configSets update.
+      return;
+    }
+
+    const capturedSessionId = activeSessionId;
+    const capturedTargetId = targetConfigSetId;
+
+    // Chain onto the previous restore promise so switches are serialized
+    // without polling. Each link checks staleness before and after IPC.
+    restoreChainRef.current = restoreChainRef.current.then(async () => {
+      // Pre-IPC staleness check: abort if a newer effect run has fired
+      if (restoreRequestRef.current !== requestToken) return;
+
+      try {
+        const result = await window.electronAPI!.config.switchSet({ id: capturedTargetId });
+
+        // Post-IPC staleness check
+        if (restoreRequestRef.current !== requestToken) {
+          // Stale IPC mutated main-process config. Issue a corrective switch
+          // to restore the config set that the latest effect run expects.
+          // The latest effect will re-run and handle its own restore, but we
+          // need main-process state to not be left on the wrong set.
+          // Re-read current desired state from the latest active config set.
+          const currentActiveSetId = useAppStore.getState().appConfig?.activeConfigSetId;
+          if (currentActiveSetId && currentActiveSetId !== capturedTargetId) {
+            await window.electronAPI!.config.switchSet({ id: currentActiveSetId });
+          }
+          return;
+        }
+
+        setAppConfig(result.config);
+        setIsConfigured(Boolean(result.config?.isConfigured));
+
+        // Mark as definitively restored only after successful application
+        lastRestoredSessionRef.current = capturedSessionId;
+
+        const setName = configSets.find((s) => s.id === capturedTargetId)?.name || capturedTargetId;
+        setGlobalNotice({
+          id: `config-set-restore-${capturedSessionId}`,
+          type: 'info',
+          message: t('chat.configSetRestored', { name: setName }),
+        });
+      } catch (error) {
+        console.error('[ChatView] Failed to auto-restore config set:', error);
+        // Do not mark as restored — will retry on next render cycle
+      }
+    });
+  }, [
+    activeSessionId,
+    activeSession,
+    configSets,
+    activeConfigSetId,
+    isElectron,
+    setAppConfig,
+    setIsConfigured,
+    setGlobalNotice,
+    t,
+  ]);
+
   // Auto-resize textarea based on content, capped at max-height
   useEffect(() => {
     const el = textareaRef.current;

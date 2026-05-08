@@ -309,6 +309,7 @@ export class SessionManager {
       ],
       memoryEnabled: resolvedMemoryEnabled,
       model: configStore.get('model') || undefined,
+      configSetId: configStore.get('activeConfigSetId') || undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -327,6 +328,7 @@ export class SessionManager {
       allowed_tools: JSON.stringify(session.allowedTools),
       memory_enabled: session.memoryEnabled ? 1 : 0,
       model: session.model || null,
+      config_set_id: session.configSetId || null,
       created_at: session.createdAt,
       updated_at: session.updatedAt,
     });
@@ -364,6 +366,7 @@ export class SessionManager {
       allowedTools,
       memoryEnabled: row.memory_enabled === 1,
       model: row.model || undefined,
+      configSetId: row.config_set_id || undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -401,6 +404,7 @@ export class SessionManager {
         allowedTools,
         memoryEnabled: row.memory_enabled === 1,
         model: row.model || undefined,
+        configSetId: row.config_set_id || undefined,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       };
@@ -694,6 +698,21 @@ export class SessionManager {
           this.sendToRenderer({
             type: 'session.update',
             payload: { sessionId: session.id, updates: { model: currentModel } },
+          });
+        }
+
+        // Update session configSetId to match current active config set
+        const currentConfigSetId = configStore.get('activeConfigSetId') ?? null;
+        const sessionConfigSetId = session.configSetId ?? null;
+        if (currentConfigSetId !== sessionConfigSetId) {
+          session.configSetId = currentConfigSetId || undefined;
+          this.db.sessions.update(session.id, { config_set_id: currentConfigSetId });
+          this.sendToRenderer({
+            type: 'session.update',
+            payload: {
+              sessionId: session.id,
+              updates: { configSetId: currentConfigSetId || undefined },
+            },
           });
         }
 
