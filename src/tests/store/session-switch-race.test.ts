@@ -43,10 +43,10 @@ const makeMessages = (sessionId: string, count: number): Message[] =>
 const makeTraceSteps = (sessionId: string, count: number): TraceStep[] =>
   Array.from({ length: count }, (_, i) => ({
     id: `step-${sessionId}-${i}`,
-    sessionId,
-    type: 'tool_use' as const,
-    toolName: `tool-${i}`,
+    type: 'tool_call' as const,
     status: 'completed' as const,
+    title: `Tool ${i}`,
+    toolName: `tool-${i}`,
     timestamp: Date.now() + i,
   }));
 
