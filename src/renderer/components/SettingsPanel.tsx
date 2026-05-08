@@ -188,7 +188,9 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
             <p className="mt-1 text-[11px] leading-4 text-text-muted">{t('settings.panelDesc')}</p>
           </div>
         )}
-        <div className={`flex-1 ${compactSidebar ? 'p-1.5 space-y-1' : 'p-3 space-y-1.5'}`}>
+        <div
+          className={`flex-1 overflow-y-auto ${compactSidebar ? 'p-1.5 space-y-1' : 'p-3 space-y-1.5'}`}
+        >
           {tabs.map((tab) => (
             <button
               key={tab.id}
