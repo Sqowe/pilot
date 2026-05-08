@@ -228,7 +228,7 @@ export function RemoteControlPanel({ isActive }: { isActive: boolean }) {
   }
 
   function copyToClipboard(text: string) {
-    navigator.clipboard.writeText(text);
+    window.electronAPI.clipboard.writeText(text);
     setSuccess({ key: 'remote.copied' });
     setTimeout(() => setSuccess(null), 2000);
   }
