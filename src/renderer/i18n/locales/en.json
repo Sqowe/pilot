@@ -169,6 +169,7 @@
     "fileList": "File list",
     "refreshFiles": "Refresh",
     "noFiles": "No memory files yet",
+    "fileNotCreatedYet": "This file has not been created yet. It will appear after the first memory ingestion.",
     "fileContent": "File content",
     "emptyFile": "File is empty",
     "selectFileHint": "Select a file on the left to view raw JSON",
