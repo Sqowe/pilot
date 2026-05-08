@@ -21,7 +21,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue" alt="Platform" />
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
-  <img src="https://img.shields.io/badge/Node.js-18+-brightgreen" alt="Node.js" />
+  <img src="https://img.shields.io/badge/Node.js-24+-brightgreen" alt="Node.js" />
   <a href="https://discord.gg/pynjtQDf"><img src="https://img.shields.io/discord/1493588403260883078?logo=discord&label=Discord&color=5865F2" alt="Discord" /></a>
   <a href="#community"><img src="https://img.shields.io/badge/WeChat-微信群-07C160?logo=wechat&logoColor=white" alt="WeChat" /></a>
 </p>
@@ -125,9 +125,14 @@ For developers who want to contribute or modify the codebase:
 git clone https://github.com/OpenCoworkAI/open-cowork.git
 cd open-cowork
 npm install
-npm run rebuild
+npm rebuild better-sqlite3   # rebuild native module for host Node.js (required for tests)
 npm run dev
 ```
+
+> **Why `npm rebuild better-sqlite3`?** The `postinstall` script rebuilds the native
+> SQLite module against Electron's ABI (needed for the packaged app). To run tests
+> locally with `npm test`, you must rebuild it for your host Node.js. Run this after
+> every `npm install` or `npm ci`.
 
 To build the installer locally: `npm run build`
 

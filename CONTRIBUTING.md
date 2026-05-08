@@ -8,7 +8,7 @@ Thank you for your interest in contributing! Open Cowork is an open-source deskt
 
 **Requirements**
 
-- Node.js 22 (matches CI)
+- Node.js 24 (see `.nvmrc`)
 - npm 10+
 - macOS or Windows
 
@@ -19,6 +19,17 @@ git clone https://github.com/OpenCoworkAI/open-cowork.git
 cd open-cowork
 npm install        # also runs postinstall: downloads Node binaries + rebuilds native modules
 ```
+
+> **Native module note:** `npm install` rebuilds `better-sqlite3` against Electron's
+> Node ABI (for the packaged app). To run tests locally with Vitest, you need to
+> rebuild it for your host Node.js:
+>
+> ```bash
+> npm rebuild better-sqlite3
+> ```
+>
+> This is required after every `npm install` or `npm ci` if you plan to run `npm test`.
+> The production build (electron-builder) handles the Electron-targeted rebuild automatically.
 
 **Common commands**
 

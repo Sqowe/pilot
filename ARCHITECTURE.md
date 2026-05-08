@@ -103,7 +103,7 @@ open-cowork/
 ├── BASH_COMMAND_RESTRICTIONS.md # ⚡ AI rules: bash permission engine
 ├── ARCHITECTURE.md             # ← this file
 ├── ROADMAP.md                  # Feature roadmap
-└── package.json                # Node 22+, Electron 35, Vite 7
+└── package.json                # Node 22+, Electron 41, Vite 7
 ```
 
 ---
@@ -192,7 +192,7 @@ electron-store (JSON)          better-sqlite3
 | Item              | Value                            | Notes                                                 |
 | ----------------- | -------------------------------- | ----------------------------------------------------- |
 | Node.js           | ≥22                              | `.nvmrc` pinned; bundled Node shipped in `resources/` |
-| Electron          | 35.x                             | `better-sqlite3` must rebuild against Electron ABI    |
+| Electron          | 41.x                             | `better-sqlite3` must rebuild against Electron ABI    |
 | Package manager   | npm                              | `package-lock.json` committed; no yarn/pnpm           |
 | Build tool        | Vite 7 + vite-plugin-electron    | `vite.config.ts`                                      |
 | Test runner       | Vitest 4                         | `vitest.config.mts`; run with `npm test`              |
