@@ -16,11 +16,11 @@
 - **CI/CD**: Automated builds, smoke tests, Codex-powered PR review bot
 - **Model Presets**: Up-to-date model catalogs for all major providers
 - **Dependency Policy**: Tiered management strategy with Dependabot grouping
+- **Memory System**: Unified storage with core/experience memory, cross-session retrieval, source-aware reranking, Settings UI (PR #138 merged)
 
 ## 🚧 In Progress
 
 - **v3.3.0 Stable Release**: Graduate from beta — all blocking issues resolved
-- **Memory System**: Unified storage with core/experience memory (PR #138 under review)
 
 ## 📋 Planned
 
@@ -30,7 +30,7 @@
 - **App Slimming**: Reduce installer from ~156 MB to ~80 MB — on-demand Python/Node.js download, lazy-load Feishu SDK, strip unused files ([details](docs/SLIM-PLAN.md))
 - **Code Cleanup**: Split god files (index.ts 2672 lines, gui-operate-server.ts 6884 lines), lazy imports, dead code removal
 - **Tool Completeness**: Implement native TodoWrite, AskUserQuestion, Glob, Grep, WebFetch, WebSearch tool schemas + handlers for API key users
-- **Memory System**: Unified storage, prompt injection, cross-session retrieval, and source-aware reranking
+- **Memory System (advanced)**: Prompt injection optimization, progressive disclosure tuning, embedding-based retrieval
 - **Scheduled Tasks**: Cron-like task scheduling with UI management and persistent execution
 - **Log Management**: Structured logging with rotation, size limits, and user-accessible log viewer improvements
 - **Installation Experience**: Smoother first-run — auto-detect system dependencies, clearer error messages, one-click setup
@@ -50,5 +50,5 @@
 
 ---
 
-_Last updated: 2026-04-18_
+_Last updated: 2026-05-07_
 _Want to contribute? Check our [Contributing Guide](CONTRIBUTING.md) and pick an issue labeled `good first issue`._
