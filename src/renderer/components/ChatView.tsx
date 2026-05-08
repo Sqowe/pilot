@@ -14,7 +14,7 @@ import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
 import { MessageCard } from './MessageCard';
 import type { Message, ContentBlock } from '../types';
-import { Send, Square, Plus, Loader2, Plug, X, Clock } from 'lucide-react';
+import { Send, Square, Plus, Loader2, Plug, X, Clock, Layers } from 'lucide-react';
 
 type AttachedFile = {
   name: string;
@@ -36,9 +36,13 @@ export function ChatView() {
   const executionClock = useActiveExecutionClock();
   const appConfig = useAppConfig();
   const setGlobalNotice = useAppStore((s) => s.setGlobalNotice);
+  const setAppConfig = useAppStore((s) => s.setAppConfig);
+  const setIsConfigured = useAppStore((s) => s.setIsConfigured);
   const { continueSession, stopSession, isElectron } = useIPC();
   const [prompt, setPrompt] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSwitchingSet, setIsSwitchingSet] = useState(false);
+  const switchRequestRef = useRef(0);
   const [activeConnectors, setActiveConnectors] = useState<
     { id: string; name: string; connected: boolean; toolCount: number }[]
   >([]);
@@ -67,6 +71,33 @@ export function ChatView() {
   const pendingCount = pendingTurns.length;
   const isSessionRunning = activeSession?.status === 'running';
   const canStop = isSessionRunning || hasActiveTurn || pendingCount > 0;
+
+  // Config set selection
+  const configSets = appConfig?.configSets ?? [];
+  const activeConfigSetId = appConfig?.activeConfigSetId ?? '';
+
+  const handleConfigSetSwitch = useCallback(
+    async (setId: string) => {
+      if (!isElectron || !window.electronAPI || setId === activeConfigSetId || isSwitchingSet)
+        return;
+      const requestId = ++switchRequestRef.current;
+      setIsSwitchingSet(true);
+      try {
+        const result = await window.electronAPI.config.switchSet({ id: setId });
+        if (switchRequestRef.current === requestId) {
+          setAppConfig(result.config);
+          setIsConfigured(Boolean(result.config?.isConfigured));
+        }
+      } catch (error) {
+        console.error('[ChatView] Failed to switch config set:', error);
+      } finally {
+        if (switchRequestRef.current === requestId) {
+          setIsSwitchingSet(false);
+        }
+      }
+    },
+    [isElectron, activeConfigSetId, isSwitchingSet, setAppConfig, setIsConfigured]
+  );
 
   const displayedMessages = useMemo(() => {
     if (!activeSessionId) return messages;
@@ -826,10 +857,30 @@ export function ChatView() {
               />
 
               <div className="flex items-center gap-2">
-                {/* Model display */}
-                <span className="hidden sm:inline-flex px-2.5 py-1 rounded-full border border-border-subtle bg-background/60 text-xs text-text-muted">
-                  {appConfig?.model || t('chat.noModel')}
-                </span>
+                {/* Config Set Selector */}
+                {configSets.length > 1 ? (
+                  <div className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-border-subtle bg-background/60 text-xs text-text-muted">
+                    <Layers className="w-3 h-3 shrink-0" />
+                    <select
+                      value={activeConfigSetId}
+                      onChange={(e) => {
+                        void handleConfigSetSwitch(e.target.value);
+                      }}
+                      disabled={isSwitchingSet}
+                      className="bg-transparent border-none outline-none text-xs text-text-muted hover:text-text-primary cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed max-w-[120px] truncate"
+                    >
+                      {configSets.map((set) => (
+                        <option key={set.id} value={set.id}>
+                          {set.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <span className="hidden sm:inline-flex px-2.5 py-1 rounded-full border border-border-subtle bg-background/60 text-xs text-text-muted">
+                    {appConfig?.model || t('chat.noModel')}
+                  </span>
+                )}
 
                 {canStop && (
                   <button
