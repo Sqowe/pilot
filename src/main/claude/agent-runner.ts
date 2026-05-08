@@ -62,6 +62,7 @@ import { extractArtifactsFromText, buildArtifactTraceSteps } from '../utils/arti
 import { getDefaultShell } from '../utils/shell-resolver';
 import { PluginRuntimeService } from '../skills/plugin-runtime-service';
 import type { SkillsAdapter } from '../skills/skills-adapter';
+import { AgentRuntimeExtensionManager } from '../extensions/agent-runtime-extension-manager';
 import { configStore } from '../config/config-store';
 import { loadWorkspaceSystemPrompt } from '../utils/workspace-system-prompt';
 import { normalizeOpenAICompatibleBaseUrl } from '../config/auth-utils';
@@ -429,6 +430,7 @@ interface CachedPiSession {
   modelId: string;
   thinkingLevel: string;
   runtimeSignature: string;
+  skillsSignature?: string;
   ollamaNumCtx?: { value: number };
 }
 
@@ -456,9 +458,9 @@ export class ClaudeAgentRunner {
   ) => Promise<'allow' | 'deny' | 'allow_always'>;
   private pathResolver: PathResolver;
   private mcpManager?: MCPManager;
-  // @ts-expect-error stored for future plugin support
   private _pluginRuntimeService?: PluginRuntimeService;
   private _skillsAdapter?: SkillsAdapter;
+  private extensionManager?: AgentRuntimeExtensionManager;
   private activeControllers: Map<string, AbortController> = new Map();
   private piSessions: Map<string, CachedPiSession> = new Map();
   private static readonly MAX_CACHED_SESSIONS = 50;
@@ -481,6 +483,12 @@ export class ClaudeAgentRunner {
       }
       this.piSessions.delete(sessionId);
       log('[ClaudeAgentRunner] Disposed pi session for:', sessionId);
+    }
+  }
+
+  clearAllSdkSessions(): void {
+    for (const sessionId of Array.from(this.piSessions.keys())) {
+      this.clearSdkSession(sessionId);
     }
   }
 
@@ -543,6 +551,44 @@ ${hints.join('\n')}
     const global = this.getConfiguredGlobalSkillsDir();
     if (global && fs.existsSync(global)) paths.push(global);
     return paths;
+  }
+
+  private async resolveSkillPaths(sessionId?: string): Promise<string[]> {
+    const basePaths = this._skillsAdapter
+      ? this._skillsAdapter.getSkillPaths()
+      : this.legacySkillPaths();
+    const mergedPaths = new Set(
+      basePaths.filter((item): item is string => Boolean(item && fs.existsSync(item)))
+    );
+    const appliedPlugins: Array<{ name: string; path: string }> = [];
+
+    if (this._pluginRuntimeService) {
+      try {
+        const runtimePlugins = await this._pluginRuntimeService.getEnabledRuntimePlugins();
+        for (const plugin of runtimePlugins) {
+          if (!plugin.componentsEnabled.skills || plugin.componentCounts.skills <= 0) {
+            continue;
+          }
+          const runtimeSkillsPath = path.join(plugin.runtimePath, 'skills');
+          if (!fs.existsSync(runtimeSkillsPath)) {
+            continue;
+          }
+          mergedPaths.add(runtimeSkillsPath);
+          appliedPlugins.push({ name: plugin.name, path: runtimeSkillsPath });
+        }
+      } catch (error) {
+        logWarn('[ClaudeAgentRunner] Failed to resolve runtime plugin skill paths:', error);
+      }
+    }
+
+    if (sessionId && appliedPlugins.length > 0) {
+      this.sendToRenderer({
+        type: 'plugins.runtimeApplied',
+        payload: { sessionId, plugins: appliedPlugins },
+      });
+    }
+
+    return Array.from(mergedPaths);
   }
 
   /**
@@ -729,7 +775,8 @@ ${hints.join('\n')}
     pathResolver: PathResolver,
     mcpManager?: MCPManager,
     pluginRuntimeService?: PluginRuntimeService,
-    skillsAdapter?: SkillsAdapter
+    skillsAdapter?: SkillsAdapter,
+    extensionManager?: AgentRuntimeExtensionManager
   ) {
     this.sendToRenderer = options.sendToRenderer;
     this.saveMessage = options.saveMessage;
@@ -739,6 +786,7 @@ ${hints.join('\n')}
     this.mcpManager = mcpManager;
     this._pluginRuntimeService = pluginRuntimeService;
     this._skillsAdapter = skillsAdapter;
+    this.extensionManager = extensionManager;
 
     log('[ClaudeAgentRunner] Initialized with pi-coding-agent SDK');
     log('[ClaudeAgentRunner] Skills enabled: settingSources=[user, project], Skill tool enabled');
@@ -1663,6 +1711,9 @@ ${hints.join('\n')}
         apiKey,
         workspaceInstructionsFingerprint: workspaceInstructions?.fingerprint,
       });
+      const skillPaths = await this.resolveSkillPaths(session.id);
+      const skillsSignature = JSON.stringify(skillPaths);
+      log('[ClaudeAgentRunner] Skill paths for pi ResourceLoader:', skillPaths);
 
       // Build contextual prompt — if reusing an existing SDK session, the SDK
       // already has conversation history so we only pass the new prompt.
@@ -1679,6 +1730,28 @@ ${hints.join('\n')}
         this.piSessions.delete(session.id);
         cachedSession = undefined;
       }
+      if (cachedSession && cachedSession.skillsSignature !== skillsSignature) {
+        logCtx('[ClaudeAgentRunner] Skills changed, recreating cached pi session:', session.id);
+        try {
+          cachedSession.session.dispose();
+        } catch (disposeError) {
+          logWarn(
+            '[ClaudeAgentRunner] dispose error while recreating pi session for skills:',
+            disposeError
+          );
+        }
+        this.piSessions.delete(session.id);
+        cachedSession = undefined;
+      }
+
+      const extensionResult = this.extensionManager
+        ? await this.extensionManager.beforeSessionRun({
+            session,
+            prompt,
+            existingMessages,
+            isColdStart: !cachedSession,
+          })
+        : { promptPrefix: undefined, customTools: [] };
 
       let contextualPrompt = prompt;
       if (!cachedSession) {
@@ -1752,6 +1825,9 @@ ${hints.join('\n')}
       } else {
         // Reusing session — SDK already has the full conversation context
         logCtx('[ClaudeAgentRunner] Reusing existing SDK session for:', session.id);
+      }
+      if (extensionResult.promptPrefix?.trim()) {
+        contextualPrompt = `${extensionResult.promptPrefix.trim()}\n\n${contextualPrompt}`;
       }
 
       logTiming('before building MCP servers config', runStartTime);
@@ -1937,22 +2013,21 @@ Tool routing:
       logTiming('before pi-coding-agent session creation', runStartTime);
 
       // Create or reuse pi-coding-agent session
-
-      // Collect skill directories for pi's native skill discovery.
-      // SkillsAdapter handles path resolution, disabled skill filtering,
-      // and compatibility with Claude Code / OpenClaw ecosystems.
-      const skillPaths = this._skillsAdapter
-        ? this._skillsAdapter.getSkillPaths()
-        : this.legacySkillPaths();
-      log('[ClaudeAgentRunner] Skill paths for pi ResourceLoader:', skillPaths);
-
       // Bridge MCP tools as customTools for pi-coding-agent.
       // Re-read every query so newly added/removed MCP servers take effect immediately.
       const mcpCustomTools = this.mcpManager ? buildMcpCustomTools(this.mcpManager) : [];
+      const extensionCustomTools = extensionResult.customTools || [];
+      const customTools = [...mcpCustomTools, ...extensionCustomTools];
       if (mcpCustomTools.length > 0) {
         log(
           `[ClaudeAgentRunner] Registered ${mcpCustomTools.length} MCP tools as customTools:`,
           mcpCustomTools.map((t) => t.name).join(', ')
+        );
+      }
+      if (extensionCustomTools.length > 0) {
+        log(
+          `[ClaudeAgentRunner] Registered ${extensionCustomTools.length} extension tools as customTools:`,
+          extensionCustomTools.map((t) => t.name).join(', ')
         );
       }
 
@@ -1980,7 +2055,7 @@ Tool routing:
         `[ClaudeAgentRunner] Built-in tools (${wrappedTools.length}): ${wrappedTools.map((t: { name?: string; type?: string }) => t.name || t.type).join(', ')}`
       );
       log(
-        `[ClaudeAgentRunner] Custom MCP tools (${mcpCustomTools.length}): ${mcpCustomTools.map((t) => t.name).join(', ')}`
+        `[ClaudeAgentRunner] Custom tools (${customTools.length}): ${customTools.map((t) => t.name).join(', ')}`
       );
 
       let piSession: PiAgentSession;
@@ -2125,7 +2200,11 @@ Tool routing:
           authStorage,
           modelRegistry,
           noTools: 'builtin',
-          customTools: [...(wrappedTools as ToolDefinition[]), ...mcpCustomTools],
+          customTools: [
+            ...(wrappedTools as ToolDefinition[]),
+            ...mcpCustomTools,
+            ...extensionCustomTools,
+          ],
           sessionManager: PiSessionManager.inMemory(),
           settingsManager: PiSettingsManager.inMemory({
             compaction: compactionSettings,
@@ -2161,6 +2240,7 @@ Tool routing:
           modelId: piModel.id,
           thinkingLevel,
           runtimeSignature: sessionRuntimeSignature,
+          skillsSignature,
         });
 
         // Ollama: wrap _onPayload to inject num_ctx into every request
