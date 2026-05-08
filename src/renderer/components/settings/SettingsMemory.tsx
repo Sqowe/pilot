@@ -118,7 +118,8 @@ export function SettingsMemory() {
   const refreshFiles = async () => {
     const nextFiles = await window.electronAPI.memory.listFiles();
     setFiles(nextFiles);
-    if (selectedFilePath && nextFiles.some((item) => item.filePath === selectedFilePath)) {
+    const selectedEntry = nextFiles.find((item) => item.filePath === selectedFilePath);
+    if (selectedFilePath && selectedEntry?.exists) {
       const nextContent = await window.electronAPI.memory.readFile(selectedFilePath);
       setFileContent(nextContent);
     } else {
@@ -229,6 +230,13 @@ export function SettingsMemory() {
   };
 
   const handleSelectFile = async (filePath: string) => {
+    const entry = files.find((item) => item.filePath === filePath);
+    if (entry && !entry.exists) {
+      setSelectedFilePath(filePath);
+      setFileContent(null);
+      setStatus(t('memory.fileNotCreatedYet'));
+      return;
+    }
     setIsBusy(true);
     setStatus(null);
     try {

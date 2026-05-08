@@ -169,6 +169,7 @@
     "fileList": "文件列表",
     "refreshFiles": "刷新",
     "noFiles": "还没有记忆文件",
+    "fileNotCreatedYet": "该文件尚未创建，首次记忆摄取后将自动生成。",
     "fileContent": "文件内容",
     "emptyFile": "文件为空",
     "selectFileHint": "选择左侧文件后即可查看原始 JSON",
