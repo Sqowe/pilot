@@ -675,6 +675,7 @@
     "startFailed": "启动会话失败，请稍后重试。",
     "disclaimer": "Open Cowork 由 AI 驱动，可能会出错，请务必自行复核结果。",
     "noModel": "无模型",
+    "configSetRestored": "已切换到「{{name}}」配置方案",
     "connectorCount_one": "{{count}} 个连接器",
     "connectorCount_other": "{{count}} 个连接器"
   },
