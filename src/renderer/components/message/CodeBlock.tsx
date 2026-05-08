@@ -34,7 +34,7 @@ export const CodeBlock = memo(function CodeBlock({ language, children }: CodeBlo
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(children);
+      await window.electronAPI.clipboard.writeText(children);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {

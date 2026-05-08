@@ -12,7 +12,17 @@
  * Dependencies: session-manager, config-store, mcp-manager, sandbox-adapter,
  *               skills-manager, scheduled-task-manager, nav-server, remote-manager
  */
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeTheme, Tray } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  shell,
+  Menu,
+  nativeTheme,
+  Tray,
+  clipboard,
+} from 'electron';
 import { join, resolve, dirname, isAbsolute, basename } from 'path';
 import * as fs from 'fs';
 import { execFileSync } from 'child_process';
@@ -2005,6 +2015,11 @@ ipcMain.on('window.close', () => {
   } catch (error) {
     logError('[Window] Error closing:', error);
   }
+});
+
+// Clipboard IPC handler (avoids deprecated renderer clipboard access in Electron 40+)
+ipcMain.handle('clipboard.writeText', (_event, text: string) => {
+  clipboard.writeText(text);
 });
 
 // Sandbox IPC handlers

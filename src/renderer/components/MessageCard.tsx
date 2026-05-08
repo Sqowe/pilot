@@ -48,7 +48,7 @@ export const MessageCard = memo(function MessageCard({ message, isStreaming }: M
     const text = getTextContent();
     if (text) {
       try {
-        await navigator.clipboard.writeText(text);
+        await window.electronAPI.clipboard.writeText(text);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       } catch {

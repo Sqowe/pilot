@@ -1,14 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  AlertCircle,
-  CheckCircle,
-  Loader2,
-  Save,
-  Globe,
-  Trash2,
-  Copy,
-} from 'lucide-react';
+import { AlertCircle, CheckCircle, Loader2, Save, Globe, Trash2, Copy } from 'lucide-react';
 import { formatAppDateTime } from '../../utils/i18n-format';
 import { SettingsContentSection } from './shared';
 
@@ -252,7 +244,7 @@ export function SettingsLogs({ isActive }: { isActive: boolean }) {
               </button>
               <button
                 className="shrink-0 p-1 rounded hover:bg-surface-hover text-text-muted hover:text-text-primary transition-colors"
-                onClick={() => navigator.clipboard.writeText(logsDirectory)}
+                onClick={() => window.electronAPI.clipboard.writeText(logsDirectory)}
                 title={t('common.copy')}
               >
                 <Copy className="w-3 h-3" />

@@ -197,6 +197,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     close: () => ipcRenderer.send('window.close'),
   },
 
+  // Clipboard methods (routed through main process to avoid renderer deprecation)
+  clipboard: {
+    writeText: (text: string): Promise<void> => ipcRenderer.invoke('clipboard.writeText', text),
+  },
+
   // MCP methods
   mcp: {
     getServers: (): Promise<McpServerConfig[]> => ipcRenderer.invoke('mcp.getServers'),
@@ -491,6 +496,9 @@ declare global {
         minimize: () => void;
         maximize: () => void;
         close: () => void;
+      };
+      clipboard: {
+        writeText: (text: string) => Promise<void>;
       };
       mcp: {
         getServers: () => Promise<McpServerConfig[]>;

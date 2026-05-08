@@ -1,6 +1,6 @@
 {
   "name": "open-cowork",
-  "version": "3.3.0-sqowe.2",
+  "version": "3.3.0-sqowe.3",
   "description": "Open-source AI agent desktop app for Windows & macOS — one-click install Claude Code, MCP tools, and Skills with sandbox isolation and multi-model support",
   "keywords": [
     "ai-agent",
@@ -115,7 +115,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/coverage-v8": "4.1.0",
     "autoprefixer": "^10.4.27",
-    "electron": "^35.7.5",
+    "electron": "41.3.0",
     "electron-builder": "^26.8.1",
     "eslint": "^8.56.0",
     "eslint-plugin-react-hooks": "^4.6.0",
