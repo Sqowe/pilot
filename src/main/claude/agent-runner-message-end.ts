@@ -20,31 +20,31 @@ interface ResolvedMessageEndPayload {
 export function toUserFacingErrorText(errorText: string): string {
   const lower = errorText.toLowerCase();
   if (lower.includes('first_response_timeout')) {
-    return '模型响应超时：长时间未收到上游返回，请稍后重试或检查当前模型/网关负载。';
+    return 'Model response timeout: no response received from upstream for an extended period. Please retry or check the current model/gateway load.';
   }
   if (lower.includes('empty_success_result')) {
-    return '模型返回了一个空的成功结果，当前模型或网关兼容性可能有问题，请重试或切换协议后再试。';
+    return 'Model returned an empty success result. There may be a compatibility issue with the current model or gateway. Please retry or try switching the protocol.';
   }
   if (
     /\b400\b/.test(errorText) ||
     lower.includes('bad request') ||
     lower.includes('invalid request')
   ) {
-    return `请求被上游拒绝（400），可能是模型/协议配置不兼容。请检查模型名称、协议设置和 API 端点。\n原始错误: ${errorText}`;
+    return `Request rejected by upstream (400), possibly due to incompatible model/protocol configuration. Please check the model name, protocol settings, and API endpoint.\nOriginal error: ${errorText}`;
   }
   if (
     /\b(401|403)\b/.test(errorText) ||
     lower.includes('unauthorized') ||
     lower.includes('forbidden')
   ) {
-    return `认证失败，请检查 API Key 是否正确、是否已过期或无权访问当前模型。\n原始错误: ${errorText}`;
+    return `Authentication failed. Please check whether the API Key is correct, expired, or lacks access to the current model.\nOriginal error: ${errorText}`;
   }
   if (
     /\b429\b/.test(errorText) ||
     lower.includes('rate limit') ||
     lower.includes('too many requests')
   ) {
-    return `请求被限流（429），当前模型或 API 端点的调用频率已达上限，请稍后重试。\n原始错误: ${errorText}`;
+    return `Request rate-limited (429). The current model or API endpoint has reached its call frequency limit. Please retry later.\nOriginal error: ${errorText}`;
   }
   if (
     /\b(5\d{2})\b/.test(errorText) ||
@@ -53,7 +53,7 @@ export function toUserFacingErrorText(errorText: string): string {
     lower.includes('service unavailable') ||
     lower.includes('overloaded')
   ) {
-    return `上游服务异常，可能是模型服务过载或临时故障，SDK 将自动重试。\n原始错误: ${errorText}`;
+    return `Upstream service error, possibly due to model service overload or a temporary failure. The SDK will retry automatically.\nOriginal error: ${errorText}`;
   }
   if (
     lower.includes('terminated') ||
@@ -67,7 +67,7 @@ export function toUserFacingErrorText(errorText: string): string {
     lower.includes('upstream connect') ||
     lower.includes('retry delay')
   ) {
-    return `网络连接中断（${errorText}），可能是代理/网关不稳定，SDK 将自动重试。`;
+    return `Network connection interrupted (${errorText}), possibly due to an unstable proxy/gateway. The SDK will retry automatically.`;
   }
   return errorText;
 }
