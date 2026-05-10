@@ -80,7 +80,14 @@ import {
   normalizeMcpToolResultForModel,
   normalizeToolExecutionResultForUi,
 } from './tool-result-utils';
-import { selectCompactionSettings } from './compaction-budget';
+import { selectCompactionSettings, estimateToolSchemaTokens } from './compaction-budget';
+import {
+  estimatePreRequestSize,
+  determineGuardAction,
+  truncatePrompt,
+  computeTruncationLimit,
+  GuardAbortError,
+} from './pre-request-guard';
 import { fetchOllamaModelInfo } from '../config/ollama-api';
 
 // Virtual workspace path shown to the model (hides real sandbox path)
@@ -2728,6 +2735,163 @@ Tool routing:
             log('[ClaudeAgentRunner] Passing', piImages.length, 'image(s) to SDK prompt');
           }
         }
+
+        // ─── Pre-request overflow guard ───────────────────────────────────
+        // Estimate total request size BEFORE sending. If it would overflow the
+        // provider's context window, force compaction or truncate the prompt.
+        // This closes the gap where pi-coding-agent's post-response compaction
+        // can't catch single-turn jumps that push past the limit.
+
+        // Cache invariant components to avoid repeated computation across
+        // multiple re-estimations within the same guard pass.
+        const guardContextWindow = piModel.contextWindow ?? 128000;
+        const guardModelMaxOutput = piModel.maxTokens ?? 16384;
+        const guardImageCount = piImages.length;
+        // Precompute tool schema tokens once — this involves JSON.stringify on
+        // every tool's parameters and is the most expensive invariant cost.
+        const guardToolSchemaTokens = estimateToolSchemaTokens(wrappedTools, mcpCustomTools);
+
+        const buildGuardInput = (promptText: string) => ({
+          existingMessages: piSession.messages as ReadonlyArray<{
+            role?: string;
+            content?: unknown;
+          }>,
+          newPromptText: promptText,
+          contextWindow: guardContextWindow,
+          modelMaxOutput: guardModelMaxOutput,
+          builtInTools: wrappedTools,
+          customTools: mcpCustomTools,
+          imageCount: guardImageCount,
+          precomputedToolSchemaTokens: guardToolSchemaTokens,
+        });
+
+        const guardEstimate = estimatePreRequestSize(buildGuardInput(contextualPrompt));
+
+        if (guardEstimate.wouldOverflow) {
+          const guardAction = determineGuardAction(guardEstimate, piSession.messages.length);
+
+          if (guardAction.type === 'abort') {
+            // Session cannot fit any prompt — fail fast with a clear error
+            logError('[ClaudeAgentRunner] Pre-request guard: ABORT.', guardAction.reason);
+            throw new GuardAbortError(
+              '上下文窗口已耗尽，无法发送请求。请禁用未使用的 MCP 服务器或在 API 配置中降低 maxTokens。\n\n' +
+                'Context window exhausted — cannot send request. Disable unused MCP servers or lower maxTokens in your API profile.'
+            );
+          } else if (guardAction.type === 'compact') {
+            log('[ClaudeAgentRunner] Pre-request guard: forcing compaction.', guardAction.reason);
+            try {
+              await piSession.compact();
+              log('[ClaudeAgentRunner] Pre-request guard: compaction completed successfully.');
+              // Re-estimate after compaction to verify we're within budget
+              const postCompactEstimate = estimatePreRequestSize(buildGuardInput(contextualPrompt));
+              if (postCompactEstimate.wouldOverflow) {
+                // Compaction helped but not enough — force truncation
+                const truncLimit = computeTruncationLimit(
+                  postCompactEstimate,
+                  postCompactEstimate.breakdown.existingMessagesTokens
+                );
+                if (truncLimit <= 0) {
+                  throw new GuardAbortError(
+                    '上下文窗口已耗尽（压缩后仍无法容纳请求）。请禁用未使用的 MCP 服务器或降低 maxTokens。\n\n' +
+                      'Context window exhausted after compaction. Disable unused MCP servers or lower maxTokens.'
+                  );
+                }
+                contextualPrompt = truncatePrompt(contextualPrompt, truncLimit);
+                log(
+                  '[ClaudeAgentRunner] Pre-request guard: still over budget after compaction, truncated to',
+                  truncLimit,
+                  'chars.'
+                );
+              }
+            } catch (compactErr) {
+              // Rethrow guard abort errors
+              if (compactErr instanceof GuardAbortError) {
+                throw compactErr;
+              }
+              // Rethrow cancellation/abort errors — these indicate the user or
+              // system intentionally stopped the operation and must not be
+              // swallowed into a fallback execution path.
+              if (
+                compactErr instanceof Error &&
+                (compactErr.name === 'AbortError' ||
+                  compactErr.name === 'CancelledError' ||
+                  (compactErr as { code?: string }).code === 'ABORT_ERR' ||
+                  controller.signal.aborted)
+              ) {
+                throw compactErr;
+              }
+              logWarn(
+                '[ClaudeAgentRunner] Pre-request guard: compaction failed, forcing truncation.',
+                compactErr
+              );
+              // After failed compaction, always force truncation — never allow
+              // a second compact action (it would just fail again).
+              const reEstimate = estimatePreRequestSize(buildGuardInput(contextualPrompt));
+              if (reEstimate.wouldOverflow) {
+                const truncLimit = computeTruncationLimit(
+                  reEstimate,
+                  reEstimate.breakdown.existingMessagesTokens
+                );
+                if (truncLimit <= 0) {
+                  throw new GuardAbortError(
+                    '上下文窗口已耗尽（压缩失败后仍无法容纳请求）。请禁用未使用的 MCP 服务器或降低 maxTokens。\n\n' +
+                      'Context window exhausted after failed compaction. Disable unused MCP servers or lower maxTokens.'
+                  );
+                }
+                contextualPrompt = truncatePrompt(contextualPrompt, truncLimit);
+                log(
+                  '[ClaudeAgentRunner] Pre-request guard: prompt truncated to',
+                  truncLimit,
+                  'chars after failed compaction.'
+                );
+              }
+            }
+          } else if (guardAction.type === 'truncate') {
+            contextualPrompt = truncatePrompt(contextualPrompt, guardAction.maxPromptChars);
+            log('[ClaudeAgentRunner] Pre-request guard:', guardAction.reason);
+          }
+
+          // ─── Final post-action overflow verification ───────────────────────
+          // After any guard action (compact, truncate), re-estimate one final
+          // time and block the request if still oversized. This catches edge
+          // cases where heuristic estimation or truncation notice length causes
+          // the result to still exceed the window.
+          const finalEstimate = estimatePreRequestSize(buildGuardInput(contextualPrompt));
+          if (finalEstimate.wouldOverflow) {
+            logError(
+              '[ClaudeAgentRunner] Pre-request guard: STILL over budget after all mitigations.',
+              JSON.stringify({
+                estimated: finalEstimate.estimatedTotal,
+                contextWindow: finalEstimate.contextWindow,
+                overflow: finalEstimate.overflow,
+                breakdown: finalEstimate.breakdown,
+              })
+            );
+            throw new GuardAbortError(
+              `请求仍然超出上下文窗口限制（超出 ${finalEstimate.overflow} tokens）。请禁用未使用的 MCP 服务器或降低 maxTokens。\n\n` +
+                `Request still exceeds context window by ${finalEstimate.overflow} tokens after all mitigations. ` +
+                `Disable unused MCP servers or lower maxTokens in your API profile.`
+            );
+          }
+          log(
+            '[ClaudeAgentRunner] Pre-request guard: post-action verification passed.',
+            JSON.stringify({
+              estimated: finalEstimate.estimatedTotal,
+              contextWindow: finalEstimate.contextWindow,
+              headroom: -finalEstimate.overflow,
+            })
+          );
+        } else {
+          log(
+            '[ClaudeAgentRunner] Pre-request guard: within budget.',
+            JSON.stringify({
+              estimated: guardEstimate.estimatedTotal,
+              contextWindow: guardEstimate.contextWindow,
+              headroom: -guardEstimate.overflow,
+            })
+          );
+        }
+        // ─── End pre-request overflow guard ──────────────────────────────────
 
         const promptResult = await piSession.prompt(
           contextualPrompt,
