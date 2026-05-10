@@ -49,6 +49,7 @@ import {
   logCtxError,
   logTiming,
 } from '../utils/logger';
+import { ReadLoopGuard, extractReadFilePath } from './read-loop-guard';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -439,6 +440,9 @@ interface CachedPiSession {
   runtimeSignature: string;
   skillsSignature?: string;
   ollamaNumCtx?: { value: number };
+  /** Mutable cwd reference — updated on each prompt call so the
+   *  permission hook always resolves paths against the current cwd. */
+  cwdRef?: { value: string };
 }
 
 /**
@@ -828,12 +832,11 @@ ${hints.join('\n')}
    * the backend, but the renderer's loading spinner may not clear. This is
    * a renderer-side issue tracked as a follow-up.
    */
-  private installPermissionHook(piSession: PiAgentSession, sessionId: string): void {
-    if (!this.requestPermission) {
-      log('[ClaudeAgentRunner] No requestPermission callback — skipping permission hook');
-      return;
-    }
-
+  private installPermissionHook(
+    piSession: PiAgentSession,
+    sessionId: string,
+    cwdRef: { value: string }
+  ): void {
     // Access the Agent instance (public readonly property on AgentSession).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const agent = (piSession as any).agent;
@@ -853,9 +856,46 @@ ${hints.join('\n')}
 
     const requestPermission = this.requestPermission;
 
+    // Per-session guard against models reading the same file repeatedly,
+    // exhausting the context window without making progress.
+    // NOTE: This guard runs regardless of whether requestPermission is
+    // configured — read-loop protection is a safety control that must
+    // always be active, especially in auto-approve/non-interactive modes.
+    //
+    // CONCURRENCY NOTE: cwdRef.value is updated at the start of each run()
+    // call, before piSession.prompt() is invoked. The pi-coding-agent SDK
+    // enforces sequential prompt execution within a session (a new prompt
+    // cannot start until the previous one completes or is aborted). This
+    // guarantees cwdRef.value is stable for the duration of any single
+    // prompt's tool calls. If this invariant ever changes (e.g., parallel
+    // prompts), cwdRef must be replaced with a per-prompt-scoped value.
+    const readLoopGuard = new ReadLoopGuard();
+
     const gate: BeforeToolCallHook = async (ctx, signal) => {
       const toolName: string = ctx.toolCall?.name ?? '';
       const input: Record<string, unknown> = ctx.args ?? {};
+
+      // --- Read loop detection (always active) ---
+      if (toolName === 'read') {
+        const filePath = extractReadFilePath(input);
+        if (filePath) {
+          // Use cwdRef.value at call-time (not captured at install-time)
+          // so path resolution stays correct across session reuse.
+          const guardResult = readLoopGuard.check(filePath, cwdRef.value);
+          if (guardResult.blocked) {
+            logWarn(
+              `[ClaudeAgentRunner] Read loop guard blocked read #${guardResult.count} of "${filePath}" in session ${sessionId}`
+            );
+            return { block: true, reason: guardResult.reason };
+          }
+        }
+      }
+
+      // --- Permission gating (only when requestPermission is configured) ---
+      if (!requestPermission) {
+        // No permission callback — delegate to SDK's original hook
+        return sdkBeforeToolCall ? sdkBeforeToolCall(ctx, signal) : undefined;
+      }
 
       const decision = decidePermission(sessionId, toolName, input);
 
@@ -2101,6 +2141,12 @@ Tool routing:
         }
 
         logCtx('[ClaudeAgentRunner] Reusing cached pi session for:', session.id);
+        // Update the mutable cwd reference so the permission hook
+        // resolves paths against the current effective cwd, not the
+        // one from when the session was first created.
+        if (cachedSession.cwdRef) {
+          cachedSession.cwdRef.value = effectiveCwd;
+        }
         logTiming('pi-coding-agent session reused', runStartTime);
       } else {
         // First query in this session — create new pi-coding-agent session
@@ -2224,7 +2270,8 @@ Tool routing:
 
         // Install permission-gating hook via the SDK's tool_call extension event.
         // This must happen once per new session — the hook persists across reuses.
-        this.installPermissionHook(piSession, session.id);
+        const cwdRef = { value: effectiveCwd };
+        this.installPermissionHook(piSession, session.id, cwdRef);
 
         // Store session for reuse — evict oldest if cache is full
         if (this.piSessions.size >= ClaudeAgentRunner.MAX_CACHED_SESSIONS) {
@@ -2248,6 +2295,7 @@ Tool routing:
           thinkingLevel,
           runtimeSignature: sessionRuntimeSignature,
           skillsSignature,
+          cwdRef,
         });
 
         // Ollama: wrap _onPayload to inject num_ctx into every request
