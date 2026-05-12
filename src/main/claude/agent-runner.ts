@@ -90,6 +90,7 @@ import {
   GuardAbortError,
 } from './pre-request-guard';
 import { fetchOllamaModelInfo } from '../config/ollama-api';
+import { fetchOpenRouterModelInfo } from '../config/openrouter-api';
 
 // Virtual workspace path shown to the model (hides real sandbox path)
 const VIRTUAL_WORKSPACE_PATH = '/workspace';
@@ -1593,6 +1594,45 @@ ${hints.join('\n')}
             ')'
           );
           piModel = { ...piModel, contextWindow: ollamaInfo.contextWindow };
+        }
+      }
+
+      // For OpenRouter: query actual context window from /api/v1/models if the
+      // model wasn't found in the pi-ai registry (synthetic fallback used) and
+      // either contextWindow or maxTokens may still need enrichment from the API.
+      if (
+        provider === 'openrouter' &&
+        usedSyntheticModel &&
+        (!runtimeConfig.contextWindow || !runtimeConfig.maxTokens)
+      ) {
+        const orInfo = await fetchOpenRouterModelInfo({
+          modelId: piModel.id,
+          baseUrl: piModel.baseUrl || runtimeConfig.baseUrl,
+        });
+        if (orInfo.contextWindow && !runtimeConfig.contextWindow) {
+          log(
+            '[ClaudeAgentRunner] OpenRouter /models reported contextWindow:',
+            orInfo.contextWindow,
+            '(was:',
+            piModel.contextWindow,
+            ')'
+          );
+          piModel = { ...piModel, contextWindow: orInfo.contextWindow };
+        }
+        // Only apply API-reported maxTokens when the user hasn't explicitly configured one
+        if (
+          orInfo.maxTokens &&
+          !runtimeConfig.maxTokens &&
+          orInfo.maxTokens !== piModel.maxTokens
+        ) {
+          log(
+            '[ClaudeAgentRunner] OpenRouter /models reported maxTokens:',
+            orInfo.maxTokens,
+            '(was:',
+            piModel.maxTokens,
+            ')'
+          );
+          piModel = { ...piModel, maxTokens: orInfo.maxTokens };
         }
       }
 
