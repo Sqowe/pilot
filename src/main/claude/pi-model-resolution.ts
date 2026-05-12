@@ -124,15 +124,28 @@ const KNOWN_MODEL_SPECS: Record<string, { contextWindow: number; maxTokens: numb
   'kimi-k2': { contextWindow: 262144, maxTokens: 8192 },
   'kimi-k1': { contextWindow: 131072, maxTokens: 8192 },
   kimi: { contextWindow: 131072, maxTokens: 8192 },
+  // Tencent Hunyuan family
+  'hy3-preview': { contextWindow: 262144, maxTokens: 8192 },
+  'hunyuan-a13b': { contextWindow: 131072, maxTokens: 8192 },
 };
 
 function lookupModelSpecs(
   modelId: string
 ): { contextWindow: number; maxTokens: number } | undefined {
   const lower = modelId.toLowerCase();
+  // Strip provider prefix (e.g., "tencent/hy3-preview" → "hy3-preview") so
+  // OpenRouter-style prefixed IDs still match KNOWN_MODEL_SPECS keys.
+  const stripped = lower.includes('/') ? lower.split('/').slice(1).join('/') : lower;
   // Match by prefix: "qwen3.5:0.8b" → "qwen3.5", "deepseek-r1-distill" → "deepseek-r1"
   for (const [key, specs] of Object.entries(KNOWN_MODEL_SPECS)) {
-    if (lower === key || lower.startsWith(key + ':') || lower.startsWith(key + '-')) {
+    if (
+      stripped === key ||
+      stripped.startsWith(key + ':') ||
+      stripped.startsWith(key + '-') ||
+      lower === key ||
+      lower.startsWith(key + ':') ||
+      lower.startsWith(key + '-')
+    ) {
       return specs;
     }
   }
