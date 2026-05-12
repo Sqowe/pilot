@@ -5,14 +5,16 @@ documented in `docs/chats/`. This file governs all code under `src/main/`.
 
 ---
 
-## Pi SDK Integration (`@mariozechner/pi-coding-agent` + `@mariozechner/pi-ai`)
+## Pi SDK Integration (`@earendil-works/pi-coding-agent` + `@earendil-works/pi-ai`)
 
 ### Version Management
 
 - **Always version-lock `pi-ai` and `pi-coding-agent`** — they share a monorepo
-  (`github.com/badlogic/pi-mono`) and must be upgraded together. A mismatch
-  causes type errors and runtime failures.
-- Both packages are pre-1.0 (currently 0.71.x). Breaking changes happen between
+  (formerly `github.com/badlogic/pi-mono`, now under `earendil-works` org) and must
+  be upgraded together. A mismatch causes type errors and runtime failures.
+- The old `@mariozechner/pi-*` scope was deprecated at 0.73.1. We migrated to
+  `@earendil-works/pi-*` at 0.74.0.
+- Both packages are pre-1.0 (currently 0.74.x). Breaking changes happen between
   minors. Budget time for code adaptations on every uplift.
 - Known uplift history (0.60→0.71 required 5 adaptations):
   1. TypeBox migration (`@sinclair/typebox` → `typebox` 1.x)

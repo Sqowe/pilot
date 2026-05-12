@@ -19,8 +19,8 @@ import {
   createCodingTools,
   type AgentSession as PiAgentSession,
   type ToolDefinition,
-} from '@mariozechner/pi-coding-agent';
-import type { ImageContent as PiImageContent } from '@mariozechner/pi-ai';
+} from '@earendil-works/pi-coding-agent';
+import type { ImageContent as PiImageContent } from '@earendil-works/pi-ai';
 import { Type, type TSchema } from 'typebox';
 import { getSharedAuthStorage, ModelRegistry } from './shared-auth';
 import type { Session, Message, TraceStep, ServerEvent, ContentBlock } from '../../renderer/types';
@@ -447,7 +447,7 @@ interface CachedPiSession {
 }
 
 /**
- * ClaudeAgentRunner - Uses @mariozechner/pi-coding-agent SDK
+ * ClaudeAgentRunner - Uses @earendil-works/pi-coding-agent SDK
  *
  * Environment variables should be set before running:
  *   ANTHROPIC_BASE_URL=https://openrouter.ai/api
@@ -1130,10 +1130,10 @@ ${hints.join('\n')}
 
     const controller = new AbortController();
     try {
-      // SDK 会在同一 AbortSignal 上挂载较多监听器，放开上限避免无意义告警干扰排错。
+      // SDK attaches many listeners to the same AbortSignal; raise the limit to suppress spurious warnings.
       setMaxListeners(0, controller.signal);
     } catch {
-      // 旧运行时不支持 EventTarget 调整监听上限时忽略即可。
+      // Older runtimes don't support adjusting EventTarget listener limits — safe to ignore.
     }
     this.activeControllers.set(session.id, controller);
 
@@ -1636,6 +1636,29 @@ ${hints.join('\n')}
         }
       }
 
+      // Sanity cap: some providers (e.g., Tencent Hunyuan on OpenRouter) report
+      // max_completion_tokens equal to the full context window. This makes budget
+      // math impossible — reserving the entire window for output leaves zero room
+      // for input, tool schemas, and safety margin. Cap maxTokens at 50% of
+      // contextWindow when it's unreasonably large. The model can still produce
+      // longer outputs (the provider allows it), but our budget planning won't
+      // over-reserve and falsely trigger the pre-request guard abort.
+      const effectiveContextWindow = piModel.contextWindow ?? 128000;
+      const effectiveMaxTokens = piModel.maxTokens ?? 16384;
+      if (effectiveMaxTokens > effectiveContextWindow * 0.5) {
+        const cappedMaxTokens = Math.floor(effectiveContextWindow * 0.2);
+        log(
+          '[ClaudeAgentRunner] maxTokens exceeds 50% of contextWindow — capping for budget planning:',
+          effectiveMaxTokens,
+          '→',
+          cappedMaxTokens,
+          '(contextWindow:',
+          effectiveContextWindow,
+          ')'
+        );
+        piModel = { ...piModel, maxTokens: cappedMaxTokens };
+      }
+
       // Send context window info to renderer for UI display
       this.sendToRenderer({
         type: 'session.contextInfo',
@@ -1961,7 +1984,7 @@ ${hints.join('\n')}
               const serverKey = config.name;
 
               if (config.type === 'stdio') {
-                // 当命令是 npx 或 node 时优先使用内置路径
+                // Prefer bundled paths when the command is npx or node
                 const command =
                   config.command === 'npx' && bundledNpx
                     ? bundledNpx
@@ -1969,7 +1992,7 @@ ${hints.join('\n')}
                       ? bundledNodePaths.node
                       : config.command;
 
-                // 使用内置 npx/node 时，将内置 node bin 注入 PATH
+                // When using bundled npx/node, inject bundled node bin into PATH
                 const serverEnv = { ...config.env };
                 if (bundledNodePaths && (config.command === 'npx' || config.command === 'node')) {
                   const nodeBinDir = path.dirname(bundledNodePaths.node);
@@ -2191,7 +2214,7 @@ Tool routing:
       } else {
         // First query in this session — create new pi-coding-agent session
         // ResourceLoader + ModelRegistry only needed for session creation — skip on reuse
-        const { DefaultResourceLoader } = await import('@mariozechner/pi-coding-agent');
+        const { DefaultResourceLoader } = await import('@earendil-works/pi-coding-agent');
 
         // Workspace-level instructions (loaded earlier in this call for signature
         // fingerprinting): if present, append to the end of the system prompt so
@@ -2599,8 +2622,8 @@ Tool routing:
                         type: 'text',
                         text: `**Error**: ${resolvedPayload.errorText}\n\n${
                           /\b4\d{2}\b/.test(resolvedPayload.errorText)
-                            ? '_请检查配置后重试。_'
-                            : '_Agent 正在自动重试，请稍候..._'
+                            ? '_Please check your configuration and retry._'
+                            : '_Agent is retrying automatically, please wait..._'
                         }`,
                       },
                     ],
@@ -2862,8 +2885,7 @@ Tool routing:
             // Session cannot fit any prompt — fail fast with a clear error
             logError('[ClaudeAgentRunner] Pre-request guard: ABORT.', guardAction.reason);
             throw new GuardAbortError(
-              '上下文窗口已耗尽，无法发送请求。请禁用未使用的 MCP 服务器或在 API 配置中降低 maxTokens。\n\n' +
-                'Context window exhausted — cannot send request. Disable unused MCP servers or lower maxTokens in your API profile.'
+              'Context window exhausted — cannot send request. Disable unused MCP servers or lower maxTokens in your API profile.'
             );
           } else if (guardAction.type === 'compact') {
             log('[ClaudeAgentRunner] Pre-request guard: forcing compaction.', guardAction.reason);
@@ -2880,8 +2902,7 @@ Tool routing:
                 );
                 if (truncLimit <= 0) {
                   throw new GuardAbortError(
-                    '上下文窗口已耗尽（压缩后仍无法容纳请求）。请禁用未使用的 MCP 服务器或降低 maxTokens。\n\n' +
-                      'Context window exhausted after compaction. Disable unused MCP servers or lower maxTokens.'
+                    'Context window exhausted after compaction. Disable unused MCP servers or lower maxTokens.'
                   );
                 }
                 contextualPrompt = truncatePrompt(contextualPrompt, truncLimit);
@@ -2922,8 +2943,7 @@ Tool routing:
                 );
                 if (truncLimit <= 0) {
                   throw new GuardAbortError(
-                    '上下文窗口已耗尽（压缩失败后仍无法容纳请求）。请禁用未使用的 MCP 服务器或降低 maxTokens。\n\n' +
-                      'Context window exhausted after failed compaction. Disable unused MCP servers or lower maxTokens.'
+                    'Context window exhausted after failed compaction. Disable unused MCP servers or lower maxTokens.'
                   );
                 }
                 contextualPrompt = truncatePrompt(contextualPrompt, truncLimit);
@@ -2956,8 +2976,7 @@ Tool routing:
               })
             );
             throw new GuardAbortError(
-              `请求仍然超出上下文窗口限制（超出 ${finalEstimate.overflow} tokens）。请禁用未使用的 MCP 服务器或降低 maxTokens。\n\n` +
-                `Request still exceeds context window by ${finalEstimate.overflow} tokens after all mitigations. ` +
+              `Request still exceeds context window by ${finalEstimate.overflow} tokens after all mitigations. ` +
                 `Disable unused MCP servers or lower maxTokens in your API profile.`
             );
           }
@@ -3008,7 +3027,12 @@ Tool routing:
           id: uuidv4(),
           sessionId: session.id,
           role: 'assistant',
-          content: [{ type: 'text', text: '**请求超时**：长时间未收到响应，操作已中止。' }],
+          content: [
+            {
+              type: 'text',
+              text: '**Request timed out**: No response received for an extended period. Operation aborted.',
+            },
+          ],
           timestamp: Date.now(),
         };
         this.sendMessage(session.id, errorMsg);
@@ -3031,7 +3055,12 @@ Tool routing:
             id: uuidv4(),
             sessionId: session.id,
             role: 'assistant',
-            content: [{ type: 'text', text: '**请求超时**：长时间未收到响应，操作已中止。' }],
+            content: [
+              {
+                type: 'text',
+                text: '**Request timed out**: No response received for an extended period. Operation aborted.',
+              },
+            ],
             timestamp: Date.now(),
           };
           this.sendMessage(session.id, errorMsg);

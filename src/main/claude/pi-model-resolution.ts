@@ -1,4 +1,4 @@
-import { getModel, type Api, type Model } from '@mariozechner/pi-ai';
+import { getModel, type Api, type Model } from '@earendil-works/pi-ai';
 import { isOfficialOpenAIBaseUrl } from '../config/auth-utils';
 
 const COMMON_FALLBACK_PROVIDERS = ['openai', 'anthropic', 'google'] as const;

@@ -306,9 +306,9 @@ export function ContextPanel() {
             </span>
             <span
               className={`text-xs font-medium ${
-                contextUsage.percentage > 95
+                contextUsage.percentage > 75
                   ? 'text-error'
-                  : contextUsage.percentage > 80
+                  : contextUsage.percentage > 50
                     ? 'text-warning'
                     : 'text-text-primary'
               }`}
@@ -319,9 +319,9 @@ export function ContextPanel() {
           <div className="h-1.5 bg-surface-muted rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full transition-all duration-500 ease-out ${
-                contextUsage.percentage > 95
+                contextUsage.percentage > 75
                   ? 'bg-error'
-                  : contextUsage.percentage > 80
+                  : contextUsage.percentage > 50
                     ? 'bg-warning'
                     : 'bg-gradient-to-r from-accent to-accent-hover'
               }`}

@@ -10,13 +10,13 @@ structure, boundaries, and where to find authoritative coding rules. This docume
 does NOT define coding rules — it points to them (see Section 8).
 
 Target audience: AI coding assistants and new human contributors.
-Last updated: 2026-05-06.
+Last updated: 2026-05-12.
 
 ---
 
 ## 2. High-Level System Overview
 
-Open Cowork is a desktop app that wraps the `@mariozechner/pi-coding-agent` SDK
+Open Cowork is a desktop app that wraps the `@earendil-works/pi-coding-agent` SDK
 (the "Pi" engine) inside an Electron shell, adding GUI, MCP tool bridging, sandbox
 isolation, skills, permission gating, and remote-channel integrations.
 
@@ -112,7 +112,7 @@ open-cowork/
 
 ### 4.1 Agent Engine (`src/main/claude/`)
 
-The heart of the app. `ClaudeAgentRunner` (~2600 lines) wraps `@mariozechner/pi-coding-agent`
+The heart of the app. `ClaudeAgentRunner` (~2600 lines) wraps `@earendil-works/pi-coding-agent`
 SDK via `createAgentSession()`. One session per chat — full conversation context sent on
 each reasoning step (ReAct loop). Context compaction is SDK-driven when usage exceeds
 `contextWindow − reserveTokens`.
@@ -252,7 +252,7 @@ the dedicated rule files listed below.
 
 ### Behavioral Contracts for AI Coders
 
-- **Never modify `@mariozechner/pi-*` packages** — we are a pure consumer of the SDK
+- **Never modify `@earendil-works/pi-*` packages** — we are a pure consumer of the SDK
 - **Never access Pi private fields** (`_beforeToolCall`, etc.) without documenting the risk
 - **Version-lock `pi-ai` and `pi-coding-agent`** — always upgrade together
 - **MCP servers run on host only** — never route MCP spawns through sandbox bridges
