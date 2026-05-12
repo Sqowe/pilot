@@ -1646,7 +1646,7 @@ ${hints.join('\n')}
       const effectiveContextWindow = piModel.contextWindow ?? 128000;
       const effectiveMaxTokens = piModel.maxTokens ?? 16384;
       if (effectiveMaxTokens > effectiveContextWindow * 0.5) {
-        const cappedMaxTokens = Math.floor(effectiveContextWindow * 0.25);
+        const cappedMaxTokens = Math.floor(effectiveContextWindow * 0.2);
         log(
           '[ClaudeAgentRunner] maxTokens exceeds 50% of contextWindow — capping for budget planning:',
           effectiveMaxTokens,
