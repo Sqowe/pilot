@@ -1,4 +1,9 @@
-import type { AssistantMessage, TextContent, ThinkingContent, ToolCall } from '@mariozechner/pi-ai';
+import type {
+  AssistantMessage,
+  TextContent,
+  ThinkingContent,
+  ToolCall,
+} from '@earendil-works/pi-ai';
 import { splitThinkTagBlocks } from './think-tag-parser';
 
 type MessageEndContentBlock = TextContent | ThinkingContent | ToolCall;

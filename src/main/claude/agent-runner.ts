@@ -19,8 +19,8 @@ import {
   createCodingTools,
   type AgentSession as PiAgentSession,
   type ToolDefinition,
-} from '@mariozechner/pi-coding-agent';
-import type { ImageContent as PiImageContent } from '@mariozechner/pi-ai';
+} from '@earendil-works/pi-coding-agent';
+import type { ImageContent as PiImageContent } from '@earendil-works/pi-ai';
 import { Type, type TSchema } from 'typebox';
 import { getSharedAuthStorage, ModelRegistry } from './shared-auth';
 import type { Session, Message, TraceStep, ServerEvent, ContentBlock } from '../../renderer/types';
@@ -447,7 +447,7 @@ interface CachedPiSession {
 }
 
 /**
- * ClaudeAgentRunner - Uses @mariozechner/pi-coding-agent SDK
+ * ClaudeAgentRunner - Uses @earendil-works/pi-coding-agent SDK
  *
  * Environment variables should be set before running:
  *   ANTHROPIC_BASE_URL=https://openrouter.ai/api
@@ -2191,7 +2191,7 @@ Tool routing:
       } else {
         // First query in this session — create new pi-coding-agent session
         // ResourceLoader + ModelRegistry only needed for session creation — skip on reuse
-        const { DefaultResourceLoader } = await import('@mariozechner/pi-coding-agent');
+        const { DefaultResourceLoader } = await import('@earendil-works/pi-coding-agent');
 
         // Workspace-level instructions (loaded earlier in this call for signature
         // fingerprinting): if present, append to the end of the system prompt so

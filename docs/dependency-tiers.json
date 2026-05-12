@@ -1,23 +1,23 @@
 {
   "_description": "Machine-readable dependency tiering for open-cowork. Tier 1 = LLM/model/agent core, Tier 2 = platform & integrations, Tier 3 = supporting utilities. Use this as input for future uplift research.",
-  "generated_at": "2026-05-01 (updated: pi-* 0.60→0.71, Anthropic SDK 0.39→0.92)",
+  "generated_at": "2026-05-01 (updated: pi-* 0.60\u21920.71, Anthropic SDK 0.39\u21920.92)",
   "generated_from": "package.json v3.3.0",
   "scope": "runtime dependencies only (devDependencies excluded per user request)",
   "tiers": {
     "tier_1_core": {
-      "label": "Core — LLM, model, agent runtime",
+      "label": "Core \u2014 LLM, model, agent runtime",
       "description": "Direct impact on AI model communication and agent execution. Any breaking change or missed feature here directly blocks or unlocks end-user features. Monitor aggressively.",
       "monitor_cadence": "weekly",
       "uplift_priority": "high"
     },
     "tier_2_platform": {
-      "label": "Platform — app shell, storage, channel integrations",
+      "label": "Platform \u2014 app shell, storage, channel integrations",
       "description": "Support significant end-user features (remote channels, persistence, UI shell, auto-update). Swappable but costly; new features here translate to visible product capability.",
       "monitor_cadence": "bi-weekly",
       "uplift_priority": "medium"
     },
     "tier_3_supporting": {
-      "label": "Supporting — rendering, i18n, utilities",
+      "label": "Supporting \u2014 rendering, i18n, utilities",
       "description": "Visible quality-of-life and rendering improvements, but broadly commodity libraries with stable APIs. Uplift when convenient or for security.",
       "monitor_cadence": "monthly",
       "uplift_priority": "low"
@@ -25,39 +25,39 @@
   },
   "packages": [
     {
-      "name": "@mariozechner/pi-coding-agent",
+      "name": "@earendil-works/pi-coding-agent",
       "tier": "tier_1_core",
-      "installed_version": "0.71.0",
+      "installed_version": "0.74.0",
       "declared_range": "^0.71.0",
-      "role": "Core agent execution engine. createAgentSession, SessionManager, tool dispatch, streaming — drives agent-runner.ts (1514 lines). This is the heart of the app.",
+      "role": "Core agent execution engine. createAgentSession, SessionManager, tool dispatch, streaming \u2014 drives agent-runner.ts (1514 lines). This is the heart of the app.",
       "primary_callsites": [
         "src/main/claude/agent-runner.ts",
         "src/main/claude/claude-sdk-one-shot.ts"
       ],
-      "npm_url": "https://www.npmjs.com/package/@mariozechner/pi-coding-agent",
+      "npm_url": "https://www.npmjs.com/package/@earendil-works/pi-coding-agent",
       "repository_url": "https://github.com/badlogic/pi-mono",
       "homepage_url": null,
       "license": "MIT",
-      "risk_notes": "Pre-1.0 (0.71.x) — breaking changes possible between minors. Shares monorepo with pi-ai; uplift both together. Uplifted 0.60→0.71 on 2026-05-01: required 5 code adaptations (TypeBox 1.x, ModelRegistry factory, appendSystemPrompt array, tools→customTools, event renames).",
+      "risk_notes": "Pre-1.0 (0.71.x) \u2014 breaking changes possible between minors. Shares monorepo with pi-ai; uplift both together. Uplifted 0.60\u21920.71 on 2026-05-01: required 5 code adaptations (TypeBox 1.x, ModelRegistry factory, appendSystemPrompt array, tools\u2192customTools, event renames).",
       "monitor_releases": true
     },
     {
-      "name": "@mariozechner/pi-ai",
+      "name": "@earendil-works/pi-ai",
       "tier": "tier_1_core",
-      "installed_version": "0.71.0",
+      "installed_version": "0.74.0",
       "declared_range": "^0.71.0",
-      "role": "Unified LLM API layer. Provider routing, model registry resolution, auth storage — resolves which SDK/endpoint to call for a given (provider, model) pair.",
+      "role": "Unified LLM API layer. Provider routing, model registry resolution, auth storage \u2014 resolves which SDK/endpoint to call for a given (provider, model) pair.",
       "primary_callsites": [
         "src/main/claude/agent-runner.ts",
         "src/main/claude/shared-auth.ts",
         "src/main/claude/pi-model-resolution.ts",
         "src/shared/api-model-presets.ts"
       ],
-      "npm_url": "https://www.npmjs.com/package/@mariozechner/pi-ai",
+      "npm_url": "https://www.npmjs.com/package/@earendil-works/pi-ai",
       "repository_url": "https://github.com/badlogic/pi-mono",
       "homepage_url": null,
       "license": "MIT",
-      "risk_notes": "Pre-1.0 — registry additions (new models, providers) are key release value. Must be version-locked with pi-coding-agent. Uplifted 0.60→0.71 on 2026-05-01.",
+      "risk_notes": "Pre-1.0 \u2014 registry additions (new models, providers) are key release value. Must be version-locked with pi-coding-agent. Uplifted 0.60\u21920.71 on 2026-05-01.",
       "monitor_releases": true
     },
     {
@@ -65,7 +65,7 @@
       "tier": "tier_1_core",
       "installed_version": "1.27.1",
       "declared_range": "^1.26.0",
-      "role": "MCP client + server. Powers MCPManager — stdio / SSE / StreamableHTTP transports for connecting external MCP servers and exposing their tools to the agent.",
+      "role": "MCP client + server. Powers MCPManager \u2014 stdio / SSE / StreamableHTTP transports for connecting external MCP servers and exposing their tools to the agent.",
       "primary_callsites": [
         "src/main/mcp/mcp-manager.ts",
         "src/main/mcp/software-dev-server-example.ts",
@@ -92,7 +92,7 @@
       "repository_url": "https://github.com/anthropics/anthropic-sdk-typescript",
       "homepage_url": null,
       "license": "MIT",
-      "risk_notes": "Pre-1.0 but stable. Tracks new Claude model families and response formats; missing a release means missing new model support. Uplifted 0.39→0.92 on 2026-05-01 — no breaking changes for our usage surface.",
+      "risk_notes": "Pre-1.0 but stable. Tracks new Claude model families and response formats; missing a release means missing new model support. Uplifted 0.39\u21920.92 on 2026-05-01 \u2014 no breaking changes for our usage surface.",
       "monitor_releases": true
     },
     {
@@ -123,7 +123,6 @@
       "risk_notes": "New Gemini model families and preview APIs ship here. Major/minor bumps may rename client classes.",
       "monitor_releases": true
     },
-
     {
       "name": "electron-updater",
       "tier": "tier_2_platform",
@@ -161,7 +160,7 @@
       "tier": "tier_2_platform",
       "installed_version": "12.8.0",
       "declared_range": "^12.8.0",
-      "role": "Native SQLite binding — persistent storage for sessions, messages, memory, scheduled tasks. Whole persistence layer.",
+      "role": "Native SQLite binding \u2014 persistent storage for sessions, messages, memory, scheduled tasks. Whole persistence layer.",
       "primary_callsites": [
         "src/main/db/database.ts",
         "src/main/memory/memory-manager.ts",
@@ -171,7 +170,7 @@
       "repository_url": "https://github.com/WiseLibs/better-sqlite3",
       "homepage_url": "http://github.com/WiseLibs/better-sqlite3",
       "license": "MIT",
-      "risk_notes": "Native module — requires electron rebuild on Electron version bump. Node/Electron ABI compatibility is the main concern.",
+      "risk_notes": "Native module \u2014 requires electron rebuild on Electron version bump. Node/Electron ABI compatibility is the main concern.",
       "monitor_releases": true
     },
     {
@@ -196,7 +195,7 @@
       "tier": "tier_2_platform",
       "installed_version": "4.7.0",
       "declared_range": "4.7.0",
-      "role": "Slack app framework — Socket Mode and webhook handling for the Slack remote channel.",
+      "role": "Slack app framework \u2014 Socket Mode and webhook handling for the Slack remote channel.",
       "primary_callsites": ["src/main/remote/channels/slack/slack-channel.ts"],
       "npm_url": "https://www.npmjs.com/package/@slack/bolt",
       "repository_url": "https://github.com/slackapi/bolt-js",
@@ -224,7 +223,7 @@
       "tier": "tier_2_platform",
       "installed_version": "5.0.0-beta.2",
       "declared_range": "^5.0.0-beta.2",
-      "role": "Tunnel manager — exposes the local remote gateway to the internet so Slack/Feishu webhooks can reach it.",
+      "role": "Tunnel manager \u2014 exposes the local remote gateway to the internet so Slack/Feishu webhooks can reach it.",
       "primary_callsites": ["src/main/remote/tunnel-manager.ts"],
       "npm_url": "https://www.npmjs.com/package/ngrok",
       "repository_url": "https://github.com/bubenshchykov/ngrok",
@@ -238,7 +237,7 @@
       "tier": "tier_2_platform",
       "installed_version": "8.19.0",
       "declared_range": "^8.19.0",
-      "role": "WebSocket server for the Remote Gateway — how external web clients connect to the agent runtime.",
+      "role": "WebSocket server for the Remote Gateway \u2014 how external web clients connect to the agent runtime.",
       "primary_callsites": ["src/main/remote/gateway.ts"],
       "npm_url": "https://www.npmjs.com/package/ws",
       "repository_url": "https://github.com/websockets/ws",
@@ -252,7 +251,7 @@
       "tier": "tier_2_platform",
       "installed_version": "4.0.3",
       "declared_range": "^4.0.1",
-      "role": "File watcher for the Skills hot-reload system. Users see skill changes live without restart — core to the Skills feature.",
+      "role": "File watcher for the Skills hot-reload system. Users see skill changes live without restart \u2014 core to the Skills feature.",
       "primary_callsites": ["src/main/skills/skills-manager.ts"],
       "npm_url": "https://www.npmjs.com/package/chokidar",
       "repository_url": "https://github.com/paulmillr/chokidar",
@@ -272,7 +271,7 @@
       "repository_url": "https://github.com/facebook/react",
       "homepage_url": "https://reactjs.org/",
       "license": "MIT",
-      "risk_notes": "React 19 is released — major upgrade with Actions, use() hook, asset loading. Must be coordinated with react-dom.",
+      "risk_notes": "React 19 is released \u2014 major upgrade with Actions, use() hook, asset loading. Must be coordinated with react-dom.",
       "monitor_releases": true
     },
     {
@@ -280,7 +279,7 @@
       "tier": "tier_2_platform",
       "installed_version": "18.3.1",
       "declared_range": "^18.3.1",
-      "role": "React DOM renderer — must match react major.",
+      "role": "React DOM renderer \u2014 must match react major.",
       "primary_callsites": ["src/renderer/main.tsx"],
       "npm_url": "https://www.npmjs.com/package/react-dom",
       "repository_url": "https://github.com/facebook/react",
@@ -300,7 +299,7 @@
       "repository_url": "https://github.com/pmndrs/zustand",
       "homepage_url": "https://github.com/pmndrs/zustand",
       "license": "MIT",
-      "risk_notes": "v5 major done — API stable.",
+      "risk_notes": "v5 major done \u2014 API stable.",
       "monitor_releases": false
     },
     {
@@ -331,7 +330,6 @@
       "risk_notes": "Mature. Major version jumps (16->17) tighten parsing.",
       "monitor_releases": false
     },
-
     {
       "name": "react-markdown",
       "tier": "tier_3_supporting",
@@ -393,7 +391,7 @@
       "tier": "tier_3_supporting",
       "installed_version": "6.0.0",
       "declared_range": "^6.0.0",
-      "role": "HTML sanitization on model-generated markdown — security boundary against XSS from LLM output.",
+      "role": "HTML sanitization on model-generated markdown \u2014 security boundary against XSS from LLM output.",
       "primary_callsites": ["src/renderer/components/MessageCard.tsx"],
       "npm_url": "https://www.npmjs.com/package/rehype-sanitize",
       "repository_url": "https://github.com/rehypejs/rehype-sanitize",
@@ -449,7 +447,7 @@
       "tier": "tier_3_supporting",
       "installed_version": "16.6.0",
       "declared_range": "^16.6.0",
-      "role": "React bindings for i18next — hooks and components.",
+      "role": "React bindings for i18next \u2014 hooks and components.",
       "primary_callsites": ["src/renderer/**"],
       "npm_url": "https://www.npmjs.com/package/react-i18next",
       "repository_url": "https://github.com/i18next/react-i18next",
@@ -477,7 +475,7 @@
       "tier": "tier_3_supporting",
       "installed_version": "0.468.0",
       "declared_range": "^0.468.0",
-      "role": "Icon library — all UI iconography.",
+      "role": "Icon library \u2014 all UI iconography.",
       "primary_callsites": ["src/renderer/**"],
       "npm_url": "https://www.npmjs.com/package/lucide-react",
       "repository_url": "https://github.com/lucide-icons/lucide",
@@ -511,7 +509,7 @@
       "repository_url": "https://github.com/sinclairzx81/typebox",
       "homepage_url": null,
       "license": "MIT",
-      "risk_notes": "Added as direct dep during pi-* 0.60→0.71 uplift (TypeBox 1.x migration). Same author as @sinclair/typebox.",
+      "risk_notes": "Added as direct dep during pi-* 0.60\u21920.71 uplift (TypeBox 1.x migration). Same author as @sinclair/typebox.",
       "monitor_releases": false
     },
     {

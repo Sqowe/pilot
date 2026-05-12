@@ -1,7 +1,7 @@
 # NPM Dependency Tiers
 
 > Scope: runtime `dependencies` from `package.json` (v3.3.0). DevDependencies excluded — they affect the build pipeline, not end-user features.
-> Last updated: 2026-05-01 (pi-coding-agent + pi-ai uplift 0.60→0.71, Anthropic SDK 0.39→0.92).
+> Last updated: 2026-05-12 (pi-coding-agent + pi-ai scope migration @mariozechner→@earendil-works, uplift 0.71→0.74).
 >
 > Purpose: identify which upstream libraries most directly drive end-user features so uplifts can be prioritized and new capabilities adopted quickly. The machine-readable companion lives at [`docs/dependency-tiers.json`](./dependency-tiers.json).
 
@@ -21,18 +21,18 @@ Importance is judged by **direct impact on end-user features, with extra weight 
 
 These six libraries are **the AI pipeline**. A new Claude / GPT / Gemini model, a new MCP transport, or a new agent capability all arrive through these packages first. They are the highest-value release feeds to track.
 
-| Package                         | Installed | Role                                                                                                                                                           |
-| ------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@mariozechner/pi-coding-agent` | 0.71.0    | Agent execution engine. Drives `src/main/claude/agent-runner.ts` (~1500 lines) — session lifecycle, tool dispatch, streaming. Heart of the app.                |
-| `@mariozechner/pi-ai`           | 0.71.0    | Unified LLM abstraction — provider routing, model registry, auth. Resolves which concrete SDK/endpoint to call. Must be version-locked with `pi-coding-agent`. |
-| `@modelcontextprotocol/sdk`     | 1.27.1    | MCP client + server (stdio, SSE, Streamable HTTP). Powers the entire MCP connector ecosystem in `src/main/mcp/mcp-manager.ts`.                                 |
-| `@anthropic-ai/sdk`             | 0.92.0    | Official Anthropic SDK. Used for Claude diagnostics and probes. Tracks new Claude model families.                                                              |
-| `openai`                        | 6.32.0    | Official OpenAI SDK. Used across all OpenAI-compatible endpoints (OpenAI, OpenRouter, Ollama, DashScope, custom proxies).                                      |
-| `@google/genai`                 | 1.44.0    | Official Gemini SDK. Used in auth diagnostics; tracks new Gemini model previews.                                                                               |
+| Package                           | Installed | Role                                                                                                                                                           |
+| --------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@earendil-works/pi-coding-agent` | 0.74.0    | Agent execution engine. Drives `src/main/claude/agent-runner.ts` (~1500 lines) — session lifecycle, tool dispatch, streaming. Heart of the app.                |
+| `@earendil-works/pi-ai`           | 0.74.0    | Unified LLM abstraction — provider routing, model registry, auth. Resolves which concrete SDK/endpoint to call. Must be version-locked with `pi-coding-agent`. |
+| `@modelcontextprotocol/sdk`       | 1.27.1    | MCP client + server (stdio, SSE, Streamable HTTP). Powers the entire MCP connector ecosystem in `src/main/mcp/mcp-manager.ts`.                                 |
+| `@anthropic-ai/sdk`               | 0.92.0    | Official Anthropic SDK. Used for Claude diagnostics and probes. Tracks new Claude model families.                                                              |
+| `openai`                          | 6.32.0    | Official OpenAI SDK. Used across all OpenAI-compatible endpoints (OpenAI, OpenRouter, Ollama, DashScope, custom proxies).                                      |
+| `@google/genai`                   | 1.44.0    | Official Gemini SDK. Used in auth diagnostics; tracks new Gemini model previews.                                                                               |
 
 **Why these are Tier 1:** if OpenAI ships a new Responses API feature, Anthropic ships a new `claude-opus-5`, or MCP publishes a new transport — the only way to expose that in the app is to bump the relevant package here. A missed release = a missed feature.
 
-**Special note on `@mariozechner/pi-*`:** both packages live in a single monorepo (`github.com/badlogic/pi-mono`). They are pre-1.0, ship frequently, and must be uplifted together.
+**Special note on `@earendil-works/pi-*`:** both packages live in a single monorepo (formerly `github.com/badlogic/pi-mono`, now under the `earendil-works` org). They are pre-1.0, ship frequently, and must be uplifted together. The old `@mariozechner/pi-*` scope is deprecated as of 0.73.1.
 
 ---
 
@@ -96,7 +96,7 @@ Commodity libraries with stable APIs. Uplift when convenient, or for security pa
 
 Packages with `monitor_releases: true` in `dependency-tiers.json` (18 total):
 
-**Tier 1 (6):** `@mariozechner/pi-coding-agent`, `@mariozechner/pi-ai`, `@modelcontextprotocol/sdk`, `@anthropic-ai/sdk`, `openai`, `@google/genai`
+**Tier 1 (6):** `@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai`, `@modelcontextprotocol/sdk`, `@anthropic-ai/sdk`, `openai`, `@google/genai`
 
 **Tier 2 (11):** `electron-updater`, `electron-store`, `better-sqlite3`, `@larksuiteoapi/node-sdk`, `@slack/bolt`, `@slack/web-api`, `ngrok`, `ws`, `chokidar`, `react`, `react-dom`
 
