@@ -49,6 +49,7 @@ import {
   logCtxError,
   logTiming,
 } from '../utils/logger';
+import { ReadLoopGuard, extractReadFilePath } from './read-loop-guard';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -80,7 +81,14 @@ import {
   normalizeMcpToolResultForModel,
   normalizeToolExecutionResultForUi,
 } from './tool-result-utils';
-import { selectCompactionSettings } from './compaction-budget';
+import { selectCompactionSettings, estimateToolSchemaTokens } from './compaction-budget';
+import {
+  estimatePreRequestSize,
+  determineGuardAction,
+  truncatePrompt,
+  computeTruncationLimit,
+  GuardAbortError,
+} from './pre-request-guard';
 import { fetchOllamaModelInfo } from '../config/ollama-api';
 
 // Virtual workspace path shown to the model (hides real sandbox path)
@@ -432,6 +440,9 @@ interface CachedPiSession {
   runtimeSignature: string;
   skillsSignature?: string;
   ollamaNumCtx?: { value: number };
+  /** Mutable cwd reference — updated on each prompt call so the
+   *  permission hook always resolves paths against the current cwd. */
+  cwdRef?: { value: string };
 }
 
 /**
@@ -821,12 +832,11 @@ ${hints.join('\n')}
    * the backend, but the renderer's loading spinner may not clear. This is
    * a renderer-side issue tracked as a follow-up.
    */
-  private installPermissionHook(piSession: PiAgentSession, sessionId: string): void {
-    if (!this.requestPermission) {
-      log('[ClaudeAgentRunner] No requestPermission callback — skipping permission hook');
-      return;
-    }
-
+  private installPermissionHook(
+    piSession: PiAgentSession,
+    sessionId: string,
+    cwdRef: { value: string }
+  ): void {
     // Access the Agent instance (public readonly property on AgentSession).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const agent = (piSession as any).agent;
@@ -846,9 +856,46 @@ ${hints.join('\n')}
 
     const requestPermission = this.requestPermission;
 
+    // Per-session guard against models reading the same file repeatedly,
+    // exhausting the context window without making progress.
+    // NOTE: This guard runs regardless of whether requestPermission is
+    // configured — read-loop protection is a safety control that must
+    // always be active, especially in auto-approve/non-interactive modes.
+    //
+    // CONCURRENCY NOTE: cwdRef.value is updated at the start of each run()
+    // call, before piSession.prompt() is invoked. The pi-coding-agent SDK
+    // enforces sequential prompt execution within a session (a new prompt
+    // cannot start until the previous one completes or is aborted). This
+    // guarantees cwdRef.value is stable for the duration of any single
+    // prompt's tool calls. If this invariant ever changes (e.g., parallel
+    // prompts), cwdRef must be replaced with a per-prompt-scoped value.
+    const readLoopGuard = new ReadLoopGuard();
+
     const gate: BeforeToolCallHook = async (ctx, signal) => {
       const toolName: string = ctx.toolCall?.name ?? '';
       const input: Record<string, unknown> = ctx.args ?? {};
+
+      // --- Read loop detection (always active) ---
+      if (toolName === 'read') {
+        const filePath = extractReadFilePath(input);
+        if (filePath) {
+          // Use cwdRef.value at call-time (not captured at install-time)
+          // so path resolution stays correct across session reuse.
+          const guardResult = readLoopGuard.check(filePath, cwdRef.value);
+          if (guardResult.blocked) {
+            logWarn(
+              `[ClaudeAgentRunner] Read loop guard blocked read #${guardResult.count} of "${filePath}" in session ${sessionId}`
+            );
+            return { block: true, reason: guardResult.reason };
+          }
+        }
+      }
+
+      // --- Permission gating (only when requestPermission is configured) ---
+      if (!requestPermission) {
+        // No permission callback — delegate to SDK's original hook
+        return sdkBeforeToolCall ? sdkBeforeToolCall(ctx, signal) : undefined;
+      }
 
       const decision = decidePermission(sessionId, toolName, input);
 
@@ -2094,6 +2141,12 @@ Tool routing:
         }
 
         logCtx('[ClaudeAgentRunner] Reusing cached pi session for:', session.id);
+        // Update the mutable cwd reference so the permission hook
+        // resolves paths against the current effective cwd, not the
+        // one from when the session was first created.
+        if (cachedSession.cwdRef) {
+          cachedSession.cwdRef.value = effectiveCwd;
+        }
         logTiming('pi-coding-agent session reused', runStartTime);
       } else {
         // First query in this session — create new pi-coding-agent session
@@ -2217,7 +2270,8 @@ Tool routing:
 
         // Install permission-gating hook via the SDK's tool_call extension event.
         // This must happen once per new session — the hook persists across reuses.
-        this.installPermissionHook(piSession, session.id);
+        const cwdRef = { value: effectiveCwd };
+        this.installPermissionHook(piSession, session.id, cwdRef);
 
         // Store session for reuse — evict oldest if cache is full
         if (this.piSessions.size >= ClaudeAgentRunner.MAX_CACHED_SESSIONS) {
@@ -2241,6 +2295,7 @@ Tool routing:
           thinkingLevel,
           runtimeSignature: sessionRuntimeSignature,
           skillsSignature,
+          cwdRef,
         });
 
         // Ollama: wrap _onPayload to inject num_ctx into every request
@@ -2728,6 +2783,163 @@ Tool routing:
             log('[ClaudeAgentRunner] Passing', piImages.length, 'image(s) to SDK prompt');
           }
         }
+
+        // ─── Pre-request overflow guard ───────────────────────────────────
+        // Estimate total request size BEFORE sending. If it would overflow the
+        // provider's context window, force compaction or truncate the prompt.
+        // This closes the gap where pi-coding-agent's post-response compaction
+        // can't catch single-turn jumps that push past the limit.
+
+        // Cache invariant components to avoid repeated computation across
+        // multiple re-estimations within the same guard pass.
+        const guardContextWindow = piModel.contextWindow ?? 128000;
+        const guardModelMaxOutput = piModel.maxTokens ?? 16384;
+        const guardImageCount = piImages.length;
+        // Precompute tool schema tokens once — this involves JSON.stringify on
+        // every tool's parameters and is the most expensive invariant cost.
+        const guardToolSchemaTokens = estimateToolSchemaTokens(wrappedTools, mcpCustomTools);
+
+        const buildGuardInput = (promptText: string) => ({
+          existingMessages: piSession.messages as ReadonlyArray<{
+            role?: string;
+            content?: unknown;
+          }>,
+          newPromptText: promptText,
+          contextWindow: guardContextWindow,
+          modelMaxOutput: guardModelMaxOutput,
+          builtInTools: wrappedTools,
+          customTools: mcpCustomTools,
+          imageCount: guardImageCount,
+          precomputedToolSchemaTokens: guardToolSchemaTokens,
+        });
+
+        const guardEstimate = estimatePreRequestSize(buildGuardInput(contextualPrompt));
+
+        if (guardEstimate.wouldOverflow) {
+          const guardAction = determineGuardAction(guardEstimate, piSession.messages.length);
+
+          if (guardAction.type === 'abort') {
+            // Session cannot fit any prompt — fail fast with a clear error
+            logError('[ClaudeAgentRunner] Pre-request guard: ABORT.', guardAction.reason);
+            throw new GuardAbortError(
+              '上下文窗口已耗尽，无法发送请求。请禁用未使用的 MCP 服务器或在 API 配置中降低 maxTokens。\n\n' +
+                'Context window exhausted — cannot send request. Disable unused MCP servers or lower maxTokens in your API profile.'
+            );
+          } else if (guardAction.type === 'compact') {
+            log('[ClaudeAgentRunner] Pre-request guard: forcing compaction.', guardAction.reason);
+            try {
+              await piSession.compact();
+              log('[ClaudeAgentRunner] Pre-request guard: compaction completed successfully.');
+              // Re-estimate after compaction to verify we're within budget
+              const postCompactEstimate = estimatePreRequestSize(buildGuardInput(contextualPrompt));
+              if (postCompactEstimate.wouldOverflow) {
+                // Compaction helped but not enough — force truncation
+                const truncLimit = computeTruncationLimit(
+                  postCompactEstimate,
+                  postCompactEstimate.breakdown.existingMessagesTokens
+                );
+                if (truncLimit <= 0) {
+                  throw new GuardAbortError(
+                    '上下文窗口已耗尽（压缩后仍无法容纳请求）。请禁用未使用的 MCP 服务器或降低 maxTokens。\n\n' +
+                      'Context window exhausted after compaction. Disable unused MCP servers or lower maxTokens.'
+                  );
+                }
+                contextualPrompt = truncatePrompt(contextualPrompt, truncLimit);
+                log(
+                  '[ClaudeAgentRunner] Pre-request guard: still over budget after compaction, truncated to',
+                  truncLimit,
+                  'chars.'
+                );
+              }
+            } catch (compactErr) {
+              // Rethrow guard abort errors
+              if (compactErr instanceof GuardAbortError) {
+                throw compactErr;
+              }
+              // Rethrow cancellation/abort errors — these indicate the user or
+              // system intentionally stopped the operation and must not be
+              // swallowed into a fallback execution path.
+              if (
+                compactErr instanceof Error &&
+                (compactErr.name === 'AbortError' ||
+                  compactErr.name === 'CancelledError' ||
+                  (compactErr as { code?: string }).code === 'ABORT_ERR' ||
+                  controller.signal.aborted)
+              ) {
+                throw compactErr;
+              }
+              logWarn(
+                '[ClaudeAgentRunner] Pre-request guard: compaction failed, forcing truncation.',
+                compactErr
+              );
+              // After failed compaction, always force truncation — never allow
+              // a second compact action (it would just fail again).
+              const reEstimate = estimatePreRequestSize(buildGuardInput(contextualPrompt));
+              if (reEstimate.wouldOverflow) {
+                const truncLimit = computeTruncationLimit(
+                  reEstimate,
+                  reEstimate.breakdown.existingMessagesTokens
+                );
+                if (truncLimit <= 0) {
+                  throw new GuardAbortError(
+                    '上下文窗口已耗尽（压缩失败后仍无法容纳请求）。请禁用未使用的 MCP 服务器或降低 maxTokens。\n\n' +
+                      'Context window exhausted after failed compaction. Disable unused MCP servers or lower maxTokens.'
+                  );
+                }
+                contextualPrompt = truncatePrompt(contextualPrompt, truncLimit);
+                log(
+                  '[ClaudeAgentRunner] Pre-request guard: prompt truncated to',
+                  truncLimit,
+                  'chars after failed compaction.'
+                );
+              }
+            }
+          } else if (guardAction.type === 'truncate') {
+            contextualPrompt = truncatePrompt(contextualPrompt, guardAction.maxPromptChars);
+            log('[ClaudeAgentRunner] Pre-request guard:', guardAction.reason);
+          }
+
+          // ─── Final post-action overflow verification ───────────────────────
+          // After any guard action (compact, truncate), re-estimate one final
+          // time and block the request if still oversized. This catches edge
+          // cases where heuristic estimation or truncation notice length causes
+          // the result to still exceed the window.
+          const finalEstimate = estimatePreRequestSize(buildGuardInput(contextualPrompt));
+          if (finalEstimate.wouldOverflow) {
+            logError(
+              '[ClaudeAgentRunner] Pre-request guard: STILL over budget after all mitigations.',
+              JSON.stringify({
+                estimated: finalEstimate.estimatedTotal,
+                contextWindow: finalEstimate.contextWindow,
+                overflow: finalEstimate.overflow,
+                breakdown: finalEstimate.breakdown,
+              })
+            );
+            throw new GuardAbortError(
+              `请求仍然超出上下文窗口限制（超出 ${finalEstimate.overflow} tokens）。请禁用未使用的 MCP 服务器或降低 maxTokens。\n\n` +
+                `Request still exceeds context window by ${finalEstimate.overflow} tokens after all mitigations. ` +
+                `Disable unused MCP servers or lower maxTokens in your API profile.`
+            );
+          }
+          log(
+            '[ClaudeAgentRunner] Pre-request guard: post-action verification passed.',
+            JSON.stringify({
+              estimated: finalEstimate.estimatedTotal,
+              contextWindow: finalEstimate.contextWindow,
+              headroom: -finalEstimate.overflow,
+            })
+          );
+        } else {
+          log(
+            '[ClaudeAgentRunner] Pre-request guard: within budget.',
+            JSON.stringify({
+              estimated: guardEstimate.estimatedTotal,
+              contextWindow: guardEstimate.contextWindow,
+              headroom: -guardEstimate.overflow,
+            })
+          );
+        }
+        // ─── End pre-request overflow guard ──────────────────────────────────
 
         const promptResult = await piSession.prompt(
           contextualPrompt,

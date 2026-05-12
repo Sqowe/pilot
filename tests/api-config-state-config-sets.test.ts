@@ -96,8 +96,16 @@ describe('api config set helpers', () => {
 
   it('generates stable draft signature and detects material changes', () => {
     const snapshot = buildApiConfigSnapshot(undefined, FALLBACK_PROVIDER_PRESETS);
-    const signatureA = buildApiConfigDraftSignature(snapshot.activeProfileKey, snapshot.profiles, snapshot.enableThinking);
-    const signatureB = buildApiConfigDraftSignature(snapshot.activeProfileKey, snapshot.profiles, snapshot.enableThinking);
+    const signatureA = buildApiConfigDraftSignature(
+      snapshot.activeProfileKey,
+      snapshot.profiles,
+      snapshot.enableThinking
+    );
+    const signatureB = buildApiConfigDraftSignature(
+      snapshot.activeProfileKey,
+      snapshot.profiles,
+      snapshot.enableThinking
+    );
     expect(signatureA).toBe(signatureB);
 
     const changedProfiles = {
@@ -107,7 +115,11 @@ describe('api config set helpers', () => {
         apiKey: 'sk-new',
       },
     };
-    const signatureC = buildApiConfigDraftSignature(snapshot.activeProfileKey, changedProfiles, snapshot.enableThinking);
+    const signatureC = buildApiConfigDraftSignature(
+      snapshot.activeProfileKey,
+      changedProfiles,
+      snapshot.enableThinking
+    );
     expect(signatureC).not.toBe(signatureA);
   });
 
@@ -123,7 +135,7 @@ describe('api config set helpers', () => {
       configSets: [
         {
           id: 'default',
-          name: '默认方案',
+          name: 'Default',
           isSystem: true,
           provider: 'openrouter',
           customProtocol: 'anthropic',
