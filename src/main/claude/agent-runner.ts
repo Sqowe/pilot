@@ -1130,10 +1130,10 @@ ${hints.join('\n')}
 
     const controller = new AbortController();
     try {
-      // SDK 会在同一 AbortSignal 上挂载较多监听器，放开上限避免无意义告警干扰排错。
+      // SDK attaches many listeners to the same AbortSignal; raise the limit to suppress spurious warnings.
       setMaxListeners(0, controller.signal);
     } catch {
-      // 旧运行时不支持 EventTarget 调整监听上限时忽略即可。
+      // Older runtimes don't support adjusting EventTarget listener limits — safe to ignore.
     }
     this.activeControllers.set(session.id, controller);
 
@@ -1984,7 +1984,7 @@ ${hints.join('\n')}
               const serverKey = config.name;
 
               if (config.type === 'stdio') {
-                // 当命令是 npx 或 node 时优先使用内置路径
+                // Prefer bundled paths when the command is npx or node
                 const command =
                   config.command === 'npx' && bundledNpx
                     ? bundledNpx
@@ -1992,7 +1992,7 @@ ${hints.join('\n')}
                       ? bundledNodePaths.node
                       : config.command;
 
-                // 使用内置 npx/node 时，将内置 node bin 注入 PATH
+                // When using bundled npx/node, inject bundled node bin into PATH
                 const serverEnv = { ...config.env };
                 if (bundledNodePaths && (config.command === 'npx' || config.command === 'node')) {
                   const nodeBinDir = path.dirname(bundledNodePaths.node);
@@ -2622,8 +2622,8 @@ Tool routing:
                         type: 'text',
                         text: `**Error**: ${resolvedPayload.errorText}\n\n${
                           /\b4\d{2}\b/.test(resolvedPayload.errorText)
-                            ? '_请检查配置后重试。_'
-                            : '_Agent 正在自动重试，请稍候..._'
+                            ? '_Please check your configuration and retry._'
+                            : '_Agent is retrying automatically, please wait..._'
                         }`,
                       },
                     ],
@@ -2885,8 +2885,7 @@ Tool routing:
             // Session cannot fit any prompt — fail fast with a clear error
             logError('[ClaudeAgentRunner] Pre-request guard: ABORT.', guardAction.reason);
             throw new GuardAbortError(
-              '上下文窗口已耗尽，无法发送请求。请禁用未使用的 MCP 服务器或在 API 配置中降低 maxTokens。\n\n' +
-                'Context window exhausted — cannot send request. Disable unused MCP servers or lower maxTokens in your API profile.'
+              'Context window exhausted — cannot send request. Disable unused MCP servers or lower maxTokens in your API profile.'
             );
           } else if (guardAction.type === 'compact') {
             log('[ClaudeAgentRunner] Pre-request guard: forcing compaction.', guardAction.reason);
@@ -2903,8 +2902,7 @@ Tool routing:
                 );
                 if (truncLimit <= 0) {
                   throw new GuardAbortError(
-                    '上下文窗口已耗尽（压缩后仍无法容纳请求）。请禁用未使用的 MCP 服务器或降低 maxTokens。\n\n' +
-                      'Context window exhausted after compaction. Disable unused MCP servers or lower maxTokens.'
+                    'Context window exhausted after compaction. Disable unused MCP servers or lower maxTokens.'
                   );
                 }
                 contextualPrompt = truncatePrompt(contextualPrompt, truncLimit);
@@ -2945,8 +2943,7 @@ Tool routing:
                 );
                 if (truncLimit <= 0) {
                   throw new GuardAbortError(
-                    '上下文窗口已耗尽（压缩失败后仍无法容纳请求）。请禁用未使用的 MCP 服务器或降低 maxTokens。\n\n' +
-                      'Context window exhausted after failed compaction. Disable unused MCP servers or lower maxTokens.'
+                    'Context window exhausted after failed compaction. Disable unused MCP servers or lower maxTokens.'
                   );
                 }
                 contextualPrompt = truncatePrompt(contextualPrompt, truncLimit);
@@ -2979,8 +2976,7 @@ Tool routing:
               })
             );
             throw new GuardAbortError(
-              `请求仍然超出上下文窗口限制（超出 ${finalEstimate.overflow} tokens）。请禁用未使用的 MCP 服务器或降低 maxTokens。\n\n` +
-                `Request still exceeds context window by ${finalEstimate.overflow} tokens after all mitigations. ` +
+              `Request still exceeds context window by ${finalEstimate.overflow} tokens after all mitigations. ` +
                 `Disable unused MCP servers or lower maxTokens in your API profile.`
             );
           }
@@ -3031,7 +3027,12 @@ Tool routing:
           id: uuidv4(),
           sessionId: session.id,
           role: 'assistant',
-          content: [{ type: 'text', text: '**请求超时**：长时间未收到响应，操作已中止。' }],
+          content: [
+            {
+              type: 'text',
+              text: '**Request timed out**: No response received for an extended period. Operation aborted.',
+            },
+          ],
           timestamp: Date.now(),
         };
         this.sendMessage(session.id, errorMsg);
@@ -3054,7 +3055,12 @@ Tool routing:
             id: uuidv4(),
             sessionId: session.id,
             role: 'assistant',
-            content: [{ type: 'text', text: '**请求超时**：长时间未收到响应，操作已中止。' }],
+            content: [
+              {
+                type: 'text',
+                text: '**Request timed out**: No response received for an extended period. Operation aborted.',
+              },
+            ],
             timestamp: Date.now(),
           };
           this.sendMessage(session.id, errorMsg);
