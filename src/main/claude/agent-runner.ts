@@ -1636,6 +1636,29 @@ ${hints.join('\n')}
         }
       }
 
+      // Sanity cap: some providers (e.g., Tencent Hunyuan on OpenRouter) report
+      // max_completion_tokens equal to the full context window. This makes budget
+      // math impossible — reserving the entire window for output leaves zero room
+      // for input, tool schemas, and safety margin. Cap maxTokens at 50% of
+      // contextWindow when it's unreasonably large. The model can still produce
+      // longer outputs (the provider allows it), but our budget planning won't
+      // over-reserve and falsely trigger the pre-request guard abort.
+      const effectiveContextWindow = piModel.contextWindow ?? 128000;
+      const effectiveMaxTokens = piModel.maxTokens ?? 16384;
+      if (effectiveMaxTokens > effectiveContextWindow * 0.5) {
+        const cappedMaxTokens = Math.floor(effectiveContextWindow * 0.25);
+        log(
+          '[ClaudeAgentRunner] maxTokens exceeds 50% of contextWindow — capping for budget planning:',
+          effectiveMaxTokens,
+          '→',
+          cappedMaxTokens,
+          '(contextWindow:',
+          effectiveContextWindow,
+          ')'
+        );
+        piModel = { ...piModel, maxTokens: cappedMaxTokens };
+      }
+
       // Send context window info to renderer for UI display
       this.sendToRenderer({
         type: 'session.contextInfo',
