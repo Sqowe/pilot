@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0-sqowe.4] - 2026-05-12
+
+### Changed
+
+- Migrate Pi SDK from deprecated `@mariozechner/pi-*` scope to `@earendil-works/pi-*`
+- Uplift pi-coding-agent and pi-ai from 0.71.0 to 0.74.0
+- Update all source imports, test mocks, and documentation references
+
 ## [3.3.0-sqowe.3] - 2026-05-08
 
 ### Changed
@@ -144,7 +152,8 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.3...HEAD
+[Unreleased]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.4...HEAD
+[3.3.0-sqowe.4]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.3...v3.3.0-sqowe.4
 [3.3.0-sqowe.3]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.2...v3.3.0-sqowe.3
 [3.3.0-sqowe.2]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.1...v3.3.0-sqowe.2
 [3.3.0-sqowe.1]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0...v3.3.0-sqowe.1
