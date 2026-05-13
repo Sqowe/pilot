@@ -106,6 +106,33 @@ The remaining packages use `monitor_releases: false` — check them opportunisti
 
 ---
 
+---
+
+## Bundled Runtimes & Tools
+
+> Non-npm executables bundled into the packaged app via `extraResources`. These provide the agent runtime environment for Skills, MCP servers, and GUI automation. Managed by dedicated download/prepare scripts, not npm.
+
+| Runtime      | Version           | Platforms                                      | Bundle Path         | Script                         | EOL      |
+| ------------ | ----------------- | ---------------------------------------------- | ------------------- | ------------------------------ | -------- |
+| **Node.js**  | 22.22.0           | darwin-arm64, darwin-x64, win32-x64, linux-x64 | `Resources/node/`   | `scripts/download-node.js`     | Apr 2027 |
+| **Python**   | 3.12.11           | darwin-arm64, darwin-x64, linux-x64            | `Resources/python/` | `scripts/prepare-python.js`    | Oct 2028 |
+| **cliclick** | latest (Homebrew) | darwin-arm64, darwin-x64                       | `Resources/tools/`  | `scripts/prepare-gui-tools.js` | —        |
+
+**Node.js** — Runs MCP servers (via bundled npx), npm packages, and Node.js-based Skills. LTS v22 (Active LTS until Oct 2025, Maintenance until Apr 2027). Bundled npx uses a custom shell wrapper to avoid broken `require()` paths in the extracted layout.
+
+**Python** — GUI automation runtime. Bundles `pillow` (image processing) and `pyobjc-framework-Quartz` (macOS screen capture). Source: [astral-sh/python-build-standalone](https://github.com/astral-sh/python-build-standalone) release `20260510`. Upgraded from 3.10 → 3.12 on 2026-05-13 (3.10 EOL Oct 2026).
+
+**cliclick** — macOS-only GUI click automation binary. Copied from Homebrew on the build machine. No version pinning. Low change frequency.
+
+### Bundled MCP Servers
+
+| Server                      | Source                                        | Bundle                                         | Build                        |
+| --------------------------- | --------------------------------------------- | ---------------------------------------------- | ---------------------------- |
+| gui-operate-server          | `src/main/mcp/gui-operate-server.ts`          | `Resources/mcp/gui-operate-server.js`          | esbuild (self-contained CJS) |
+| software-dev-server-example | `src/main/mcp/software-dev-server-example.ts` | `Resources/mcp/software-dev-server-example.js` | esbuild (self-contained CJS) |
+
+---
+
 ## Next step
 
 When you want recent-version research and uplift recommendations, hand me `docs/dependency-tiers.json` and I'll use firecrawl / npm registry queries to compare `installed_version` against the latest, read release notes, and flag breaking changes — prioritized by tier.
