@@ -65,6 +65,7 @@ import { PluginRuntimeService } from '../skills/plugin-runtime-service';
 import type { SkillsAdapter } from '../skills/skills-adapter';
 import { AgentRuntimeExtensionManager } from '../extensions/agent-runtime-extension-manager';
 import { configStore } from '../config/config-store';
+import { setBasePath, applyLocalDevPath } from '../utils/path-env';
 import { loadWorkspaceSystemPrompt } from '../utils/workspace-system-prompt';
 import { normalizeOpenAICompatibleBaseUrl } from '../config/auth-utils';
 import { resolveMessageEndPayload, toUserFacingErrorText } from './agent-runner-message-end';
@@ -205,8 +206,6 @@ let pathEnriched = false;
  */
 export function reapplyLocalDevPath(): void {
   if (!app.isPackaged) return; // dev mode inherits full shell PATH already
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { applyLocalDevPath } = require('../utils/path-env') as typeof import('../utils/path-env');
   const localDevPath = (configStore.get('localDevPath') || '').trim();
   applyLocalDevPath(localDevPath);
 }
@@ -304,9 +303,6 @@ async function enrichProcessPathForBuild(): Promise<void> {
   );
 
   // 4. Set base PATH snapshot and apply localDevPath on top (idempotent)
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { setBasePath, applyLocalDevPath } =
-    require('../utils/path-env') as typeof import('../utils/path-env');
   const localDevPath = (configStore.get('localDevPath') || '').trim();
   setBasePath(process.env.PATH, localDevPath);
   applyLocalDevPath(localDevPath);

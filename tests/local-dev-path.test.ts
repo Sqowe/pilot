@@ -67,7 +67,9 @@ describe('localDevPath feature', () => {
     });
 
     it('reapplyLocalDevPath delegates to centralized path-env utility', () => {
-      expect(agentRunnerContent).toContain("require('../utils/path-env')");
+      expect(agentRunnerContent).toContain(
+        "import { setBasePath, applyLocalDevPath } from '../utils/path-env'"
+      );
     });
   });
 
@@ -97,7 +99,9 @@ describe('localDevPath feature', () => {
     });
 
     it('uses centralized applyLocalDevPath utility', () => {
-      expect(mainIndexContent).toContain("require('./utils/path-env')");
+      expect(mainIndexContent).toContain('applyLocalDevPath');
+      expect(mainIndexContent).toContain('isBasePathSet');
+      expect(mainIndexContent).toContain("from './utils/path-env'");
       expect(mainIndexContent).toContain('applyLocalDevPath(newConfig.localDevPath)');
     });
 
