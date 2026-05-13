@@ -552,7 +552,12 @@
     "commandRequired": "Command is required",
     "urlRequired": "URL is required",
     "toolCount": "{{count}} tools",
-    "callCount": "{{count}} calls"
+    "callCount": "{{count}} calls",
+    "headers": "Headers",
+    "headersDescription": "Custom HTTP headers (e.g., Authorization)",
+    "noHeaders": "No headers configured",
+    "headerKeyPlaceholder": "Header name (e.g., Authorization)",
+    "headerValuePlaceholder": "Header value (e.g., Bearer your-token)"
   },
   "credentials": {
     "envVars": "Environment Variables",
