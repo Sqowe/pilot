@@ -242,6 +242,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('skills.openStoragePath'),
   },
 
+  // Environment methods
+  env: {
+    getEffectivePath: (): Promise<string> => ipcRenderer.invoke('env.getEffectivePath'),
+  },
+
   plugins: {
     listCatalog: (options?: { installableOnly?: boolean }): Promise<PluginCatalogItemV2[]> =>
       ipcRenderer.invoke('plugins.listCatalog', options),
@@ -527,6 +532,9 @@ declare global {
           error?: string;
         }>;
         openStoragePath: () => Promise<{ success: boolean; path: string; error?: string }>;
+      };
+      env: {
+        getEffectivePath: () => Promise<string>;
       };
       plugins: {
         listCatalog: (options?: { installableOnly?: boolean }) => Promise<PluginCatalogItemV2[]>;

@@ -112,6 +112,10 @@ export interface AppConfig {
   // Optional: Global skills storage directory
   globalSkillsPath?: string;
 
+  // Optional: Local development PATH directories to prepend to system PATH.
+  // Colon-separated (macOS/Linux) or semicolon-separated (Windows) list of directories.
+  localDevPath?: string;
+
   // Optional: workspace-level instructions file injected as system prompt tail.
   // Empty string (default) preserves today's behavior. See
   // `loadWorkspaceSystemPrompt` for the valid choices and safety model.
@@ -190,6 +194,7 @@ const DIRECT_READ_KEYS = new Set<keyof AppConfig>([
   'claudeCodePath',
   'defaultWorkdir',
   'globalSkillsPath',
+  'localDevPath',
   'systemPromptFile',
   'enableDevLogs',
   'theme',
@@ -270,6 +275,7 @@ const defaultConfig: AppConfig = {
   claudeCodePath: '',
   defaultWorkdir: '',
   globalSkillsPath: '',
+  localDevPath: '',
   systemPromptFile: '',
   bashTrustedCommands: [],
   bashDenylist: [],
@@ -1040,6 +1046,8 @@ export class ConfigStore {
         typeof raw.globalSkillsPath === 'string'
           ? raw.globalSkillsPath
           : defaultConfig.globalSkillsPath,
+      localDevPath:
+        typeof raw.localDevPath === 'string' ? raw.localDevPath : defaultConfig.localDevPath,
       systemPromptFile: isValidSystemPromptFileChoice(raw.systemPromptFile)
         ? raw.systemPromptFile
         : defaultConfig.systemPromptFile,
@@ -1463,6 +1471,8 @@ export class ConfigStore {
         updates.globalSkillsPath !== undefined
           ? updates.globalSkillsPath
           : current.globalSkillsPath,
+      localDevPath:
+        updates.localDevPath !== undefined ? updates.localDevPath : current.localDevPath,
       systemPromptFile:
         updates.systemPromptFile !== undefined
           ? updates.systemPromptFile
