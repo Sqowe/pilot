@@ -567,8 +567,12 @@ export class ClaudeAgentRunner {
     if (hints.length === 0) return '';
 
     return `<bundled_executables>
-This application bundles its own executables. When executing commands, prefer these absolute paths:
-${hints.join('\n')}
+This application bundles node, npx, python3, and pip3 as fallback runtimes. They are already in PATH.
+
+RULES:
+- Always run commands directly by name. The user's PATH is configured and takes priority.
+- Never wrap a command with npx or node unless explicitly instructed to do so.
+- If a command is not found, retry using node or python3 only if appropriate for that tool.
 </bundled_executables>`;
   }
 
