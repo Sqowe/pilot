@@ -34,7 +34,7 @@ const OUTPUT_ROOT = path.join(PROJECT_ROOT, 'resources', 'python');
 const DOWNLOAD_DIR = path.join(OUTPUT_ROOT, '.downloads');
 
 // Keep the default minor aligned with the checked-in bundled runtime and fallback URLs.
-const PYTHON_MINOR = process.env.OPEN_COWORK_PYTHON_MINOR || '3.10';
+const PYTHON_MINOR = process.env.OPEN_COWORK_PYTHON_MINOR || '3.12';
 const ABI = `cp${PYTHON_MINOR.replace('.', '')}`; // e.g. 3.12 -> cp312
 
 const GITHUB_REPO = process.env.OPEN_COWORK_PYTHON_STANDALONE_REPO || 'astral-sh/python-build-standalone';
@@ -49,10 +49,11 @@ const RELEASES_API = `https://api.github.com/repos/${GITHUB_REPO}/releases?per_p
 
 // Default URLs are only used for the checked-in default minor.
 // Other minors fall back to the GitHub releases API or explicit env overrides.
-const DEFAULT_PYTHON_URLS = PYTHON_MINOR === '3.10'
+const DEFAULT_PYTHON_URLS = PYTHON_MINOR === '3.12'
   ? {
-      'aarch64-apple-darwin': 'https://github.com/astral-sh/python-build-standalone/releases/download/20260203/cpython-3.10.19+20260203-aarch64-apple-darwin-install_only.tar.gz',
-      'x86_64-apple-darwin': 'https://github.com/astral-sh/python-build-standalone/releases/download/20260203/cpython-3.10.19+20260203-x86_64-apple-darwin-install_only.tar.gz',
+      'aarch64-apple-darwin': 'https://github.com/astral-sh/python-build-standalone/releases/download/20260510/cpython-3.12.11+20260510-aarch64-apple-darwin-install_only.tar.gz',
+      'x86_64-apple-darwin': 'https://github.com/astral-sh/python-build-standalone/releases/download/20260510/cpython-3.12.11+20260510-x86_64-apple-darwin-install_only.tar.gz',
+      'x86_64-unknown-linux-gnu': 'https://github.com/astral-sh/python-build-standalone/releases/download/20260510/cpython-3.12.11+20260510-x86_64-unknown-linux-gnu-install_only.tar.gz',
     }
   : {};
 

@@ -1,6 +1,6 @@
 {
   "_description": "Machine-readable dependency tiering for open-cowork. Tier 1 = LLM/model/agent core, Tier 2 = platform & integrations, Tier 3 = supporting utilities. Use this as input for future uplift research.",
-  "generated_at": "2026-05-01 (updated: pi-* 0.60\u21920.71, Anthropic SDK 0.39\u21920.92)",
+  "generated_at": "2026-05-01 (updated: 2026-05-13 Python 3.10→3.12, bundled runtimes section added)",
   "generated_from": "package.json v3.3.0",
   "scope": "runtime dependencies only (devDependencies excluded per user request)",
   "tiers": {
@@ -526,5 +526,64 @@
       "risk_notes": "Boring commodity util. v11 already adopted.",
       "monitor_releases": false
     }
-  ]
+  ],
+  "bundled_runtimes": {
+    "_description": "Non-npm executables bundled into the packaged app via extraResources. These provide the agent runtime environment for Skills, MCP servers, and GUI automation.",
+    "runtimes": [
+      {
+        "name": "Node.js",
+        "version": "22.22.0",
+        "source": "https://nodejs.org/dist/v22.22.0/",
+        "platforms": ["darwin-arm64", "darwin-x64", "win32-x64", "linux-x64"],
+        "bundle_path": "Resources/node/",
+        "download_script": "scripts/download-node.js",
+        "role": "Runs MCP servers (via bundled npx), npm packages, and any Node.js-based Skills. Also provides npx for on-demand package execution.",
+        "risk_notes": "LTS (Active until Oct 2025, Maintenance until Apr 2027). Coordinate with Electron ABI for native modules. Bundled npx has a custom shell wrapper to avoid broken require() paths.",
+        "monitor_releases": true,
+        "eol_date": "2027-04-30"
+      },
+      {
+        "name": "Python",
+        "version": "3.12.11",
+        "source": "https://github.com/astral-sh/python-build-standalone",
+        "source_release": "20260510",
+        "platforms": ["darwin-arm64", "darwin-x64", "linux-x64"],
+        "bundle_path": "Resources/python/",
+        "download_script": "scripts/prepare-python.js",
+        "role": "GUI automation runtime. Bundles Pillow (image processing) and pyobjc-framework-Quartz (macOS screen capture/click). Used by gui-operate-server MCP.",
+        "bundled_packages": ["pillow", "pyobjc-framework-Quartz"],
+        "risk_notes": "Python 3.12 EOL: Oct 2028. Upgraded from 3.10 (EOL Oct 2026). Wheels for bundled packages verified available for cp312 + macosx_11_0_arm64.",
+        "monitor_releases": true,
+        "eol_date": "2028-10-31"
+      },
+      {
+        "name": "cliclick",
+        "version": "latest (Homebrew)",
+        "source": "https://github.com/BlueM/cliclick",
+        "platforms": ["darwin-arm64", "darwin-x64"],
+        "bundle_path": "Resources/tools/",
+        "download_script": "scripts/prepare-gui-tools.js",
+        "role": "macOS GUI click automation. Sends mouse clicks and keyboard events without accessibility API overhead. Used by gui-operate-server.",
+        "risk_notes": "No version pinning — copies whatever Homebrew has on the build machine. macOS only. Low change frequency.",
+        "monitor_releases": false,
+        "eol_date": null
+      }
+    ],
+    "mcp_servers": [
+      {
+        "name": "gui-operate-server",
+        "source": "src/main/mcp/gui-operate-server.ts",
+        "bundle_path": "Resources/mcp/gui-operate-server.js",
+        "build_tool": "esbuild (self-contained CJS bundle)",
+        "role": "GUI automation MCP server — screen capture, mouse/keyboard control, OCR."
+      },
+      {
+        "name": "software-dev-server-example",
+        "source": "src/main/mcp/software-dev-server-example.ts",
+        "bundle_path": "Resources/mcp/software-dev-server-example.js",
+        "build_tool": "esbuild (self-contained CJS bundle)",
+        "role": "Example software development MCP server."
+      }
+    ]
+  }
 }

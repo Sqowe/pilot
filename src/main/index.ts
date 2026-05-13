@@ -44,6 +44,7 @@ import {
 } from './config/config-store';
 import { runConfigApiTest } from './config/config-test-routing';
 import { listOllamaModels } from './config/ollama-api';
+import { applyLocalDevPath, isBasePathSet, getEffectivePath } from './utils/path-env';
 import {
   setPermissionRules,
   setBashCommandLists,
@@ -1601,9 +1602,6 @@ ipcMain.handle('config.save', async (_event, newConfig: Partial<AppConfig>) => {
     newConfig.localDevPath !== undefined &&
     newConfig.localDevPath !== previousConfig.localDevPath
   ) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { applyLocalDevPath, isBasePathSet } =
-      require('./utils/path-env') as typeof import('./utils/path-env');
     if (isBasePathSet()) {
       applyLocalDevPath(newConfig.localDevPath);
     }
@@ -1722,8 +1720,6 @@ ipcMain.handle('config.discover-local', async (_event, payload?: { baseUrl?: str
 
 // Environment IPC handlers
 ipcMain.handle('env.getEffectivePath', () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { getEffectivePath } = require('./utils/path-env') as typeof import('./utils/path-env');
   return getEffectivePath();
 });
 
