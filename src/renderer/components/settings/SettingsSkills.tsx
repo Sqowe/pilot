@@ -13,6 +13,8 @@ import {
   Globe,
   RefreshCw,
   X,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import type { Skill, PluginCatalogItemV2, InstalledPlugin, PluginComponentKind } from '../../types';
 import { useAppStore } from '../../store';
@@ -42,6 +44,10 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
   const [pluginToastMessage, setPluginToastMessage] = useState('');
   const [error, setError] = useState<LocalizedBanner | null>(null);
   const [success, setSuccess] = useState<LocalizedBanner | null>(null);
+  const [localDevPath, setLocalDevPath] = useState('');
+  const [localDevPathDraft, setLocalDevPathDraft] = useState('');
+  const [effectivePath, setEffectivePath] = useState('');
+  const [showEffectivePath, setShowEffectivePath] = useState(false);
   const pluginToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const componentOrder: PluginComponentKind[] = ['skills', 'commands', 'agents', 'hooks', 'mcp'];
 
@@ -167,6 +173,13 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
     }
 
     void loadSkills();
+
+    // Load localDevPath from config
+    window.electronAPI.config.get().then((config) => {
+      const saved = config.localDevPath || '';
+      setLocalDevPath(saved);
+      setLocalDevPathDraft(saved);
+    });
 
     return () => {
       if (pluginToastTimerRef.current) {
@@ -307,6 +320,34 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  async function handleSaveLocalDevPath() {
+    try {
+      setIsLoading(true);
+      await window.electronAPI.config.save({ localDevPath: localDevPathDraft });
+      setLocalDevPath(localDevPathDraft);
+      setSuccess({ text: t('skills.localDevPathSaved') });
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError({
+        text: err instanceof Error ? err.message : t('skills.localDevPathSaveFailed'),
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleToggleEffectivePath() {
+    if (!showEffectivePath) {
+      try {
+        const pathValue = await window.electronAPI.env.getEffectivePath();
+        setEffectivePath(pathValue);
+      } catch {
+        setEffectivePath('(unavailable)');
+      }
+    }
+    setShowEffectivePath(!showEffectivePath);
   }
 
   async function handleDelete(skillId: string, skillName: string) {
@@ -454,6 +495,51 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
             {t('skills.refreshSkills')}
           </button>
         </div>
+      </SettingsContentSection>
+
+      {/* Local Development PATH */}
+      <SettingsContentSection
+        title={t('skills.localDevPathTitle')}
+        description={t('skills.localDevPathHint')}
+      >
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={localDevPathDraft}
+            onChange={(e) => setLocalDevPathDraft(e.target.value)}
+            placeholder={t('skills.localDevPathPlaceholder')}
+            className="flex-1 px-3 py-2 rounded-lg border border-border bg-surface text-text-primary text-sm font-mono placeholder:text-text-muted focus:outline-none focus:border-accent"
+          />
+          <button
+            onClick={handleSaveLocalDevPath}
+            disabled={isLoading || localDevPathDraft === localDevPath}
+            className="px-4 py-2 rounded-lg bg-accent text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed text-sm whitespace-nowrap"
+          >
+            {t('common.save')}
+          </button>
+        </div>
+        <button
+          onClick={handleToggleEffectivePath}
+          className="flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary transition-colors mt-1"
+        >
+          {showEffectivePath ? (
+            <ChevronDown className="w-3 h-3" />
+          ) : (
+            <ChevronRight className="w-3 h-3" />
+          )}
+          {showEffectivePath
+            ? t('skills.localDevPathHideEffective')
+            : t('skills.localDevPathShowEffective')}
+        </button>
+        {showEffectivePath && (
+          <div className="mt-2 p-3 rounded-lg bg-surface-hover border border-border overflow-x-auto max-h-40 overflow-y-auto">
+            <pre className="text-xs font-mono text-text-secondary whitespace-pre-wrap break-all">
+              {effectivePath
+                .split(window.electronAPI?.platform === 'win32' ? ';' : ':')
+                .join('\n') || '(empty)'}
+            </pre>
+          </div>
+        )}
       </SettingsContentSection>
 
       {/* Built-in Skills */}

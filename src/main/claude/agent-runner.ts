@@ -199,6 +199,18 @@ function resolveBundledToolsBinDir(): string | null {
  */
 let pathEnriched = false;
 
+/**
+ * Re-apply localDevPath to process.env.PATH after a runtime config change.
+ * Delegates to the centralized path-env utility for idempotent reconciliation.
+ */
+export function reapplyLocalDevPath(): void {
+  if (!app.isPackaged) return; // dev mode inherits full shell PATH already
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { applyLocalDevPath } = require('../utils/path-env') as typeof import('../utils/path-env');
+  const localDevPath = (configStore.get('localDevPath') || '').trim();
+  applyLocalDevPath(localDevPath);
+}
+
 async function enrichProcessPathForBuild(): Promise<void> {
   if (pathEnriched) return;
   pathEnriched = true;
@@ -274,6 +286,7 @@ async function enrichProcessPathForBuild(): Promise<void> {
   }
 
   // 3. Merge: bundled (highest) → shell → current process, deduplicate
+  //    This forms the "base PATH" — localDevPath is applied on top via path-env utility.
   const seen = new Set<string>();
   const merged: string[] = [];
 
@@ -287,8 +300,16 @@ async function enrichProcessPathForBuild(): Promise<void> {
 
   process.env.PATH = merged.join(delimiter);
   log(
-    `[ClaudeAgentRunner] Enriched process.env.PATH for build mode: ${bundledDirs.length} bundled + ${shellPaths.length} shell + ${currentPaths.length} process → ${merged.length} total`
+    `[ClaudeAgentRunner] Base PATH: ${bundledDirs.length} bundled + ${shellPaths.length} shell + ${currentPaths.length} process → ${merged.length} total`
   );
+
+  // 4. Set base PATH snapshot and apply localDevPath on top (idempotent)
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { setBasePath, applyLocalDevPath } =
+    require('../utils/path-env') as typeof import('../utils/path-env');
+  const localDevPath = (configStore.get('localDevPath') || '').trim();
+  setBasePath(process.env.PATH, localDevPath);
+  applyLocalDevPath(localDevPath);
 }
 
 // Shared pi-ai auth storage — created once, reused across sessions.

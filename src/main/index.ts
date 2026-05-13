@@ -1595,6 +1595,28 @@ ipcMain.handle('config.save', async (_event, newConfig: Partial<AppConfig>) => {
   const previousConfig = configStore.getAll();
   // Update config
   configStore.update(newConfig);
+
+  // If localDevPath changed, re-apply it idempotently via centralized utility
+  if (
+    newConfig.localDevPath !== undefined &&
+    newConfig.localDevPath !== previousConfig.localDevPath
+  ) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { applyLocalDevPath, isBasePathSet } =
+      require('./utils/path-env') as typeof import('./utils/path-env');
+    if (isBasePathSet()) {
+      applyLocalDevPath(newConfig.localDevPath);
+    }
+
+    // Invalidate MCP manager's cached env so next server spawn picks up the change
+    if (sessionManager) {
+      const mcpManager = sessionManager.getMCPManager();
+      if (mcpManager) {
+        mcpManager.invalidateEnvCache();
+      }
+    }
+  }
+
   const updatedConfig = await syncConfigAfterMutation(previousConfig);
 
   return { success: true, config: updatedConfig };
@@ -1696,6 +1718,13 @@ ipcMain.handle('config.discover-local', async (_event, payload?: { baseUrl?: str
     logError('[Config] Error discovering local services:', error);
     return [];
   }
+});
+
+// Environment IPC handlers
+ipcMain.handle('env.getEffectivePath', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getEffectivePath } = require('./utils/path-env') as typeof import('./utils/path-env');
+  return getEffectivePath();
 });
 
 // MCP Server IPC handlers

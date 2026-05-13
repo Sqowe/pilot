@@ -20,6 +20,7 @@ import { app, BrowserWindow } from 'electron';
 import path from 'path';
 import { log, logError, logWarn, logCtx, logCtxError, logTiming } from '../utils/logger';
 import { getDefaultShell } from '../utils/shell-resolver';
+import { configStore } from '../config/config-store';
 
 /**
  * MCP Server Configuration
@@ -273,6 +274,15 @@ export class MCPManager {
   }
 
   /**
+   * Invalidate the cached base environment so the next MCP server spawn
+   * re-resolves PATH (including any updated localDevPath).
+   */
+  invalidateEnvCache(): void {
+    this.cachedBaseEnv = null;
+    log('[MCPManager] Invalidated cached base environment');
+  }
+
+  /**
    * Resolve the base environment (shell env + PATH).
    * Heavy operation — called once, then cached by getEnhancedEnv.
    */
@@ -418,6 +428,29 @@ export class MCPManager {
       // Add bundled path at the beginning
       env.PATH = [nodeBinDir, ...filteredPaths].join(pathDelimiter);
       log(`[MCPManager] Prepended bundled Node.js bin to PATH: ${nodeBinDir}`);
+    }
+
+    // Prepend user-configured local development PATH (highest priority)
+    // Uses the same centralized logic as agent-runner for consistency
+    const localDevPath = (configStore.get('localDevPath') || '').trim();
+    if (localDevPath && env.PATH) {
+      const pathDelimiter = platform === 'win32' ? ';' : ':';
+      const userDirs = localDevPath.split(pathDelimiter).filter((p) => p.trim());
+      if (userDirs.length > 0) {
+        const pathParts = env.PATH.split(pathDelimiter).filter((p) => p.trim());
+        // Platform-aware deduplication: rebuild localDev → rest
+        const seen = new Set<string>(
+          userDirs.map((p) => (platform === 'win32' ? p.toLowerCase() : p))
+        );
+        const filteredPaths = pathParts.filter((p) => {
+          const normalized = platform === 'win32' ? p.toLowerCase() : p;
+          if (seen.has(normalized)) return false;
+          seen.add(normalized);
+          return true;
+        });
+        env.PATH = [...userDirs, ...filteredPaths].join(pathDelimiter);
+        log(`[MCPManager] Prepended localDevPath to PATH: ${userDirs.join(pathDelimiter)}`);
+      }
     }
 
     log(`[MCPManager] Final PATH: ${env.PATH?.substring(0, 150)}...`);

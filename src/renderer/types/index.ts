@@ -791,6 +791,7 @@ export interface AppConfig {
   claudeCodePath?: string;
   defaultWorkdir?: string;
   globalSkillsPath?: string;
+  localDevPath?: string;
   systemPromptFile?: SystemPromptFileChoice;
   // Bash command trust list and denylist. Optional on the renderer side
   // because the Settings bootstrap hydrates them defensively via `?? []`.
