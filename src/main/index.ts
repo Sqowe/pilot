@@ -108,6 +108,15 @@ import {
 import { listRecentWorkspaceFiles } from './utils/recent-workspace-files';
 import { buildDiagnosticsSummary } from './utils/diagnostics-summary';
 import { isValidSystemPromptFileChoice } from '../shared/system-prompt-file-choices';
+import {
+  ensurePromptFiles,
+  loadPromptSections,
+  updatePromptSection,
+  resetPromptSection,
+  togglePromptSection,
+  openPromptsDir,
+  invalidatePromptCache,
+} from './prompts/prompt-loader';
 
 // Current working directory (persisted between sessions)
 let currentWorkingDir: string | null = null;
@@ -891,6 +900,7 @@ app
     setupTray();
 
     // Show window after core managers are ready so first-load actions can be handled.
+    ensurePromptFiles();
     createWindow();
 
     // macOS: dock menu
@@ -2888,7 +2898,11 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
       return sm.getTraceSteps(event.payload.sessionId);
 
     case 'permission.response':
-      return sm.handlePermissionResponse(event.payload.toolUseId, event.payload.result, event.payload.suggestion);
+      return sm.handlePermissionResponse(
+        event.payload.toolUseId,
+        event.payload.result,
+        event.payload.suggestion
+      );
 
     case 'sudo.password.response':
       return sm.handleSudoPasswordResponse(event.payload.toolUseId, event.payload.password);
@@ -3080,6 +3094,32 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
         scheduledTaskManager.resolveCatchUp(event.payload.decisions);
       }
       return null;
+
+    case 'prompt.getSections':
+      // Invalidate cache to pick up external file edits (e.g. via "Open folder")
+      invalidatePromptCache();
+      return loadPromptSections();
+
+    case 'prompt.updateSection':
+      if (event.payload?.filename && typeof event.payload.content === 'string') {
+        return updatePromptSection(event.payload.filename, event.payload.content);
+      }
+      return { success: false, error: 'Invalid payload: filename and content required' };
+
+    case 'prompt.resetSection':
+      if (event.payload?.filename) {
+        return resetPromptSection(event.payload.filename);
+      }
+      return { success: false, error: 'Invalid payload: filename required' };
+
+    case 'prompt.toggleSection':
+      if (event.payload?.filename && typeof event.payload.enabled === 'boolean') {
+        return togglePromptSection(event.payload.filename, event.payload.enabled);
+      }
+      return { success: false, error: 'Invalid payload: filename and enabled required' };
+
+    case 'prompt.getDir':
+      return openPromptsDir();
 
     default:
       logWarn('Unknown event type:', event);

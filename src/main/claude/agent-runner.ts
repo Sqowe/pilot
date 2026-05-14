@@ -67,6 +67,7 @@ import { AgentRuntimeExtensionManager } from '../extensions/agent-runtime-extens
 import { configStore } from '../config/config-store';
 import { setBasePath, applyLocalDevPath } from '../utils/path-env';
 import { loadWorkspaceSystemPrompt } from '../utils/workspace-system-prompt';
+import { assembleUserPrompt } from '../prompts/prompt-loader';
 import { normalizeOpenAICompatibleBaseUrl } from '../config/auth-utils';
 import { resolveMessageEndPayload, toUserFacingErrorText } from './agent-runner-message-end';
 import {
@@ -448,7 +449,10 @@ interface AgentRunnerOptions {
     toolUseId: string,
     toolName: string,
     input: Record<string, unknown>
-  ) => Promise<{ result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion'; suggestion?: string }>;
+  ) => Promise<{
+    result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
+    suggestion?: string;
+  }>;
 }
 
 interface CachedPiSession {
@@ -484,7 +488,10 @@ export class ClaudeAgentRunner {
     toolUseId: string,
     toolName: string,
     input: Record<string, unknown>
-  ) => Promise<{ result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion'; suggestion?: string }>;
+  ) => Promise<{
+    result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
+    suggestion?: string;
+  }>;
   private pathResolver: PathResolver;
   private mcpManager?: MCPManager;
   private _pluginRuntimeService?: PluginRuntimeService;
@@ -952,7 +959,10 @@ RULES:
         }
 
         const toolUseId = `${ctx.toolCall?.id ?? 'unknown'}-perm-${uuidv4().slice(0, 8)}`;
-        let result: { result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion'; suggestion?: string };
+        let result: {
+          result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
+          suggestion?: string;
+        };
         try {
           const rawResult = await requestPermission(sessionId, toolUseId, toolName, input);
           // Normalize: accept both legacy string responses and new object shape.
@@ -960,29 +970,42 @@ RULES:
           if (typeof rawResult === 'string') {
             // Legacy string response — wrap into object
             const validStrings = ['allow', 'deny', 'allow_always', 'deny_with_suggestion'] as const;
-            if (validStrings.includes(rawResult as typeof validStrings[number])) {
-              result = { result: rawResult as typeof validStrings[number] };
+            if (validStrings.includes(rawResult as (typeof validStrings)[number])) {
+              result = { result: rawResult as (typeof validStrings)[number] };
             } else {
               logWarn(
                 `[ClaudeAgentRunner] Unknown legacy permission string '${rawResult}' for '${toolName}' — failing closed`
               );
-              return { block: true, reason: `Permission response invalid for '${toolName}'; tool not executed.` };
+              return {
+                block: true,
+                reason: `Permission response invalid for '${toolName}'; tool not executed.`,
+              };
             }
           } else if (rawResult && typeof rawResult === 'object' && 'result' in rawResult) {
             const validResults = ['allow', 'deny', 'allow_always', 'deny_with_suggestion'] as const;
-            if (validResults.includes((rawResult as { result: string }).result as typeof validResults[number])) {
+            if (
+              validResults.includes(
+                (rawResult as { result: string }).result as (typeof validResults)[number]
+              )
+            ) {
               result = rawResult as typeof result;
             } else {
               logWarn(
                 `[ClaudeAgentRunner] Unknown permission result '${(rawResult as { result: string }).result}' for '${toolName}' — failing closed`
               );
-              return { block: true, reason: `Permission response invalid for '${toolName}'; tool not executed.` };
+              return {
+                block: true,
+                reason: `Permission response invalid for '${toolName}'; tool not executed.`,
+              };
             }
           } else {
             logWarn(
               `[ClaudeAgentRunner] Malformed permission response for '${toolName}' — failing closed`
             );
-            return { block: true, reason: `Permission response malformed for '${toolName}'; tool not executed.` };
+            return {
+              block: true,
+              reason: `Permission response malformed for '${toolName}'; tool not executed.`,
+            };
           }
         } catch (permErr) {
           logError(
@@ -2161,22 +2184,8 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
             : '';
 
       const coworkAppendPrompt = [
-        'You are an Open Cowork assistant. Be concise, accurate, and tool-capable.',
-        `CRITICAL BEHAVIORAL RULES:
-1. CHAT FIRST: By default, respond to the user in plain text within the conversation. Do NOT create, write, or edit files unless the user explicitly asks you to (e.g., "create a file", "write this to...", "edit the code", "save as...", mentions a specific file path, or describes code changes they want applied). For questions, summaries, explanations, analysis, and general conversation — always reply directly in chat text.
-2. When a request is actionable, proceed immediately with reasonable assumptions. If you need clarification, ask briefly in plain text.
-3. For relative time windows like "within two days" in browsing or research tasks, assume the most recent two relevant publication days unless the user explicitly defines another date range.
-4. For bracketed placeholders like [Agent], [Topic], etc., treat the word inside brackets as the literal search keyword unless the user says otherwise.
-5. When given a task, START DOING IT. Do not restate the task, do not list what you will do, do not ask for confirmation. Just execute.`,
+        assembleUserPrompt(),
         workspaceInfoPrompt,
-        `<citation_requirements>
-If your answer uses linkable content from MCP tools, include a "Sources:" section and otherwise use standard Markdown links: [Title](https://claude.ai/chat/URL).
-</citation_requirements>`,
-        `<tool_behavior>
-Tool routing:
-- If user explicitly asks to use Chrome/browser/web navigation, prioritize Chrome MCP tools (mcp__Chrome__*) over generic WebSearch/WebFetch.
-- Use WebSearch/WebFetch only when Chrome MCP is unavailable or the user explicitly asks for generic web search.
-</tool_behavior>`,
         this.getBundledPathHints(),
       ]
         .filter((section): section is string => Boolean(section && section.trim()))

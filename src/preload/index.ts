@@ -63,6 +63,11 @@ const ALLOWED_CLIENT_EVENTS: ReadonlySet<string> = new Set<ClientEvent['type']>(
   'workdir.set',
   'workdir.select',
   'scheduled-task.catch-up-response',
+  'prompt.getSections',
+  'prompt.updateSection',
+  'prompt.resetSection',
+  'prompt.toggleSection',
+  'prompt.getDir',
 ]);
 
 // Expose protected methods that allow the renderer process to use

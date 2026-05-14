@@ -541,14 +541,22 @@ export type ClientEvent =
   | { type: 'session.list'; payload: Record<string, never> }
   | { type: 'session.getMessages'; payload: { sessionId: string } }
   | { type: 'session.getTraceSteps'; payload: { sessionId: string } }
-  | { type: 'permission.response'; payload: { toolUseId: string; result: PermissionResult; suggestion?: string } }
+  | {
+      type: 'permission.response';
+      payload: { toolUseId: string; result: PermissionResult; suggestion?: string };
+    }
   | { type: 'sudo.password.response'; payload: { toolUseId: string; password: string | null } }
   | { type: 'settings.update'; payload: Record<string, unknown> }
   | { type: 'folder.select'; payload: Record<string, never> }
   | { type: 'workdir.get'; payload: Record<string, never> }
   | { type: 'workdir.set'; payload: { path: string; sessionId?: string } }
   | { type: 'workdir.select'; payload: { sessionId?: string; currentPath?: string } }
-  | { type: 'scheduled-task.catch-up-response'; payload: { decisions: CatchUpDecision[] } };
+  | { type: 'scheduled-task.catch-up-response'; payload: { decisions: CatchUpDecision[] } }
+  | { type: 'prompt.getSections'; payload: Record<string, never> }
+  | { type: 'prompt.updateSection'; payload: { filename: string; content: string } }
+  | { type: 'prompt.resetSection'; payload: { filename: string } }
+  | { type: 'prompt.toggleSection'; payload: { filename: string; enabled: boolean } }
+  | { type: 'prompt.getDir'; payload: Record<string, never> };
 
 // Sandbox setup types (app startup)
 export type SandboxSetupPhase =
