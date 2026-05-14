@@ -117,7 +117,7 @@ export function SettingsBashCommands() {
         <p className="text-xs leading-5 text-text-muted">
           {t(
             'bashCommands.denylistDesc',
-            'One pattern per line. Substring-matched. Any command containing a denylist entry always prompts, even if it also matches the trusted list.'
+            'One pattern per line. Word-boundary matched — only triggers when the pattern appears as a distinct word (e.g. "rm" catches "rm -rf" but not "formats"). Any command containing a denylist match always prompts, even if it also matches the trusted list.'
           )}
         </p>
         <textarea

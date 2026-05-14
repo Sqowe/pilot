@@ -226,6 +226,34 @@ function matchesTrustedPrefix(pattern: string, command: string): boolean {
 }
 
 /**
+ * Match a denylist pattern against a sub-command using word-boundary
+ * semantics. The pattern matches only when it appears as a distinct "word"
+ * in the command — i.e. not surrounded by alphanumeric or underscore
+ * characters on either side.
+ *
+ * This prevents false positives like `rm` matching inside `formats` or
+ * `markdown`, while still catching `rm -rf`, `sudo rm`, `(rm ...)`,
+ * `/usr/bin/rm`, etc.
+ *
+ * For patterns that start with `-` (like `--force`), the boundary is
+ * checked only on the left side (must NOT be preceded by a word character)
+ * since flags naturally run into their values without a word boundary on
+ * the right (e.g. `--force-with-lease` should still match `--force`).
+ *
+ * Case-insensitive to stay consistent with the rest of the rule engine.
+ */
+function matchesDenylistPattern(pattern: string, command: string): boolean {
+  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Use negative lookaround for word characters (letters, digits, underscore).
+  // This ensures the pattern is treated as a distinct token regardless of
+  // what delimiter surrounds it (space, /, (, ;, quotes, start/end, etc.).
+  const leftBoundary = '(?<![A-Za-z0-9_])';
+  const rightBoundary = pattern.startsWith('-') ? '' : '(?![A-Za-z0-9_])';
+  const re = new RegExp(leftBoundary + escaped + rightBoundary, 'i');
+  return re.test(command);
+}
+
+/**
  * Shell metacharacters the simple splitter below cannot safely parse. If any
  * of these appear in an *evaluating* context we fail closed — returning null
  * from `decideBashPermission` so the caller falls through to the default
@@ -384,8 +412,7 @@ export function decideBashPermission(command: string): 'allow' | 'ask' | null {
 
   let allTrusted = true;
   for (const sub of subs) {
-    const lower = sub.toLowerCase();
-    if (bashDenylist.some((p) => lower.includes(p.toLowerCase()))) {
+    if (bashDenylist.some((p) => matchesDenylistPattern(p, sub))) {
       return 'ask';
     }
     if (!bashTrustedCommands.some((p) => matchesTrustedPrefix(p, sub))) {
