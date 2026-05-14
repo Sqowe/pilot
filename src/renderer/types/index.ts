@@ -485,7 +485,12 @@ export interface PermissionRequest {
   sessionId: string;
 }
 
-export type PermissionResult = 'allow' | 'deny' | 'allow_always';
+export type PermissionResult = 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
+
+export interface PermissionResponse {
+  result: PermissionResult;
+  suggestion?: string;
+}
 
 // Sudo password types
 export interface SudoPasswordRequest {
@@ -536,7 +541,7 @@ export type ClientEvent =
   | { type: 'session.list'; payload: Record<string, never> }
   | { type: 'session.getMessages'; payload: { sessionId: string } }
   | { type: 'session.getTraceSteps'; payload: { sessionId: string } }
-  | { type: 'permission.response'; payload: { toolUseId: string; result: PermissionResult } }
+  | { type: 'permission.response'; payload: { toolUseId: string; result: PermissionResult; suggestion?: string } }
   | { type: 'sudo.password.response'; payload: { toolUseId: string; password: string | null } }
   | { type: 'settings.update'; payload: Record<string, unknown> }
   | { type: 'folder.select'; payload: Record<string, never> }

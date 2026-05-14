@@ -283,7 +283,33 @@ describe('SessionManager.handlePermissionResponse', () => {
     manager.handlePermissionResponse('tool-1', 'allow');
 
     const result = await permissionPromise;
-    expect(result).toBe('allow');
+    expect(result).toEqual({ result: 'allow', suggestion: undefined });
+  });
+
+  it('propagates deny_with_suggestion and suggestion text', async () => {
+    const db = makeDb();
+    const sendToRenderer = vi.fn();
+    const manager = new SessionManager(db, sendToRenderer);
+
+    const permissionPromise = manager.requestPermission('s1', 'tool-2', 'bash', { command: 'rm -rf /' });
+
+    manager.handlePermissionResponse('tool-2', 'deny_with_suggestion', 'Use the pdf skill instead');
+
+    const result = await permissionPromise;
+    expect(result).toEqual({ result: 'deny_with_suggestion', suggestion: 'Use the pdf skill instead' });
+  });
+
+  it('returns deny without suggestion when no suggestion is provided', async () => {
+    const db = makeDb();
+    const sendToRenderer = vi.fn();
+    const manager = new SessionManager(db, sendToRenderer);
+
+    const permissionPromise = manager.requestPermission('s1', 'tool-3', 'bash', { command: 'ls' });
+
+    manager.handlePermissionResponse('tool-3', 'deny');
+
+    const result = await permissionPromise;
+    expect(result).toEqual({ result: 'deny', suggestion: undefined });
   });
 
   it('is a no-op when the toolUseId is unknown', () => {

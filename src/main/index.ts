@@ -2888,7 +2888,7 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
       return sm.getTraceSteps(event.payload.sessionId);
 
     case 'permission.response':
-      return sm.handlePermissionResponse(event.payload.toolUseId, event.payload.result);
+      return sm.handlePermissionResponse(event.payload.toolUseId, event.payload.result, event.payload.suggestion);
 
     case 'sudo.password.response':
       return sm.handleSudoPasswordResponse(event.payload.toolUseId, event.payload.password);

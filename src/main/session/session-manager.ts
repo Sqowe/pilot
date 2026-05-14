@@ -19,6 +19,7 @@ import type {
   Message,
   ServerEvent,
   PermissionResult,
+  PermissionResponse,
   ContentBlock,
   TextContent,
   TraceStep,
@@ -80,7 +81,7 @@ export class SessionManager {
   private activeSessions: Map<string, AbortController> = new Map();
   private promptQueues: Map<string, Array<{ prompt: string; content?: ContentBlock[] }>> =
     new Map();
-  private pendingPermissions: Map<string, (result: PermissionResult) => void> = new Map();
+  private pendingPermissions: Map<string, (result: PermissionResult, suggestion?: string) => void> = new Map();
   private pendingSudoPasswords: Map<
     string,
     { sessionId: string; resolve: (password: string | null) => void }
@@ -1208,10 +1209,10 @@ export class SessionManager {
   }
 
   // Handle permission response
-  handlePermissionResponse(toolUseId: string, result: PermissionResult): void {
+  handlePermissionResponse(toolUseId: string, result: PermissionResult, suggestion?: string): void {
     const resolver = this.pendingPermissions.get(toolUseId);
     if (resolver) {
-      resolver(result);
+      resolver(result, suggestion);
       this.pendingPermissions.delete(toolUseId);
     }
   }
@@ -1222,7 +1223,7 @@ export class SessionManager {
     toolUseId: string,
     toolName: string,
     input: Record<string, unknown>
-  ): Promise<PermissionResult> {
+  ): Promise<PermissionResponse> {
     return new Promise((resolve) => {
       const timeoutSeconds = configStore.get('permissionTimeoutSeconds');
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -1230,14 +1231,14 @@ export class SessionManager {
       if (timeoutSeconds > 0) {
         timeoutId = setTimeout(() => {
           this.pendingPermissions.delete(toolUseId);
-          resolve('deny');
+          resolve({ result: 'deny' });
           this.sendToRenderer({ type: 'permission.dismiss', payload: { toolUseId } });
         }, timeoutSeconds * 1000);
       }
 
-      this.pendingPermissions.set(toolUseId, (result: PermissionResult) => {
+      this.pendingPermissions.set(toolUseId, (result: PermissionResult, suggestion?: string) => {
         if (timeoutId !== null) clearTimeout(timeoutId);
-        resolve(result);
+        resolve({ result, suggestion });
       });
       this.sendToRenderer({
         type: 'permission.request',

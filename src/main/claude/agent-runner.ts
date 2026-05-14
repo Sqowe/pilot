@@ -448,7 +448,7 @@ interface AgentRunnerOptions {
     toolUseId: string,
     toolName: string,
     input: Record<string, unknown>
-  ) => Promise<'allow' | 'deny' | 'allow_always'>;
+  ) => Promise<{ result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion'; suggestion?: string }>;
 }
 
 interface CachedPiSession {
@@ -484,7 +484,7 @@ export class ClaudeAgentRunner {
     toolUseId: string,
     toolName: string,
     input: Record<string, unknown>
-  ) => Promise<'allow' | 'deny' | 'allow_always'>;
+  ) => Promise<{ result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion'; suggestion?: string }>;
   private pathResolver: PathResolver;
   private mcpManager?: MCPManager;
   private _pluginRuntimeService?: PluginRuntimeService;
@@ -952,9 +952,38 @@ RULES:
         }
 
         const toolUseId = `${ctx.toolCall?.id ?? 'unknown'}-perm-${uuidv4().slice(0, 8)}`;
-        let result: 'allow' | 'deny' | 'allow_always';
+        let result: { result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion'; suggestion?: string };
         try {
-          result = await requestPermission(sessionId, toolUseId, toolName, input);
+          const rawResult = await requestPermission(sessionId, toolUseId, toolName, input);
+          // Normalize: accept both legacy string responses and new object shape.
+          // Fail-closed on malformed/unknown values.
+          if (typeof rawResult === 'string') {
+            // Legacy string response — wrap into object
+            const validStrings = ['allow', 'deny', 'allow_always', 'deny_with_suggestion'] as const;
+            if (validStrings.includes(rawResult as typeof validStrings[number])) {
+              result = { result: rawResult as typeof validStrings[number] };
+            } else {
+              logWarn(
+                `[ClaudeAgentRunner] Unknown legacy permission string '${rawResult}' for '${toolName}' — failing closed`
+              );
+              return { block: true, reason: `Permission response invalid for '${toolName}'; tool not executed.` };
+            }
+          } else if (rawResult && typeof rawResult === 'object' && 'result' in rawResult) {
+            const validResults = ['allow', 'deny', 'allow_always', 'deny_with_suggestion'] as const;
+            if (validResults.includes((rawResult as { result: string }).result as typeof validResults[number])) {
+              result = rawResult as typeof result;
+            } else {
+              logWarn(
+                `[ClaudeAgentRunner] Unknown permission result '${(rawResult as { result: string }).result}' for '${toolName}' — failing closed`
+              );
+              return { block: true, reason: `Permission response invalid for '${toolName}'; tool not executed.` };
+            }
+          } else {
+            logWarn(
+              `[ClaudeAgentRunner] Malformed permission response for '${toolName}' — failing closed`
+            );
+            return { block: true, reason: `Permission response malformed for '${toolName}'; tool not executed.` };
+          }
         } catch (permErr) {
           logError(
             `[ClaudeAgentRunner] Permission request failed for '${toolName}' — failing closed`,
@@ -966,12 +995,21 @@ RULES:
           };
         }
 
-        if (result === 'deny') {
+        if (result.result === 'deny') {
           log(`[ClaudeAgentRunner] Tool '${toolName}' denied by user`);
           return { block: true, reason: `User denied permission for '${toolName}'.` };
         }
 
-        if (result === 'allow_always') {
+        if (result.result === 'deny_with_suggestion') {
+          log(`[ClaudeAgentRunner] Tool '${toolName}' denied by user with suggestion`);
+          const suggestion = result.suggestion || '';
+          return {
+            block: true,
+            reason: `User denied permission for '${toolName}'. User's suggestion: ${suggestion}`,
+          };
+        }
+
+        if (result.result === 'allow_always') {
           rememberAlwaysAllow(sessionId, toolName);
         }
       }

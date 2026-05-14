@@ -746,10 +746,10 @@ export function useIPC() {
   );
 
   const respondToPermission = useCallback(
-    (toolUseId: string, result: PermissionResult) => {
+    (toolUseId: string, result: PermissionResult, suggestion?: string) => {
       send({
         type: 'permission.response',
-        payload: { toolUseId, result },
+        payload: { toolUseId, result, suggestion },
       });
       setPendingPermission(null);
     },
