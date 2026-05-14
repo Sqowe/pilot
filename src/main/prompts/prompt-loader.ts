@@ -12,11 +12,21 @@
  *   - tool-routing.md
  *   - _meta.json (tracks enabled/disabled state)
  *
+ * Workspace overrides: {cwd}/.cowork/prompts/
+ *   - If a file with the same name exists here, it completely replaces
+ *     the global section for sessions in that workspace.
+ *
+ * Template variables (resolved at assembly time):
+ *   - {{cwd}} — current working directory
+ *   - {{project_name}} — basename of cwd
+ *   - {{date}} — current date (YYYY-MM-DD)
+ *   - {{model}} — active model name
+ *
  * Dynamic sections (workspace info, bundled path hints) remain in code
  * because they depend on runtime state.
  *
- * Performance: Sections are cached in memory after first load. Cache is
- * invalidated on update/reset/toggle operations.
+ * Performance: Uses mtime+size fingerprinting — checks file stats (fast
+ * syscall) and only re-reads content when files have changed.
  */
 
 import * as fs from 'fs';
@@ -71,6 +81,7 @@ let cachedSections: PromptSection[] | null = null;
 function invalidateCache(): void {
   cachedSections = null;
   assembledPromptCache = null;
+  assembledPromptCacheKey = '';
   assembledPromptMtimes = new Map();
 }
 
@@ -231,10 +242,11 @@ export function loadPromptSections(): PromptSection[] {
  * while still reflecting external edits promptly.
  */
 let assembledPromptCache: string | null = null;
+let assembledPromptCacheKey: string = '';
 let assembledPromptMtimes: Map<string, string> = new Map();
 
 /** Build a fingerprint combining mtime + size for robust change detection. */
-function getFileFingerprints(): Map<string, string> {
+function getFileFingerprints(cwd?: string): Map<string, string> {
   const dir = getPromptsDir();
   const fingerprints = new Map<string, string>();
   for (const filename of SECTION_ORDER) {
@@ -252,6 +264,18 @@ function getFileFingerprints(): Map<string, string> {
   } catch {
     fingerprints.set('_meta.json', '0:0');
   }
+  // Check workspace override files
+  if (cwd) {
+    const wsDir = path.join(cwd, '.cowork', 'prompts');
+    for (const filename of SECTION_ORDER) {
+      try {
+        const stat = fs.statSync(path.join(wsDir, filename));
+        fingerprints.set(`ws:${filename}`, `${stat.mtimeMs}:${stat.size}`);
+      } catch {
+        fingerprints.set(`ws:${filename}`, '0:0');
+      }
+    }
+  }
   return fingerprints;
 }
 
@@ -263,10 +287,61 @@ function fingerprintsChanged(current: Map<string, string>): boolean {
   return false;
 }
 
-export function assembleUserPrompt(): string {
-  const currentFingerprints = getFileFingerprints();
+// --- Workspace overrides ---
 
-  if (assembledPromptCache !== null && !fingerprintsChanged(currentFingerprints)) {
+/**
+ * Read a workspace-level prompt override file.
+ * Returns file content if it exists, null otherwise.
+ */
+function readWorkspaceOverride(workspacePromptsDir: string, filename: string): string | null {
+  try {
+    const filePath = path.join(workspacePromptsDir, filename);
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, 'utf-8');
+    }
+  } catch {
+    // Workspace override not readable — fall through to global
+  }
+  return null;
+}
+
+// --- Template variables ---
+
+/**
+ * Resolve template variables in prompt content.
+ * Supported: {{cwd}}, {{project_name}}, {{date}}, {{model}}
+ */
+function resolveTemplateVariables(content: string, ctx?: PromptAssemblyContext): string {
+  if (!content.includes('{{')) return content;
+
+  const cwd = ctx?.cwd || '';
+  const projectName = cwd ? path.basename(cwd) : '';
+  const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const model = ctx?.model || '';
+
+  return content
+    .replace(/\{\{cwd\}\}/g, cwd)
+    .replace(/\{\{project_name\}\}/g, projectName)
+    .replace(/\{\{date\}\}/g, date)
+    .replace(/\{\{model\}\}/g, model);
+}
+
+export interface PromptAssemblyContext {
+  cwd?: string;
+  model?: string;
+}
+
+export function assembleUserPrompt(ctx?: PromptAssemblyContext): string {
+  const cwd = ctx?.cwd || '';
+  const model = ctx?.model || '';
+  const currentFingerprints = getFileFingerprints(cwd);
+  const cacheKey = `${cwd}:${model}`;
+
+  if (
+    assembledPromptCache !== null &&
+    assembledPromptCacheKey === cacheKey &&
+    !fingerprintsChanged(currentFingerprints)
+  ) {
     return assembledPromptCache;
   }
 
@@ -277,31 +352,41 @@ export function assembleUserPrompt(): string {
     const parts = SECTION_ORDER.filter((f) => !meta.disabled.includes(f))
       .map((f) => DEFAULT_SECTIONS[f] ?? '')
       .filter((c) => c.trim());
-    return parts.join('\n\n');
+    return resolveTemplateVariables(parts.join('\n\n'), ctx);
   }
 
   const dir = getPromptsDir();
   const meta = loadMeta();
+  const workspacePromptsDir = cwd ? path.join(cwd, '.cowork', 'prompts') : null;
 
   const parts: string[] = [];
   for (const filename of SECTION_ORDER) {
     if (meta.disabled.includes(filename)) continue;
-    const filePath = path.join(dir, filename);
-    try {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      if (content.trim()) {
-        parts.push(content);
+
+    // Check workspace override first (Option A: full replace)
+    let content: string | null = null;
+    if (workspacePromptsDir) {
+      content = readWorkspaceOverride(workspacePromptsDir, filename);
+    }
+
+    // Fall back to global section
+    if (content === null) {
+      const filePath = path.join(dir, filename);
+      try {
+        content = fs.readFileSync(filePath, 'utf-8');
+      } catch {
+        content = DEFAULT_SECTIONS[filename] ?? '';
       }
-    } catch {
-      // File missing — use default
-      const defaultContent = DEFAULT_SECTIONS[filename] ?? '';
-      if (defaultContent.trim()) {
-        parts.push(defaultContent);
-      }
+    }
+
+    if (content.trim()) {
+      parts.push(content);
     }
   }
 
-  assembledPromptCache = parts.join('\n\n');
+  const assembled = resolveTemplateVariables(parts.join('\n\n'), ctx);
+  assembledPromptCache = assembled;
+  assembledPromptCacheKey = cacheKey;
   assembledPromptMtimes = currentFingerprints;
   return assembledPromptCache;
 }

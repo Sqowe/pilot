@@ -2184,7 +2184,7 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
             : '';
 
       const coworkAppendPrompt = [
-        assembleUserPrompt(),
+        assembleUserPrompt({ cwd: effectiveCwd, model: piModel.id }),
         workspaceInfoPrompt,
         this.getBundledPathHints(),
       ]

@@ -192,6 +192,145 @@ describe('prompt-loader', () => {
     });
   });
 
+  describe('workspace overrides', () => {
+    it('workspace file replaces global section entirely', () => {
+      ensurePromptFiles();
+      const workspaceDir = path.join(testUserDataDir, 'workspace');
+      const wsPromptsDir = path.join(workspaceDir, '.cowork', 'prompts');
+      fs.mkdirSync(wsPromptsDir, { recursive: true });
+      fs.writeFileSync(path.join(wsPromptsDir, 'identity.md'), 'You are a Python expert.', 'utf-8');
+
+      invalidatePromptCache();
+      const prompt = assembleUserPrompt({ cwd: workspaceDir });
+
+      expect(prompt).toContain('You are a Python expert.');
+      expect(prompt).not.toContain('Open Cowork assistant');
+      // Other sections still come from global
+      expect(prompt).toContain('CRITICAL BEHAVIORAL RULES');
+    });
+
+    it('non-existent workspace override falls back to global', () => {
+      ensurePromptFiles();
+      const workspaceDir = path.join(testUserDataDir, 'workspace-no-overrides');
+      fs.mkdirSync(workspaceDir, { recursive: true });
+
+      invalidatePromptCache();
+      const prompt = assembleUserPrompt({ cwd: workspaceDir });
+
+      expect(prompt).toContain('Open Cowork assistant');
+    });
+
+    it('workspace override for one section does not affect others', () => {
+      ensurePromptFiles();
+      const workspaceDir = path.join(testUserDataDir, 'workspace2');
+      const wsPromptsDir = path.join(workspaceDir, '.cowork', 'prompts');
+      fs.mkdirSync(wsPromptsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(wsPromptsDir, 'citations.md'),
+        'Custom citation rules for this project.',
+        'utf-8'
+      );
+
+      invalidatePromptCache();
+      const prompt = assembleUserPrompt({ cwd: workspaceDir });
+
+      expect(prompt).toContain('Custom citation rules for this project.');
+      expect(prompt).not.toContain('<citation_requirements>');
+      expect(prompt).toContain('Open Cowork assistant');
+      expect(prompt).toContain('<tool_behavior>');
+    });
+
+    it('disabled section is not loaded even if workspace override exists', () => {
+      ensurePromptFiles();
+      togglePromptSection('identity.md', false);
+
+      const workspaceDir = path.join(testUserDataDir, 'workspace3');
+      const wsPromptsDir = path.join(workspaceDir, '.cowork', 'prompts');
+      fs.mkdirSync(wsPromptsDir, { recursive: true });
+      fs.writeFileSync(path.join(wsPromptsDir, 'identity.md'), 'Should not appear', 'utf-8');
+
+      invalidatePromptCache();
+      const prompt = assembleUserPrompt({ cwd: workspaceDir });
+
+      expect(prompt).not.toContain('Should not appear');
+      expect(prompt).not.toContain('Open Cowork assistant');
+    });
+  });
+
+  describe('template variables', () => {
+    it('resolves {{cwd}} in prompt content', () => {
+      ensurePromptFiles();
+      const promptsDir = path.join(testUserDataDir, 'prompts');
+      fs.writeFileSync(path.join(promptsDir, 'identity.md'), 'Working in {{cwd}}', 'utf-8');
+
+      invalidatePromptCache();
+      const prompt = assembleUserPrompt({ cwd: '/Users/test/my-project' });
+
+      expect(prompt).toContain('Working in /Users/test/my-project');
+      expect(prompt).not.toContain('{{cwd}}');
+    });
+
+    it('resolves {{project_name}} to basename of cwd', () => {
+      ensurePromptFiles();
+      const promptsDir = path.join(testUserDataDir, 'prompts');
+      fs.writeFileSync(path.join(promptsDir, 'identity.md'), 'Project: {{project_name}}', 'utf-8');
+
+      invalidatePromptCache();
+      const prompt = assembleUserPrompt({ cwd: '/Users/test/my-awesome-project' });
+
+      expect(prompt).toContain('Project: my-awesome-project');
+    });
+
+    it('resolves {{model}} to the active model name', () => {
+      ensurePromptFiles();
+      const promptsDir = path.join(testUserDataDir, 'prompts');
+      fs.writeFileSync(path.join(promptsDir, 'identity.md'), 'Using model: {{model}}', 'utf-8');
+
+      invalidatePromptCache();
+      const prompt = assembleUserPrompt({ cwd: '/tmp', model: 'claude-sonnet-4' });
+
+      expect(prompt).toContain('Using model: claude-sonnet-4');
+    });
+
+    it('resolves {{date}} to current date in YYYY-MM-DD format', () => {
+      ensurePromptFiles();
+      const promptsDir = path.join(testUserDataDir, 'prompts');
+      fs.writeFileSync(path.join(promptsDir, 'identity.md'), 'Today is {{date}}', 'utf-8');
+
+      invalidatePromptCache();
+      const prompt = assembleUserPrompt({ cwd: '/tmp' });
+
+      const today = new Date().toISOString().split('T')[0];
+      expect(prompt).toContain(`Today is ${today}`);
+    });
+
+    it('leaves content unchanged when no template variables present', () => {
+      ensurePromptFiles();
+      const prompt = assembleUserPrompt({ cwd: '/tmp', model: 'test' });
+
+      // Default content has no {{...}} so should be unchanged
+      expect(prompt).toContain('Open Cowork assistant');
+      expect(prompt).not.toContain('{{');
+    });
+
+    it('resolves variables in workspace override files too', () => {
+      ensurePromptFiles();
+      const workspaceDir = path.join(testUserDataDir, 'ws-templates');
+      const wsPromptsDir = path.join(workspaceDir, '.cowork', 'prompts');
+      fs.mkdirSync(wsPromptsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(wsPromptsDir, 'identity.md'),
+        'You are helping with {{project_name}} using {{model}}.',
+        'utf-8'
+      );
+
+      invalidatePromptCache();
+      const prompt = assembleUserPrompt({ cwd: workspaceDir, model: 'gpt-4o' });
+
+      expect(prompt).toContain(`You are helping with ws-templates using gpt-4o.`);
+    });
+  });
+
   describe('updatePromptSection', () => {
     it('updates section content on disk', () => {
       ensurePromptFiles();
