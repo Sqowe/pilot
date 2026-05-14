@@ -1224,13 +1224,19 @@ export class SessionManager {
     input: Record<string, unknown>
   ): Promise<PermissionResult> {
     return new Promise((resolve) => {
-      const timeoutId = setTimeout(() => {
-        this.pendingPermissions.delete(toolUseId);
-        resolve('deny');
-        this.sendToRenderer({ type: 'permission.dismiss', payload: { toolUseId } });
-      }, 60_000);
+      const timeoutSeconds = configStore.get('permissionTimeoutSeconds');
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+      if (timeoutSeconds > 0) {
+        timeoutId = setTimeout(() => {
+          this.pendingPermissions.delete(toolUseId);
+          resolve('deny');
+          this.sendToRenderer({ type: 'permission.dismiss', payload: { toolUseId } });
+        }, timeoutSeconds * 1000);
+      }
+
       this.pendingPermissions.set(toolUseId, (result: PermissionResult) => {
-        clearTimeout(timeoutId);
+        if (timeoutId !== null) clearTimeout(timeoutId);
         resolve(result);
       });
       this.sendToRenderer({
@@ -1247,15 +1253,21 @@ export class SessionManager {
     command: string
   ): Promise<string | null> {
     return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        this.pendingSudoPasswords.delete(toolUseId);
-        resolve(null);
-        this.sendToRenderer({ type: 'sudo.password.dismiss', payload: { toolUseId } });
-      }, 60_000);
+      const timeoutSeconds = configStore.get('permissionTimeoutSeconds');
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+      if (timeoutSeconds > 0) {
+        timeoutId = setTimeout(() => {
+          this.pendingSudoPasswords.delete(toolUseId);
+          resolve(null);
+          this.sendToRenderer({ type: 'sudo.password.dismiss', payload: { toolUseId } });
+        }, timeoutSeconds * 1000);
+      }
+
       this.pendingSudoPasswords.set(toolUseId, {
         sessionId,
         resolve: (password: string | null) => {
-          clearTimeout(timeout);
+          if (timeoutId !== null) clearTimeout(timeoutId);
           resolve(password);
         },
       });

@@ -3008,6 +3008,24 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
             },
           });
         }
+
+        // Permission timeout setting
+        const hasOwnPerm = (key: string): boolean =>
+          Object.prototype.hasOwnProperty.call(event.payload, key);
+        if (hasOwnPerm('permissionTimeoutSeconds')) {
+          const val = (event.payload as Record<string, unknown>).permissionTimeoutSeconds;
+          if (typeof val === 'number' && Number.isFinite(val) && val >= 0) {
+            const normalized = val <= 0 ? 0 : Math.max(10, Math.min(3600, Math.floor(val)));
+            configStore.update({ permissionTimeoutSeconds: normalized });
+            sendToRenderer({
+              type: 'config.status',
+              payload: {
+                isConfigured: configStore.isConfigured(),
+                config: configStore.getAll(),
+              },
+            });
+          }
+        }
       }
 
       // Permission-related settings are gated behind a single object-guard

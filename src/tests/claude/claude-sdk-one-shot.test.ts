@@ -66,6 +66,7 @@ function makeConfig(): AppConfig {
     schedulerCatchUpPolicy: 'ask',
     schedulerConflictPolicy: 'queue',
     schedulerRunHistoryDepth: 10,
+    permissionTimeoutSeconds: 300,
     isConfigured: true,
   };
 }

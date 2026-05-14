@@ -155,6 +155,10 @@ export interface AppConfig {
   schedulerCatchUpPolicy: 'skip' | 'run-once' | 'run-all' | 'ask';
   schedulerConflictPolicy: 'queue' | 'skip-if-busy';
   schedulerRunHistoryDepth: number;
+
+  // Permission dialog timeout in seconds.
+  // 0 means infinite (no timeout — wait forever for user response).
+  permissionTimeoutSeconds: number;
 }
 
 export interface MemoryModelRuntimeConfig {
@@ -317,6 +321,7 @@ const defaultConfig: AppConfig = {
   schedulerCatchUpPolicy: 'ask',
   schedulerConflictPolicy: 'queue',
   schedulerRunHistoryDepth: 10,
+  permissionTimeoutSeconds: 300,
 };
 
 export const PROVIDER_PRESETS = API_PROVIDER_PRESETS;
@@ -414,6 +419,22 @@ function normalizeRunHistoryDepth(value: unknown): number {
   if (clamped < 1) return 1;
   if (clamped > 100) return 100;
   return clamped;
+}
+
+/**
+ * Normalize permission timeout. 0 means infinite (no timeout).
+ * Any positive integer is the timeout in seconds (min 10s to avoid accidental
+ * instant-deny, max 3600s = 1 hour).
+ */
+function normalizePermissionTimeout(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return defaultConfig.permissionTimeoutSeconds;
+  }
+  const rounded = Math.floor(value);
+  if (rounded <= 0) return 0; // infinite
+  if (rounded < 10) return 10; // minimum 10 seconds
+  if (rounded > 3600) return 3600; // maximum 1 hour
+  return rounded;
 }
 
 /**
@@ -1065,6 +1086,7 @@ export class ConfigStore {
         ? raw.schedulerConflictPolicy
         : defaultConfig.schedulerConflictPolicy,
       schedulerRunHistoryDepth: normalizeRunHistoryDepth(raw.schedulerRunHistoryDepth),
+      permissionTimeoutSeconds: normalizePermissionTimeout(raw.permissionTimeoutSeconds),
     };
     this.normalizeModelIds(result);
     return result;

@@ -684,6 +684,8 @@ export interface Settings {
   schedulerCatchUpPolicy?: CatchUpPolicy;
   schedulerConflictPolicy?: ConflictPolicy;
   schedulerRunHistoryDepth?: number;
+  // Permission dialog timeout in seconds. 0 = infinite (no timeout).
+  permissionTimeoutSeconds?: number;
 }
 
 // Tool types
