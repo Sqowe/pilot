@@ -997,7 +997,10 @@ RULES:
 
         if (result.result === 'deny') {
           log(`[ClaudeAgentRunner] Tool '${toolName}' denied by user`);
-          return { block: true, reason: `User denied permission for '${toolName}'.` };
+          return {
+            block: true,
+            reason: `User denied THIS SPECIFIC invocation of '${toolName}'. The tool '${toolName}' is NOT globally blocked — only this particular call was rejected. You may still use '${toolName}' for other purposes.`,
+          };
         }
 
         if (result.result === 'deny_with_suggestion') {
@@ -1005,7 +1008,7 @@ RULES:
           const suggestion = result.suggestion || '';
           return {
             block: true,
-            reason: `User denied permission for '${toolName}'. User's suggestion: ${suggestion}`,
+            reason: `User denied THIS SPECIFIC invocation of '${toolName}'. The tool '${toolName}' is NOT globally blocked — only this particular call was rejected. You may still use '${toolName}' for other purposes. User's suggestion: ${suggestion}`,
           };
         }
 
