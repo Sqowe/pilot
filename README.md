@@ -225,6 +225,8 @@ Open Cowork ships with built-in skills under `.claude/skills/`, and supports use
 This is the **Sqowe** variant of Open Cowork. It tracks upstream functionality and adds the following on top:
 
 - **Bash Command Restrictions**: A configurable allow/deny engine that gates every bash command the agent runs. Trusted patterns run automatically, denied patterns always prompt, and everything else requires explicit approval. See [BASH_COMMAND_RESTRICTIONS.md](BASH_COMMAND_RESTRICTIONS.md) for configuration details, pattern syntax, and edge cases.
+- **Configurable Permission Timeout**: Permission dialogs auto-deny after a configurable timeout (default: 5 minutes). Set to 0 for infinite wait. Configurable in Settings → Bash Commands.
+- **Customizable System Prompt**: The AI's system prompt is fully editable via Settings → System Prompt. Each section (identity, behavioral rules, citations, tool routing) is a separate file that can be independently edited, disabled, or reset. Workspace-level overrides in `.cowork/prompts/` replace global sections per-project. Template variables (`{{cwd}}`, `{{project_name}}`, `{{date}}`, `{{model}}`) are resolved at runtime.
 
 ---
 

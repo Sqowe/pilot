@@ -63,7 +63,7 @@ export default defineConfig({
         operatingSystem: 'Windows, macOS',
         offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
         license: 'https://opensource.org/licenses/MIT',
-        softwareVersion: '3.3.0-sqowe.4',
+        softwareVersion: '3.3.0-sqowe.5',
         author: {
           '@type': 'Organization',
           name: 'OpenCoworkAI',

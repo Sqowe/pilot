@@ -10,7 +10,7 @@ structure, boundaries, and where to find authoritative coding rules. This docume
 does NOT define coding rules — it points to them (see Section 8).
 
 Target audience: AI coding assistants and new human contributors.
-Last updated: 2026-05-12.
+Last updated: 2026-05-14.
 
 ---
 
@@ -72,6 +72,7 @@ open-cowork/
 │   │   ├── db/                 # SQLite persistence (better-sqlite3)
 │   │   ├── mcp/               # MCP manager + GUI-operate server
 │   │   ├── memory/            # Memory system (experimental)
+│   │   ├── prompts/           # System prompt loader (editable sections)
 │   │   ├── remote/            # Feishu/Slack remote channels
 │   │   ├── sandbox/           # WSL2/Lima/Native execution adapters
 │   │   ├── schedule/          # Anacron-style task scheduling (v2)
@@ -146,6 +147,41 @@ but UI toggle is hidden pending stabilization.
 Security layers: PathGuard (blocks escape from session dir), path containment
 (`isPathWithinRoot`), permission hooks (trust/denylist for bash), workspace path constraints.
 
+### 4.5 System Prompt (`src/main/prompts/`)
+
+The AI's system prompt is assembled from user-editable section files stored in
+`{userData}/prompts/`. This is a key customization feature — users can modify the AI's
+personality, behavioral rules, and tool routing without touching code.
+
+**Architecture:**
+
+```
+Global sections:  {userData}/prompts/
+                  ├── identity.md
+                  ├── behavioral-rules.md
+                  ├── citations.md
+                  ├── tool-routing.md
+                  └── _meta.json (enabled/disabled state)
+
+Workspace overrides:  {cwd}/.cowork/prompts/
+                      └── identity.md (replaces global identity.md)
+```
+
+**Assembly order:** identity → behavioral-rules → citations → tool-routing → workspace-info
+(dynamic) → bundled-path-hints (dynamic).
+
+**Workspace overrides (Option A):** If `{cwd}/.cowork/prompts/{section}.md` exists, it
+completely replaces the corresponding global section for that workspace.
+
+**Template variables:** `{{cwd}}`, `{{project_name}}`, `{{date}}`, `{{model}}` are resolved
+at assembly time.
+
+**Performance:** Uses mtime+size fingerprinting — checks file stats on each message (fast
+syscall), only re-reads content when files have changed. Prompt files are read by the main
+process on the host, never inside the sandbox.
+
+Key file: `prompt-loader.ts`. Settings UI: `SettingsPrompt.tsx`.
+
 ---
 
 ## 5. Data Flow & Runtime Model
@@ -214,6 +250,7 @@ Environment variables (`.env.example`): `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | ✅ **Stable**       | Renderer UI, Config Store, IPC bridge, Session management, i18n, electron-updater, Skills loader, MCP Manager (stdio/SSE) | Production-ready, low risk                                   |
 | ✅ **Stable**       | Bash permission engine (trust/denylist), Path containment                                                                 | Security-critical, well-tested                               |
+| ✅ **Stable**       | System prompt loader (editable sections, workspace overrides, template variables)                                         | 46 tests, file-based, no external deps                       |
 | 🔄 **Semi-Stable**  | `ClaudeAgentRunner` + pi-coding-agent integration                                                                         | Functional but coupled to pre-1.0 SDK; breaks on Pi upgrades |
 | 🔄 **Semi-Stable**  | Remote channels (Feishu/Slack), GUI-operate server                                                                        | Working but APIs evolve; Feishu SDK updates frequently       |
 | 🔄 **Semi-Stable**  | SQLite persistence layer                                                                                                  | Schema may evolve with memory system                         |
