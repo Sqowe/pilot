@@ -12,6 +12,7 @@ import {
   Terminal,
   ChevronRight,
   BrainCircuit,
+  MessageSquareText,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useWindowSize } from '../hooks/useWindowSize';
@@ -26,6 +27,7 @@ import { SettingsGeneral } from './settings/SettingsGeneral';
 import { SettingsLogs } from './settings/SettingsLogs';
 import { SettingsBashCommands } from './settings/SettingsBashCommands';
 import { SettingsMemory } from './settings/SettingsMemory';
+import { SettingsPrompt } from './settings/SettingsPrompt';
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -39,7 +41,8 @@ interface SettingsPanelProps {
     | 'remote'
     | 'logs'
     | 'general'
-    | 'bashCommands';
+    | 'bashCommands'
+    | 'prompt';
 }
 
 type TabId =
@@ -52,7 +55,8 @@ type TabId =
   | 'remote'
   | 'logs'
   | 'general'
-  | 'bashCommands';
+  | 'bashCommands'
+  | 'prompt';
 
 const VALID_TABS = new Set<TabId>([
   'api',
@@ -65,6 +69,7 @@ const VALID_TABS = new Set<TabId>([
   'logs',
   'general',
   'bashCommands',
+  'prompt',
 ]);
 
 export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProps) {
@@ -161,6 +166,12 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
       label: t('settings.general'),
       icon: Globe,
       description: t('settings.generalDesc'),
+    },
+    {
+      id: 'prompt' as TabId,
+      label: t('settings.prompt', 'System Prompt'),
+      icon: MessageSquareText,
+      description: t('settings.promptDesc', 'AI instructions and workspace prompt file'),
     },
     {
       id: 'bashCommands' as TabId,
@@ -295,6 +306,9 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
               </div>
               <div className={activeTab === 'general' ? '' : 'hidden'}>
                 {viewedTabs.has('general') && <SettingsGeneral />}
+              </div>
+              <div className={activeTab === 'prompt' ? '' : 'hidden'}>
+                {viewedTabs.has('prompt') && <SettingsPrompt />}
               </div>
               <div className={activeTab === 'bashCommands' ? '' : 'hidden'}>
                 {viewedTabs.has('bashCommands') && <SettingsBashCommands />}
