@@ -1532,6 +1532,10 @@ export class ConfigStore {
         updates.schedulerRunHistoryDepth !== undefined
           ? updates.schedulerRunHistoryDepth
           : current.schedulerRunHistoryDepth,
+      permissionTimeoutSeconds:
+        updates.permissionTimeoutSeconds !== undefined
+          ? normalizePermissionTimeout(updates.permissionTimeoutSeconds)
+          : current.permissionTimeoutSeconds,
     });
   }
 
