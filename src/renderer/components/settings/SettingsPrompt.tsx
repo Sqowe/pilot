@@ -40,6 +40,7 @@ export function SettingsPrompt() {
   const [editDrafts, setEditDrafts] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [showResetAllConfirm, setShowResetAllConfirm] = useState(false);
+  const [pendingResetSection, setPendingResetSection] = useState<string | null>(null);
   const sectionsRef = useRef<PromptSection[]>([]);
   const draftsRef = useRef<Record<string, string>>({});
 
@@ -255,14 +256,34 @@ export function SettingsPrompt() {
                   </button>
 
                   <div className="flex items-center gap-1.5">
-                    {!section.isDefault && (
+                    {!section.isDefault && pendingResetSection !== section.filename && (
                       <button
-                        onClick={() => handleReset(section.filename)}
+                        onClick={() => setPendingResetSection(section.filename)}
                         className="p-1 rounded hover:bg-surface text-text-muted hover:text-warning transition-colors"
                         title={t('prompt.resetToDefault', 'Reset to default')}
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
                       </button>
+                    )}
+                    {pendingResetSection === section.filename && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            handleReset(section.filename);
+                            setPendingResetSection(null);
+                          }}
+                          className="px-1.5 py-0.5 text-[10px] rounded bg-warning/20 border border-warning/30 text-warning font-medium hover:bg-warning/30 transition-colors"
+                          title={t('prompt.confirmReset', 'Confirm reset')}
+                        >
+                          {t('prompt.reset', 'Reset')}
+                        </button>
+                        <button
+                          onClick={() => setPendingResetSection(null)}
+                          className="px-1.5 py-0.5 text-[10px] rounded border border-border text-text-muted hover:bg-surface transition-colors"
+                        >
+                          {t('prompt.cancel', 'Cancel')}
+                        </button>
+                      </div>
                     )}
                     <button
                       onClick={() => handleToggle(section.filename, !section.enabled)}
