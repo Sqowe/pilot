@@ -14,6 +14,7 @@ import {
   ChevronRight,
   AlertTriangle,
 } from 'lucide-react';
+import { Tooltip } from '../Tooltip';
 
 interface PromptSection {
   id: string;
@@ -257,13 +258,14 @@ export function SettingsPrompt() {
 
                   <div className="flex items-center gap-1.5">
                     {!section.isDefault && pendingResetSection !== section.filename && (
-                      <button
-                        onClick={() => setPendingResetSection(section.filename)}
-                        className="p-1 rounded hover:bg-surface text-text-muted hover:text-warning transition-colors"
-                        title={t('prompt.resetToDefault', 'Reset to default')}
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                      </button>
+                      <Tooltip text={t('prompt.resetToDefault', 'Reset to default')}>
+                        <button
+                          onClick={() => setPendingResetSection(section.filename)}
+                          className="p-1 rounded hover:bg-surface text-text-muted hover:text-warning transition-colors"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        </button>
+                      </Tooltip>
                     )}
                     {pendingResetSection === section.filename && (
                       <div className="flex items-center gap-1">
@@ -273,7 +275,6 @@ export function SettingsPrompt() {
                             setPendingResetSection(null);
                           }}
                           className="px-1.5 py-0.5 text-[10px] rounded bg-warning/20 border border-warning/30 text-warning font-medium hover:bg-warning/30 transition-colors"
-                          title={t('prompt.confirmReset', 'Confirm reset')}
                         >
                           {t('prompt.reset', 'Reset')}
                         </button>
@@ -285,25 +286,28 @@ export function SettingsPrompt() {
                         </button>
                       </div>
                     )}
-                    <button
-                      onClick={() => handleToggle(section.filename, !section.enabled)}
-                      className={`p-1 rounded transition-colors ${
+                    <Tooltip
+                      text={
                         section.enabled
-                          ? 'text-accent hover:bg-accent/10'
-                          : 'text-text-muted hover:bg-surface'
-                      }`}
-                      title={
-                        section.enabled
-                          ? t('prompt.disable', 'Disable section')
-                          : t('prompt.enable', 'Enable section')
+                          ? t('prompt.disable', 'Exclude from system prompt')
+                          : t('prompt.enable', 'Include in system prompt')
                       }
                     >
-                      {section.enabled ? (
-                        <Eye className="w-3.5 h-3.5" />
-                      ) : (
-                        <EyeOff className="w-3.5 h-3.5" />
-                      )}
-                    </button>
+                      <button
+                        onClick={() => handleToggle(section.filename, !section.enabled)}
+                        className={`p-1 rounded transition-colors ${
+                          section.enabled
+                            ? 'text-accent hover:bg-accent/10'
+                            : 'text-text-muted hover:bg-surface'
+                        }`}
+                      >
+                        {section.enabled ? (
+                          <Eye className="w-3.5 h-3.5" />
+                        ) : (
+                          <EyeOff className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </Tooltip>
                   </div>
                 </div>
 
