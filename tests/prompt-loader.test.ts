@@ -30,6 +30,7 @@ import {
   assembleUserPrompt,
   updatePromptSection,
   resetPromptSection,
+  resetAllPromptSections,
   togglePromptSection,
   getPromptsDirPath,
   openPromptsDir,
@@ -375,6 +376,178 @@ describe('prompt-loader', () => {
     it('rejects unknown section filenames', () => {
       const result = resetPromptSection('hacker.md');
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe('resetAllPromptSections', () => {
+    it('resets all sections to defaults and re-enables all', () => {
+      ensurePromptFiles();
+      updatePromptSection('identity.md', 'Custom identity');
+      updatePromptSection('citations.md', 'Custom citations');
+      togglePromptSection('tool-routing.md', false);
+
+      const result = resetAllPromptSections();
+      expect(result.success).toBe(true);
+
+      invalidatePromptCache();
+      const sections = loadPromptSections();
+      for (const s of sections) {
+        expect(s.isDefault).toBe(true);
+        expect(s.enabled).toBe(true);
+      }
+    });
+
+    it('returns error when directory is inaccessible', () => {
+      // Make userData a file to block directory creation
+      fs.rmSync(testUserDataDir, { recursive: true, force: true });
+      fs.writeFileSync(testUserDataDir, 'blocking', 'utf-8');
+
+      const result = resetAllPromptSections();
+      expect(result.success).toBe(false);
+
+      // Cleanup
+      fs.unlinkSync(testUserDataDir);
+      fs.mkdirSync(testUserDataDir, { recursive: true });
+    });
+
+    it('rolls back on partial write failure', () => {
+      ensurePromptFiles();
+      // Customize sections first
+      updatePromptSection('identity.md', 'My custom identity');
+      updatePromptSection('behavioral-rules.md', 'My custom rules');
+
+      const promptsDir = path.join(testUserDataDir, 'prompts');
+      const citationsPath = path.join(promptsDir, 'citations.md');
+
+      // Make citations.md unwritable to trigger write failure
+      // (readable for snapshot, but write will fail)
+      fs.chmodSync(citationsPath, 0o444);
+
+      invalidatePromptCache();
+      const result = resetAllPromptSections();
+
+      // Restore permissions for cleanup
+      fs.chmodSync(citationsPath, 0o644);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('rolled back');
+
+      // Verify rollback: identity.md should still have custom content
+      invalidatePromptCache();
+      const sections = loadPromptSections();
+      const identity = sections.find((s) => s.filename === 'identity.md');
+      expect(identity?.content).toBe('My custom identity');
+    });
+
+    it('restores _meta.json disabled state on rollback', () => {
+      ensurePromptFiles();
+      togglePromptSection('identity.md', false);
+      togglePromptSection('citations.md', false);
+
+      const promptsDir = path.join(testUserDataDir, 'prompts');
+      const toolRoutingPath = path.join(promptsDir, 'tool-routing.md');
+
+      // Make tool-routing.md unwritable (readable for snapshot, write fails)
+      fs.chmodSync(toolRoutingPath, 0o444);
+
+      invalidatePromptCache();
+      const result = resetAllPromptSections();
+
+      // Restore permissions
+      fs.chmodSync(toolRoutingPath, 0o644);
+
+      expect(result.success).toBe(false);
+
+      // Verify _meta.json was restored — disabled sections should still be disabled
+      invalidatePromptCache();
+      const sections = loadPromptSections();
+      const identity = sections.find((s) => s.filename === 'identity.md');
+      const citations = sections.find((s) => s.filename === 'citations.md');
+      expect(identity?.enabled).toBe(false);
+      expect(citations?.enabled).toBe(false);
+    });
+
+    it('aborts without writing if backup read fails', () => {
+      ensurePromptFiles();
+      updatePromptSection('identity.md', 'Custom before abort');
+
+      const promptsDir = path.join(testUserDataDir, 'prompts');
+
+      // Make behavioral-rules.md unreadable (but it exists)
+      const rulesPath = path.join(promptsDir, 'behavioral-rules.md');
+      fs.chmodSync(rulesPath, 0o000);
+
+      invalidatePromptCache();
+      const result = resetAllPromptSections();
+
+      // Restore permissions for cleanup
+      fs.chmodSync(rulesPath, 0o644);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Cannot snapshot');
+      expect(result.error).toContain('Aborting reset');
+
+      // Verify no writes happened — identity.md still has custom content
+      invalidatePromptCache();
+      const sections = loadPromptSections();
+      const identity = sections.find((s) => s.filename === 'identity.md');
+      expect(identity?.content).toBe('Custom before abort');
+    });
+
+    it('includes the failing file in rollback (not just previously written files)', () => {
+      ensurePromptFiles();
+      updatePromptSection('identity.md', 'Original identity');
+      updatePromptSection('citations.md', 'Original citations');
+
+      const promptsDir = path.join(testUserDataDir, 'prompts');
+
+      // Make citations.md unwritable — snapshot can read it, but write will fail
+      const citationsPath = path.join(promptsDir, 'citations.md');
+      fs.chmodSync(citationsPath, 0o444);
+
+      invalidatePromptCache();
+      const result = resetAllPromptSections();
+
+      // Restore permissions
+      fs.chmodSync(citationsPath, 0o644);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('rolled back');
+
+      // identity.md was written before the failure — should be rolled back
+      invalidatePromptCache();
+      const sections = loadPromptSections();
+      expect(sections.find((s) => s.filename === 'identity.md')?.content).toBe('Original identity');
+      // citations.md write failed — content should still be original
+      expect(sections.find((s) => s.filename === 'citations.md')?.content).toBe(
+        'Original citations'
+      );
+    });
+
+    it('restores _meta.json when meta write fails (all section writes succeed)', () => {
+      ensurePromptFiles();
+      togglePromptSection('identity.md', false);
+
+      const promptsDir = path.join(testUserDataDir, 'prompts');
+      const metaPath = path.join(promptsDir, '_meta.json');
+
+      // Make _meta.json unwritable — snapshot can read it, but write will fail
+      fs.chmodSync(metaPath, 0o444);
+
+      invalidatePromptCache();
+      const result = resetAllPromptSections();
+
+      // Restore permissions
+      fs.chmodSync(metaPath, 0o644);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('rolled back');
+
+      // _meta.json should be restored — identity.md should still be disabled
+      invalidatePromptCache();
+      const sections = loadPromptSections();
+      const identity = sections.find((s) => s.filename === 'identity.md');
+      expect(identity?.enabled).toBe(false);
     });
   });
 

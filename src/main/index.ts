@@ -113,6 +113,7 @@ import {
   loadPromptSections,
   updatePromptSection,
   resetPromptSection,
+  resetAllPromptSections,
   togglePromptSection,
   openPromptsDir,
   invalidatePromptCache,
@@ -3120,6 +3121,9 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
 
     case 'prompt.getDir':
       return openPromptsDir();
+
+    case 'prompt.resetAll':
+      return resetAllPromptSections();
 
     default:
       logWarn('Unknown event type:', event);

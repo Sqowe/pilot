@@ -5,7 +5,15 @@ import {
   SYSTEM_PROMPT_FILE_CHOICES,
   type SystemPromptFileChoice,
 } from '../../../shared/system-prompt-file-choices';
-import { RotateCcw, FolderOpen, Eye, EyeOff, ChevronDown, ChevronRight } from 'lucide-react';
+import {
+  RotateCcw,
+  FolderOpen,
+  Eye,
+  EyeOff,
+  ChevronDown,
+  ChevronRight,
+  AlertTriangle,
+} from 'lucide-react';
 
 interface PromptSection {
   id: string;
@@ -31,6 +39,7 @@ export function SettingsPrompt() {
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [editDrafts, setEditDrafts] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const [showResetAllConfirm, setShowResetAllConfirm] = useState(false);
   const sectionsRef = useRef<PromptSection[]>([]);
   const draftsRef = useRef<Record<string, string>>({});
 
@@ -139,6 +148,38 @@ export function SettingsPrompt() {
       type: 'prompt.getDir',
       payload: {},
     });
+  }, []);
+
+  const handleResetAll = useCallback(async () => {
+    if (!window.electronAPI) return;
+    setError(null);
+    try {
+      const result = await window.electronAPI.invoke<{ success: boolean; error?: string }>({
+        type: 'prompt.resetAll',
+        payload: {},
+      });
+      setShowResetAllConfirm(false);
+      if (result?.success) {
+        // Force full reload of all sections and drafts
+        const freshSections = await window.electronAPI.invoke({
+          type: 'prompt.getSections',
+          payload: {},
+        });
+        if (Array.isArray(freshSections)) {
+          setSections(freshSections);
+          const drafts: Record<string, string> = {};
+          for (const s of freshSections as PromptSection[]) {
+            drafts[s.filename] = s.content;
+          }
+          setEditDrafts(drafts);
+        }
+      } else {
+        setError(result?.error || 'Failed to reset all sections');
+      }
+    } catch (err) {
+      setShowResetAllConfirm(false);
+      setError(err instanceof Error ? err.message : 'Reset failed due to an unexpected error');
+    }
   }, []);
 
   const systemPromptFile: SystemPromptFileChoice = settings.systemPromptFile ?? '';
@@ -274,6 +315,50 @@ export function SettingsPrompt() {
               </div>
             );
           })}
+        </div>
+
+        {/* Reset All to Defaults */}
+        <div className="mt-4">
+          {!showResetAllConfirm ? (
+            <button
+              onClick={() => setShowResetAllConfirm(true)}
+              className="flex items-center gap-1.5 text-xs text-text-muted hover:text-warning transition-colors"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              {t('prompt.resetAll', 'Reset all to defaults')}
+            </button>
+          ) : (
+            <div className="p-3 rounded-lg bg-warning/10 border border-warning/20">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-warning mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm text-warning font-medium">
+                    {t('prompt.resetAllTitle', 'Reset all sections?')}
+                  </p>
+                  <p className="text-xs text-text-secondary mt-1">
+                    {t(
+                      'prompt.resetAllWarning',
+                      'This will replace all prompt sections with factory defaults and re-enable all sections. Your custom edits will be lost.'
+                    )}
+                  </p>
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      onClick={() => setShowResetAllConfirm(false)}
+                      className="px-3 py-1.5 text-xs rounded-lg border border-border bg-surface text-text-secondary hover:bg-surface-muted transition-colors"
+                    >
+                      {t('prompt.cancel', 'Cancel')}
+                    </button>
+                    <button
+                      onClick={handleResetAll}
+                      className="px-3 py-1.5 text-xs rounded-lg bg-warning/20 border border-warning/30 text-warning font-medium hover:bg-warning/30 transition-colors"
+                    >
+                      {t('prompt.resetAllConfirm', 'Reset All')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

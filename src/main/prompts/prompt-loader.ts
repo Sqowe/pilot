@@ -442,6 +442,125 @@ export function resetPromptSection(filename: string): { success: boolean; error?
 }
 
 /**
+ * Reset ALL sections to factory defaults and re-enable all.
+ * Uses backup-and-rollback: reads current state into memory before writing.
+ * If any backup read fails, aborts immediately (no writes).
+ * If any write fails mid-operation, restores previous content/state.
+ * Returns success/error for IPC callers.
+ */
+export function resetAllPromptSections(): { success: boolean; error?: string } {
+  try {
+    if (!ensurePromptsDir()) {
+      return { success: false, error: 'Cannot access prompts directory' };
+    }
+    const dir = getPromptsDir();
+    const metaPath = getMetaPath();
+
+    // Phase 1: Snapshot current state for rollback.
+    // Fail fast if any existing file cannot be read.
+    const backups: Map<string, string | null> = new Map(); // null = file did not exist
+    for (const filename of SECTION_ORDER) {
+      const filePath = path.join(dir, filename);
+      if (fs.existsSync(filePath)) {
+        try {
+          backups.set(filename, fs.readFileSync(filePath, 'utf-8'));
+        } catch (readErr) {
+          const msg = readErr instanceof Error ? readErr.message : 'Unknown read error';
+          logError('[PromptLoader] Cannot snapshot section for rollback:', filename, readErr);
+          return {
+            success: false,
+            error: `Cannot snapshot current prompt state (${filename}): ${msg}. Aborting reset.`,
+          };
+        }
+      } else {
+        backups.set(filename, null);
+      }
+    }
+
+    let metaBackup: string | null = null; // null = file did not exist
+    if (fs.existsSync(metaPath)) {
+      try {
+        metaBackup = fs.readFileSync(metaPath, 'utf-8');
+      } catch (readErr) {
+        const msg = readErr instanceof Error ? readErr.message : 'Unknown read error';
+        logError('[PromptLoader] Cannot snapshot _meta.json for rollback:', readErr);
+        return {
+          success: false,
+          error: `Cannot snapshot current prompt state (_meta.json): ${msg}. Aborting reset.`,
+        };
+      }
+    }
+
+    // Phase 2: Write all defaults
+    const writtenFiles: string[] = [];
+    let currentlyWriting: string | null = null;
+    try {
+      for (const [filename, defaultContent] of Object.entries(DEFAULT_SECTIONS)) {
+        currentlyWriting = filename;
+        const filePath = path.join(dir, filename);
+        fs.writeFileSync(filePath, defaultContent, 'utf-8');
+        writtenFiles.push(filename);
+      }
+      // Clear disabled state (re-enable all)
+      currentlyWriting = '_meta.json';
+      fs.writeFileSync(metaPath, JSON.stringify({ disabled: [] }, null, 2), 'utf-8');
+      currentlyWriting = null;
+    } catch (writeErr) {
+      // Phase 3: Rollback — restore or delete files to match pre-reset state.
+      // Include the file that was being written when the error occurred.
+      logError('[PromptLoader] resetAll write failed, rolling back:', writeErr);
+
+      const filesToRollback = [...writtenFiles];
+      if (
+        currentlyWriting &&
+        currentlyWriting !== '_meta.json' &&
+        !filesToRollback.includes(currentlyWriting)
+      ) {
+        filesToRollback.push(currentlyWriting);
+      }
+
+      for (const filename of filesToRollback) {
+        const backup = backups.get(filename);
+        const filePath = path.join(dir, filename);
+        try {
+          if (backup !== null && backup !== undefined) {
+            fs.writeFileSync(filePath, backup, 'utf-8');
+          } else {
+            // File didn't exist before — remove it
+            if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+          }
+        } catch {
+          logError('[PromptLoader] Rollback failed for:', filename);
+        }
+      }
+
+      // Always attempt meta restore (regardless of whether meta write succeeded,
+      // failed, or was never reached — the file may have been truncated)
+      try {
+        if (metaBackup !== null) {
+          fs.writeFileSync(metaPath, metaBackup, 'utf-8');
+        } else {
+          if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
+        }
+      } catch {
+        logError('[PromptLoader] Rollback failed for _meta.json');
+      }
+
+      const msg = writeErr instanceof Error ? writeErr.message : 'Unknown write error';
+      return { success: false, error: `Reset failed (rolled back): ${msg}` };
+    }
+
+    invalidateCache();
+    log('[PromptLoader] Reset ALL sections to factory defaults');
+    return { success: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    logError('[PromptLoader] Failed to reset all sections:', err);
+    return { success: false, error: msg };
+  }
+}
+
+/**
  * Toggle a section's enabled state.
  * Returns success/error for IPC callers.
  */

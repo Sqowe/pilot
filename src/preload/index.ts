@@ -66,6 +66,7 @@ const ALLOWED_CLIENT_EVENTS: ReadonlySet<string> = new Set<ClientEvent['type']>(
   'prompt.getSections',
   'prompt.updateSection',
   'prompt.resetSection',
+  'prompt.resetAll',
   'prompt.toggleSection',
   'prompt.getDir',
 ]);

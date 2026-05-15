@@ -555,6 +555,7 @@ export type ClientEvent =
   | { type: 'prompt.getSections'; payload: Record<string, never> }
   | { type: 'prompt.updateSection'; payload: { filename: string; content: string } }
   | { type: 'prompt.resetSection'; payload: { filename: string } }
+  | { type: 'prompt.resetAll'; payload: Record<string, never> }
   | { type: 'prompt.toggleSection'; payload: { filename: string; enabled: boolean } }
   | { type: 'prompt.getDir'; payload: Record<string, never> };
 
