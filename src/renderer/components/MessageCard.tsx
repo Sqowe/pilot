@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { Copy, Check, Clock, XCircle } from 'lucide-react';
 import type { Message, ContentBlock, ToolUseContent, ToolResultContent } from '../types';
 import { ContentBlockView } from './message/ContentBlockView';
+import { ProcessAccordion } from './message/ProcessAccordion';
 
 interface MessageCardProps {
   message: Message;
@@ -108,28 +109,127 @@ export const MessageCard = memo(function MessageCard({ message, isStreaming }: M
         </div>
       ) : (
         // Assistant message — no bubble, direct content (Claude style)
-        <div className="space-y-1.5">
-          {contentBlocks.map((block, index) => {
-            // Skip tool_result blocks that are merged into their tool_use card
-            if (
-              block.type === 'tool_result' &&
-              mergedResultIds.has((block as ToolResultContent).toolUseId)
-            ) {
-              return null;
-            }
-            return (
-              <ContentBlockView
-                key={'id' in block ? (block as { id: string }).id : `block-${block.type}-${index}`}
-                block={block}
-                isUser={isUser}
-                isStreaming={isStreaming}
-                allBlocks={contentBlocks}
-                message={message}
-              />
-            );
-          })}
-        </div>
+        <AssistantMessageBody
+          contentBlocks={contentBlocks}
+          mergedResultIds={mergedResultIds}
+          isStreaming={isStreaming}
+          message={message}
+        />
       )}
     </div>
   );
 });
+
+// --- Process/Answer splitting logic ---
+
+const THINKING_THRESHOLD = 3; // Collapse if ≥3 thinking blocks (even without tools)
+
+interface AssistantMessageBodyProps {
+  contentBlocks: ContentBlock[];
+  mergedResultIds: Set<string>;
+  isStreaming?: boolean;
+  message: Message;
+}
+
+/**
+ * Determines whether to show a ProcessAccordion and splits blocks accordingly.
+ * Collapse conditions (Option D):
+ *   - Any tool_use block is present, OR
+ *   - ≥ THINKING_THRESHOLD thinking blocks
+ *
+ * "Final answer" = the trailing contiguous text blocks not followed by tool_use/thinking.
+ */
+function AssistantMessageBody({
+  contentBlocks,
+  mergedResultIds,
+  isStreaming,
+  message,
+}: AssistantMessageBodyProps) {
+  const { processBlocks, answerBlocks, shouldCollapse } = useMemo(() => {
+    // Filter out merged tool_results first (same logic as before)
+    const visibleBlocks = contentBlocks.filter((block) => {
+      if (
+        block.type === 'tool_result' &&
+        mergedResultIds.has((block as ToolResultContent).toolUseId)
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+    // Check collapse conditions
+    const hasToolUse = visibleBlocks.some((b) => b.type === 'tool_use');
+    const thinkingCount = visibleBlocks.filter((b) => b.type === 'thinking').length;
+    const shouldCollapseResult = hasToolUse || thinkingCount >= THINKING_THRESHOLD;
+
+    if (!shouldCollapseResult) {
+      return { processBlocks: [], answerBlocks: visibleBlocks, shouldCollapse: false };
+    }
+
+    // Find the boundary: the "final answer" is the trailing run of text/image blocks
+    // not followed by any tool_use, tool_result, or thinking block.
+    let boundaryIndex = visibleBlocks.length;
+    for (let i = visibleBlocks.length - 1; i >= 0; i--) {
+      const blockType = visibleBlocks[i].type;
+      if (blockType === 'text' || blockType === 'image' || blockType === 'file_attachment') {
+        boundaryIndex = i;
+      } else {
+        // Hit a non-text block — everything from here up is process
+        break;
+      }
+    }
+
+    // Edge case: if there's no trailing text (message ends with tool_use/tool_result),
+    // don't split — show everything flat (no final answer to highlight)
+    if (boundaryIndex >= visibleBlocks.length) {
+      return { processBlocks: [], answerBlocks: visibleBlocks, shouldCollapse: false };
+    }
+
+    return {
+      processBlocks: visibleBlocks.slice(0, boundaryIndex),
+      answerBlocks: visibleBlocks.slice(boundaryIndex),
+      shouldCollapse: true,
+    };
+  }, [contentBlocks, mergedResultIds]);
+
+  if (!shouldCollapse) {
+    // No accordion — render flat like before
+    return (
+      <div className="space-y-1.5">
+        {answerBlocks.map((block, index) => (
+          <ContentBlockView
+            key={'id' in block ? (block as { id: string }).id : `block-${block.type}-${index}`}
+            block={block}
+            isUser={false}
+            isStreaming={isStreaming}
+            allBlocks={contentBlocks}
+            message={message}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {/* Collapsible process section */}
+      <ProcessAccordion
+        blocks={processBlocks}
+        isStreaming={isStreaming}
+        allBlocks={contentBlocks}
+        message={message}
+      />
+      {/* Final answer — always visible */}
+      {answerBlocks.map((block, index) => (
+        <ContentBlockView
+          key={'id' in block ? (block as { id: string }).id : `answer-${block.type}-${index}`}
+          block={block}
+          isUser={false}
+          isStreaming={isStreaming}
+          allBlocks={contentBlocks}
+          message={message}
+        />
+      ))}
+    </div>
+  );
+}

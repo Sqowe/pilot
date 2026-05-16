@@ -736,7 +736,10 @@
     "noQuestions": "No questions",
     "question": "Question",
     "thinking": "Thinking",
-    "executionTime": "Execution time: {{time}}"
+    "executionTime": "Execution time: {{time}}",
+    "process": "Process",
+    "processThinking": "{{count}} thinking",
+    "processTools": "{{count}} tools"
   },
   "schedule": {
     "createTitle": "Create Schedule",
