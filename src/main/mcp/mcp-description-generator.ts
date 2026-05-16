@@ -24,7 +24,9 @@ import type { MCPTool } from './mcp-manager';
 const GENERATION_SYSTEM_PROMPT = `You generate concise MCP server descriptions for LLM tool routing.
 Given a server name and its tool list, write a single sentence (max 25 words) describing
 what this server does. Focus on the domain and capabilities, not individual tools.
-Reply with only the description text, no quotes, no prefix.`;
+
+IMPORTANT: Your final answer must be plain text only — not inside any thinking or reasoning tags.
+Reply with only the description text, no quotes, no prefix, no explanation.`;
 
 /** Max tools to include in the LLM prompt (token budget). */
 const MAX_TOOLS_FOR_LLM = 30;
@@ -63,30 +65,69 @@ export async function generateServerDescription(
 
     // Check if API key is configured — skip LLM call if not
     if (!config.apiKey?.trim()) {
+      log(
+        '[MCPDescriptionGenerator] No API key configured, skipping LLM generation for:',
+        serverName
+      );
       return null;
     }
+
+    log(
+      '[MCPDescriptionGenerator] Calling LLM for description of:',
+      serverName,
+      'provider:',
+      config.provider,
+      'model:',
+      config.model
+    );
 
     const result = await runPiAiOneShot(userPrompt, GENERATION_SYSTEM_PROMPT, config, {
       temperature: 0,
       maxTokens: 100,
     });
 
-    const description = sanitizeDescription(result.text);
+    const rawText: string | null = result.text || null;
+
+    // If LLM returned no text (e.g., thinking-only model), fall back to template.
+    // Do NOT use thinking content as description — it's reasoning, not a final answer.
+    if (!rawText) {
+      if (result.hasThinking) {
+        log(
+          '[MCPDescriptionGenerator] Model produced thinking only (no text block) for:',
+          serverName,
+          '— using template fallback'
+        );
+      } else {
+        logWarn('[MCPDescriptionGenerator] LLM returned no usable text for:', serverName);
+      }
+      return null;
+    }
+
+    const description = sanitizeDescription(rawText);
     if (!description) {
-      logWarn('[MCPDescriptionGenerator] LLM returned empty description for:', serverName);
+      logWarn(
+        '[MCPDescriptionGenerator] LLM returned empty description after sanitization for:',
+        serverName
+      );
       return null;
     }
 
     log('[MCPDescriptionGenerator] Generated description for', serverName, ':', description);
     return description;
   } catch (error) {
-    logWarn('[MCPDescriptionGenerator] LLM generation failed for', serverName, ':', error);
+    logWarn(
+      '[MCPDescriptionGenerator] LLM generation failed for',
+      serverName,
+      ':',
+      error instanceof Error ? error.message : error
+    );
     return null;
   }
 }
 
 /**
- * Generate a heuristic description from tool names when LLM is unavailable.
+ * Generate a description from tool names and descriptions using template-based summarization.
+ * No LLM needed — uses the tool metadata directly to compose a meaningful summary.
  * Always returns a non-empty string.
  */
 export function generateHeuristicDescription(serverName: string, tools: MCPTool[]): string {
@@ -94,7 +135,119 @@ export function generateHeuristicDescription(serverName: string, tools: MCPTool[
     return `${cleanServerName(serverName)} (no tools discovered)`;
   }
 
-  // Extract unique action words from tool names
+  const cleanName = cleanServerName(serverName);
+
+  // Strategy 1: If tools have good descriptions, summarize from them
+  const toolsWithDescriptions = tools.filter((t) => t.description && t.description.length > 5);
+  if (toolsWithDescriptions.length >= Math.min(2, tools.length)) {
+    const result = buildFromDescriptions(cleanName, toolsWithDescriptions);
+    // If description extraction produced a meaningful result (not just "name (N tools)"), use it
+    if (!result.endsWith('tools)')) {
+      return result;
+    }
+  }
+
+  // Strategy 2: Fall back to tool name analysis
+  return buildFromToolNames(cleanName, tools);
+}
+
+/**
+ * Build a description by extracting key capabilities from tool descriptions.
+ * Finds common themes/actions across tool descriptions and composes a summary.
+ */
+function buildFromDescriptions(serverName: string, tools: MCPTool[]): string {
+  // Extract the core action/capability from each tool description
+  const capabilities: string[] = [];
+
+  for (const tool of tools.slice(0, 10)) {
+    const cap = extractCapability(tool.description);
+    if (cap && !capabilities.some((c) => c.toLowerCase() === cap.toLowerCase())) {
+      capabilities.push(cap);
+    }
+  }
+
+  if (capabilities.length === 0) {
+    return `${serverName} (${tools.length} tools)`;
+  }
+
+  // Compose: take up to 4 capabilities, join naturally
+  const selected = capabilities.slice(0, 4);
+  const joined =
+    selected.length <= 2
+      ? selected.join(' and ')
+      : selected.slice(0, -1).join(', ') + ', and ' + selected[selected.length - 1];
+
+  // Capitalize first letter
+  const sentence = joined.charAt(0).toUpperCase() + joined.slice(1) + '.';
+
+  // Keep under 200 chars
+  if (sentence.length > 180) {
+    return `${serverName}: ${selected.slice(0, 3).join(', ')}.`;
+  }
+
+  return sentence;
+}
+
+/**
+ * Extract a short capability phrase from a tool description.
+ * E.g., "Search for Eurostat datasets by keyword" → "search for Eurostat datasets by keyword"
+ *       "\nGet detailed information about a dataset.\n\nArgs:..." → "get detailed information about a dataset"
+ */
+function extractCapability(description: string): string | null {
+  if (!description || description.length < 5) return null;
+
+  // Trim leading/trailing whitespace and newlines
+  const trimmed = description.trim();
+
+  // Take the first sentence/clause (before period, semicolon, or double-newline)
+  let phrase = trimmed.split(/[.;\n\n]/)[0].trim();
+
+  // If first split was empty (e.g., started with delimiter), try next non-empty segment
+  if (!phrase) {
+    const segments = trimmed.split(/[.;\n]/).filter((s) => s.trim().length > 3);
+    phrase = segments[0]?.trim() || '';
+  }
+
+  if (!phrase || phrase.length < 5) return null;
+
+  // Remove common prefixes that don't add meaning
+  phrase = phrase
+    .replace(/^(This tool |Tool to |Used to |Use this to |Allows you to |A tool that )/i, '')
+    .replace(/^(Provides |Enables |Performs |Executes |Runs |Returns )/i, '')
+    .trim();
+
+  // Lowercase the first word (it's now a verb or noun phrase)
+  if (phrase.length > 0) {
+    phrase = phrase.charAt(0).toLowerCase() + phrase.slice(1);
+  }
+
+  // Truncate if too long — take first meaningful clause
+  if (phrase.length > 60) {
+    // Try to cut at a natural boundary
+    const cutPoints = [' - ', ' — ', ', ', ' with ', ' for '];
+    for (const cut of cutPoints) {
+      const idx = phrase.indexOf(cut);
+      if (idx > 15 && idx < 55) {
+        phrase = phrase.slice(0, idx);
+        break;
+      }
+    }
+    if (phrase.length > 60) {
+      const words = phrase.split(/\s+/).slice(0, 8);
+      phrase = words.join(' ');
+    }
+  }
+
+  // Skip if too short or just the tool name repeated
+  if (phrase.length < 4) return null;
+
+  return phrase;
+}
+
+/**
+ * Build a description from tool names when descriptions are unavailable.
+ */
+function buildFromToolNames(serverName: string, tools: MCPTool[]): string {
   const toolNames = tools.map((t) => stripMcpPrefix(t.name));
   const prefix = findCommonPrefix(toolNames);
   const verbs = new Set<string>();
@@ -108,9 +261,7 @@ export function generateHeuristicDescription(serverName: string, tools: MCPTool[
   }
 
   const verbList = Array.from(verbs).slice(0, 5).join(', ');
-  const cleanName = cleanServerName(serverName);
-
-  return verbList ? `${cleanName}: ${verbList}` : `${cleanName} (${tools.length} tools)`;
+  return verbList ? `${serverName}: ${verbList}` : `${serverName} (${tools.length} tools)`;
 }
 
 /**

@@ -1853,9 +1853,11 @@ ipcMain.handle('mcp.regenerateDescription', async (_event, serverId: string) => 
       sanitizeDescription,
     } = await import('./mcp/mcp-description-generator');
 
+    // Try LLM generation first (optional upgrade)
     const llmDescription = await generateServerDescription(config.name, serverTools);
+
+    // Template-based description is the reliable primary — LLM is just an upgrade
     const rawDescription = llmDescription || generateHeuristicDescription(config.name, serverTools);
-    // Always sanitize before persisting — descriptions derive from untrusted MCP metadata
     const description = sanitizeDescription(rawDescription);
     const hash = computeToolsHash(serverTools);
 
@@ -1867,7 +1869,9 @@ ipcMain.handle('mcp.regenerateDescription', async (_event, serverId: string) => 
     });
 
     sessionManager.invalidateMcpServersCache();
-    log(`[MCP] Description regenerated for ${config.name}: ${description}`);
+    log(
+      `[MCP] Description regenerated for ${config.name}: ${description} (source: ${llmDescription ? 'llm' : 'template'})`
+    );
     return { success: true, description };
   } catch (error) {
     logError('[MCP] Error regenerating description:', error);

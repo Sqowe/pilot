@@ -530,7 +530,7 @@ function ServerCard({
                 </button>
               )}
               {regenerateError && (
-                <div className="text-[10px] text-error mb-1">{regenerateError}</div>
+                <div className="text-[10px] text-warning mb-1">⚠️ {regenerateError}</div>
               )}
               {server.type === 'stdio' && (
                 <div

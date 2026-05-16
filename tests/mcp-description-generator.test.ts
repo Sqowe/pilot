@@ -27,19 +27,30 @@ describe('generateHeuristicDescription', () => {
     expect(result).toBe('My Server (no tools discovered)');
   });
 
-  it('extracts verbs from tool names with common prefix', () => {
+  it('uses tool descriptions when available to build a summary', () => {
+    const tools = [
+      mockTool('firecrawl_scrape', 'Scrape content from a URL'),
+      mockTool('firecrawl_search', 'Search the web and return results'),
+      mockTool('firecrawl_crawl', 'Crawl a website to extract all pages'),
+      mockTool('firecrawl_map', 'Map all URLs on a website'),
+      mockTool('firecrawl_extract', 'Extract structured data from web pages'),
+    ];
+    const result = generateHeuristicDescription('Firecrawl', tools);
+    // Should produce a natural sentence from tool descriptions
+    expect(result.length).toBeGreaterThan(10);
+    expect(result).toMatch(/\./); // ends with period (sentence)
+    expect(result).not.toBe('Firecrawl: scrape, search, crawl, map, extract');
+  });
+
+  it('falls back to tool name analysis when descriptions are missing', () => {
     const tools = [
       mockTool('firecrawl_scrape'),
       mockTool('firecrawl_search'),
       mockTool('firecrawl_crawl'),
-      mockTool('firecrawl_map'),
-      mockTool('firecrawl_extract'),
     ];
     const result = generateHeuristicDescription('Firecrawl', tools);
     expect(result).toContain('Firecrawl');
     expect(result).toContain('scrape');
-    expect(result).toContain('search');
-    expect(result).toContain('crawl');
   });
 
   it('handles tools without a common prefix', () => {
@@ -48,33 +59,67 @@ describe('generateHeuristicDescription', () => {
     expect(result).toContain('DevTools');
   });
 
-  it('limits to 5 verbs maximum', () => {
-    const tools = [
-      mockTool('prefix_alpha'),
-      mockTool('prefix_beta'),
-      mockTool('prefix_gamma'),
-      mockTool('prefix_delta'),
-      mockTool('prefix_epsilon'),
-      mockTool('prefix_zeta'),
-      mockTool('prefix_eta'),
-    ];
-    const result = generateHeuristicDescription('Server', tools);
-    const commas = (result.match(/,/g) || []).length;
-    // 5 verbs = 4 commas
-    expect(commas).toBeLessThanOrEqual(4);
+  it('limits capabilities to avoid overly long descriptions', () => {
+    const tools = Array.from({ length: 20 }, (_, i) =>
+      mockTool(`tool_${i}`, `Capability number ${i} that does something useful`)
+    );
+    const result = generateHeuristicDescription('BigServer', tools);
+    expect(result.length).toBeLessThanOrEqual(200);
   });
 
   it('cleans underscores and hyphens from server name', () => {
-    const tools = [mockTool('do_something')];
+    const tools = [mockTool('do_something', 'Does something useful')];
     const result = generateHeuristicDescription('my-cool_server', tools);
-    expect(result).toContain('my cool server');
+    expect(result).not.toContain('_');
+    expect(result).not.toContain('my-cool_server');
   });
 
-  it('falls back to tool count when no verbs extracted', () => {
-    // Tools with very short names (<=2 chars) are skipped
+  it('handles tool descriptions with leading newlines and Args sections', () => {
+    const tools = [
+      mockTool(
+        'search_datasets',
+        '\nSearch for Eurostat datasets by keyword.\n\nArgs:\n    query: Search term'
+      ),
+      mockTool(
+        'get_dataset',
+        '\nGet detailed information about a specific Eurostat dataset.\n\nArgs:\n    dataset_id: The ID'
+      ),
+      mockTool(
+        'query_data',
+        '\nQuery data from a Eurostat dataset with optional filters.\n\nArgs:\n    dataset_id: The ID'
+      ),
+      mockTool(
+        'list_categories',
+        '\nList commonly used Eurostat datasets across different statistical domains.\n\nReturns:'
+      ),
+      mockTool(
+        'export_data',
+        '\nExport Eurostat data to a CSV file on disk.\n\nArgs:\n    dataset_id: The ID'
+      ),
+    ];
+    const result = generateHeuristicDescription('Eurostat', tools);
+    // Should NOT fall back to verb extraction — should use the descriptions
+    expect(result).not.toBe('Eurostat: search, get, query, list, export');
+    expect(result).toMatch(/\./); // should be a sentence
+    expect(result.length).toBeGreaterThan(20);
+  });
+
+  it('falls back to tool count when no verbs or descriptions available', () => {
+    // Tools with very short names (<=2 chars) and no descriptions
     const tools = [mockTool('ab'), mockTool('cd'), mockTool('ef')];
     const result = generateHeuristicDescription('Short', tools);
     expect(result).toBe('Short (3 tools)');
+  });
+
+  it('strips common description prefixes like "This tool" or "Used to"', () => {
+    const tools = [
+      mockTool('tool_a', 'This tool searches for documents in the database'),
+      mockTool('tool_b', 'Used to update records in the system'),
+    ];
+    const result = generateHeuristicDescription('DB', tools);
+    // Should not start with "This tool" or "Used to"
+    expect(result).not.toMatch(/this tool/i);
+    expect(result).not.toMatch(/used to/i);
   });
 });
 
