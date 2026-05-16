@@ -824,6 +824,8 @@ export interface AppConfig {
   schedulerCatchUpPolicy?: CatchUpPolicy;
   schedulerConflictPolicy?: ConflictPolicy;
   schedulerRunHistoryDepth?: number;
+  // Permission dialog timeout in seconds. 0 = infinite (no timeout).
+  permissionTimeoutSeconds?: number;
 }
 
 export interface ProviderPreset {
