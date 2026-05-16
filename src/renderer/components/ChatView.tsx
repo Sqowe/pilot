@@ -12,7 +12,7 @@ import {
 } from '../store/selectors';
 import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
-import { MessageCard } from './MessageCard';
+import { GroupedMessages } from './message/GroupedMessages';
 import type { Message, ContentBlock } from '../types';
 import { Send, Square, Plus, Loader2, Plug, X, Clock, Layers } from 'lucide-react';
 
@@ -841,15 +841,7 @@ export function ChatView() {
               <p className="text-base text-text-secondary">{t('chat.startConversation')}</p>
             </div>
           ) : (
-            displayedMessages.map((message) => {
-              const isStreaming =
-                typeof message.id === 'string' && message.id.startsWith('partial-');
-              return (
-                <div key={message.id}>
-                  <MessageCard message={message} isStreaming={isStreaming} />
-                </div>
-              );
-            })
+            <GroupedMessages messages={displayedMessages} hasActiveTurn={hasActiveTurn} />
           )}
 
           {/* Processing indicator - show when we have an active turn but no streaming content yet */}
