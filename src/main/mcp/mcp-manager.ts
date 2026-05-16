@@ -21,6 +21,11 @@ import path from 'path';
 import { log, logError, logWarn, logCtx, logCtxError, logTiming } from '../utils/logger';
 import { getDefaultShell } from '../utils/shell-resolver';
 import { configStore } from '../config/config-store';
+import {
+  generateServerDescription,
+  generateHeuristicDescription,
+  computeToolsHash,
+} from './mcp-description-generator';
 
 /**
  * MCP Server Configuration
@@ -28,6 +33,9 @@ import { configStore } from '../config/config-store';
 export interface MCPServerConfig {
   id: string;
   name: string;
+  description?: string; // Server-level description for LLM tool routing
+  descriptionToolsHash?: string; // Hash of tool list when description was last generated
+  descriptionSource?: 'auto' | 'manual'; // How the description was created
   type: 'stdio' | 'sse' | 'streamable-http';
   command?: string; // For stdio: command to run
   args?: string[]; // For stdio: command arguments
@@ -1434,6 +1442,160 @@ export class MCPManager {
     this.tools = newTools; // atomic swap
 
     log(`[MCPManager] Total tools available: ${this.tools.size}`);
+
+    // --- Description generation & change detection (async, non-blocking) ---
+    // Guarded: only one check runs at a time to prevent race conditions.
+    // If a refresh occurs while in-flight, queue a rerun.
+    if (!this._descriptionCheckInFlight) {
+      this._descriptionCheckInFlight = true;
+      this._descriptionCheckPending = false;
+      this.runDescriptionCheck();
+    } else {
+      this._descriptionCheckPending = true;
+    }
+  }
+
+  /** In-flight guard for async description checks. */
+  private _descriptionCheckInFlight = false;
+  /** Whether another refresh occurred while a check was in-flight. */
+  private _descriptionCheckPending = false;
+
+  /** Run description check with pending-rerun support. */
+  private runDescriptionCheck(): void {
+    this.checkServerDescriptions()
+      .catch((err) => {
+        logWarn('[MCPManager] Description check failed (non-critical):', err);
+      })
+      .finally(() => {
+        if (this._descriptionCheckPending) {
+          // Another refresh happened while we were running — rerun with latest state
+          this._descriptionCheckPending = false;
+          this.runDescriptionCheck();
+        } else {
+          this._descriptionCheckInFlight = false;
+        }
+      });
+  }
+
+  /**
+   * Check all connected servers for missing or stale descriptions.
+   * Runs after refreshTools() — generates descriptions for new servers,
+   * detects tool list changes for existing ones.
+   *
+   * Uses read-latest-before-write to avoid overwriting concurrent manual edits.
+   * All descriptions are sanitized before persistence.
+   */
+  private async checkServerDescriptions(): Promise<void> {
+    // Lazy import to avoid circular dependency at module load time
+    const { mcpConfigStore } = await import('./mcp-config-store');
+    const { sanitizeDescription } = await import('./mcp-description-generator');
+
+    // Pre-group tools by serverId once (O(T)) instead of filtering per server (O(S*T))
+    const toolsByServer = new Map<string, MCPTool[]>();
+    for (const tool of this.tools.values()) {
+      const list = toolsByServer.get(tool.serverId);
+      if (list) {
+        list.push(tool);
+      } else {
+        toolsByServer.set(tool.serverId, [tool]);
+      }
+    }
+
+    for (const [serverId] of this.clients.entries()) {
+      const config = this.serverConfigs.get(serverId);
+      if (!config) continue;
+
+      const serverTools = toolsByServer.get(serverId);
+      if (!serverTools || serverTools.length === 0) continue;
+
+      const currentHash = computeToolsHash(serverTools);
+
+      // Case 1: No description yet — generate one
+      if (!config.description && !config.descriptionSource) {
+        log(`[MCPManager] No description for ${config.name}, generating...`);
+
+        // Try LLM first, fall back to heuristic
+        const llmDescription = await generateServerDescription(config.name, serverTools);
+        const rawDescription =
+          llmDescription || generateHeuristicDescription(config.name, serverTools);
+
+        // Sanitize before persisting (descriptions derive from untrusted MCP metadata)
+        const description = sanitizeDescription(rawDescription);
+
+        // Re-read config before writing to avoid overwriting concurrent manual edits
+        const latestConfig = mcpConfigStore.getServer(serverId);
+        if (latestConfig?.descriptionSource === 'manual' || latestConfig?.description) {
+          log(`[MCPManager] Skipping write for ${config.name} — config was updated concurrently`);
+          continue;
+        }
+
+        const updatedConfig: MCPServerConfig = {
+          ...(latestConfig || config),
+          description,
+          descriptionToolsHash: currentHash,
+          descriptionSource: 'auto',
+        };
+        mcpConfigStore.saveServer(updatedConfig);
+        this.serverConfigs.set(serverId, updatedConfig);
+
+        // Notify renderer with sanitized values
+        this.emitServerEvent('mcp:description-generated', {
+          serverId,
+          serverName: config.name,
+          description,
+          source: llmDescription ? 'auto' : 'heuristic',
+        });
+
+        continue;
+      }
+
+      // Case 2: Description exists — check if tools changed
+      if (config.descriptionToolsHash && config.descriptionToolsHash !== currentHash) {
+        log(
+          `[MCPManager] Tools changed for ${config.name} (hash: ${config.descriptionToolsHash} → ${currentHash})`
+        );
+
+        // Re-read before write
+        const latestConfig = mcpConfigStore.getServer(serverId) || config;
+        const updatedConfig: MCPServerConfig = {
+          ...latestConfig,
+          descriptionToolsHash: currentHash,
+        };
+        mcpConfigStore.saveServer(updatedConfig);
+        this.serverConfigs.set(serverId, updatedConfig);
+
+        // Only notify if description was auto-generated (don't nag about manual ones)
+        if (latestConfig.descriptionSource === 'auto') {
+          this.emitServerEvent('mcp:tools-changed', {
+            serverId,
+            serverName: config.name,
+          });
+        }
+      } else if (!config.descriptionToolsHash) {
+        // Backfill hash for existing descriptions that predate this feature
+        const latestConfig = mcpConfigStore.getServer(serverId) || config;
+        const updatedConfig: MCPServerConfig = {
+          ...latestConfig,
+          descriptionToolsHash: currentHash,
+        };
+        mcpConfigStore.saveServer(updatedConfig);
+        this.serverConfigs.set(serverId, updatedConfig);
+      }
+    }
+  }
+
+  /**
+   * Emit a server event to the renderer (best-effort).
+   */
+  private emitServerEvent(type: string, payload: Record<string, unknown>): void {
+    try {
+      const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+      if (win) {
+        win.webContents.send('server-event', { type, payload });
+      }
+    } catch {
+      // Best-effort notification
+    }
   }
 
   /**

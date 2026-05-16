@@ -220,6 +220,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getTools: (): Promise<McpTool[]> => ipcRenderer.invoke('mcp.getTools'),
     getServerStatus: (): Promise<McpServerStatus[]> => ipcRenderer.invoke('mcp.getServerStatus'),
     getPresets: (): Promise<McpPresetsMap> => ipcRenderer.invoke('mcp.getPresets'),
+    regenerateDescription: (
+      serverId: string
+    ): Promise<{ success: boolean; description?: string; error?: string }> =>
+      ipcRenderer.invoke('mcp.regenerateDescription', serverId),
+    saveDescription: (
+      serverId: string,
+      description: string
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('mcp.saveDescription', serverId, description),
   },
 
   // Skills methods

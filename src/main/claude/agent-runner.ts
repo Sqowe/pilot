@@ -40,6 +40,7 @@ import {
 import { PathResolver } from '../sandbox/path-resolver';
 import { MCPManager } from '../mcp/mcp-manager';
 import { mcpConfigStore } from '../mcp/mcp-config-store';
+import * as mcpDescriptionGenerator from '../mcp/mcp-description-generator';
 import {
   log,
   logWarn,
@@ -310,6 +311,42 @@ async function enrichProcessPathForBuild(): Promise<void> {
 }
 
 // Shared pi-ai auth storage — created once, reused across sessions.
+
+/**
+ * Build an "MCP Server Directory" section for the system prompt.
+ * Lists all connected servers with their descriptions so the LLM can route
+ * tool calls to the appropriate server based on domain.
+ *
+ * All server names and descriptions are sanitized at render time to prevent
+ * prompt injection from untrusted MCP metadata.
+ */
+function buildMcpServerDirectory(mcpManager: MCPManager): string {
+  const { sanitizeDescription, sanitizeServerName } = mcpDescriptionGenerator;
+  const servers = mcpConfigStore.getEnabledServers();
+  const statuses = mcpManager.getServerStatus();
+  const connected = statuses.filter((s: { connected: boolean }) => s.connected);
+
+  if (connected.length === 0) return '';
+
+  const lines: string[] = [];
+  for (const server of connected) {
+    const config = servers.find((s) => s.id === server.id);
+    if (!config) continue;
+    const name = sanitizeServerName(config.name);
+    const description = sanitizeDescription(config.description || `(${server.toolCount} tools)`);
+    lines.push(`- ${name}: ${description}`);
+  }
+
+  if (lines.length === 0) return '';
+
+  return [
+    '<mcp_server_directory>',
+    'Available MCP servers and their capabilities:',
+    ...lines,
+    "Use the appropriate server's tools based on the task domain.",
+    '</mcp_server_directory>',
+  ].join('\n');
+}
 
 /**
  * Bridge MCP tools from MCPManager into pi-coding-agent ToolDefinition[] format.
@@ -2187,6 +2224,7 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
         assembleUserPrompt({ cwd: effectiveCwd, model: piModel.id }),
         workspaceInfoPrompt,
         this.getBundledPathHints(),
+        this.mcpManager ? buildMcpServerDirectory(this.mcpManager) : '',
       ]
         .filter((section): section is string => Boolean(section && section.trim()))
         .join('\n\n');

@@ -1827,6 +1827,82 @@ ipcMain.handle('mcp.getPresets', () => {
   }
 });
 
+ipcMain.handle('mcp.regenerateDescription', async (_event, serverId: string) => {
+  try {
+    const config = mcpConfigStore.getServer(serverId);
+    if (!config) {
+      return { success: false, error: 'Server not found' };
+    }
+
+    // Get tools for this server
+    if (!sessionManager) {
+      return { success: false, error: 'Session manager not initialized' };
+    }
+    const mcpManager = sessionManager.getMCPManager();
+    const allTools = mcpManager.getTools();
+    const serverTools = allTools.filter((t) => t.serverId === serverId);
+
+    if (serverTools.length === 0) {
+      return { success: false, error: 'No tools available for this server' };
+    }
+
+    const {
+      generateServerDescription,
+      generateHeuristicDescription,
+      computeToolsHash,
+      sanitizeDescription,
+    } = await import('./mcp/mcp-description-generator');
+
+    const llmDescription = await generateServerDescription(config.name, serverTools);
+    const rawDescription = llmDescription || generateHeuristicDescription(config.name, serverTools);
+    // Always sanitize before persisting — descriptions derive from untrusted MCP metadata
+    const description = sanitizeDescription(rawDescription);
+    const hash = computeToolsHash(serverTools);
+
+    mcpConfigStore.saveServer({
+      ...config,
+      description,
+      descriptionToolsHash: hash,
+      descriptionSource: 'auto',
+    });
+
+    sessionManager.invalidateMcpServersCache();
+    log(`[MCP] Description regenerated for ${config.name}: ${description}`);
+    return { success: true, description };
+  } catch (error) {
+    logError('[MCP] Error regenerating description:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { success: false, error: errorMessage };
+  }
+});
+
+ipcMain.handle('mcp.saveDescription', async (_event, serverId: string, description: string) => {
+  try {
+    const config = mcpConfigStore.getServer(serverId);
+    if (!config) {
+      return { success: false, error: 'Server not found' };
+    }
+
+    const { sanitizeDescription } = await import('./mcp/mcp-description-generator');
+
+    mcpConfigStore.saveServer({
+      ...config,
+      description: sanitizeDescription(description),
+      descriptionSource: 'manual',
+    });
+
+    if (sessionManager) {
+      sessionManager.invalidateMcpServersCache();
+    }
+    log(`[MCP] Description manually saved for ${config.name}: ${description}`);
+    return { success: true };
+  } catch (error) {
+    logError('[MCP] Error saving description:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { success: false, error: errorMessage };
+  }
+});
+
 // Skills API handlers
 ipcMain.handle('skills.getAll', async () => {
   try {
