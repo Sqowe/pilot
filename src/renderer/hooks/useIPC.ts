@@ -132,6 +132,7 @@ export function useIPC() {
         globalSkillsPath: config.globalSkillsPath ?? '',
         bashTrustedCommands: config.bashTrustedCommands ?? [],
         bashDenylist: config.bashDenylist ?? [],
+        permissionTimeoutSeconds: config.permissionTimeoutSeconds ?? 300,
       });
       if (isInitialConfigStatus) {
         store.markInitialConfigStatusSeen();
