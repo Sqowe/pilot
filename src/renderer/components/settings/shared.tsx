@@ -8,6 +8,9 @@ import type { ScheduleWeekday } from '../../types';
 export interface MCPServerConfig {
   id: string;
   name: string;
+  description?: string;
+  descriptionToolsHash?: string;
+  descriptionSource?: 'auto' | 'manual';
   type: 'stdio' | 'sse' | 'streamable-http';
   command?: string;
   args?: string[];

@@ -528,6 +528,13 @@ declare global {
         getTools: () => Promise<McpTool[]>;
         getServerStatus: () => Promise<McpServerStatus[]>;
         getPresets: () => Promise<McpPresetsMap>;
+        regenerateDescription: (
+          serverId: string
+        ) => Promise<{ success: boolean; description?: string; error?: string }>;
+        saveDescription: (
+          serverId: string,
+          description: string
+        ) => Promise<{ success: boolean; error?: string }>;
       };
       skills: {
         getAll: () => Promise<Skill[]>;
