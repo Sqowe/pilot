@@ -381,13 +381,13 @@ export function ContextPanel() {
                 )}
                 {contextUsage.toolPercentage > 0 && (
                   <div
-                    className="h-full bg-text-muted/30 transition-all duration-500 ease-out"
+                    className="h-full bg-gray-400/60 transition-all duration-500 ease-out"
                     style={{ width: `${contextUsage.toolPercentage}%` }}
                   />
                 )}
                 {contextUsage.outputPercentage > 0 && (
                   <div
-                    className="h-full bg-purple-400/40 transition-all duration-500 ease-out last:rounded-r-full"
+                    className="h-full bg-purple-400/60 transition-all duration-500 ease-out last:rounded-r-full"
                     style={{ width: `${contextUsage.outputPercentage}%` }}
                   />
                 )}
@@ -399,7 +399,7 @@ export function ContextPanel() {
             {contextUsage.toolSchemaTokens > 0 && (
               <>
                 {' + '}
-                <span className="text-text-muted/70">
+                <span className="text-gray-400">
                   {t('context.contextUsageTools', {
                     count: formatTokenCount(contextUsage.toolSchemaTokens),
                   })}
@@ -409,7 +409,7 @@ export function ContextPanel() {
             {contextUsage.maxOutputTokens > 0 && (
               <>
                 {' + '}
-                <span className="text-purple-400/70">
+                <span className="text-purple-400">
                   {t('context.contextUsageOutput', {
                     count: formatTokenCount(contextUsage.maxOutputTokens),
                   })}
