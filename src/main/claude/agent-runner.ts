@@ -21,7 +21,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import type { ImageContent as PiImageContent } from '@earendil-works/pi-ai';
-import { Type, type TSchema } from 'typebox';
+import { Type } from 'typebox';
 import { getSharedAuthStorage, ModelRegistry } from './shared-auth';
 import type { Session, Message, TraceStep, ServerEvent, ContentBlock } from '../../renderer/types';
 import { v4 as uuidv4 } from 'uuid';
@@ -352,9 +352,20 @@ function buildMcpServerDirectory(mcpManager: MCPManager): string {
 
 /**
  * Bridge MCP tools from MCPManager into pi-coding-agent ToolDefinition[] format.
- * Each MCP tool becomes a customTool whose execute() delegates to mcpManager.callTool().
+/**
+ * Extended ToolDefinition that carries MCP server metadata for filtering.
  */
-function buildMcpCustomTools(mcpManager: MCPManager): ToolDefinition[] {
+interface McpToolDefinition extends ToolDefinition {
+  /** The MCP server name this tool belongs to (exact, not parsed from tool name) */
+  _mcpServerName: string;
+}
+
+/**
+ * Build custom tool definitions from all connected MCP servers.
+ * Each MCP tool becomes a customTool whose execute() delegates to mcpManager.callTool().
+ * Returns extended definitions with explicit server metadata for filtering.
+ */
+function buildMcpCustomTools(mcpManager: MCPManager): McpToolDefinition[] {
   const mcpTools = mcpManager.getTools();
   return mcpTools.map((mcpTool) => {
     // Wrap the raw JSON Schema inputSchema as a TypeBox TSchema
@@ -362,11 +373,12 @@ function buildMcpCustomTools(mcpManager: MCPManager): ToolDefinition[] {
       mcpTool.inputSchema as Record<string, unknown>
     );
 
-    const toolDef: ToolDefinition<TSchema, unknown> = {
+    const toolDef: McpToolDefinition = {
       name: mcpTool.name,
       label: mcpTool.name.replace(/^mcp__/, '').replace(/__/g, ' → '),
       description: mcpTool.description || `MCP tool from ${mcpTool.serverName}`,
       parameters,
+      _mcpServerName: mcpTool.serverName,
       async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
         try {
           const result = await mcpManager.callTool(mcpTool.name, params as Record<string, unknown>);
@@ -386,6 +398,17 @@ function buildMcpCustomTools(mcpManager: MCPManager): ToolDefinition[] {
     };
     return toolDef;
   });
+}
+
+/**
+ * Filter MCP custom tools to only include tools from effective (non-disabled) servers.
+ * Uses explicit server metadata (_mcpServerName) for exact matching — no name parsing.
+ */
+export function filterMcpCustomTools(
+  tools: McpToolDefinition[],
+  effectiveServerNames: Set<string>
+): McpToolDefinition[] {
+  return tools.filter((tool) => effectiveServerNames.has(tool._mcpServerName));
 }
 
 /**
@@ -2080,6 +2103,7 @@ RULES:
       // Build MCP servers configuration for SDK
       // IMPORTANT: SDK uses tool names in format: mcp__<ServerKey>__<toolName>
       const mcpServers: Record<string, unknown> = {};
+      let effectiveServerNames: Set<string> = new Set();
       if (this.mcpManager) {
         const serverStatuses = this.mcpManager.getServerStatus();
         const connectedServers = serverStatuses.filter((s) => s.connected);
@@ -2111,6 +2135,7 @@ RULES:
           '[ClaudeAgentRunner] Effective MCP configs after overrides:',
           allConfigs.map((c) => c.name)
         );
+        effectiveServerNames = new Set(allConfigs.map((c) => c.name));
 
         // Cache key: serialized config list + imageCapable flag.  The bundled node
         // paths are stable for the lifetime of the process so they don't need to be
@@ -2258,12 +2283,14 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
       // Create or reuse pi-coding-agent session
       // Bridge MCP tools as customTools for pi-coding-agent.
       // Re-read every query so newly added/removed MCP servers take effect immediately.
-      const mcpCustomTools = this.mcpManager ? buildMcpCustomTools(this.mcpManager) : [];
+      // Filter to only include tools from servers that survived workspace/session overrides.
+      const allMcpCustomTools = this.mcpManager ? buildMcpCustomTools(this.mcpManager) : [];
+      const mcpCustomTools = filterMcpCustomTools(allMcpCustomTools, effectiveServerNames);
       const extensionCustomTools = extensionResult.customTools || [];
       const customTools = [...mcpCustomTools, ...extensionCustomTools];
       if (mcpCustomTools.length > 0) {
         log(
-          `[ClaudeAgentRunner] Registered ${mcpCustomTools.length} MCP tools as customTools:`,
+          `[ClaudeAgentRunner] Registered ${mcpCustomTools.length} MCP tools as customTools (filtered from ${allMcpCustomTools.length}):`,
           mcpCustomTools.map((t) => t.name).join(', ')
         );
       }
