@@ -60,7 +60,7 @@ It provides a sandboxed workspace where AI can manage files, generate profession
 - **Smart File Management**: Read, write, and organize files within your workspace.
 - **Skills System**: Built-in workflows for PPTX, DOCX, PDF, XLSX generation and processing. **Supports custom skill creation and deletion.**
 - **Task Scheduling**: Anacron-style in-app task scheduling with fuzzy time windows (morning/afternoon/evening/night), autonomous execution mode, missed-task catch-up policies, per-run token/time budgets, and full run history tracking.
-- **MCP External Service Support**: Integrate browser, Notion, custom apps and more through **MCP Connectors** to extend AI capabilities.
+- **MCP External Service Support**: Integrate browser, Notion, custom apps and more through **MCP Connectors** to extend AI capabilities. **Per-session toggle** lets you disable unused servers on-the-fly to reclaim context window tokens.
 - **Multimodal Input**: Drag & drop files and images directly into the chat input for seamless multimodal interaction.
 - **Real-time Trace**: Watch AI reasoning and tool execution in the Trace Panel.
 - **Secure Workspace**: All operations confined to your chosen workspace folder.
@@ -227,6 +227,7 @@ This is the **Sqowe** variant of Open Cowork. It tracks upstream functionality a
 - **Bash Command Restrictions**: A configurable allow/deny engine that gates every bash command the agent runs. Trusted patterns run automatically, denied patterns always prompt, and everything else requires explicit approval. See [BASH_COMMAND_RESTRICTIONS.md](BASH_COMMAND_RESTRICTIONS.md) for configuration details, pattern syntax, and edge cases.
 - **Configurable Permission Timeout**: Permission dialogs auto-deny after a configurable timeout (default: 5 minutes). Set to 0 for infinite wait. Configurable in Settings → Bash Commands.
 - **Customizable System Prompt**: The AI's system prompt is fully editable via Settings → System Prompt. Each section (identity, behavioral rules, citations, tool routing) is a separate file that can be independently edited, disabled, or reset. Workspace-level overrides in `.cowork/prompts/` replace global sections per-project. Template variables (`{{cwd}}`, `{{project_name}}`, `{{date}}`, `{{model}}`) are resolved at runtime.
+- **Per-Session MCP Server Toggle**: Disable/enable MCP servers on-the-fly from the Context Panel without restarting the session. Reduces context window token usage by shedding unused tool schemas mid-conversation. Supports workspace-level profiles via `.cowork/mcp-servers.json` (committable to git) for team-wide defaults.
 
 ---
 

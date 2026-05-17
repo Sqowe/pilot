@@ -10,7 +10,7 @@ structure, boundaries, and where to find authoritative coding rules. This docume
 does NOT define coding rules — it points to them (see Section 8).
 
 Target audience: AI coding assistants and new human contributors.
-Last updated: 2026-05-14.
+Last updated: 2026-05-17.
 
 ---
 
@@ -137,6 +137,22 @@ their tools into the Pi agent as `customTools`. `gui-operate-server.ts` (~6800 l
 is a built-in MCP server providing GUI automation via vision models.
 
 MCP servers run on the HOST, never inside the sandbox VM.
+
+**Per-session & per-workspace MCP toggle:**
+
+MCP tool definitions consume significant context window tokens. To optimize usage,
+servers can be selectively disabled at three levels (highest priority wins):
+
+1. **Session override** (ephemeral) — user toggles in ContextPanel, stored in-memory
+   in `SessionManager.sessionDisabledMcpServers` Map. Cleared on session delete.
+2. **Workspace profile** — `{cwd}/.cowork/mcp-servers.json` file with `disabled`/`enabled`
+   arrays. Follows the same pattern as `.cowork/prompts/` overrides. Committable to git.
+3. **Global config** — per-server `enabled` boolean in `electron-store` (Settings UI).
+
+Resolution happens in `agent-runner.ts` before building the SDK tool list each query:
+`getEnabledServers() → applyWorkspaceOverrides() → applySessionOverrides()`.
+
+Key files: `mcp-manager.ts`, `mcp-config-store.ts`, `mcp-workspace-profile.ts`.
 
 ### 4.4 Sandbox & Security (`src/main/sandbox/`)
 

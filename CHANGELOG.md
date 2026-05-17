@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Per-session and per-workspace MCP server toggle for context window optimization
+  - Toggle switches in Context Panel to disable/enable MCP servers mid-conversation
+  - Session-level overrides are ephemeral (in-memory only, reset on new session)
+  - Workspace-level profiles via `.cowork/mcp-servers.json` (committable to git)
+  - Three-layer resolution: session override > workspace profile > global config
+  - Input validation and bounded state to prevent memory growth
+  - 25 new tests for override precedence, validation, and cleanup
+
 ## [3.3.0-sqowe.5] - 2026-05-14
 
 ### Added
