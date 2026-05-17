@@ -2883,6 +2883,23 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
                 terminalErrorText = resolvedPayload.errorText;
                 if (!hasEmittedError) {
                   hasEmittedError = true;
+
+                  // Determine user-facing guidance based on error type
+                  let guidance: string;
+                  const isContextOverflow =
+                    /maximum context length/i.test(resolvedPayload.errorText) ||
+                    /context.*window.*exceeded/i.test(resolvedPayload.errorText) ||
+                    /token.*limit.*exceeded/i.test(resolvedPayload.errorText);
+
+                  if (isContextOverflow) {
+                    guidance =
+                      '_Context window full. Send another message — the system will automatically compress the conversation and retry._';
+                  } else if (/\b4\d{2}\b/.test(resolvedPayload.errorText)) {
+                    guidance = '_Please check your configuration and retry._';
+                  } else {
+                    guidance = '_Agent is retrying automatically, please wait..._';
+                  }
+
                   this.sendMessage(session.id, {
                     id: uuidv4(),
                     sessionId: session.id,
@@ -2890,11 +2907,7 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
                     content: [
                       {
                         type: 'text',
-                        text: `**Error**: ${resolvedPayload.errorText}\n\n${
-                          /\b4\d{2}\b/.test(resolvedPayload.errorText)
-                            ? '_Please check your configuration and retry._'
-                            : '_Agent is retrying automatically, please wait..._'
-                        }`,
+                        text: `**Error**: ${resolvedPayload.errorText}\n\n${guidance}`,
                       },
                     ],
                     timestamp: Date.now(),
