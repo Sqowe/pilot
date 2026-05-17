@@ -56,6 +56,7 @@ export function ContextPanel() {
   const [artifactsOpen, setArtifactsOpen] = useState(true);
   const [expandedConnector, setExpandedConnector] = useState<string | null>(null);
   const [mcpServers, setMcpServers] = useState<MCPServerInfo[]>([]);
+  const [sessionDisabledServers, setSessionDisabledServers] = useState<Set<string>>(new Set());
   const [copiedPath, setCopiedPath] = useState(false);
   const [isChangingDir, setIsChangingDir] = useState(false);
   const [recentWorkspaceFiles, setRecentWorkspaceFiles] = useState<
@@ -251,6 +252,39 @@ export function ContextPanel() {
     const interval = setInterval(loadMCPServers, 30000);
     return () => clearInterval(interval);
   }, [contextPanelCollapsed, getMCPServers]);
+
+  // Load session-disabled MCP servers when active session changes
+  useEffect(() => {
+    if (!activeSessionId || contextPanelCollapsed) {
+      setSessionDisabledServers(new Set());
+      return;
+    }
+    const loadDisabled = async () => {
+      try {
+        const disabled = await window.electronAPI?.mcp?.getSessionDisabledServers(activeSessionId);
+        setSessionDisabledServers(new Set(disabled || []));
+      } catch (error) {
+        console.error('Failed to load session disabled servers:', error);
+      }
+    };
+    loadDisabled();
+  }, [activeSessionId, contextPanelCollapsed]);
+
+  const handleToggleSessionServer = async (serverId: string, disabled: boolean) => {
+    if (!activeSessionId) return;
+    try {
+      const result = await window.electronAPI?.mcp?.toggleSessionServer(
+        activeSessionId,
+        serverId,
+        disabled
+      );
+      if (result?.success && result.disabledServers) {
+        setSessionDisabledServers(new Set(result.disabledServers));
+      }
+    } catch (error) {
+      console.error('Failed to toggle session MCP server:', error);
+    }
+  };
 
   if (contextPanelCollapsed) {
     return (
@@ -564,6 +598,8 @@ export function ContextPanel() {
                   onToggle={() =>
                     setExpandedConnector(expandedConnector === server.id ? null : server.id)
                   }
+                  sessionDisabled={sessionDisabledServers.has(server.id)}
+                  onToggleSession={handleToggleSessionServer}
                 />
               ))}
             </div>
@@ -579,11 +615,15 @@ function ConnectorItem({
   steps,
   expanded,
   onToggle,
+  sessionDisabled,
+  onToggleSession,
 }: {
   server: MCPServerInfo;
   steps: TraceStep[];
   expanded: boolean;
   onToggle: () => void;
+  sessionDisabled: boolean;
+  onToggleSession: (serverId: string, disabled: boolean) => void;
 }) {
   const { t } = useTranslation();
   // Get MCP tools used from this server
@@ -611,43 +651,66 @@ function ConnectorItem({
   ).length;
 
   return (
-    <div className="rounded-lg border border-border overflow-hidden">
-      <button
-        onClick={onToggle}
+    <div
+      className={`rounded-lg border border-border overflow-hidden ${sessionDisabled ? 'opacity-50' : ''}`}
+    >
+      <div
         className={`w-full px-3 py-2 flex items-center gap-2 transition-colors ${
-          server.connected ? 'bg-mcp/10 hover:bg-mcp/20' : 'bg-surface-muted hover:bg-surface-hover'
+          server.connected && !sessionDisabled
+            ? 'bg-mcp/10 hover:bg-mcp/20'
+            : 'bg-surface-muted hover:bg-surface-hover'
         }`}
       >
-        <div
-          className={`w-6 h-6 rounded flex items-center justify-center ${
-            server.connected ? 'bg-mcp/20' : 'bg-surface-muted'
+        {/* Toggle switch */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSession(server.id, !sessionDisabled);
+          }}
+          className={`w-7 h-4 rounded-full relative transition-colors shrink-0 ${
+            sessionDisabled ? 'bg-border' : 'bg-mcp'
           }`}
+          title={sessionDisabled ? t('mcp.enableForSession') : t('mcp.disableForSession')}
         >
-          <Plug className={`w-3.5 h-3.5 ${server.connected ? 'text-mcp' : 'text-text-muted'}`} />
-        </div>
-        <div className="flex-1 text-left min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-text-primary truncate">{server.name}</span>
-            {!server.connected && (
-              <span className="text-xs text-text-muted">({t('mcp.notConnected')})</span>
+          <div
+            className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${
+              sessionDisabled ? 'left-0.5' : 'translate-x-3.5'
+            }`}
+          />
+        </button>
+        <button onClick={onToggle} className="flex-1 flex items-center gap-2 min-w-0">
+          <div className="flex-1 text-left min-w-0">
+            <div className="flex items-center gap-2">
+              <span
+                className={`text-sm font-medium truncate ${sessionDisabled ? 'text-text-muted line-through' : 'text-text-primary'}`}
+              >
+                {server.name}
+              </span>
+              {!server.connected && (
+                <span className="text-xs text-text-muted">({t('mcp.notConnected')})</span>
+              )}
+              {sessionDisabled && (
+                <span className="text-xs text-warning">({t('mcp.sessionDisabled')})</span>
+              )}
+            </div>
+            {server.connected && !sessionDisabled && (
+              <p className="text-xs text-text-muted">
+                {t('mcp.toolCount', { count: server.toolCount })}
+                {usageCount > 0 && ` • ${t('mcp.callCount', { count: usageCount })}`}
+              </p>
             )}
           </div>
-          {server.connected && (
-            <p className="text-xs text-text-muted">
-              {t('mcp.toolCount', { count: server.toolCount })}
-              {usageCount > 0 && ` • ${t('mcp.callCount', { count: usageCount })}`}
-            </p>
-          )}
-        </div>
-        {server.connected &&
-          (expanded ? (
-            <ChevronDown className="w-4 h-4 text-text-muted" />
-          ) : (
-            <ChevronRight className="w-4 h-4 text-text-muted" />
-          ))}
-      </button>
+          {server.connected &&
+            !sessionDisabled &&
+            (expanded ? (
+              <ChevronDown className="w-4 h-4 text-text-muted" />
+            ) : (
+              <ChevronRight className="w-4 h-4 text-text-muted" />
+            ))}
+        </button>
+      </div>
 
-      {expanded && server.connected && (
+      {expanded && server.connected && !sessionDisabled && (
         <div className="px-3 pb-2 space-y-1 bg-surface">
           {mcpToolsUsed.length > 0 ? (
             <>

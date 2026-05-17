@@ -40,6 +40,7 @@ import {
 import { PathResolver } from '../sandbox/path-resolver';
 import { MCPManager } from '../mcp/mcp-manager';
 import { mcpConfigStore } from '../mcp/mcp-config-store';
+import { applyWorkspaceOverrides, applySessionOverrides } from '../mcp/mcp-workspace-profile';
 import * as mcpDescriptionGenerator from '../mcp/mcp-description-generator';
 import {
   log,
@@ -491,6 +492,8 @@ interface AgentRunnerOptions {
     result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
     suggestion?: string;
   }>;
+  /** Get session-level disabled MCP server IDs (ephemeral, in-memory) */
+  getSessionDisabledMcpServers?: (sessionId: string) => string[];
 }
 
 interface CachedPiSession {
@@ -538,6 +541,7 @@ export class ClaudeAgentRunner {
   private activeControllers: Map<string, AbortController> = new Map();
   private piSessions: Map<string, CachedPiSession> = new Map();
   private static readonly MAX_CACHED_SESSIONS = 50;
+  private _getSessionDisabledMcpServers?: (sessionId: string) => string[];
 
   // Per-instance caches — invalidated when the underlying config changes.
   private _mcpServersCache: { fingerprint: string; servers: Record<string, unknown> } | null = null;
@@ -576,6 +580,11 @@ export class ClaudeAgentRunner {
     this._mcpServersCache = null;
     // Sessions stay alive — MCP tools are rebuilt each query via buildMcpCustomTools()
     log('[ClaudeAgentRunner] MCP servers cache invalidated — tools will rebuild on next query');
+  }
+
+  /** Get session-level disabled MCP server IDs via the injected callback. */
+  private getSessionDisabledMcpServers(sessionId: string): string[] | null {
+    return this._getSessionDisabledMcpServers?.(sessionId) ?? null;
   }
 
   // TODO: Credentials should be served via a secure MCP tool or IPC channel,
@@ -860,6 +869,7 @@ RULES:
     this.saveMessage = options.saveMessage;
     this.requestSudoPassword = options.requestSudoPassword;
     this.requestPermission = options.requestPermission;
+    this._getSessionDisabledMcpServers = options.getSessionDisabledMcpServers;
     this.pathResolver = pathResolver;
     this.mcpManager = mcpManager;
     this._pluginRuntimeService = pluginRuntimeService;
@@ -2090,6 +2100,17 @@ RULES:
           );
           allConfigs = [];
         }
+
+        // Apply workspace-level and session-level MCP overrides
+        allConfigs = applyWorkspaceOverrides(allConfigs, session.cwd);
+        allConfigs = applySessionOverrides(
+          allConfigs,
+          this.getSessionDisabledMcpServers(session.id)
+        );
+        log(
+          '[ClaudeAgentRunner] Effective MCP configs after overrides:',
+          allConfigs.map((c) => c.name)
+        );
 
         // Cache key: serialized config list + imageCapable flag.  The bundled node
         // paths are stable for the lifetime of the process so they don't need to be

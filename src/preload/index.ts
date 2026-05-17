@@ -229,6 +229,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       description: string
     ): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('mcp.saveDescription', serverId, description),
+    toggleSessionServer: (
+      sessionId: string,
+      serverId: string,
+      disabled: boolean
+    ): Promise<{ success: boolean; disabledServers?: string[]; error?: string }> =>
+      ipcRenderer.invoke('mcp.toggleSessionServer', sessionId, serverId, disabled),
+    getSessionDisabledServers: (sessionId: string): Promise<string[]> =>
+      ipcRenderer.invoke('mcp.getSessionDisabledServers', sessionId),
   },
 
   // Skills methods
@@ -535,6 +543,12 @@ declare global {
           serverId: string,
           description: string
         ) => Promise<{ success: boolean; error?: string }>;
+        toggleSessionServer: (
+          sessionId: string,
+          serverId: string,
+          disabled: boolean
+        ) => Promise<{ success: boolean; disabledServers?: string[]; error?: string }>;
+        getSessionDisabledServers: (sessionId: string) => Promise<string[]>;
       };
       skills: {
         getAll: () => Promise<Skill[]>;

@@ -81,7 +81,8 @@ export class SessionManager {
   private activeSessions: Map<string, AbortController> = new Map();
   private promptQueues: Map<string, Array<{ prompt: string; content?: ContentBlock[] }>> =
     new Map();
-  private pendingPermissions: Map<string, (result: PermissionResult, suggestion?: string) => void> = new Map();
+  private pendingPermissions: Map<string, (result: PermissionResult, suggestion?: string) => void> =
+    new Map();
   private pendingSudoPasswords: Map<
     string,
     { sessionId: string; resolve: (password: string | null) => void }
@@ -91,6 +92,13 @@ export class SessionManager {
   private titleGenerationTokens: Map<string, symbol> = new Map();
   private messageCache: Map<string, Message[]> = new Map();
   private static readonly MAX_CACHE_SIZE = 100;
+
+  /**
+   * Per-session MCP server disabled state (ephemeral, in-memory only).
+   * Maps sessionId → Set of disabled server IDs.
+   * Cleared when session is deleted.
+   */
+  private sessionDisabledMcpServers: Map<string, Set<string>> = new Map();
 
   constructor(
     db: DatabaseInstance,
@@ -145,6 +153,8 @@ export class SessionManager {
           toolName: string,
           input: Record<string, unknown>
         ) => this.requestPermission(sessionId, toolUseId, toolName, input),
+        getSessionDisabledMcpServers: (sessionId: string) =>
+          this.getSessionDisabledMcpServers(sessionId),
       },
       this.pathResolver,
       this.mcpManager,
@@ -179,6 +189,61 @@ export class SessionManager {
     if (this.agentRunner && 'invalidateMcpServersCache' in this.agentRunner) {
       (this.agentRunner as ClaudeAgentRunner).invalidateMcpServersCache();
     }
+  }
+
+  /**
+   * Toggle an MCP server's disabled state for a specific session (ephemeral, in-memory only).
+   * Returns the updated list of disabled server IDs for the session.
+   * Throws if sessionId doesn't correspond to an existing session or serverId is invalid.
+   */
+  toggleSessionMcpServer(sessionId: string, serverId: string, disabled: boolean): string[] {
+    // Validate inputs
+    if (!sessionId || typeof sessionId !== 'string') {
+      throw new Error('Invalid sessionId');
+    }
+    if (!serverId || typeof serverId !== 'string' || serverId.length > 256) {
+      throw new Error('Invalid serverId');
+    }
+    // Verify session exists
+    const session = this.loadSession(sessionId);
+    if (!session) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+
+    if (disabled) {
+      let disabledSet = this.sessionDisabledMcpServers.get(sessionId);
+      if (!disabledSet) {
+        disabledSet = new Set();
+        this.sessionDisabledMcpServers.set(sessionId, disabledSet);
+      }
+      disabledSet.add(serverId);
+    } else {
+      const disabledSet = this.sessionDisabledMcpServers.get(sessionId);
+      if (disabledSet) {
+        disabledSet.delete(serverId);
+        // Clean up empty sets to avoid unbounded map growth
+        if (disabledSet.size === 0) {
+          this.sessionDisabledMcpServers.delete(sessionId);
+        }
+      }
+    }
+
+    // Invalidate MCP cache so next query picks up the change
+    this.invalidateMcpServersCache();
+
+    log(
+      `[SessionManager] MCP server ${serverId} ${disabled ? 'disabled' : 'enabled'} for session ${sessionId}`
+    );
+    const disabledSet = this.sessionDisabledMcpServers.get(sessionId);
+    return disabledSet ? Array.from(disabledSet) : [];
+  }
+
+  /**
+   * Get the list of disabled MCP server IDs for a session.
+   */
+  getSessionDisabledMcpServers(sessionId: string): string[] {
+    const disabledSet = this.sessionDisabledMcpServers.get(sessionId);
+    return disabledSet ? Array.from(disabledSet) : [];
   }
 
   /**
@@ -998,6 +1063,7 @@ export class SessionManager {
     this.messageCache.delete(sessionId);
     this.sessionTitleAttempts.delete(sessionId);
     this.titleGenerationTokens.delete(sessionId);
+    this.sessionDisabledMcpServers.delete(sessionId);
     forgetSessionPermissions(sessionId);
     if (this.extensionManager) {
       await this.extensionManager.onSessionDeleted({
@@ -1032,6 +1098,7 @@ export class SessionManager {
         this.messageCache.delete(sessionId);
         this.sessionTitleAttempts.delete(sessionId);
         this.titleGenerationTokens.delete(sessionId);
+        this.sessionDisabledMcpServers.delete(sessionId);
         forgetSessionPermissions(sessionId);
       }
     })();

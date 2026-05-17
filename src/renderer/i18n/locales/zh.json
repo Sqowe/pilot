@@ -552,7 +552,10 @@
     "commandRequired": "命令不能为空",
     "urlRequired": "URL 不能为空",
     "toolCount": "{{count}} 个工具",
-    "callCount": "{{count}} 次调用"
+    "callCount": "{{count}} 次调用",
+    "sessionDisabled": "本会话已关闭",
+    "enableForSession": "在本会话中启用",
+    "disableForSession": "在本会话中禁用"
   },
   "credentials": {
     "envVars": "环境变量",

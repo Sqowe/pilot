@@ -1907,6 +1907,36 @@ ipcMain.handle('mcp.saveDescription', async (_event, serverId: string, descripti
   }
 });
 
+ipcMain.handle(
+  'mcp.toggleSessionServer',
+  async (_event, sessionId: string, serverId: string, disabled: boolean) => {
+    try {
+      if (!sessionManager) {
+        return { success: false, error: 'Session manager not initialized' };
+      }
+      const disabledServers = sessionManager.toggleSessionMcpServer(sessionId, serverId, disabled);
+      log(`[MCP] Session ${sessionId}: server ${serverId} ${disabled ? 'disabled' : 'enabled'}`);
+      return { success: true, disabledServers };
+    } catch (error) {
+      logError('[MCP] Error toggling session server:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { success: false, error: errorMessage };
+    }
+  }
+);
+
+ipcMain.handle('mcp.getSessionDisabledServers', async (_event, sessionId: string) => {
+  try {
+    if (!sessionManager) {
+      return [];
+    }
+    return sessionManager.getSessionDisabledMcpServers(sessionId);
+  } catch (error) {
+    logError('[MCP] Error getting session disabled servers:', error);
+    return [];
+  }
+});
+
 // Skills API handlers
 ipcMain.handle('skills.getAll', async () => {
   try {
