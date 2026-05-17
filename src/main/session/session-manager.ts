@@ -317,7 +317,8 @@ export class SessionManager {
     cwd?: string,
     allowedTools?: string[],
     content?: ContentBlock[],
-    memoryEnabled?: boolean
+    memoryEnabled?: boolean,
+    initialDisabledMcpServers?: string[]
   ): Promise<Session> {
     log('[SessionManager] Starting new session:', title);
 
@@ -325,6 +326,24 @@ export class SessionManager {
 
     // Save to database
     this.saveSession(session);
+
+    // Apply initial MCP disabled state BEFORE enqueueing the prompt.
+    // This ensures tool availability is correct on the very first agent turn.
+    if (initialDisabledMcpServers && initialDisabledMcpServers.length > 0) {
+      const disabledSet = new Set<string>();
+      for (const serverId of initialDisabledMcpServers) {
+        if (typeof serverId === 'string' && serverId && serverId.length <= 256) {
+          disabledSet.add(serverId);
+        }
+      }
+      if (disabledSet.size > 0) {
+        this.sessionDisabledMcpServers.set(session.id, disabledSet);
+        this.invalidateMcpServersCache();
+        log(
+          `[SessionManager] Applied ${disabledSet.size} initial disabled MCP servers for session ${session.id}`
+        );
+      }
+    }
 
     // Start processing the prompt with content blocks
     this.enqueuePrompt(session, prompt, content);

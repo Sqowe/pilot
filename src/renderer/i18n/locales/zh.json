@@ -47,7 +47,12 @@
     "quickPromptNotion": "帮我调研三篇与 agents 相关、具有代表性的综述论文，并将它们添加到一个名为“Agent Survey”的 Notion 页面下。每篇论文请包含标题、作者、发表 venue/year，以及主要贡献的简短总结。",
     "apiNotConfigured": "API 尚未配置，请前往设置页面填写 API 提供商和密钥。",
     "goToSettings": "前往设置",
-    "configSet": "配置方案"
+    "configSet": "配置方案",
+    "mcpServersActive": "个 MCP 服务器已启用",
+    "mcpTokensSaved": "已禁用 {{count}} 个",
+    "mcpServersForChat": "本次对话的 MCP 服务器",
+    "mcpAllOn": "全部启用",
+    "mcpAllOff": "全部禁用"
   },
   "settings": {
     "title": "设置",

@@ -3163,14 +3163,18 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
         });
         return null;
       }
-      return sm.startSession(
-        event.payload.title,
-        event.payload.prompt,
-        event.payload.cwd,
-        event.payload.allowedTools,
-        event.payload.content,
-        event.payload.memoryEnabled
-      );
+      {
+        const session = await sm.startSession(
+          event.payload.title,
+          event.payload.prompt,
+          event.payload.cwd,
+          event.payload.allowedTools,
+          event.payload.content,
+          event.payload.memoryEnabled,
+          event.payload.initialDisabledMcpServers
+        );
+        return session;
+      }
 
     case 'session.continue':
       return sm.continueSession(

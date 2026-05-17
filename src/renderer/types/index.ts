@@ -529,6 +529,7 @@ export type ClientEvent =
         allowedTools?: string[];
         content?: ContentBlock[];
         memoryEnabled?: boolean;
+        initialDisabledMcpServers?: string[];
       };
     }
   | {

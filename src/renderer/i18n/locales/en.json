@@ -47,7 +47,12 @@
     "quickPromptNotion": "Help me research three representative survey papers related to agents, and add them under a Notion page titled \"Agent Survey\". For each paper, include the title, authors, publication venue/year, and a brief summary of the main contributions.",
     "apiNotConfigured": "API not configured yet. Please go to Settings to set up your API provider and key.",
     "goToSettings": "Go to Settings",
-    "configSet": "Config Set"
+    "configSet": "Config Set",
+    "mcpServersActive": "MCP servers active",
+    "mcpTokensSaved": "{{count}} disabled",
+    "mcpServersForChat": "MCP Servers for this chat",
+    "mcpAllOn": "All on",
+    "mcpAllOff": "All off"
   },
   "settings": {
     "title": "Settings",
