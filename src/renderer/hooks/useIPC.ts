@@ -295,7 +295,13 @@ export function useIPC() {
             break;
 
           case 'session.contextInfo':
-            store.setSessionContextWindow(event.payload.sessionId, event.payload.contextWindow);
+            store.setSessionContextWindow(
+              event.payload.sessionId,
+              event.payload.contextWindow,
+              event.payload.toolSchemaTokens,
+              event.payload.maxOutputTokens,
+              event.payload.currentInputTokens
+            );
             break;
 
           case 'error':

@@ -721,7 +721,9 @@
     "copyPath": "Copy path",
     "openInFileManager": "Open in file manager",
     "contextUsage": "Context Usage",
-    "contextUsageLabel": "{{used}} / {{total}}"
+    "contextUsageLabel": "{{used}} / {{total}}",
+    "contextUsageTools": "{{count}} tools",
+    "contextUsageOutput": "{{count}} output"
   },
   "messageCard": {
     "request": "Request",

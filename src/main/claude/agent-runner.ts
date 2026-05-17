@@ -1783,11 +1783,13 @@ RULES:
       }
 
       // Send context window info to renderer for UI display
+      // (toolSchemaTokens will be sent later once tools are computed)
       this.sendToRenderer({
         type: 'session.contextInfo',
         payload: {
           sessionId: session.id,
           contextWindow: piModel.contextWindow || 128000,
+          maxOutputTokens: piModel.maxTokens || 16384,
         },
       });
 
@@ -2488,6 +2490,7 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
         {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const agent = piSession.agent as any;
+          const sendToRendererRef = this.sendToRenderer.bind(this); // Capture for use inside _onPayload
           if (!('_onPayload' in agent)) {
             logWarn(
               '[ClaudeAgentRunner] SDK agent does not expose _onPayload — skipping mid-loop overflow guard'
@@ -2527,6 +2530,15 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
               this.piSessions.get(session.id)!.ollamaNumCtx = ollamaNumCtx;
             }
 
+            // Throttle live context updates to avoid IPC flooding.
+            // _onPayload fires on every API request (including stream retries).
+            // We only emit to the renderer at most every 200ms, or when the
+            // token count changes by a meaningful delta (>1000 tokens).
+            let lastContextEmitTime = 0;
+            let lastEmittedInputTokens = 0;
+            const CONTEXT_EMIT_INTERVAL_MS = 200;
+            const CONTEXT_EMIT_MIN_DELTA = 1000; // tokens
+
             agent._onPayload = async (payload: Record<string, unknown>, modelArg: unknown) => {
               // Chain to original _onPayload if it exists
               let result = originalOnPayload
@@ -2557,6 +2569,32 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
                 maxOutput: payloadMaxOutput,
                 safetyMargin: payloadSafetyMargin,
               });
+
+              // ─── Emit live context usage to renderer (throttled) ─────────
+              // Updates the context usage bar during the tool loop. Throttled
+              // to avoid IPC flooding: emits at most every 200ms or when the
+              // token count changes by >1000 tokens (whichever comes first).
+              const now = Date.now();
+              const tokenDelta = Math.abs(
+                estimate.breakdown.messageTokens - lastEmittedInputTokens
+              );
+              if (
+                now - lastContextEmitTime >= CONTEXT_EMIT_INTERVAL_MS ||
+                tokenDelta >= CONTEXT_EMIT_MIN_DELTA
+              ) {
+                lastContextEmitTime = now;
+                lastEmittedInputTokens = estimate.breakdown.messageTokens;
+                sendToRendererRef({
+                  type: 'session.contextInfo',
+                  payload: {
+                    sessionId: session.id,
+                    contextWindow: payloadContextWindow,
+                    toolSchemaTokens: estimate.breakdown.toolTokens,
+                    maxOutputTokens: payloadMaxOutput,
+                    currentInputTokens: estimate.breakdown.messageTokens,
+                  },
+                });
+              }
 
               if (!estimate.wouldOverflow) {
                 return result; // Within budget — proceed normally
@@ -3093,6 +3131,20 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
         // Precompute tool schema tokens once — this involves JSON.stringify on
         // every tool's parameters and is the most expensive invariant cost.
         const guardToolSchemaTokens = estimateToolSchemaTokens(wrappedTools, mcpCustomTools);
+
+        // Update renderer with tool schema token count (now that tools are computed)
+        // Reset currentInputTokens to 0 at run start — the _onPayload hook will
+        // update it with live values as the tool loop progresses.
+        this.sendToRenderer({
+          type: 'session.contextInfo',
+          payload: {
+            sessionId: session.id,
+            contextWindow: guardContextWindow,
+            toolSchemaTokens: guardToolSchemaTokens,
+            maxOutputTokens: guardModelMaxOutput,
+            currentInputTokens: 0,
+          },
+        });
 
         const buildGuardInput = (promptText: string) => ({
           existingMessages: piSession.messages as ReadonlyArray<{

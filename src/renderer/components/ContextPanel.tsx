@@ -38,6 +38,7 @@ import {
   Layers,
 } from 'lucide-react';
 import type { TraceStep, MCPServerInfo } from '../types';
+import { computeContextUsage } from '../utils/context-usage';
 
 const EMPTY_STEPS: TraceStep[] = [];
 
@@ -111,24 +112,34 @@ export function ContextPanel() {
     return { input, output, total: input + output };
   }, [messages]);
 
-  // Context usage: last message's input tokens ≈ current context occupation
+  // Context usage: effective budget including tool schemas + output reservation
+  // Uses live currentInputTokens from _onPayload when available (updates during
+  // tool loop), falls back to last message's tokenUsage.input for initial state.
   const contextUsage = useMemo(() => {
-    const contextWindow = activeSessionId
-      ? sessionStates[activeSessionId]?.contextWindow
-      : undefined;
+    const sessionState = activeSessionId ? sessionStates[activeSessionId] : undefined;
+    const contextWindow = sessionState?.contextWindow;
     if (!contextWindow) return null;
 
-    let lastInput = 0;
+    const toolSchemaTokens = sessionState?.toolSchemaTokens ?? 0;
+    const maxOutputTokens = sessionState?.maxOutputTokens ?? 0;
+    const currentInputTokens = sessionState?.currentInputTokens ?? 0;
+
+    // Find last reported input tokens from assistant messages (fallback)
+    let lastMessageInputTokens = 0;
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i].tokenUsage?.input) {
-        lastInput = messages[i].tokenUsage!.input;
+        lastMessageInputTokens = messages[i].tokenUsage!.input;
         break;
       }
     }
-    if (lastInput === 0) return null;
 
-    const percentage = Math.min((lastInput / contextWindow) * 100, 100);
-    return { used: lastInput, total: contextWindow, percentage };
+    return computeContextUsage({
+      contextWindow,
+      toolSchemaTokens,
+      maxOutputTokens,
+      currentInputTokens,
+      lastMessageInputTokens,
+    });
   }, [activeSessionId, sessionStates, messages]);
 
   const completedStepCount = useMemo(
@@ -316,23 +327,63 @@ export function ContextPanel() {
               {Math.round(contextUsage.percentage)}%
             </span>
           </div>
-          <div className="h-1.5 bg-surface-muted rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-500 ease-out ${
-                contextUsage.percentage > 75
-                  ? 'bg-error'
-                  : contextUsage.percentage > 50
-                    ? 'bg-warning'
-                    : 'bg-gradient-to-r from-accent to-accent-hover'
-              }`}
-              style={{ width: `${contextUsage.percentage}%` }}
-            />
+          <div className="h-1.5 bg-surface-muted rounded-full overflow-hidden flex">
+            {contextUsage.percentage > 50 ? (
+              /* Warning/Critical: single-color bar */
+              <div
+                className={`h-full rounded-full transition-all duration-500 ease-out ${
+                  contextUsage.percentage > 75 ? 'bg-error' : 'bg-warning'
+                }`}
+                style={{ width: `${contextUsage.percentage}%` }}
+              />
+            ) : (
+              /* Normal: stacked segments */
+              <>
+                {contextUsage.convPercentage > 0 && (
+                  <div
+                    className="h-full bg-accent transition-all duration-500 ease-out first:rounded-l-full"
+                    style={{ width: `${contextUsage.convPercentage}%` }}
+                  />
+                )}
+                {contextUsage.toolPercentage > 0 && (
+                  <div
+                    className="h-full bg-text-muted/30 transition-all duration-500 ease-out"
+                    style={{ width: `${contextUsage.toolPercentage}%` }}
+                  />
+                )}
+                {contextUsage.outputPercentage > 0 && (
+                  <div
+                    className="h-full bg-purple-400/40 transition-all duration-500 ease-out last:rounded-r-full"
+                    style={{ width: `${contextUsage.outputPercentage}%` }}
+                  />
+                )}
+              </>
+            )}
           </div>
           <p className="text-xs text-text-muted">
-            {t('context.contextUsageLabel', {
-              used: formatTokenCount(contextUsage.used),
-              total: formatTokenCount(contextUsage.total),
-            })}
+            <span className="text-accent">{formatTokenCount(contextUsage.conversation)}</span>
+            {contextUsage.toolSchemaTokens > 0 && (
+              <>
+                {' + '}
+                <span className="text-text-muted/70">
+                  {t('context.contextUsageTools', {
+                    count: formatTokenCount(contextUsage.toolSchemaTokens),
+                  })}
+                </span>
+              </>
+            )}
+            {contextUsage.maxOutputTokens > 0 && (
+              <>
+                {' + '}
+                <span className="text-purple-400/70">
+                  {t('context.contextUsageOutput', {
+                    count: formatTokenCount(contextUsage.maxOutputTokens),
+                  })}
+                </span>
+              </>
+            )}
+            {' / '}
+            <span>{formatTokenCount(contextUsage.total)}</span>
           </p>
         </div>
       )}
