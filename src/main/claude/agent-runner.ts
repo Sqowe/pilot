@@ -94,6 +94,7 @@ import {
 } from './pre-request-guard';
 import { fetchOllamaModelInfo } from '../config/ollama-api';
 import { fetchOpenRouterModelInfo } from '../config/openrouter-api';
+import { estimatePayloadSize, trimPayloadMessages } from './mid-loop-overflow-guard';
 
 // Virtual workspace path shown to the model (hides real sandbox path)
 const VIRTUAL_WORKSPACE_PATH = '/workspace';
@@ -2470,14 +2471,26 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
           cwdRef,
         });
 
-        // Ollama: wrap _onPayload to inject num_ctx into every request
-        if (provider === 'ollama') {
+        // ─── Mid-loop overflow guard via _onPayload ─────────────────────────
+        // The pre-request guard only runs before the initial piSession.prompt().
+        // During the SDK's internal tool loop (tool call → tool result → next
+        // model call), the conversation can grow past the context window without
+        // any guard. This _onPayload hook intercepts EVERY API request the SDK
+        // makes and trims the messages array if it would overflow.
+        //
+        // Strategy: estimate the payload size from the messages array. If it
+        // exceeds the context window budget, drop the oldest non-system messages
+        // from the payload (keeping the system prompt and the most recent
+        // messages). This is a "just-in-time" trim that doesn't require async
+        // compaction — it simply removes older messages from the outgoing request.
+        // The session state is NOT modified (compaction still runs post-response
+        // via the SDK's normal path), but the immediate request won't 400.
+        {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const agent = piSession.agent as any;
-          // Guard: only patch if the SDK exposes _onPayload (private API)
           if (!('_onPayload' in agent)) {
             logWarn(
-              '[ClaudeAgentRunner] SDK agent does not expose _onPayload — skipping Ollama num_ctx patch'
+              '[ClaudeAgentRunner] SDK agent does not expose _onPayload — skipping mid-loop overflow guard'
             );
           } else {
             const originalOnPayload = agent._onPayload as
@@ -2486,23 +2499,133 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
                   modelArg: unknown
                 ) => Promise<Record<string, unknown>>)
               | undefined;
-            const ollamaNumCtx = {
-              value: piModel.contextWindow || 128000,
-            };
+
+            // Use a conservative fallback for context window when metadata is
+            // missing. For the mid-loop guard, we use the KNOWN piModel values
+            // which are already resolved (via registry, OpenRouter API, or
+            // KNOWN_MODEL_SPECS). The fallback only applies if ALL resolution
+            // paths failed — in that case, use 8K as the absolute minimum safe
+            // default. This ensures the guard trims aggressively for truly
+            // unknown models rather than letting oversized payloads through.
+            // Note: piModel.contextWindow is always set by this point (either
+            // from registry, OpenRouter API, KNOWN_MODEL_SPECS, or the 128K
+            // synthetic fallback). The 8K here is a last-resort defensive guard.
+            const payloadContextWindow = piModel.contextWindow || 8192;
+            const payloadMaxOutput = piModel.maxTokens || 4096;
+            const payloadSafetyMargin = 4000;
+            if (!piModel.contextWindow) {
+              logWarn(
+                '[ClaudeAgentRunner] Mid-loop overflow guard: contextWindow unknown, using conservative 8K fallback.',
+                'Model:',
+                piModel.id
+              );
+            }
+            // For Ollama, also inject num_ctx
+            const isOllama = provider === 'ollama';
+            const ollamaNumCtx = isOllama ? { value: payloadContextWindow } : undefined;
+            if (isOllama && ollamaNumCtx) {
+              this.piSessions.get(session.id)!.ollamaNumCtx = ollamaNumCtx;
+            }
+
             agent._onPayload = async (payload: Record<string, unknown>, modelArg: unknown) => {
+              // Chain to original _onPayload if it exists
               let result = originalOnPayload
                 ? await originalOnPayload.call(agent, payload, modelArg)
                 : payload;
               if (result === undefined) result = payload;
-              return { ...result, num_ctx: ollamaNumCtx.value };
+
+              // Inject num_ctx for Ollama
+              if (isOllama && ollamaNumCtx) {
+                result = { ...result, num_ctx: ollamaNumCtx.value };
+              }
+
+              // ─── Mid-loop overflow estimation ───────────────────────────
+              // Estimate the total request size from the payload's messages.
+              // The payload has `messages` (array of LLM-format messages) and
+              // `tools` (array of tool definitions). We estimate tokens using
+              // the chars/4 heuristic on the serialized messages.
+              const messages = result.messages as unknown[] | undefined;
+              if (!messages || !Array.isArray(messages) || messages.length === 0) {
+                return result;
+              }
+
+              const tools = result.tools as unknown[] | undefined;
+              const estimate = estimatePayloadSize({
+                messages,
+                tools: tools && Array.isArray(tools) ? tools : undefined,
+                contextWindow: payloadContextWindow,
+                maxOutput: payloadMaxOutput,
+                safetyMargin: payloadSafetyMargin,
+              });
+
+              if (!estimate.wouldOverflow) {
+                return result; // Within budget — proceed normally
+              }
+
+              // ─── Overflow detected — trim by conversational turns ──────
+              log(
+                '[ClaudeAgentRunner] Mid-loop overflow guard: estimated',
+                estimate.estimatedTotal,
+                'tokens exceeds',
+                payloadContextWindow,
+                'by',
+                estimate.overflow,
+                '— trimming oldest turns from payload.'
+              );
+
+              const trimResult = trimPayloadMessages(messages, estimate.overflow);
+
+              if (!trimResult) {
+                // Can't drop anything — let the request go through and let the
+                // SDK's own error handling deal with it
+                logWarn(
+                  '[ClaudeAgentRunner] Mid-loop overflow guard: cannot trim turns (too few). Proceeding anyway.'
+                );
+                return result;
+              }
+
+              // Re-estimate with full context (tools + output + safety)
+              const trimmedTotal =
+                trimResult.estimatedTotalAfterTrim +
+                estimate.breakdown.toolTokens +
+                payloadMaxOutput +
+                payloadSafetyMargin;
+
+              if (trimmedTotal > payloadContextWindow) {
+                logWarn(
+                  '[ClaudeAgentRunner] Mid-loop overflow guard: still over budget after trimming',
+                  trimResult.turnsDropped,
+                  'turns (estimated:',
+                  trimmedTotal,
+                  '> window:',
+                  payloadContextWindow,
+                  '). Sending anyway — SDK overflow recovery may handle it.'
+                );
+              }
+
+              log(
+                '[ClaudeAgentRunner] Mid-loop overflow guard: dropped',
+                trimResult.turnsDropped,
+                'turns (',
+                trimResult.messagesDropped,
+                'messages), freed ~',
+                Math.ceil(trimResult.charsFreed / 4),
+                'tokens. Messages:',
+                messages.length,
+                '→',
+                trimResult.trimmedMessages.length
+              );
+
+              return { ...result, messages: trimResult.trimmedMessages };
             };
-            this.piSessions.get(session.id)!.ollamaNumCtx = ollamaNumCtx;
+
             log(
-              '[ClaudeAgentRunner] Ollama _onPayload wrapper installed, num_ctx:',
-              ollamaNumCtx.value
+              '[ClaudeAgentRunner] Mid-loop overflow guard installed via _onPayload',
+              isOllama ? '(with Ollama num_ctx)' : ''
             );
-          } // end else (_onPayload exists)
+          }
         }
+        // ─── End mid-loop overflow guard ─────────────────────────────────────
 
         logTiming('pi-coding-agent session created', runStartTime);
       }
