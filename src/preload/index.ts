@@ -150,6 +150,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
     return ipcRenderer.invoke('shell.openExternal', safeUrl);
   },
+
+  // Get list of installed browsers (macOS)
+  getInstalledBrowsers: (): Promise<Array<{ bundleId: string; name: string }>> =>
+    ipcRenderer.invoke('shell.getInstalledBrowsers'),
+
+  // Open URL in a specific browser by bundle ID
+  openUrlInBrowser: (url: string, bundleId: string): Promise<boolean> =>
+    ipcRenderer.invoke('shell.openUrlInBrowser', url, bundleId),
+
   showItemInFolder: (filePath: string, cwd?: string) =>
     ipcRenderer.invoke('shell.showItemInFolder', filePath, cwd),
 
@@ -490,6 +499,8 @@ declare global {
       getSystemTheme: () => Promise<{ shouldUseDarkColors: boolean }>;
       getVersion: () => Promise<string>;
       openExternal: (url: string) => Promise<boolean>;
+      getInstalledBrowsers: () => Promise<Array<{ bundleId: string; name: string }>>;
+      openUrlInBrowser: (url: string, bundleId: string) => Promise<boolean>;
       showItemInFolder: (filePath: string, cwd?: string) => Promise<boolean>;
       selectFiles: () => Promise<string[]>;
       artifacts: {

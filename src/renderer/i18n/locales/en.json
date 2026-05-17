@@ -746,6 +746,13 @@
     "processThinking": "{{count}} thinking",
     "processTools": "{{count}} tools"
   },
+  "linkMenu": {
+    "title": "Link options",
+    "copyLink": "Copy Link",
+    "copied": "Copied!",
+    "openDefault": "Open in Default Browser",
+    "openWith": "Open with…"
+  },
   "schedule": {
     "createTitle": "Create Schedule",
     "editTitle": "Edit Schedule",

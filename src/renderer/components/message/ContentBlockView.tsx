@@ -1,5 +1,15 @@
 // Dispatches a single ContentBlock to the appropriate sub-renderer
-import { Suspense, lazy, isValidElement, cloneElement, memo, useMemo } from 'react';
+import {
+  Suspense,
+  lazy,
+  isValidElement,
+  cloneElement,
+  memo,
+  useMemo,
+  useState,
+  useCallback,
+} from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../../store';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
@@ -26,6 +36,10 @@ const MessageMarkdown = lazy(() =>
   import('../MessageMarkdown').then((module) => ({ default: module.MessageMarkdown }))
 );
 
+const LinkContextMenu = lazy(() =>
+  import('./LinkContextMenu').then((module) => ({ default: module.LinkContextMenu }))
+);
+
 // Cowork citation guidance can emit ~[Title](url)~ markers.
 // Render them as regular links instead of strikethrough links.
 function normalizeCitationMarkdownLinks(markdown: string): string {
@@ -46,6 +60,23 @@ export const ContentBlockView = memo(function ContentBlockView({
   const setGlobalNotice = useAppStore((s) => s.setGlobalNotice);
   const activeSession = activeSessionId ? sessions.find((s) => s.id === activeSessionId) : null;
   const currentWorkingDir = activeSession?.cwd || workingDir;
+
+  // Link context menu state
+  const [linkContextMenu, setLinkContextMenu] = useState<{
+    url: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const handleLinkContextMenu = useCallback((e: ReactMouseEvent, href: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setLinkContextMenu({ url: href, x: e.clientX, y: e.clientY });
+  }, []);
+
+  const closeLinkContextMenu = useCallback(() => {
+    setLinkContextMenu(null);
+  }, []);
 
   const resolveFilePath = (value: string) => resolvePathAgainstWorkspace(value, currentWorkingDir);
 
@@ -164,6 +195,11 @@ export const ContentBlockView = memo(function ContentBlockView({
                 void window.electronAPI.openExternal(safeHref);
               }
             }}
+            onContextMenu={(event) => {
+              if (safeHref && /^https?:/i.test(safeHref)) {
+                handleLinkContextMenu(event, safeHref);
+              }
+            }}
             className="text-accent hover:text-accent-hover"
           >
             {children}
@@ -274,28 +310,40 @@ export const ContentBlockView = memo(function ContentBlockView({
       }
 
       return (
-        <PanelErrorBoundary
-          name="MessageMarkdown"
-          fallback={
-            <div className="prose-chat max-w-none text-text-primary whitespace-pre-wrap break-words">
-              {normalizedText}
-            </div>
-          }
-        >
-          <Suspense
+        <>
+          <PanelErrorBoundary
+            name="MessageMarkdown"
             fallback={
               <div className="prose-chat max-w-none text-text-primary whitespace-pre-wrap break-words">
                 {normalizedText}
               </div>
             }
           >
-            <MessageMarkdown
-              normalizedText={normalizedText}
-              isStreaming={isStreaming}
-              components={markdownComponents}
-            />
-          </Suspense>
-        </PanelErrorBoundary>
+            <Suspense
+              fallback={
+                <div className="prose-chat max-w-none text-text-primary whitespace-pre-wrap break-words">
+                  {normalizedText}
+                </div>
+              }
+            >
+              <MessageMarkdown
+                normalizedText={normalizedText}
+                isStreaming={isStreaming}
+                components={markdownComponents}
+              />
+            </Suspense>
+          </PanelErrorBoundary>
+          {linkContextMenu && (
+            <Suspense fallback={null}>
+              <LinkContextMenu
+                url={linkContextMenu.url}
+                x={linkContextMenu.x}
+                y={linkContextMenu.y}
+                onClose={closeLinkContextMenu}
+              />
+            </Suspense>
+          )}
+        </>
       );
     }
 

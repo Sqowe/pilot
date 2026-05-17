@@ -741,6 +741,13 @@
     "processThinking": "{{count}} 次思考",
     "processTools": "{{count}} 个工具"
   },
+  "linkMenu": {
+    "title": "链接选项",
+    "copyLink": "复制链接",
+    "copied": "已复制！",
+    "openDefault": "在默认浏览器中打开",
+    "openWith": "打开方式…"
+  },
   "schedule": {
     "createTitle": "新建定时任务",
     "editTitle": "编辑定时任务",

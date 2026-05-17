@@ -25,7 +25,8 @@ import {
 } from 'electron';
 import { join, resolve, dirname, isAbsolute, basename } from 'path';
 import * as fs from 'fs';
-import { execFileSync } from 'child_process';
+import { execFileSync, execFile } from 'child_process';
+import { promisify } from 'util';
 import { config } from 'dotenv';
 import { initDatabase, closeDatabase, getDatabase } from './db/database';
 import { SessionManager } from './session/session-manager';
@@ -1319,6 +1320,197 @@ ipcMain.handle('shell.openExternal', async (_event, url: string) => {
   }
 
   return shell.openExternal(url);
+});
+
+// Detect installed web browsers (macOS: mdfind by bundle ID)
+// Uses a single mdfind query, async execution, in-memory cache, request
+// coalescing, and bounded mdls concurrency to avoid blocking the main process.
+const KNOWN_BROWSER_IDS: Array<{ bundleId: string; name: string }> = [
+  { bundleId: 'com.apple.Safari', name: 'Safari' },
+  { bundleId: 'com.google.Chrome', name: 'Google Chrome' },
+  { bundleId: 'com.google.Chrome.canary', name: 'Google Chrome Canary' },
+  { bundleId: 'org.mozilla.firefox', name: 'Firefox' },
+  { bundleId: 'org.mozilla.firefoxdeveloperedition', name: 'Firefox Developer Edition' },
+  { bundleId: 'com.microsoft.edgemac', name: 'Microsoft Edge' },
+  { bundleId: 'com.brave.Browser', name: 'Brave Browser' },
+  { bundleId: 'com.operasoftware.Opera', name: 'Opera' },
+  { bundleId: 'com.vivaldi.Vivaldi', name: 'Vivaldi' },
+  { bundleId: 'company.thebrowser.Browser', name: 'Arc' },
+  { bundleId: 'org.chromium.Chromium', name: 'Chromium' },
+  { bundleId: 'org.waterfoxproject.waterfox', name: 'Waterfox' },
+  { bundleId: 'app.zen-browser.zen', name: 'Zen Browser' },
+];
+
+// Lookup map: bundleId → display name
+const BROWSER_NAME_MAP = new Map(KNOWN_BROWSER_IDS.map((b) => [b.bundleId, b.name]));
+
+// Set of allowed bundle IDs for validation
+const ALLOWED_BROWSER_BUNDLE_IDS = new Set(KNOWN_BROWSER_IDS.map((b) => b.bundleId));
+
+// Cache for browser discovery (TTL: 5 minutes — browsers don't change often)
+let browserCache: {
+  browsers: Array<{ bundleId: string; name: string }>;
+  timestamp: number;
+} | null = null;
+const BROWSER_CACHE_TTL_MS = 300_000;
+
+// Request coalescing: if a discovery is already in-flight, share the promise
+let inFlightDiscovery: Promise<Array<{ bundleId: string; name: string }>> | null = null;
+
+const execFileAsync = promisify(execFile);
+
+// Bounded concurrency helper (avoids spawning too many child processes)
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<Array<PromiseSettledResult<R>>> {
+  const results: Array<PromiseSettledResult<R>> = new Array(items.length);
+  let index = 0;
+
+  async function worker() {
+    while (index < items.length) {
+      const i = index++;
+      try {
+        results[i] = { status: 'fulfilled', value: await fn(items[i]) };
+      } catch (reason) {
+        results[i] = { status: 'rejected', reason };
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+async function discoverInstalledBrowsers(): Promise<Array<{ bundleId: string; name: string }>> {
+  if (process.platform !== 'darwin') {
+    return [];
+  }
+
+  // Return cached result if still fresh
+  if (browserCache && Date.now() - browserCache.timestamp < BROWSER_CACHE_TTL_MS) {
+    return browserCache.browsers;
+  }
+
+  // Coalesce concurrent requests into a single discovery pass
+  if (inFlightDiscovery) {
+    return inFlightDiscovery;
+  }
+
+  inFlightDiscovery = (async () => {
+    try {
+      // Single mdfind query scoped to .app bundles in standard app directories.
+      // The kind restriction and OR-based bundle ID filter keeps results minimal.
+      const conditions = KNOWN_BROWSER_IDS.map(
+        (b) => `kMDItemCFBundleIdentifier == "${b.bundleId}"`
+      );
+      const query = `(${conditions.join(' || ')}) && kMDItemContentType == "com.apple.application-bundle"`;
+
+      const { stdout } = await execFileAsync(
+        'mdfind',
+        ['-onlyin', '/Applications', '-onlyin', '/System/Applications', query],
+        { encoding: 'utf-8', timeout: 10_000 }
+      );
+
+      const lines = stdout.trim().split('\n').filter(Boolean);
+
+      if (lines.length === 0) {
+        browserCache = { browsers: [], timestamp: Date.now() };
+        return [];
+      }
+
+      // Deduplicate paths (same app can appear from multiple Spotlight entries)
+      const uniquePaths = [...new Set(lines)];
+
+      // Use mdls to extract bundle IDs with bounded concurrency (max 4 at a time)
+      const mdlsResults = await mapWithConcurrency(uniquePaths, 4, async (appPath) => {
+        const { stdout: mdlsOut } = await execFileAsync(
+          'mdls',
+          ['-name', 'kMDItemCFBundleIdentifier', '-raw', appPath],
+          { encoding: 'utf-8', timeout: 3000 }
+        );
+        return { bundleId: mdlsOut.trim() };
+      });
+
+      const found: Array<{ bundleId: string; name: string }> = [];
+      const seen = new Set<string>();
+      for (const result of mdlsResults) {
+        if (result.status === 'fulfilled') {
+          const { bundleId } = result.value;
+          const name = BROWSER_NAME_MAP.get(bundleId);
+          if (name && !seen.has(bundleId)) {
+            seen.add(bundleId);
+            found.push({ bundleId, name });
+          }
+        }
+      }
+
+      // Sort to match the order in KNOWN_BROWSER_IDS (familiar ordering)
+      const orderMap = new Map(KNOWN_BROWSER_IDS.map((b, i) => [b.bundleId, i]));
+      found.sort((a, b) => (orderMap.get(a.bundleId) ?? 99) - (orderMap.get(b.bundleId) ?? 99));
+
+      // Update cache
+      browserCache = { browsers: found, timestamp: Date.now() };
+      return found;
+    } finally {
+      inFlightDiscovery = null;
+    }
+  })();
+
+  return inFlightDiscovery;
+}
+
+ipcMain.handle('shell.getInstalledBrowsers', async () => {
+  try {
+    return await discoverInstalledBrowsers();
+  } catch (error) {
+    logWarn('[shell.getInstalledBrowsers] Discovery failed:', error);
+    return [];
+  }
+});
+
+// Open a URL in a specific browser by bundle ID (macOS)
+ipcMain.handle('shell.openUrlInBrowser', async (_event, url: string, bundleId: string) => {
+  if (!url || !bundleId) {
+    return false;
+  }
+
+  // Validate bundle ID against allowlist (prevent launching arbitrary apps)
+  if (!ALLOWED_BROWSER_BUNDLE_IDS.has(bundleId)) {
+    logWarn('[shell.openUrlInBrowser] Blocked unknown bundle ID:', bundleId);
+    return false;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      logWarn('[shell.openUrlInBrowser] Blocked URL with disallowed protocol:', parsed.protocol);
+      return false;
+    }
+  } catch {
+    logWarn('[shell.openUrlInBrowser] Blocked invalid URL:', url);
+    return false;
+  }
+
+  if (process.platform !== 'darwin') {
+    // Fallback to default browser on non-macOS
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  try {
+    await execFileAsync('open', ['-b', bundleId, url], { timeout: 5000 });
+    return true;
+  } catch (error) {
+    logWarn('[shell.openUrlInBrowser] Failed to open URL in browser:', error);
+    return false;
+  }
 });
 
 async function revealFileInFolder(filePath: string, cwd?: string): Promise<boolean> {
