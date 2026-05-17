@@ -125,6 +125,9 @@ interface AppState {
   // System theme (from OS native theme)
   systemDarkMode: boolean;
 
+  // Welcome page draft (persists across navigation)
+  welcomeDraft: string;
+
   // Actions
   setSessions: (sessions: Session[]) => void;
   addSession: (session: Session) => void;
@@ -200,6 +203,9 @@ interface AppState {
 
   // System theme actions
   setSystemDarkMode: (dark: boolean) => void;
+
+  // Welcome draft actions
+  setWelcomeDraft: (text: string) => void;
 }
 
 const defaultSettings: Settings = {
@@ -258,6 +264,7 @@ export const useAppStore = create<AppState>((set) => ({
   skillsStorageChangedAt: 0,
   skillsStorageChangeEvent: null,
   systemDarkMode: false,
+  welcomeDraft: '',
 
   // Session actions
   setSessions: (sessions) => set({ sessions }),
@@ -624,6 +631,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   // System theme actions
   setSystemDarkMode: (dark) => set({ systemDarkMode: dark }),
+
+  // Welcome draft actions
+  setWelcomeDraft: (text) => set({ welcomeDraft: text }),
 }));
 
 // Expose helpers for nav-server (CLI-driven UI navigation via executeJavaScript)

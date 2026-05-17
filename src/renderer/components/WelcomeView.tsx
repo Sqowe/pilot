@@ -29,7 +29,9 @@ import welcomeLogoSrc from '../assets/logo.png';
 
 export function WelcomeView() {
   const { t } = useTranslation();
-  const [prompt, setPrompt] = useState('');
+  const welcomeDraft = useAppStore((state) => state.welcomeDraft);
+  const setWelcomeDraft = useAppStore((state) => state.setWelcomeDraft);
+  const [prompt, setPromptLocal] = useState(welcomeDraft);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isComposingRef = useRef(false);
@@ -45,6 +47,13 @@ export function WelcomeView() {
   const isConfigured = useAppStore((state) => state.isConfigured);
   const setShowSettings = useAppStore((state) => state.setShowSettings);
   const setSettingsTab = useAppStore((state) => state.setSettingsTab);
+
+  // Sync local prompt to store on every change (persists across navigation)
+  const setPrompt = (value: string) => {
+    setPromptLocal(value);
+    setWelcomeDraft(value);
+  };
+
   const canSubmit = prompt.trim().length > 0 || pastedImages.length > 0 || attachedFiles.length > 0;
 
   // Config set selection
