@@ -52,6 +52,21 @@ export function Sidebar() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try {
+      const stored = localStorage.getItem('sidebar-width');
+      if (stored) {
+        const parsed = Number(stored);
+        return Number.isFinite(parsed) ? Math.max(200, Math.min(480, parsed)) : 280;
+      }
+    } catch {
+      // localStorage unavailable (privacy mode, sandbox, etc.)
+    }
+    return 280;
+  });
+  const isResizingRef = useRef(false);
+  const currentWidthRef = useRef(280);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
 
   const switchRequestRef = useRef(0);
   const filteredSessions = useMemo(() => {
@@ -241,6 +256,76 @@ export function Sidebar() {
     [handleSessionClick]
   );
 
+  const handleResizeStart = useCallback(
+    (e: React.PointerEvent) => {
+      // Guard against re-entrant drags
+      if (isResizingRef.current) return;
+
+      e.preventDefault();
+      isResizingRef.current = true;
+      const startX = e.clientX;
+      const startWidth = sidebarWidth;
+      currentWidthRef.current = startWidth;
+
+      // Capture pointer for reliable tracking even outside window
+      const target = e.currentTarget as HTMLElement;
+      target.setPointerCapture(e.pointerId);
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        const newWidth = Math.max(200, Math.min(480, startWidth + (moveEvent.clientX - startX)));
+        currentWidthRef.current = newWidth;
+        setSidebarWidth(newWidth);
+      };
+
+      const cleanup = () => {
+        if (!isResizingRef.current) return; // Idempotent
+        isResizingRef.current = false;
+        try {
+          if (target.hasPointerCapture(e.pointerId)) {
+            target.releasePointerCapture(e.pointerId);
+          }
+        } catch {
+          // Pointer capture already released or element detached — safe to ignore
+        }
+        target.removeEventListener('pointermove', handlePointerMove);
+        target.removeEventListener('pointerup', handlePointerUp);
+        target.removeEventListener('lostpointercapture', handlePointerUp);
+        window.removeEventListener('blur', cleanup);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        dragCleanupRef.current = null;
+        // Persist final width
+        try {
+          localStorage.setItem('sidebar-width', String(currentWidthRef.current));
+        } catch {
+          // localStorage unavailable — ignore
+        }
+      };
+
+      const handlePointerUp = () => {
+        cleanup();
+      };
+
+      dragCleanupRef.current = cleanup;
+      target.addEventListener('pointermove', handlePointerMove);
+      target.addEventListener('pointerup', handlePointerUp);
+      target.addEventListener('lostpointercapture', handlePointerUp);
+      window.addEventListener('blur', cleanup);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [sidebarWidth]
+  );
+
+  // Cleanup drag listeners on unmount to prevent leaks
+  useEffect(() => {
+    return () => {
+      if (dragCleanupRef.current) {
+        dragCleanupRef.current();
+      }
+    };
+  }, []);
+
   if (sidebarCollapsed) {
     return (
       <>
@@ -303,7 +388,15 @@ export function Sidebar() {
 
   return (
     <>
-      <aside className="w-[17.5rem] bg-surface/96 border-r border-border-muted flex flex-col overflow-hidden">
+      <aside
+        className="bg-surface/96 border-r border-border-muted flex flex-col overflow-hidden relative"
+        style={{ width: `${sidebarWidth}px` }}
+      >
+        {/* Resize handle */}
+        <div
+          onPointerDown={handleResizeStart}
+          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-accent/30 transition-colors z-10 touch-none"
+        />
         <div className="px-4 pt-5 pb-4 border-b border-border-muted">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex items-center gap-3">
@@ -416,7 +509,10 @@ export function Sidebar() {
                               </div>
                             )}
                             <div className="min-w-0 flex-1">
-                              <div className="text-[13px] font-medium leading-5 text-text-primary truncate">
+                              <div
+                                className="text-[13px] font-medium leading-5 text-text-primary truncate"
+                                title={session.title}
+                              >
                                 {session.title}
                               </div>
                             </div>
