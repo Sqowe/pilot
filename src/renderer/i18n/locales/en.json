@@ -685,6 +685,16 @@
     "cancel": "Cancel",
     "confirmDelete": "Delete"
   },
+  "searchOverlay": {
+    "placeholder": "Search conversations...",
+    "searching": "Searching...",
+    "noResults": "No conversations found",
+    "hint": "Type to search across your conversations",
+    "memoryDisabledNote": "Searching titles only — enable Memory for deeper search",
+    "navigate": "navigate",
+    "open": "open",
+    "close": "close"
+  },
   "chat": {
     "sendMessage": "Send message",
     "stop": "Stop",

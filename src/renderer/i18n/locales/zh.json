@@ -680,6 +680,16 @@
     "cancel": "取消",
     "confirmDelete": "删除"
   },
+  "searchOverlay": {
+    "placeholder": "搜索对话...",
+    "searching": "搜索中...",
+    "noResults": "未找到相关对话",
+    "hint": "输入关键词搜索历史对话",
+    "memoryDisabledNote": "仅搜索标题 — 启用记忆功能可进行深度搜索",
+    "navigate": "导航",
+    "open": "打开",
+    "close": "关闭"
+  },
   "chat": {
     "sendMessage": "发送消息",
     "stop": "停止",
