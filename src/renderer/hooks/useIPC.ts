@@ -132,6 +132,7 @@ export function useIPC() {
         globalSkillsPath: config.globalSkillsPath ?? '',
         bashTrustedCommands: config.bashTrustedCommands ?? [],
         bashDenylist: config.bashDenylist ?? [],
+        permissionTimeoutSeconds: config.permissionTimeoutSeconds ?? 300,
       });
       if (isInitialConfigStatus) {
         store.markInitialConfigStatusSeen();
@@ -294,7 +295,13 @@ export function useIPC() {
             break;
 
           case 'session.contextInfo':
-            store.setSessionContextWindow(event.payload.sessionId, event.payload.contextWindow);
+            store.setSessionContextWindow(
+              event.payload.sessionId,
+              event.payload.contextWindow,
+              event.payload.toolSchemaTokens,
+              event.payload.maxOutputTokens,
+              event.payload.currentInputTokens
+            );
             break;
 
           case 'error':
@@ -441,7 +448,12 @@ export function useIPC() {
 
   // Start a new session
   const startSession = useCallback(
-    async (title: string, promptOrContent: string | ContentBlock[], cwd?: string) => {
+    async (
+      title: string,
+      promptOrContent: string | ContentBlock[],
+      cwd?: string,
+      initialDisabledMcpServers?: string[]
+    ) => {
       setLoading(true);
       console.log('[useIPC] Starting session:', title);
 
@@ -521,6 +533,7 @@ export function useIPC() {
             prompt,
             cwd,
             content, // Send full content blocks including images
+            initialDisabledMcpServers,
           },
         });
         if (session) {
@@ -746,10 +759,10 @@ export function useIPC() {
   );
 
   const respondToPermission = useCallback(
-    (toolUseId: string, result: PermissionResult) => {
+    (toolUseId: string, result: PermissionResult, suggestion?: string) => {
       send({
         type: 'permission.response',
-        payload: { toolUseId, result },
+        payload: { toolUseId, result, suggestion },
       });
       setPendingPermission(null);
     },

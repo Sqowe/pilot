@@ -182,6 +182,19 @@ export function SettingsConnectors({ isActive }: { isActive: boolean }) {
     await handleSaveServer({ ...server, enabled: !server.enabled });
   }
 
+  async function handleRegenerateDescription(serverId: string) {
+    if (!isElectron || !window.electronAPI?.mcp?.regenerateDescription) {
+      throw new Error('API not available');
+    }
+    const result = await window.electronAPI.mcp.regenerateDescription(serverId);
+    if (result.success) {
+      const updatedServers = await window.electronAPI.mcp.getServers();
+      setServers(updatedServers);
+    } else {
+      throw new Error(result.error || 'Regeneration failed');
+    }
+  }
+
   function getServerStatus(serverId: string) {
     return statuses.find((s) => s.id === serverId);
   }
@@ -236,6 +249,7 @@ export function SettingsConnectors({ isActive }: { isActive: boolean }) {
                   onEdit={() => setEditingServer(server)}
                   onDelete={() => handleDeleteServer(server.id)}
                   onToggleEnabled={() => handleToggleEnabled(server)}
+                  onRegenerateDescription={() => handleRegenerateDescription(server.id)}
                   isLoading={isLoading}
                 />
               );
@@ -410,6 +424,7 @@ function ServerCard({
   onEdit,
   onDelete,
   onToggleEnabled,
+  onRegenerateDescription,
   isLoading,
 }: {
   server: MCPServerConfig;
@@ -419,12 +434,31 @@ function ServerCard({
   onEdit: () => void;
   onDelete: () => void;
   onToggleEnabled: () => void;
+  onRegenerateDescription: () => void;
   isLoading: boolean;
 }) {
   const { t } = useTranslation();
   // Fall back to 'connecting' for enabled servers when status poll hasn't returned yet
   const serverStatus = status?.status ?? (server.enabled ? 'connecting' : 'disabled');
   const [showTools, setShowTools] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [regenerateError, setRegenerateError] = useState<string | null>(null);
+
+  const handleRegenerate = async () => {
+    setIsRegenerating(true);
+    setRegenerateError(null);
+    try {
+      await onRegenerateDescription();
+    } catch (err) {
+      setRegenerateError(
+        err instanceof Error
+          ? err.message
+          : t('mcp.regenerateFailed', { defaultValue: 'Failed to regenerate' })
+      );
+    } finally {
+      setIsRegenerating(false);
+    }
+  };
 
   return (
     <div className="rounded-lg border border-border bg-surface overflow-hidden">
@@ -449,6 +483,55 @@ function ServerCard({
               </span>
             </div>
             <div className="text-sm text-text-muted space-y-1 ml-6 min-w-0">
+              {/* Description */}
+              {server.description && (
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xs text-text-secondary italic">{server.description}</span>
+                  {server.descriptionSource && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-surface-muted text-text-muted"
+                      title={
+                        server.descriptionSource === 'manual'
+                          ? t('mcp.descriptionManual', { defaultValue: 'Manually written' })
+                          : t('mcp.descriptionAuto', { defaultValue: 'Auto-generated from tools' })
+                      }
+                    >
+                      {server.descriptionSource === 'manual' ? '✍️' : '✨'}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleRegenerate}
+                    disabled={isRegenerating || !server.enabled || serverStatus !== 'connected'}
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-surface-muted text-text-muted hover:text-accent hover:bg-accent/10 transition-colors disabled:opacity-50"
+                    title={t('mcp.regenerateDescription', {
+                      defaultValue: 'Regenerate description',
+                    })}
+                  >
+                    {isRegenerating ? '⏳' : '🔄'}
+                  </button>
+                </div>
+              )}
+              {!server.description && server.enabled && serverStatus === 'connected' && (
+                <button
+                  type="button"
+                  onClick={handleRegenerate}
+                  disabled={isRegenerating}
+                  className="text-xs text-accent hover:text-accent-hover mb-1 flex items-center gap-1"
+                >
+                  {isRegenerating ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      {t('mcp.generating', { defaultValue: 'Generating...' })}
+                    </>
+                  ) : (
+                    t('mcp.generateDescription', { defaultValue: '+ Generate description' })
+                  )}
+                </button>
+              )}
+              {regenerateError && (
+                <div className="text-[10px] text-warning mb-1">⚠️ {regenerateError}</div>
+              )}
               {server.type === 'stdio' && (
                 <div
                   className="font-mono text-xs truncate"
@@ -592,6 +675,7 @@ function ServerForm({
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState(server?.name || '');
+  const [description, setDescription] = useState(server?.description || '');
   const [type, setType] = useState<'stdio' | 'sse' | 'streamable-http'>(server?.type || 'stdio');
   const [command, setCommand] = useState(server?.command || '');
   const [args, setArgs] = useState(server?.args?.join(' ') || '');
@@ -600,6 +684,47 @@ function ServerForm({
   // Environment variables (for tokens, etc.)
   const [envVars, setEnvVars] = useState<Record<string, string>>(server?.env || {});
   const [showEnvSection, setShowEnvSection] = useState(Object.keys(server?.env || {}).length > 0);
+
+  // HTTP Headers (for auth, etc.)
+  const [headers, setHeaders] = useState<Record<string, string>>(server?.headers || {});
+  const [showHeadersSection, setShowHeadersSection] = useState(
+    Object.keys(server?.headers || {}).length > 0
+  );
+  const [isAddingHeader, setIsAddingHeader] = useState(false);
+  const [newHeaderKey, setNewHeaderKey] = useState('');
+  const [newHeaderValue, setNewHeaderValue] = useState('');
+
+  function handleHeaderChange(key: string, value: string) {
+    setHeaders((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function handleRemoveHeader(key: string) {
+    setHeaders((prev) => {
+      const newHeaders = { ...prev };
+      delete newHeaders[key];
+      return newHeaders;
+    });
+  }
+
+  const handleAddHeader = () => {
+    setIsAddingHeader(true);
+    setShowHeadersSection(true);
+  };
+
+  const handleSaveNewHeader = () => {
+    if (newHeaderKey.trim()) {
+      setHeaders((prev) => ({ ...prev, [newHeaderKey.trim()]: newHeaderValue.trim() }));
+      setNewHeaderKey('');
+      setNewHeaderValue('');
+      setIsAddingHeader(false);
+    }
+  };
+
+  const handleCancelNewHeader = () => {
+    setNewHeaderKey('');
+    setNewHeaderValue('');
+    setIsAddingHeader(false);
+  };
 
   function handleEnvChange(key: string, value: string) {
     setEnvVars((prev) => ({ ...prev, [key]: value }));
@@ -640,12 +765,33 @@ function ServerForm({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
+    const descTrimmed = description.trim();
+    const descChanged = descTrimmed !== (server?.description || '');
+
     const config: MCPServerConfig = {
       id: server?.id || `mcp-${Date.now()}`,
       name: name.trim(),
       type,
       enabled,
     };
+
+    // Description field handling:
+    // - Non-empty + changed → set as manual, clear hash (triggers re-evaluation)
+    // - Non-empty + unchanged → preserve existing source and hash
+    // - Empty → clear description, source, and hash (field absent = cleared)
+    if (descTrimmed) {
+      config.description = descTrimmed;
+      if (descChanged) {
+        config.descriptionSource = 'manual';
+        // Hash cleared: manual edit invalidates the tool-list association
+      } else {
+        // Preserve existing metadata when description is untouched
+        config.descriptionSource = server?.descriptionSource;
+        config.descriptionToolsHash = server?.descriptionToolsHash;
+      }
+    }
+    // When empty: description, descriptionSource, and descriptionToolsHash are absent.
+    // electron-store does full-replace, so absent fields = deleted from persisted JSON.
 
     if (type === 'stdio') {
       if (!command.trim()) {
@@ -664,6 +810,10 @@ function ServerForm({
         return;
       }
       config.url = url.trim();
+      // Include headers for SSE and Streamable HTTP
+      if (Object.keys(headers).length > 0) {
+        config.headers = headers;
+      }
     }
 
     onSave(config);
@@ -688,6 +838,27 @@ function ServerForm({
           className="w-full px-4 py-2 rounded-lg bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30"
           required
         />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-text-primary mb-2">
+          {t('mcp.description', { defaultValue: 'Description' })}
+        </label>
+        <input
+          type="text"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder={t('mcp.descriptionPlaceholder', {
+            defaultValue: 'What this server does (helps AI choose the right tools)',
+          })}
+          className="w-full px-4 py-2 rounded-lg bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30 text-sm"
+          maxLength={200}
+        />
+        <p className="text-xs text-text-muted mt-1">
+          {t('mcp.descriptionHint', {
+            defaultValue: 'Optional. Auto-generated if left empty when server connects.',
+          })}
+        </p>
       </div>
 
       <div>
@@ -856,17 +1027,114 @@ function ServerForm({
           </div>
         </>
       ) : (
-        <div>
-          <label className="block text-sm font-medium text-text-primary mb-2">{t('mcp.url')}</label>
-          <input
-            type="url"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://example.com/mcp"
-            className="w-full px-4 py-2 rounded-lg bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30 font-mono text-sm"
-            required
-          />
-        </div>
+        <>
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-2">
+              {t('mcp.url')}
+            </label>
+            <input
+              type="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://example.com/mcp"
+              className="w-full px-4 py-2 rounded-lg bg-background border border-border text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/30 font-mono text-sm"
+              required
+            />
+          </div>
+
+          {/* Headers Section */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-text-primary">{t('mcp.headers')}</label>
+              <button
+                type="button"
+                onClick={() => setShowHeadersSection(!showHeadersSection)}
+                className="text-xs text-accent hover:text-accent-hover"
+              >
+                {showHeadersSection ? t('mcp.hide') : t('mcp.show')}
+              </button>
+            </div>
+            {showHeadersSection && (
+              <div className="space-y-2 p-3 rounded-lg bg-surface-muted border border-border">
+                {Object.entries(headers).map(([key, value]) => (
+                  <div key={key} className="flex items-center gap-2">
+                    <span
+                      className="text-xs font-mono text-text-secondary w-32 truncate"
+                      title={key}
+                    >
+                      {key}
+                    </span>
+                    <input
+                      type="password"
+                      value={value}
+                      onChange={(e) => handleHeaderChange(key, e.target.value)}
+                      placeholder={`${t('mcp.headerValuePlaceholder')}`}
+                      className="flex-1 px-3 py-1.5 rounded bg-background border border-border text-text-primary text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent/30"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveHeader(key)}
+                      className="p-1.5 rounded hover:bg-error/10 text-text-muted hover:text-error transition-colors"
+                      title={t('mcp.removeVar')}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+                {Object.keys(headers).length === 0 && !isAddingHeader && (
+                  <p className="text-xs text-text-muted text-center py-2">{t('mcp.noHeaders')}</p>
+                )}
+                {isAddingHeader && (
+                  <div className="space-y-2 p-2 rounded bg-background border border-accent/30">
+                    <input
+                      type="text"
+                      value={newHeaderKey}
+                      onChange={(e) => setNewHeaderKey(e.target.value)}
+                      placeholder={t('mcp.headerKeyPlaceholder')}
+                      className="w-full px-3 py-1.5 rounded bg-surface border border-border text-text-primary text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent/30"
+                      autoFocus
+                    />
+                    <input
+                      type="password"
+                      value={newHeaderValue}
+                      onChange={(e) => setNewHeaderValue(e.target.value)}
+                      placeholder={t('mcp.headerValuePlaceholder')}
+                      className="w-full px-3 py-1.5 rounded bg-surface border border-border text-text-primary text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent/30"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSaveNewHeader}
+                        disabled={!newHeaderKey.trim()}
+                        className="flex-1 py-1 px-3 rounded bg-accent text-white text-xs hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {t('common.save')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelNewHeader}
+                        className="flex-1 py-1 px-3 rounded bg-surface-muted text-text-secondary text-xs hover:bg-surface-active transition-colors"
+                      >
+                        {t('common.cancel')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {!isAddingHeader && (
+                  <button
+                    type="button"
+                    onClick={handleAddHeader}
+                    className="w-full mt-2 py-1.5 px-3 rounded border border-dashed border-border hover:border-accent hover:bg-accent/5 text-xs text-text-secondary hover:text-accent transition-colors flex items-center justify-center gap-1"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    {t('mcp.headers')}
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="text-xs text-text-muted">{t('mcp.headersDescription')}</p>
+          </div>
+        </>
       )}
 
       <div className="flex items-center gap-2">

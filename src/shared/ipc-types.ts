@@ -16,6 +16,9 @@
 export interface McpServerConfig {
   id: string;
   name: string;
+  description?: string;
+  descriptionToolsHash?: string;
+  descriptionSource?: 'auto' | 'manual';
   type: 'stdio' | 'sse' | 'streamable-http';
   command?: string;
   args?: string[];

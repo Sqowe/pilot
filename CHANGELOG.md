@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0-sqowe.6] - 2026-05-17
+
+### Added
+
+- Per-session and per-workspace MCP server toggle for context window optimization
+  - Toggle switches in Context Panel to disable/enable MCP servers mid-conversation
+  - Session-level overrides are ephemeral (in-memory only, reset on new session)
+  - Workspace-level profiles via `.cowork/mcp-servers.json` (committable to git)
+  - Three-layer resolution: session override > workspace profile > global config
+  - Input validation and bounded state to prevent memory growth
+  - 25 new tests for override precedence, validation, and cleanup
+
+## [3.3.0-sqowe.5] - 2026-05-14
+
+### Added
+
+- Configurable permission dialog timeout (Settings → Bash Commands)
+  - Default: 300s (was hardcoded 60s). Set to 0 for infinite (no timeout).
+- New "System Prompt" settings tab with editable prompt sections
+  - Sections stored as files in {userData}/prompts/ (identity, behavioral-rules, citations, tool-routing)
+  - Each section can be independently edited, disabled, or reset to default
+  - Workspace-level overrides via .cowork/prompts/ (full replace model)
+  - Template variables: {{cwd}}, {{project_name}}, {{date}}, {{model}}
+  - mtime+size fingerprint cache for efficient change detection
+
+### Changed
+
+- Moved "Workspace instructions file" selector from General to System Prompt tab
+
 ## [3.3.0-sqowe.4] - 2026-05-12
 
 ### Changed
@@ -152,7 +181,9 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.4...HEAD
+[Unreleased]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.6...HEAD
+[3.3.0-sqowe.6]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.5...v3.3.0-sqowe.6
+[3.3.0-sqowe.5]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.4...v3.3.0-sqowe.5
 [3.3.0-sqowe.4]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.3...v3.3.0-sqowe.4
 [3.3.0-sqowe.3]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.2...v3.3.0-sqowe.3
 [3.3.0-sqowe.2]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.1...v3.3.0-sqowe.2

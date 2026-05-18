@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Terminal, Shield, AlertTriangle } from 'lucide-react';
+import { Terminal, Shield, AlertTriangle, Clock } from 'lucide-react';
 import { useAppStore } from '../../store';
 
 /**
@@ -117,7 +117,7 @@ export function SettingsBashCommands() {
         <p className="text-xs leading-5 text-text-muted">
           {t(
             'bashCommands.denylistDesc',
-            'One pattern per line. Substring-matched. Any command containing a denylist entry always prompts, even if it also matches the trusted list.'
+            'One pattern per line. Word-boundary matched — only triggers when the pattern appears as a distinct word (e.g. "rm" catches "rm -rf" but not "formats"). Any command containing a denylist match always prompts, even if it also matches the trusted list.'
           )}
         </p>
         <textarea
@@ -140,6 +140,65 @@ export function SettingsBashCommands() {
             'Shell expansions that cannot be parsed safely (command substitution, process substitution, newlines, lone background &) always prompt, even when a matching trusted pattern exists.'
           )}
         </p>
+      </div>
+
+      {/* Permission Timeout */}
+      <div className="pt-4 border-t border-border space-y-2">
+        <div className="flex items-center gap-2">
+          <Clock className="w-4 h-4 text-text-secondary" />
+          <h4 className="text-sm font-medium text-text-primary">
+            {t('bashCommands.permissionTimeoutTitle', 'Permission dialog timeout')}
+          </h4>
+        </div>
+        <p className="text-xs leading-5 text-text-muted">
+          {t(
+            'bashCommands.permissionTimeoutDesc',
+            'How long to wait for your response before auto-denying a permission request. Set to 0 for no timeout (wait forever).'
+          )}
+        </p>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={(settings.permissionTimeoutSeconds ?? 300) === 0}
+              onChange={(e) => {
+                updateSettings({
+                  permissionTimeoutSeconds: e.target.checked ? 0 : 300,
+                });
+              }}
+              className="w-4 h-4 rounded border-border text-accent focus:ring-accent"
+            />
+            <span className="text-sm text-text-secondary">
+              {t('bashCommands.permissionTimeoutInfinite', 'No timeout (wait forever)')}
+            </span>
+          </label>
+        </div>
+        {(settings.permissionTimeoutSeconds ?? 300) !== 0 && (
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={10}
+              max={3600}
+              step={10}
+              value={settings.permissionTimeoutSeconds ?? 300}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (!isNaN(val) && val >= 10 && val <= 3600) {
+                  updateSettings({ permissionTimeoutSeconds: val });
+                }
+              }}
+              className="w-24 px-3 py-1.5 rounded-lg border border-border bg-surface text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+              aria-label={t('bashCommands.permissionTimeoutTitle', 'Permission dialog timeout')}
+            />
+            <span className="text-sm text-text-secondary">
+              {t('bashCommands.permissionTimeoutUnit', 'seconds')}
+            </span>
+            <span className="text-xs text-text-muted">
+              ({Math.floor((settings.permissionTimeoutSeconds ?? 300) / 60)}
+              {t('bashCommands.permissionTimeoutMinLabel', ' min')})
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );

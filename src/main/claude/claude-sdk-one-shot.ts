@@ -170,7 +170,7 @@ export async function runPiAiOneShot(
     maxTokens?: number;
     signal?: AbortSignal;
   }
-): Promise<{ text: string; hasThinking: boolean; durationMs: number }> {
+): Promise<{ text: string; thinkingText: string; hasThinking: boolean; durationMs: number }> {
   const modelString = resolvePiModelString(config);
   const keyProvider = config.customProtocol || config.provider || 'anthropic';
   const parts = modelString.split('/');
@@ -274,9 +274,20 @@ export async function runPiAiOneShot(
     .map((b) => (b as { text: string }).text)
     .join('')
     .trim();
-  const hasThinking = thinkingBlocks.some(
-    (b) => (b as { thinking: string }).thinking?.trim().length > 0
-  );
+
+  // For thinking blocks, try multiple field names (different providers use different formats)
+  // Guard against non-string values (some providers return arrays/objects)
+  const thinkingText = thinkingBlocks
+    .map((b) => {
+      const block = b as unknown as Record<string, unknown>;
+      const raw = block.thinking ?? block.content ?? block.text ?? '';
+      // Only accept string values — reject arrays, objects, etc.
+      return typeof raw === 'string' ? raw : '';
+    })
+    .join('')
+    .trim();
+  const hasThinking = thinkingBlocks.length > 0;
+
   log(
     '[OneShot] Response:',
     text ? text.substring(0, 200) : '(empty)',
@@ -285,9 +296,15 @@ export async function runPiAiOneShot(
     'textBlocks:',
     textBlocks.length,
     'thinkingBlocks:',
-    thinkingBlocks.length
+    thinkingBlocks.length,
+    'thinkingText length:',
+    thinkingText.length
   );
-  return { text, hasThinking, durationMs: Date.now() - start };
+  // Thinking content may contain sensitive prompt/context data — only log in full debug mode
+  if (process.env.COWORK_LOG_SDK_MESSAGES_FULL === '1' && thinkingText) {
+    log('[OneShot] thinkingText preview:', thinkingText.substring(0, 300));
+  }
+  return { text, thinkingText, hasThinking, durationMs: Date.now() - start };
 }
 
 function normalizeProbeAck(raw: string): string {

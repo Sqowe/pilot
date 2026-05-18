@@ -47,7 +47,12 @@
     "quickPromptNotion": "帮我调研三篇与 agents 相关、具有代表性的综述论文，并将它们添加到一个名为“Agent Survey”的 Notion 页面下。每篇论文请包含标题、作者、发表 venue/year，以及主要贡献的简短总结。",
     "apiNotConfigured": "API 尚未配置，请前往设置页面填写 API 提供商和密钥。",
     "goToSettings": "前往设置",
-    "configSet": "配置方案"
+    "configSet": "配置方案",
+    "mcpServersActive": "个 MCP 服务器已启用",
+    "mcpTokensSaved": "已禁用 {{count}} 个",
+    "mcpServersForChat": "本次对话的 MCP 服务器",
+    "mcpAllOn": "全部启用",
+    "mcpAllOff": "全部禁用"
   },
   "settings": {
     "title": "设置",
@@ -552,7 +557,10 @@
     "commandRequired": "命令不能为空",
     "urlRequired": "URL 不能为空",
     "toolCount": "{{count}} 个工具",
-    "callCount": "{{count}} 次调用"
+    "callCount": "{{count}} 次调用",
+    "sessionDisabled": "本会话已关闭",
+    "enableForSession": "在本会话中启用",
+    "disableForSession": "在本会话中禁用"
   },
   "credentials": {
     "envVars": "环境变量",
@@ -716,7 +724,9 @@
     "copyPath": "复制路径",
     "openInFileManager": "在文件管理器中打开",
     "contextUsage": "上下文用量",
-    "contextUsageLabel": "{{used}} / {{total}}"
+    "contextUsageLabel": "{{used}} / {{total}}",
+    "contextUsageTools": "{{count}} 工具",
+    "contextUsageOutput": "{{count}} 输出"
   },
   "messageCard": {
     "request": "请求",
@@ -731,7 +741,17 @@
     "noQuestions": "暂无问题",
     "question": "问题",
     "thinking": "思考",
-    "executionTime": "执行时间: {{time}}"
+    "executionTime": "执行时间: {{time}}",
+    "process": "过程",
+    "processThinking": "{{count}} 次思考",
+    "processTools": "{{count}} 个工具"
+  },
+  "linkMenu": {
+    "title": "链接选项",
+    "copyLink": "复制链接",
+    "copied": "已复制！",
+    "openDefault": "在默认浏览器中打开",
+    "openWith": "打开方式…"
   },
   "schedule": {
     "createTitle": "新建定时任务",

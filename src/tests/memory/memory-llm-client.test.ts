@@ -58,6 +58,7 @@ function makeConfig(timeoutMs: number): AppConfig {
     schedulerCatchUpPolicy: 'ask',
     schedulerConflictPolicy: 'queue',
     schedulerRunHistoryDepth: 10,
+    permissionTimeoutSeconds: 300,
     isConfigured: true,
   };
 }

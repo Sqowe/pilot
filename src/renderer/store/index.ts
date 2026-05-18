@@ -41,6 +41,10 @@ export interface SessionState {
   executionClock: SessionExecutionClock;
   traceSteps: TraceStep[];
   contextWindow: number;
+  toolSchemaTokens: number;
+  maxOutputTokens: number;
+  /** Live conversation token count — updated during tool loop via _onPayload */
+  currentInputTokens: number;
 }
 
 const DEFAULT_SESSION_STATE: SessionState = {
@@ -52,6 +56,9 @@ const DEFAULT_SESSION_STATE: SessionState = {
   executionClock: { startAt: null, endAt: null },
   traceSteps: [],
   contextWindow: 0,
+  toolSchemaTokens: 0,
+  maxOutputTokens: 0,
+  currentInputTokens: 0,
 };
 
 // Helper to immutably update a single session's state within the record
@@ -118,6 +125,9 @@ interface AppState {
   // System theme (from OS native theme)
   systemDarkMode: boolean;
 
+  // Welcome page draft (persists across navigation)
+  welcomeDraft: string;
+
   // Actions
   setSessions: (sessions: Session[]) => void;
   addSession: (session: Session) => void;
@@ -183,10 +193,19 @@ interface AppState {
   setSkillsStorageChangeEvent: (event: SkillsStorageChangeEvent | null) => void;
 
   // Context window actions
-  setSessionContextWindow: (sessionId: string, contextWindow: number) => void;
+  setSessionContextWindow: (
+    sessionId: string,
+    contextWindow: number,
+    toolSchemaTokens?: number,
+    maxOutputTokens?: number,
+    currentInputTokens?: number
+  ) => void;
 
   // System theme actions
   setSystemDarkMode: (dark: boolean) => void;
+
+  // Welcome draft actions
+  setWelcomeDraft: (text: string) => void;
 }
 
 const defaultSettings: Settings = {
@@ -245,6 +264,7 @@ export const useAppStore = create<AppState>((set) => ({
   skillsStorageChangedAt: 0,
   skillsStorageChangeEvent: null,
   systemDarkMode: false,
+  welcomeDraft: '',
 
   // Session actions
   setSessions: (sessions) => set({ sessions }),
@@ -265,6 +285,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   removeSession: (sessionId) =>
     set((state) => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { [sessionId]: _, ...restSessionStates } = state.sessionStates;
       return {
         sessions: state.sessions.filter((s) => s.id !== sessionId),
@@ -589,14 +610,30 @@ export const useAppStore = create<AppState>((set) => ({
   setSkillsStorageChangedAt: (timestamp) => set({ skillsStorageChangedAt: timestamp }),
   setSkillsStorageChangeEvent: (event) => set({ skillsStorageChangeEvent: event }),
 
-  // Context window actions
-  setSessionContextWindow: (sessionId, contextWindow) =>
+  // Context window actions — always sets all context fields explicitly to
+  // prevent stale values from prior updates when a newer event omits them.
+  setSessionContextWindow: (
+    sessionId,
+    contextWindow,
+    toolSchemaTokens,
+    maxOutputTokens,
+    currentInputTokens
+  ) =>
     set((state) => ({
-      sessionStates: patchSession(state.sessionStates, sessionId, { contextWindow }),
+      sessionStates: patchSession(state.sessionStates, sessionId, {
+        contextWindow,
+        toolSchemaTokens: toolSchemaTokens ?? state.sessionStates[sessionId]?.toolSchemaTokens ?? 0,
+        maxOutputTokens: maxOutputTokens ?? state.sessionStates[sessionId]?.maxOutputTokens ?? 0,
+        currentInputTokens:
+          currentInputTokens ?? state.sessionStates[sessionId]?.currentInputTokens ?? 0,
+      }),
     })),
 
   // System theme actions
   setSystemDarkMode: (dark) => set({ systemDarkMode: dark }),
+
+  // Welcome draft actions
+  setWelcomeDraft: (text) => set({ welcomeDraft: text }),
 }));
 
 // Expose helpers for nav-server (CLI-driven UI navigation via executeJavaScript)

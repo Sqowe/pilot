@@ -2,19 +2,17 @@ import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
-import type { ContentBlock } from '../types';
+import type { ContentBlock, MCPServerInfo } from '../types';
 import { getInitialSessionTitle } from '../../shared/session-title';
 import {
-  FileText,
-  BarChart3,
   FolderOpen,
   ArrowRight,
-  Mail,
   X,
   Paperclip,
-  BookOpen,
-  FileSearch,
   Layers,
+  Plug,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 type AttachedFile = {
@@ -29,8 +27,9 @@ import welcomeLogoSrc from '../assets/logo.png';
 
 export function WelcomeView() {
   const { t } = useTranslation();
-  const [prompt, setPrompt] = useState('');
-  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const welcomeDraft = useAppStore((state) => state.welcomeDraft);
+  const setWelcomeDraft = useAppStore((state) => state.setWelcomeDraft);
+  const [prompt, setPromptLocal] = useState(welcomeDraft);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isComposingRef = useRef(false);
   const [pastedImages, setPastedImages] = useState<
@@ -39,12 +38,24 @@ export function WelcomeView() {
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { startSession, changeWorkingDir, isElectron } = useIPC();
+  const { startSession, changeWorkingDir, getMCPServers, isElectron } = useIPC();
   const workingDir = useAppStore((state) => state.workingDir);
   const setGlobalNotice = useAppStore((state) => state.setGlobalNotice);
   const isConfigured = useAppStore((state) => state.isConfigured);
   const setShowSettings = useAppStore((state) => state.setShowSettings);
   const setSettingsTab = useAppStore((state) => state.setSettingsTab);
+
+  // MCP server selection state
+  const [mcpServers, setMcpServers] = useState<MCPServerInfo[]>([]);
+  const [mcpDisabledIds, setMcpDisabledIds] = useState<Set<string>>(new Set());
+  const [mcpExpanded, setMcpExpanded] = useState(false);
+
+  // Sync local prompt to store on every change (persists across navigation)
+  const setPrompt = (value: string) => {
+    setPromptLocal(value);
+    setWelcomeDraft(value);
+  };
+
   const canSubmit = prompt.trim().length > 0 || pastedImages.length > 0 || attachedFiles.length > 0;
 
   // Config set selection
@@ -97,6 +108,19 @@ export function WelcomeView() {
       });
     }
   };
+
+  // Load MCP servers on mount
+  useEffect(() => {
+    const loadServers = async () => {
+      try {
+        const servers = await getMCPServers();
+        setMcpServers(servers || []);
+      } catch (error) {
+        console.error('[WelcomeView] Failed to load MCP servers:', error);
+      }
+    };
+    loadServers();
+  }, [getMCPServers]);
 
   // Handle paste event for images
   const handlePaste = async (e: React.ClipboardEvent) => {
@@ -379,7 +403,12 @@ export function WelcomeView() {
     setIsSubmitting(true);
     try {
       const sessionTitle = getInitialSessionTitle(currentPrompt, attachedFiles[0]?.name);
-      const session = await startSession(sessionTitle, contentBlocks, workingDir || undefined);
+      const session = await startSession(
+        sessionTitle,
+        contentBlocks,
+        workingDir || undefined,
+        mcpDisabledIds.size > 0 ? Array.from(mcpDisabledIds) : undefined
+      );
       if (session) {
         setPrompt('');
         if (textareaRef.current) {
@@ -391,18 +420,6 @@ export function WelcomeView() {
       }
     } finally {
       setIsSubmitting(false);
-    }
-  };
-
-  const handleTagClick = (tag: string, tagPrompt: string) => {
-    setSelectedTag(tag === selectedTag ? null : tag);
-    if (tag !== selectedTag) {
-      setPrompt(tagPrompt);
-      if (textareaRef.current) {
-        textareaRef.current.value = tagPrompt;
-        // Trigger height adjustment
-        adjustTextareaHeight();
-      }
     }
   };
 
@@ -425,48 +442,6 @@ export function WelcomeView() {
   useEffect(() => {
     adjustTextareaHeight();
   }, [prompt]);
-
-  const quickTags = [
-    {
-      id: 'create',
-      label: t('welcome.createFile'),
-      icon: FileText,
-      prompt: t('welcome.quickPromptCreate'),
-    },
-    {
-      id: 'crunch',
-      label: t('welcome.crunchData'),
-      icon: BarChart3,
-      prompt: t('welcome.quickPromptCrunch'),
-    },
-    {
-      id: 'organize',
-      label: t('welcome.organizeFiles'),
-      icon: FolderOpen,
-      prompt: t('welcome.quickPromptOrganize'),
-    },
-    {
-      id: 'email',
-      label: t('welcome.checkEmails'),
-      icon: Mail,
-      prompt: t('welcome.quickPromptEmail'),
-      requiresChrome: true,
-    },
-    {
-      id: 'papers',
-      label: t('welcome.searchPapers'),
-      icon: BookOpen,
-      prompt: t('welcome.quickPromptPapers'),
-      requiresChrome: true,
-    },
-    {
-      id: 'research-notion',
-      label: t('welcome.summarizePapersToNotion'),
-      icon: FileSearch,
-      prompt: t('welcome.quickPromptNotion'),
-      requiresNotion: true,
-    },
-  ];
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center px-5 py-10 md:px-8 md:py-14">
@@ -506,41 +481,6 @@ export function WelcomeView() {
             </button>
           </p>
         )}
-
-        {/* Quick Action Tags */}
-        <div className="flex flex-wrap gap-2 justify-center px-3">
-          {quickTags.map((tag) => (
-            <button
-              key={tag.id}
-              onClick={() => handleTagClick(tag.id, tag.prompt)}
-              className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm transition-colors ${
-                selectedTag === tag.id
-                  ? 'border-accent/30 bg-accent-muted text-accent'
-                  : 'border-border-subtle bg-background/65 text-text-secondary hover:bg-surface-hover hover:text-text-primary'
-              } ${
-                ('requiresChrome' in tag && tag.requiresChrome) ||
-                ('requiresNotion' in tag && tag.requiresNotion)
-                  ? 'relative'
-                  : ''
-              }`}
-            >
-              <tag.icon
-                className={`w-4 h-4 ${selectedTag === tag.id ? 'text-accent' : 'text-text-muted'}`}
-              />
-              <span>{tag.label}</span>
-              {'requiresChrome' in tag && tag.requiresChrome && (
-                <span className="ml-1 px-1.5 py-px text-[9px] rounded bg-surface-active text-text-muted">
-                  {t('welcome.chromeRequired')}
-                </span>
-              )}
-              {'requiresNotion' in tag && tag.requiresNotion && (
-                <span className="ml-1 px-1.5 py-px text-[9px] rounded bg-surface-active text-text-muted">
-                  {t('welcome.notionRequired')}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
 
         {/* Main Input Card - Right aligned */}
         <form
@@ -693,6 +633,111 @@ export function WelcomeView() {
             </div>
           </div>
         </form>
+
+        {/* MCP Server Picker */}
+        {mcpServers.length > 0 && (
+          <div className="space-y-2">
+            {/* Collapsed summary line */}
+            <button
+              type="button"
+              onClick={() => setMcpExpanded(!mcpExpanded)}
+              className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl border border-border-muted bg-background/60 hover:bg-surface-hover transition-colors"
+            >
+              <div className="flex items-center gap-2 text-sm text-text-secondary">
+                <Plug className="w-4 h-4 text-mcp" />
+                <span>
+                  {mcpServers.length - mcpDisabledIds.size}/{mcpServers.length}{' '}
+                  {t('welcome.mcpServersActive')}
+                </span>
+                {mcpDisabledIds.size > 0 && (
+                  <span className="text-xs text-text-muted">
+                    · {t('welcome.mcpTokensSaved', { count: mcpDisabledIds.size })}
+                  </span>
+                )}
+              </div>
+              {mcpExpanded ? (
+                <ChevronUp className="w-4 h-4 text-text-muted" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-text-muted" />
+              )}
+            </button>
+
+            {/* Expanded grid */}
+            {mcpExpanded && (
+              <div className="rounded-xl border border-border-muted bg-background/60 px-4 py-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
+                    {t('welcome.mcpServersForChat')}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMcpDisabledIds(new Set())}
+                      className="text-xs text-text-muted hover:text-text-primary transition-colors"
+                    >
+                      {t('welcome.mcpAllOn')}
+                    </button>
+                    <span className="text-text-muted">·</span>
+                    <button
+                      type="button"
+                      onClick={() => setMcpDisabledIds(new Set(mcpServers.map((s) => s.id)))}
+                      className="text-xs text-text-muted hover:text-text-primary transition-colors"
+                    >
+                      {t('welcome.mcpAllOff')}
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {mcpServers.map((server) => {
+                    const isDisabled = mcpDisabledIds.has(server.id);
+                    return (
+                      <button
+                        key={server.id}
+                        type="button"
+                        onClick={() => {
+                          setMcpDisabledIds((prev) => {
+                            const next = new Set(prev);
+                            if (prev.has(server.id)) {
+                              next.delete(server.id);
+                            } else {
+                              next.add(server.id);
+                            }
+                            return next;
+                          });
+                        }}
+                        className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-colors text-left ${
+                          isDisabled
+                            ? 'border-border-muted bg-surface-muted opacity-50'
+                            : 'border-mcp/30 bg-mcp/5 hover:bg-mcp/10'
+                        }`}
+                      >
+                        <div
+                          className={`w-5 h-3 rounded-full relative shrink-0 transition-colors ${
+                            isDisabled ? 'bg-border' : 'bg-mcp'
+                          }`}
+                        >
+                          <div
+                            className={`absolute top-0.5 w-2 h-2 rounded-full bg-white shadow transition-transform ${
+                              isDisabled ? 'left-0.5' : 'translate-x-2.5'
+                            }`}
+                          />
+                        </div>
+                        <span
+                          className={`text-sm flex-1 truncate ${
+                            isDisabled ? 'text-text-muted line-through' : 'text-text-primary'
+                          }`}
+                        >
+                          {server.name}
+                        </span>
+                        <span className="text-xs text-text-muted shrink-0">{server.toolCount}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

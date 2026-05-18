@@ -10,11 +10,11 @@ people the most confusion in practice.
 
 ## Quick summary
 
-| You see                                                          | What's happening                                                                                                                                                                                                                                                                                                              |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Command ran without a prompt (green check)                       | Every sub-command matched a **Trusted** pattern.                                                                                                                                                                                                                                                                              |
-| "Permission Required" dialog appeared                            | At least one sub-command was not trusted, or a denylist match fired, or the command used shell syntax we can't safely parse.                                                                                                                                                                                                  |
-| You configured the lists but the dialog still appears constantly | Most common cause: a pipeline like `cat foo \| jq .bar \| head` where the tail filters (`jq`, `head`) are not in your trust list. See [Pipelines and chained commands](#pipelines-and-chained-commands). Second most common: you expected `*` in the denylist to be a wildcard, but in the denylist it's a literal character. |
+| You see                                                          | What's happening                                                                                                                                                                                         |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Command ran without a prompt (green check)                       | Every sub-command matched a **Trusted** pattern.                                                                                                                                                         |
+| "Permission Required" dialog appeared                            | At least one sub-command was not trusted, or a denylist match fired, or the command used shell syntax we can't safely parse.                                                                             |
+| You configured the lists but the dialog still appears constantly | Most common cause: a pipeline like `cat foo \| jq .bar \| head` where the tail filters (`jq`, `head`) are not in your trust list. See [Pipelines and chained commands](#pipelines-and-chained-commands). |
 
 ---
 
@@ -47,10 +47,10 @@ in order. The first check that produces a decision wins.
    (Details below.)
 3. **Split into sub-commands** on unquoted `&&`, `||`, `;`, `|`. Each
    piece is evaluated independently.
-4. **Denylist check** on each sub-command. Substring match,
-   case-insensitive. If any sub contains a denylist entry → "ask".
-   The denylist always wins; a trusted sub with a denylist substring
-   still asks.
+4. **Denylist check** on each sub-command. Word-boundary match,
+   case-insensitive. If any sub contains a denylist entry as a distinct
+   word → "ask". The denylist always wins; a trusted sub with a
+   denylist match still asks.
 5. **Trust check** on each sub-command. Prefix match with `*` as
    wildcard, case-insensitive. If every sub matches some trusted
    pattern and none matched the denylist → "allow". Otherwise → "ask".
@@ -85,25 +85,30 @@ Examples:
 \*`cd && git status` is a chain — each piece is checked separately. The
 `git status` piece matches, but `cd` must also match a trusted pattern.
 
-### Denylist: literal substring
+### Denylist: word-boundary match
 
-- Any position in the sub-command.
+- Matches when the pattern appears as a distinct word in the
+  sub-command — not surrounded by alphanumeric or underscore characters.
 - `*` is a **literal asterisk**, not a wildcard.
 - Case-insensitive.
+- For flag-style patterns starting with `-` (like `--force`), only the
+  left boundary is enforced, so `--force` also catches
+  `--force-with-lease`.
+
+This means `rm` matches the command `rm -rf /tmp`, `/usr/bin/rm foo`,
+or `(rm file)` but does **not** match `--scrape-formats markdown`
+(where "rm" is embedded inside "formats"). No more trailing-space
+hacks needed.
 
 Examples:
 
-| Denylist entry | Matches                                       | Common mistake                                   |
-| -------------- | --------------------------------------------- | ------------------------------------------------ |
-| `--force`      | `git push --force`, `rm --force foo`          | —                                                |
-| `sudo`         | `sudo apt install`, `run-sudo-script.sh`      | Also matches `sudoku-cli` — substrings bite      |
-| `rm `          | `rm file.txt`, `xargs rm -rf`                 | `rm` without trailing space also matches `grm`   |
-| `rm *`         | **Only** commands literally containing `rm *` | Does NOT match `rm foo.txt` — the `*` is literal |
-
-**Consequence**: if you add `rm *` to the denylist expecting it to
-catch any `rm` invocation, it won't. Use `rm ` (with a trailing space)
-or just `rm` if you don't care about false positives on things like
-`grm`.
+| Denylist entry | Matches                                                    | Does NOT match                                   |
+| -------------- | ---------------------------------------------------------- | ------------------------------------------------ |
+| `rm`           | `rm file.txt`, `xargs rm -rf`, `/usr/bin/rm foo`, `(rm x)` | `formats`, `markdown`, `firmware`, `confirm_it`  |
+| `--force`      | `git push --force`, `git push --force-with-lease`          | `--reinforce`, `workforce`                       |
+| `sudo`         | `sudo apt install`, `/usr/bin/sudo ls`                     | `pseudocode`, `sudoku-cli`                       |
+| `awk`          | `awk '{print}'`, `cat f \| awk`                            | `hawkish`, `gawk` (use `gawk` entry if needed)   |
+| `rm *`         | **Only** commands literally containing `rm *`              | Does NOT match `rm foo.txt` — the `*` is literal |
 
 ---
 
@@ -370,8 +375,10 @@ sudo
 | `firecrawl search "foo" 2>&1` | allow    | `2>&1` is FD redirection, not a new command. Single sub matches.      |
 | `cat file \| head -100`       | ask      | `cat file` is trusted, but `head -100` is not.                        |
 | `cat file \| sed 's/a/b/'`    | allow    | Both subs match (`cat *`, `sed *`).                                   |
-| `sudo ls`                     | ask      | Denylist substring `sudo` matches. Denylist beats trust.              |
-| `ls --force`                  | ask      | Denylist substring `--force` matches.                                 |
+| `sudo ls`                     | ask      | Denylist word `sudo` matches. Denylist beats trust.                   |
+| `ls --force`                  | ask      | Denylist word `--force` matches.                                      |
+| `cat firmware.bin`            | allow    | `rm` denylist does NOT match inside "firmware" (word boundary).       |
+| `echo "pseudocode"`           | allow    | `sudo` denylist does NOT match inside "pseudocode" (word boundary).   |
 | `git push`                    | ask      | No trusted pattern matches. Authoritative mode → implicit ask.        |
 | `echo "hello && world"`       | ask      | `echo` isn't in the trust list. (The `&&` is inside quotes; one sub.) |
 | `ls && pwd`                   | ask      | Two subs. `ls` matches, `pwd` doesn't.                                |
@@ -453,9 +460,10 @@ rm
 git push
 ```
 
-Note the bare `rm` (not `rm *`) so any `rm` invocation asks. `git push`
-as a substring matches `git push`, `git push --force`, `git push
-origin`, etc.
+Note the bare `rm` — with word-boundary matching it catches `rm`,
+`rm -rf`, `/usr/bin/rm` etc. but won't false-positive on words like
+`formats` or `firmware`. `git push` matches `git push`,
+`git push --force`, `git push origin`, etc.
 
 ### "Research mode: firecrawl plus local JSON inspection"
 
@@ -492,11 +500,14 @@ rm
 
 - Engine: `src/main/config/permission-rules-store.ts`
   (`decideBashPermission`, `splitBashSubCommands`,
-  `containsUnsupportedShellSyntax`, `matchesTrustedPrefix`)
+  `containsUnsupportedShellSyntax`, `matchesTrustedPrefix`,
+  `matchesDenylistPattern`)
 - Main-process installation of the permission gate:
   `src/main/claude/agent-runner.ts#installPermissionHook`
 - Hook installer (SDK shape detection): `src/main/claude/before-tool-call-hook.ts`
 - Settings UI: `src/renderer/components/settings/SettingsBashCommands.tsx`
 - Persistence: `src/main/config/config-store.ts`
   (`bashTrustedCommands`, `bashDenylist` fields)
-- Tests: `tests/bash-command-control.test.ts`, `tests/before-tool-call-hook.test.ts`
+- Tests: `tests/bash-command-control.test.ts`,
+  `tests/denylist-word-boundary.test.ts`,
+  `tests/before-tool-call-hook.test.ts`

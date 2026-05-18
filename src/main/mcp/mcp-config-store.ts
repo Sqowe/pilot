@@ -10,15 +10,25 @@ import { log, logError } from '../utils/logger';
  * Preset MCP Server Configurations
  * These are common MCP servers that users can quickly add
  */
-export const MCP_SERVER_PRESETS: Record<string, Omit<MCPServerConfig, 'id' | 'enabled'> & { requiresEnv?: string[]; envDescription?: Record<string, string> }> = {
+export const MCP_SERVER_PRESETS: Record<
+  string,
+  Omit<MCPServerConfig, 'id' | 'enabled'> & {
+    requiresEnv?: string[];
+    envDescription?: Record<string, string>;
+  }
+> = {
   chrome: {
     name: 'Chrome',
+    description: 'Browser automation and DevTools interaction via Chrome.',
+    descriptionSource: 'auto',
     type: 'stdio',
     command: 'npx',
     args: ['-y', 'chrome-devtools-mcp@latest', '--browser-url', 'http://localhost:9222'],
   },
   notion: {
     name: 'Notion',
+    description: 'Notion workspace access — read and manage pages, databases, and blocks.',
+    descriptionSource: 'auto',
     type: 'stdio',
     command: 'npx',
     args: ['-y', '@notionhq/notion-mcp-server'],
@@ -32,6 +42,8 @@ export const MCP_SERVER_PRESETS: Record<string, Omit<MCPServerConfig, 'id' | 'en
   },
   'software-development': {
     name: 'Software_Development',
+    description: 'File system operations, code search, and project workspace management.',
+    descriptionSource: 'auto',
     type: 'stdio',
     command: 'node',
     args: ['{SOFTWARE_DEV_SERVER_PATH}'], // Path will be resolved at runtime (compiled JS in production)
@@ -47,6 +59,8 @@ export const MCP_SERVER_PRESETS: Record<string, Omit<MCPServerConfig, 'id' | 'en
   },
   'gui-operate': {
     name: 'GUI_Operate',
+    description: 'GUI automation via vision models — click, type, screenshot desktop apps.',
+    descriptionSource: 'auto',
     type: 'stdio',
     command: 'node',
     args: ['{GUI_OPERATE_SERVER_PATH}'], // Path will be resolved at runtime (compiled JS in production)
@@ -97,13 +111,13 @@ class MCPConfigStore {
   saveServer(config: MCPServerConfig): void {
     const servers = this.getServers();
     const index = servers.findIndex((s) => s.id === config.id);
-    
+
     if (index >= 0) {
       servers[index] = config;
     } else {
       servers.push(config);
     }
-    
+
     this.store.set('servers', servers);
   }
 
@@ -141,7 +155,6 @@ class MCPConfigStore {
    * Get the path to a MCP server file in the mcp directory
    */
   private getMcpServerPath(filename: string): string | null {
-
     // In development: __dirname points to dist-electron/main
     // In production: appPath points to the app.asar or unpacked app
     if (app.isPackaged) {
@@ -225,7 +238,7 @@ class MCPConfigStore {
     if (preset.args) {
       resolvedPreset = {
         ...preset,
-        args: preset.args.map(arg => {
+        args: preset.args.map((arg) => {
           // Software Development server path
           if (arg === '{SOFTWARE_DEV_SERVER_PATH}') {
             return this.getSoftwareDevServerPath() || arg;

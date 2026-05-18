@@ -21,7 +21,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import type { ImageContent as PiImageContent } from '@earendil-works/pi-ai';
-import { Type, type TSchema } from 'typebox';
+import { Type } from 'typebox';
 import { getSharedAuthStorage, ModelRegistry } from './shared-auth';
 import type { Session, Message, TraceStep, ServerEvent, ContentBlock } from '../../renderer/types';
 import { v4 as uuidv4 } from 'uuid';
@@ -40,6 +40,8 @@ import {
 import { PathResolver } from '../sandbox/path-resolver';
 import { MCPManager } from '../mcp/mcp-manager';
 import { mcpConfigStore } from '../mcp/mcp-config-store';
+import { applyWorkspaceOverrides, applySessionOverrides } from '../mcp/mcp-workspace-profile';
+import * as mcpDescriptionGenerator from '../mcp/mcp-description-generator';
 import {
   log,
   logWarn,
@@ -67,6 +69,7 @@ import { AgentRuntimeExtensionManager } from '../extensions/agent-runtime-extens
 import { configStore } from '../config/config-store';
 import { setBasePath, applyLocalDevPath } from '../utils/path-env';
 import { loadWorkspaceSystemPrompt } from '../utils/workspace-system-prompt';
+import { assembleUserPrompt } from '../prompts/prompt-loader';
 import { normalizeOpenAICompatibleBaseUrl } from '../config/auth-utils';
 import { resolveMessageEndPayload, toUserFacingErrorText } from './agent-runner-message-end';
 import {
@@ -92,6 +95,7 @@ import {
 } from './pre-request-guard';
 import { fetchOllamaModelInfo } from '../config/ollama-api';
 import { fetchOpenRouterModelInfo } from '../config/openrouter-api';
+import { estimatePayloadSize, trimPayloadMessages } from './mid-loop-overflow-guard';
 
 // Virtual workspace path shown to the model (hides real sandbox path)
 const VIRTUAL_WORKSPACE_PATH = '/workspace';
@@ -311,10 +315,57 @@ async function enrichProcessPathForBuild(): Promise<void> {
 // Shared pi-ai auth storage — created once, reused across sessions.
 
 /**
- * Bridge MCP tools from MCPManager into pi-coding-agent ToolDefinition[] format.
- * Each MCP tool becomes a customTool whose execute() delegates to mcpManager.callTool().
+ * Build an "MCP Server Directory" section for the system prompt.
+ * Lists all connected servers with their descriptions so the LLM can route
+ * tool calls to the appropriate server based on domain.
+ *
+ * All server names and descriptions are sanitized at render time to prevent
+ * prompt injection from untrusted MCP metadata.
  */
-function buildMcpCustomTools(mcpManager: MCPManager): ToolDefinition[] {
+function buildMcpServerDirectory(mcpManager: MCPManager): string {
+  const { sanitizeDescription, sanitizeServerName } = mcpDescriptionGenerator;
+  const servers = mcpConfigStore.getEnabledServers();
+  const statuses = mcpManager.getServerStatus();
+  const connected = statuses.filter((s: { connected: boolean }) => s.connected);
+
+  if (connected.length === 0) return '';
+
+  const lines: string[] = [];
+  for (const server of connected) {
+    const config = servers.find((s) => s.id === server.id);
+    if (!config) continue;
+    const name = sanitizeServerName(config.name);
+    const description = sanitizeDescription(config.description || `(${server.toolCount} tools)`);
+    lines.push(`- ${name}: ${description}`);
+  }
+
+  if (lines.length === 0) return '';
+
+  return [
+    '<mcp_server_directory>',
+    'Available MCP servers and their capabilities:',
+    ...lines,
+    "Use the appropriate server's tools based on the task domain.",
+    '</mcp_server_directory>',
+  ].join('\n');
+}
+
+/**
+ * Bridge MCP tools from MCPManager into pi-coding-agent ToolDefinition[] format.
+/**
+ * Extended ToolDefinition that carries MCP server metadata for filtering.
+ */
+interface McpToolDefinition extends ToolDefinition {
+  /** The MCP server name this tool belongs to (exact, not parsed from tool name) */
+  _mcpServerName: string;
+}
+
+/**
+ * Build custom tool definitions from all connected MCP servers.
+ * Each MCP tool becomes a customTool whose execute() delegates to mcpManager.callTool().
+ * Returns extended definitions with explicit server metadata for filtering.
+ */
+function buildMcpCustomTools(mcpManager: MCPManager): McpToolDefinition[] {
   const mcpTools = mcpManager.getTools();
   return mcpTools.map((mcpTool) => {
     // Wrap the raw JSON Schema inputSchema as a TypeBox TSchema
@@ -322,11 +373,12 @@ function buildMcpCustomTools(mcpManager: MCPManager): ToolDefinition[] {
       mcpTool.inputSchema as Record<string, unknown>
     );
 
-    const toolDef: ToolDefinition<TSchema, unknown> = {
+    const toolDef: McpToolDefinition = {
       name: mcpTool.name,
       label: mcpTool.name.replace(/^mcp__/, '').replace(/__/g, ' → '),
       description: mcpTool.description || `MCP tool from ${mcpTool.serverName}`,
       parameters,
+      _mcpServerName: mcpTool.serverName,
       async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
         try {
           const result = await mcpManager.callTool(mcpTool.name, params as Record<string, unknown>);
@@ -346,6 +398,17 @@ function buildMcpCustomTools(mcpManager: MCPManager): ToolDefinition[] {
     };
     return toolDef;
   });
+}
+
+/**
+ * Filter MCP custom tools to only include tools from effective (non-disabled) servers.
+ * Uses explicit server metadata (_mcpServerName) for exact matching — no name parsing.
+ */
+export function filterMcpCustomTools(
+  tools: McpToolDefinition[],
+  effectiveServerNames: Set<string>
+): McpToolDefinition[] {
+  return tools.filter((tool) => effectiveServerNames.has(tool._mcpServerName));
 }
 
 /**
@@ -448,7 +511,12 @@ interface AgentRunnerOptions {
     toolUseId: string,
     toolName: string,
     input: Record<string, unknown>
-  ) => Promise<'allow' | 'deny' | 'allow_always'>;
+  ) => Promise<{
+    result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
+    suggestion?: string;
+  }>;
+  /** Get session-level disabled MCP server IDs (ephemeral, in-memory) */
+  getSessionDisabledMcpServers?: (sessionId: string) => string[];
 }
 
 interface CachedPiSession {
@@ -484,7 +552,10 @@ export class ClaudeAgentRunner {
     toolUseId: string,
     toolName: string,
     input: Record<string, unknown>
-  ) => Promise<'allow' | 'deny' | 'allow_always'>;
+  ) => Promise<{
+    result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
+    suggestion?: string;
+  }>;
   private pathResolver: PathResolver;
   private mcpManager?: MCPManager;
   private _pluginRuntimeService?: PluginRuntimeService;
@@ -493,6 +564,7 @@ export class ClaudeAgentRunner {
   private activeControllers: Map<string, AbortController> = new Map();
   private piSessions: Map<string, CachedPiSession> = new Map();
   private static readonly MAX_CACHED_SESSIONS = 50;
+  private _getSessionDisabledMcpServers?: (sessionId: string) => string[];
 
   // Per-instance caches — invalidated when the underlying config changes.
   private _mcpServersCache: { fingerprint: string; servers: Record<string, unknown> } | null = null;
@@ -531,6 +603,11 @@ export class ClaudeAgentRunner {
     this._mcpServersCache = null;
     // Sessions stay alive — MCP tools are rebuilt each query via buildMcpCustomTools()
     log('[ClaudeAgentRunner] MCP servers cache invalidated — tools will rebuild on next query');
+  }
+
+  /** Get session-level disabled MCP server IDs via the injected callback. */
+  private getSessionDisabledMcpServers(sessionId: string): string[] | null {
+    return this._getSessionDisabledMcpServers?.(sessionId) ?? null;
   }
 
   // TODO: Credentials should be served via a secure MCP tool or IPC channel,
@@ -815,6 +892,7 @@ RULES:
     this.saveMessage = options.saveMessage;
     this.requestSudoPassword = options.requestSudoPassword;
     this.requestPermission = options.requestPermission;
+    this._getSessionDisabledMcpServers = options.getSessionDisabledMcpServers;
     this.pathResolver = pathResolver;
     this.mcpManager = mcpManager;
     this._pluginRuntimeService = pluginRuntimeService;
@@ -952,9 +1030,54 @@ RULES:
         }
 
         const toolUseId = `${ctx.toolCall?.id ?? 'unknown'}-perm-${uuidv4().slice(0, 8)}`;
-        let result: 'allow' | 'deny' | 'allow_always';
+        let result: {
+          result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
+          suggestion?: string;
+        };
         try {
-          result = await requestPermission(sessionId, toolUseId, toolName, input);
+          const rawResult = await requestPermission(sessionId, toolUseId, toolName, input);
+          // Normalize: accept both legacy string responses and new object shape.
+          // Fail-closed on malformed/unknown values.
+          if (typeof rawResult === 'string') {
+            // Legacy string response — wrap into object
+            const validStrings = ['allow', 'deny', 'allow_always', 'deny_with_suggestion'] as const;
+            if (validStrings.includes(rawResult as (typeof validStrings)[number])) {
+              result = { result: rawResult as (typeof validStrings)[number] };
+            } else {
+              logWarn(
+                `[ClaudeAgentRunner] Unknown legacy permission string '${rawResult}' for '${toolName}' — failing closed`
+              );
+              return {
+                block: true,
+                reason: `Permission response invalid for '${toolName}'; tool not executed.`,
+              };
+            }
+          } else if (rawResult && typeof rawResult === 'object' && 'result' in rawResult) {
+            const validResults = ['allow', 'deny', 'allow_always', 'deny_with_suggestion'] as const;
+            if (
+              validResults.includes(
+                (rawResult as { result: string }).result as (typeof validResults)[number]
+              )
+            ) {
+              result = rawResult as typeof result;
+            } else {
+              logWarn(
+                `[ClaudeAgentRunner] Unknown permission result '${(rawResult as { result: string }).result}' for '${toolName}' — failing closed`
+              );
+              return {
+                block: true,
+                reason: `Permission response invalid for '${toolName}'; tool not executed.`,
+              };
+            }
+          } else {
+            logWarn(
+              `[ClaudeAgentRunner] Malformed permission response for '${toolName}' — failing closed`
+            );
+            return {
+              block: true,
+              reason: `Permission response malformed for '${toolName}'; tool not executed.`,
+            };
+          }
         } catch (permErr) {
           logError(
             `[ClaudeAgentRunner] Permission request failed for '${toolName}' — failing closed`,
@@ -966,12 +1089,24 @@ RULES:
           };
         }
 
-        if (result === 'deny') {
+        if (result.result === 'deny') {
           log(`[ClaudeAgentRunner] Tool '${toolName}' denied by user`);
-          return { block: true, reason: `User denied permission for '${toolName}'.` };
+          return {
+            block: true,
+            reason: `User denied THIS SPECIFIC invocation of '${toolName}'. The tool '${toolName}' is NOT globally blocked — only this particular call was rejected. You may still use '${toolName}' for other purposes.`,
+          };
         }
 
-        if (result === 'allow_always') {
+        if (result.result === 'deny_with_suggestion') {
+          log(`[ClaudeAgentRunner] Tool '${toolName}' denied by user with suggestion`);
+          const suggestion = result.suggestion || '';
+          return {
+            block: true,
+            reason: `User denied THIS SPECIFIC invocation of '${toolName}'. The tool '${toolName}' is NOT globally blocked — only this particular call was rejected. You may still use '${toolName}' for other purposes. User's suggestion: ${suggestion}`,
+          };
+        }
+
+        if (result.result === 'allow_always') {
           rememberAlwaysAllow(sessionId, toolName);
         }
       }
@@ -1681,11 +1816,13 @@ RULES:
       }
 
       // Send context window info to renderer for UI display
+      // (toolSchemaTokens will be sent later once tools are computed)
       this.sendToRenderer({
         type: 'session.contextInfo',
         payload: {
           sessionId: session.id,
           contextWindow: piModel.contextWindow || 128000,
+          maxOutputTokens: piModel.maxTokens || 16384,
         },
       });
 
@@ -1966,6 +2103,7 @@ RULES:
       // Build MCP servers configuration for SDK
       // IMPORTANT: SDK uses tool names in format: mcp__<ServerKey>__<toolName>
       const mcpServers: Record<string, unknown> = {};
+      let effectiveServerNames: Set<string> = new Set();
       if (this.mcpManager) {
         const serverStatuses = this.mcpManager.getServerStatus();
         const connectedServers = serverStatuses.filter((s) => s.connected);
@@ -1986,6 +2124,18 @@ RULES:
           );
           allConfigs = [];
         }
+
+        // Apply workspace-level and session-level MCP overrides
+        allConfigs = applyWorkspaceOverrides(allConfigs, session.cwd);
+        allConfigs = applySessionOverrides(
+          allConfigs,
+          this.getSessionDisabledMcpServers(session.id)
+        );
+        log(
+          '[ClaudeAgentRunner] Effective MCP configs after overrides:',
+          allConfigs.map((c) => c.name)
+        );
+        effectiveServerNames = new Set(allConfigs.map((c) => c.name));
 
         // Cache key: serialized config list + imageCapable flag.  The bundled node
         // paths are stable for the lifetime of the process so they don't need to be
@@ -2120,23 +2270,10 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
             : '';
 
       const coworkAppendPrompt = [
-        'You are an Open Cowork assistant. Be concise, accurate, and tool-capable.',
-        `CRITICAL BEHAVIORAL RULES:
-1. CHAT FIRST: By default, respond to the user in plain text within the conversation. Do NOT create, write, or edit files unless the user explicitly asks you to (e.g., "create a file", "write this to...", "edit the code", "save as...", mentions a specific file path, or describes code changes they want applied). For questions, summaries, explanations, analysis, and general conversation — always reply directly in chat text.
-2. When a request is actionable, proceed immediately with reasonable assumptions. If you need clarification, ask briefly in plain text.
-3. For relative time windows like "within two days" in browsing or research tasks, assume the most recent two relevant publication days unless the user explicitly defines another date range.
-4. For bracketed placeholders like [Agent], [Topic], etc., treat the word inside brackets as the literal search keyword unless the user says otherwise.
-5. When given a task, START DOING IT. Do not restate the task, do not list what you will do, do not ask for confirmation. Just execute.`,
+        assembleUserPrompt({ cwd: effectiveCwd, model: piModel.id }),
         workspaceInfoPrompt,
-        `<citation_requirements>
-If your answer uses linkable content from MCP tools, include a "Sources:" section and otherwise use standard Markdown links: [Title](https://claude.ai/chat/URL).
-</citation_requirements>`,
-        `<tool_behavior>
-Tool routing:
-- If user explicitly asks to use Chrome/browser/web navigation, prioritize Chrome MCP tools (mcp__Chrome__*) over generic WebSearch/WebFetch.
-- Use WebSearch/WebFetch only when Chrome MCP is unavailable or the user explicitly asks for generic web search.
-</tool_behavior>`,
         this.getBundledPathHints(),
+        this.mcpManager ? buildMcpServerDirectory(this.mcpManager) : '',
       ]
         .filter((section): section is string => Boolean(section && section.trim()))
         .join('\n\n');
@@ -2146,12 +2283,14 @@ Tool routing:
       // Create or reuse pi-coding-agent session
       // Bridge MCP tools as customTools for pi-coding-agent.
       // Re-read every query so newly added/removed MCP servers take effect immediately.
-      const mcpCustomTools = this.mcpManager ? buildMcpCustomTools(this.mcpManager) : [];
+      // Filter to only include tools from servers that survived workspace/session overrides.
+      const allMcpCustomTools = this.mcpManager ? buildMcpCustomTools(this.mcpManager) : [];
+      const mcpCustomTools = filterMcpCustomTools(allMcpCustomTools, effectiveServerNames);
       const extensionCustomTools = extensionResult.customTools || [];
       const customTools = [...mcpCustomTools, ...extensionCustomTools];
       if (mcpCustomTools.length > 0) {
         log(
-          `[ClaudeAgentRunner] Registered ${mcpCustomTools.length} MCP tools as customTools:`,
+          `[ClaudeAgentRunner] Registered ${mcpCustomTools.length} MCP tools as customTools (filtered from ${allMcpCustomTools.length}):`,
           mcpCustomTools.map((t) => t.name).join(', ')
         );
       }
@@ -2382,14 +2521,27 @@ Tool routing:
           cwdRef,
         });
 
-        // Ollama: wrap _onPayload to inject num_ctx into every request
-        if (provider === 'ollama') {
+        // ─── Mid-loop overflow guard via _onPayload ─────────────────────────
+        // The pre-request guard only runs before the initial piSession.prompt().
+        // During the SDK's internal tool loop (tool call → tool result → next
+        // model call), the conversation can grow past the context window without
+        // any guard. This _onPayload hook intercepts EVERY API request the SDK
+        // makes and trims the messages array if it would overflow.
+        //
+        // Strategy: estimate the payload size from the messages array. If it
+        // exceeds the context window budget, drop the oldest non-system messages
+        // from the payload (keeping the system prompt and the most recent
+        // messages). This is a "just-in-time" trim that doesn't require async
+        // compaction — it simply removes older messages from the outgoing request.
+        // The session state is NOT modified (compaction still runs post-response
+        // via the SDK's normal path), but the immediate request won't 400.
+        {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const agent = piSession.agent as any;
-          // Guard: only patch if the SDK exposes _onPayload (private API)
+          const sendToRendererRef = this.sendToRenderer.bind(this); // Capture for use inside _onPayload
           if (!('_onPayload' in agent)) {
             logWarn(
-              '[ClaudeAgentRunner] SDK agent does not expose _onPayload — skipping Ollama num_ctx patch'
+              '[ClaudeAgentRunner] SDK agent does not expose _onPayload — skipping mid-loop overflow guard'
             );
           } else {
             const originalOnPayload = agent._onPayload as
@@ -2398,23 +2550,168 @@ Tool routing:
                   modelArg: unknown
                 ) => Promise<Record<string, unknown>>)
               | undefined;
-            const ollamaNumCtx = {
-              value: piModel.contextWindow || 128000,
-            };
+
+            // Use a conservative fallback for context window when metadata is
+            // missing. For the mid-loop guard, we use the KNOWN piModel values
+            // which are already resolved (via registry, OpenRouter API, or
+            // KNOWN_MODEL_SPECS). The fallback only applies if ALL resolution
+            // paths failed — in that case, use 8K as the absolute minimum safe
+            // default. This ensures the guard trims aggressively for truly
+            // unknown models rather than letting oversized payloads through.
+            // Note: piModel.contextWindow is always set by this point (either
+            // from registry, OpenRouter API, KNOWN_MODEL_SPECS, or the 128K
+            // synthetic fallback). The 8K here is a last-resort defensive guard.
+            const payloadContextWindow = piModel.contextWindow || 8192;
+            const payloadMaxOutput = piModel.maxTokens || 4096;
+            const payloadSafetyMargin = 4000;
+            if (!piModel.contextWindow) {
+              logWarn(
+                '[ClaudeAgentRunner] Mid-loop overflow guard: contextWindow unknown, using conservative 8K fallback.',
+                'Model:',
+                piModel.id
+              );
+            }
+            // For Ollama, also inject num_ctx
+            const isOllama = provider === 'ollama';
+            const ollamaNumCtx = isOllama ? { value: payloadContextWindow } : undefined;
+            if (isOllama && ollamaNumCtx) {
+              this.piSessions.get(session.id)!.ollamaNumCtx = ollamaNumCtx;
+            }
+
+            // Throttle live context updates to avoid IPC flooding.
+            // _onPayload fires on every API request (including stream retries).
+            // We only emit to the renderer at most every 200ms, or when the
+            // token count changes by a meaningful delta (>1000 tokens).
+            let lastContextEmitTime = 0;
+            let lastEmittedInputTokens = 0;
+            const CONTEXT_EMIT_INTERVAL_MS = 200;
+            const CONTEXT_EMIT_MIN_DELTA = 1000; // tokens
+
             agent._onPayload = async (payload: Record<string, unknown>, modelArg: unknown) => {
+              // Chain to original _onPayload if it exists
               let result = originalOnPayload
                 ? await originalOnPayload.call(agent, payload, modelArg)
                 : payload;
               if (result === undefined) result = payload;
-              return { ...result, num_ctx: ollamaNumCtx.value };
+
+              // Inject num_ctx for Ollama
+              if (isOllama && ollamaNumCtx) {
+                result = { ...result, num_ctx: ollamaNumCtx.value };
+              }
+
+              // ─── Mid-loop overflow estimation ───────────────────────────
+              // Estimate the total request size from the payload's messages.
+              // The payload has `messages` (array of LLM-format messages) and
+              // `tools` (array of tool definitions). We estimate tokens using
+              // the chars/4 heuristic on the serialized messages.
+              const messages = result.messages as unknown[] | undefined;
+              if (!messages || !Array.isArray(messages) || messages.length === 0) {
+                return result;
+              }
+
+              const tools = result.tools as unknown[] | undefined;
+              const estimate = estimatePayloadSize({
+                messages,
+                tools: tools && Array.isArray(tools) ? tools : undefined,
+                contextWindow: payloadContextWindow,
+                maxOutput: payloadMaxOutput,
+                safetyMargin: payloadSafetyMargin,
+              });
+
+              // ─── Emit live context usage to renderer (throttled) ─────────
+              // Updates the context usage bar during the tool loop. Throttled
+              // to avoid IPC flooding: emits at most every 200ms or when the
+              // token count changes by >1000 tokens (whichever comes first).
+              const now = Date.now();
+              const tokenDelta = Math.abs(
+                estimate.breakdown.messageTokens - lastEmittedInputTokens
+              );
+              if (
+                now - lastContextEmitTime >= CONTEXT_EMIT_INTERVAL_MS ||
+                tokenDelta >= CONTEXT_EMIT_MIN_DELTA
+              ) {
+                lastContextEmitTime = now;
+                lastEmittedInputTokens = estimate.breakdown.messageTokens;
+                sendToRendererRef({
+                  type: 'session.contextInfo',
+                  payload: {
+                    sessionId: session.id,
+                    contextWindow: payloadContextWindow,
+                    toolSchemaTokens: estimate.breakdown.toolTokens,
+                    maxOutputTokens: payloadMaxOutput,
+                    currentInputTokens: estimate.breakdown.messageTokens,
+                  },
+                });
+              }
+
+              if (!estimate.wouldOverflow) {
+                return result; // Within budget — proceed normally
+              }
+
+              // ─── Overflow detected — trim by conversational turns ──────
+              log(
+                '[ClaudeAgentRunner] Mid-loop overflow guard: estimated',
+                estimate.estimatedTotal,
+                'tokens exceeds',
+                payloadContextWindow,
+                'by',
+                estimate.overflow,
+                '— trimming oldest turns from payload.'
+              );
+
+              const trimResult = trimPayloadMessages(messages, estimate.overflow);
+
+              if (!trimResult) {
+                // Can't drop anything — let the request go through and let the
+                // SDK's own error handling deal with it
+                logWarn(
+                  '[ClaudeAgentRunner] Mid-loop overflow guard: cannot trim turns (too few). Proceeding anyway.'
+                );
+                return result;
+              }
+
+              // Re-estimate with full context (tools + output + safety)
+              const trimmedTotal =
+                trimResult.estimatedTotalAfterTrim +
+                estimate.breakdown.toolTokens +
+                payloadMaxOutput +
+                payloadSafetyMargin;
+
+              if (trimmedTotal > payloadContextWindow) {
+                logWarn(
+                  '[ClaudeAgentRunner] Mid-loop overflow guard: still over budget after trimming',
+                  trimResult.turnsDropped,
+                  'turns (estimated:',
+                  trimmedTotal,
+                  '> window:',
+                  payloadContextWindow,
+                  '). Sending anyway — SDK overflow recovery may handle it.'
+                );
+              }
+
+              log(
+                '[ClaudeAgentRunner] Mid-loop overflow guard: dropped',
+                trimResult.turnsDropped,
+                'turns (',
+                trimResult.messagesDropped,
+                'messages), freed ~',
+                Math.ceil(trimResult.charsFreed / 4),
+                'tokens. Messages:',
+                messages.length,
+                '→',
+                trimResult.trimmedMessages.length
+              );
+
+              return { ...result, messages: trimResult.trimmedMessages };
             };
-            this.piSessions.get(session.id)!.ollamaNumCtx = ollamaNumCtx;
+
             log(
-              '[ClaudeAgentRunner] Ollama _onPayload wrapper installed, num_ctx:',
-              ollamaNumCtx.value
+              '[ClaudeAgentRunner] Mid-loop overflow guard installed via _onPayload',
+              isOllama ? '(with Ollama num_ctx)' : ''
             );
-          } // end else (_onPayload exists)
+          }
         }
+        // ─── End mid-loop overflow guard ─────────────────────────────────────
 
         logTiming('pi-coding-agent session created', runStartTime);
       }
@@ -2634,6 +2931,23 @@ Tool routing:
                 terminalErrorText = resolvedPayload.errorText;
                 if (!hasEmittedError) {
                   hasEmittedError = true;
+
+                  // Determine user-facing guidance based on error type
+                  let guidance: string;
+                  const isContextOverflow =
+                    /maximum context length/i.test(resolvedPayload.errorText) ||
+                    /context.*window.*exceeded/i.test(resolvedPayload.errorText) ||
+                    /token.*limit.*exceeded/i.test(resolvedPayload.errorText);
+
+                  if (isContextOverflow) {
+                    guidance =
+                      '_Context window full. Send another message — the system will automatically compress the conversation and retry._';
+                  } else if (/\b4\d{2}\b/.test(resolvedPayload.errorText)) {
+                    guidance = '_Please check your configuration and retry._';
+                  } else {
+                    guidance = '_Agent is retrying automatically, please wait..._';
+                  }
+
                   this.sendMessage(session.id, {
                     id: uuidv4(),
                     sessionId: session.id,
@@ -2641,11 +2955,7 @@ Tool routing:
                     content: [
                       {
                         type: 'text',
-                        text: `**Error**: ${resolvedPayload.errorText}\n\n${
-                          /\b4\d{2}\b/.test(resolvedPayload.errorText)
-                            ? '_Please check your configuration and retry._'
-                            : '_Agent is retrying automatically, please wait..._'
-                        }`,
+                        text: `**Error**: ${resolvedPayload.errorText}\n\n${guidance}`,
                       },
                     ],
                     timestamp: Date.now(),
@@ -2882,6 +3192,20 @@ Tool routing:
         // Precompute tool schema tokens once — this involves JSON.stringify on
         // every tool's parameters and is the most expensive invariant cost.
         const guardToolSchemaTokens = estimateToolSchemaTokens(wrappedTools, mcpCustomTools);
+
+        // Update renderer with tool schema token count (now that tools are computed)
+        // Reset currentInputTokens to 0 at run start — the _onPayload hook will
+        // update it with live values as the tool loop progresses.
+        this.sendToRenderer({
+          type: 'session.contextInfo',
+          payload: {
+            sessionId: session.id,
+            contextWindow: guardContextWindow,
+            toolSchemaTokens: guardToolSchemaTokens,
+            maxOutputTokens: guardModelMaxOutput,
+            currentInputTokens: 0,
+          },
+        });
 
         const buildGuardInput = (promptText: string) => ({
           existingMessages: piSession.messages as ReadonlyArray<{

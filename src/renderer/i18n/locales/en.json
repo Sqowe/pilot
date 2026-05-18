@@ -47,7 +47,12 @@
     "quickPromptNotion": "Help me research three representative survey papers related to agents, and add them under a Notion page titled \"Agent Survey\". For each paper, include the title, authors, publication venue/year, and a brief summary of the main contributions.",
     "apiNotConfigured": "API not configured yet. Please go to Settings to set up your API provider and key.",
     "goToSettings": "Go to Settings",
-    "configSet": "Config Set"
+    "configSet": "Config Set",
+    "mcpServersActive": "MCP servers active",
+    "mcpTokensSaved": "{{count}} disabled",
+    "mcpServersForChat": "MCP Servers for this chat",
+    "mcpAllOn": "All on",
+    "mcpAllOff": "All off"
   },
   "settings": {
     "title": "Settings",
@@ -552,7 +557,15 @@
     "commandRequired": "Command is required",
     "urlRequired": "URL is required",
     "toolCount": "{{count}} tools",
-    "callCount": "{{count}} calls"
+    "callCount": "{{count}} calls",
+    "sessionDisabled": "off this session",
+    "enableForSession": "Enable for this session",
+    "disableForSession": "Disable for this session",
+    "headers": "Headers",
+    "headersDescription": "Custom HTTP headers (e.g., Authorization)",
+    "noHeaders": "No headers configured",
+    "headerKeyPlaceholder": "Header name (e.g., Authorization)",
+    "headerValuePlaceholder": "Header value (e.g., Bearer your-token)"
   },
   "credentials": {
     "envVars": "Environment Variables",
@@ -716,7 +729,9 @@
     "copyPath": "Copy path",
     "openInFileManager": "Open in file manager",
     "contextUsage": "Context Usage",
-    "contextUsageLabel": "{{used}} / {{total}}"
+    "contextUsageLabel": "{{used}} / {{total}}",
+    "contextUsageTools": "{{count}} tools",
+    "contextUsageOutput": "{{count}} output"
   },
   "messageCard": {
     "request": "Request",
@@ -731,7 +746,17 @@
     "noQuestions": "No questions",
     "question": "Question",
     "thinking": "Thinking",
-    "executionTime": "Execution time: {{time}}"
+    "executionTime": "Execution time: {{time}}",
+    "process": "Process",
+    "processThinking": "{{count}} thinking",
+    "processTools": "{{count}} tools"
+  },
+  "linkMenu": {
+    "title": "Link options",
+    "copyLink": "Copy Link",
+    "copied": "Copied!",
+    "openDefault": "Open in Default Browser",
+    "openWith": "Open with…"
   },
   "schedule": {
     "createTitle": "Create Schedule",

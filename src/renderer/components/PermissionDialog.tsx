@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useIPC } from '../hooks/useIPC';
 import type { PermissionRequest } from '../types';
-import { Shield, X, Check, AlertTriangle } from 'lucide-react';
+import { Shield, X, Check, AlertTriangle, MessageSquare } from 'lucide-react';
 
 interface PermissionDialogProps {
   permission: PermissionRequest;
@@ -12,6 +12,8 @@ export function PermissionDialog({ permission }: PermissionDialogProps) {
   const { t } = useTranslation();
   const { respondToPermission } = useIPC();
   const [pendingAlwaysAllow, setPendingAlwaysAllow] = useState(false);
+  const [showSuggestionInput, setShowSuggestionInput] = useState(false);
+  const [suggestion, setSuggestion] = useState('');
 
   const getToolDescription = (toolName: string): string => {
     const key = `permission.toolDescriptions.${toolName}`;
@@ -32,6 +34,14 @@ export function PermissionDialog({ permission }: PermissionDialogProps) {
     'write_file',
     'edit_file',
   ].includes(permission.toolName);
+
+  const handleDenyWithSuggestion = () => {
+    if (suggestion.trim()) {
+      respondToPermission(permission.toolUseId, 'deny_with_suggestion', suggestion.trim());
+    } else {
+      respondToPermission(permission.toolUseId, 'deny');
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
@@ -85,66 +95,121 @@ export function PermissionDialog({ permission }: PermissionDialogProps) {
           </div>
         )}
 
-        {/* Actions */}
-        <div className="mt-6 flex items-center gap-3">
-          <button
-            onClick={() => respondToPermission(permission.toolUseId, 'deny')}
-            className="flex-1 btn btn-secondary"
-          >
-            <X className="w-4 h-4" />
-            {t('permission.deny')}
-          </button>
-
-          <button
-            onClick={() => respondToPermission(permission.toolUseId, 'allow')}
-            className="flex-1 btn btn-primary"
-          >
-            <Check className="w-4 h-4" />
-            {t('permission.allow')}
-          </button>
-        </div>
-
-        {/* Always Allow option */}
-        {!pendingAlwaysAllow ? (
-          <button
-            onClick={() => {
-              const dangerousTools = ['bash', 'write', 'edit', 'execute_command'];
-              const isDangerous = dangerousTools.some((tool) =>
-                permission.toolName?.toLowerCase().includes(tool)
-              );
-              if (isDangerous) {
-                setPendingAlwaysAllow(true);
-              } else {
-                respondToPermission(permission.toolUseId, 'allow_always');
-              }
-            }}
-            className="w-full mt-2 btn btn-ghost text-sm"
-          >
-            {t('permission.alwaysAllow')}
-          </button>
-        ) : (
-          <div className="mt-2 p-3 bg-warning/10 border border-warning/20 rounded-xl">
-            <p className="text-sm text-warning mb-2">
-              {`Are you sure you want to always allow "${permission.toolName}"? This tool can modify your system.`}
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setPendingAlwaysAllow(false)}
-                className="flex-1 btn btn-secondary text-sm"
-              >
-                {t('permission.deny')}
-              </button>
+        {/* Suggestion Input */}
+        {showSuggestionInput && (
+          <div className="mt-4 p-3 bg-surface-muted border border-border rounded-xl">
+            <label className="text-sm font-medium text-text-primary block mb-2">
+              {t('permission.suggestionLabel', { defaultValue: 'Suggest an alternative approach:' })}
+            </label>
+            <textarea
+              value={suggestion}
+              onChange={(e) => setSuggestion(e.target.value)}
+              placeholder={t('permission.suggestionPlaceholder', {
+                defaultValue: 'e.g., "Use the pdf skill instead" or "Read with pdfplumber, not pypdf"',
+              })}
+              className="w-full p-2 text-sm rounded-lg border border-border bg-background text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:border-accent"
+              rows={3}
+              autoFocus
+            />
+            <div className="flex gap-2 mt-2">
               <button
                 onClick={() => {
-                  setPendingAlwaysAllow(false);
-                  respondToPermission(permission.toolUseId, 'allow_always');
+                  setShowSuggestionInput(false);
+                  setSuggestion('');
                 }}
-                className="flex-1 btn btn-primary text-sm"
+                className="flex-1 btn btn-ghost text-sm"
               >
-                {t('permission.alwaysAllow')}
+                {t('common.cancel', { defaultValue: 'Cancel' })}
+              </button>
+              <button
+                onClick={handleDenyWithSuggestion}
+                className="flex-1 btn btn-secondary text-sm"
+              >
+                <X className="w-3 h-3" />
+                {t('permission.denyWithSuggestion', { defaultValue: 'Deny & Send' })}
               </button>
             </div>
           </div>
+        )}
+
+        {/* Actions */}
+        {!showSuggestionInput && (
+          <div className="mt-6 flex items-center gap-3">
+            <button
+              onClick={() => respondToPermission(permission.toolUseId, 'deny')}
+              className="flex-1 btn btn-secondary"
+            >
+              <X className="w-4 h-4" />
+              {t('permission.deny')}
+            </button>
+
+            <button
+              onClick={() => respondToPermission(permission.toolUseId, 'allow')}
+              className="flex-1 btn btn-primary"
+            >
+              <Check className="w-4 h-4" />
+              {t('permission.allow')}
+            </button>
+          </div>
+        )}
+
+        {/* Deny & Suggest + Always Allow options */}
+        {!showSuggestionInput && (
+          <>
+            <button
+              onClick={() => {
+                setPendingAlwaysAllow(false);
+                setShowSuggestionInput(true);
+              }}
+              className="w-full mt-2 btn btn-ghost text-sm"
+            >
+              <MessageSquare className="w-3.5 h-3.5 mr-1" />
+              {t('permission.denySuggest', { defaultValue: 'Deny & Suggest Alternative' })}
+            </button>
+
+            {/* Always Allow option */}
+            {!pendingAlwaysAllow ? (
+              <button
+                onClick={() => {
+                  const dangerousTools = ['bash', 'write', 'edit', 'execute_command'];
+                  const isDangerous = dangerousTools.some((tool) =>
+                    permission.toolName?.toLowerCase().includes(tool)
+                  );
+                  if (isDangerous) {
+                    setPendingAlwaysAllow(true);
+                  } else {
+                    respondToPermission(permission.toolUseId, 'allow_always');
+                  }
+                }}
+                className="w-full mt-1 btn btn-ghost text-sm"
+              >
+                {t('permission.alwaysAllow')}
+              </button>
+            ) : (
+              <div className="mt-2 p-3 bg-warning/10 border border-warning/20 rounded-xl">
+                <p className="text-sm text-warning mb-2">
+                  {`Are you sure you want to always allow "${permission.toolName}"? This tool can modify your system.`}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setPendingAlwaysAllow(false)}
+                    className="flex-1 btn btn-secondary text-sm"
+                  >
+                    {t('permission.deny')}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPendingAlwaysAllow(false);
+                      respondToPermission(permission.toolUseId, 'allow_always');
+                    }}
+                    className="flex-1 btn btn-primary text-sm"
+                  >
+                    {t('permission.alwaysAllow')}
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

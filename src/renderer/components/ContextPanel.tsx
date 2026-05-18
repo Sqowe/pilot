@@ -38,6 +38,7 @@ import {
   Layers,
 } from 'lucide-react';
 import type { TraceStep, MCPServerInfo } from '../types';
+import { computeContextUsage } from '../utils/context-usage';
 
 const EMPTY_STEPS: TraceStep[] = [];
 
@@ -55,6 +56,7 @@ export function ContextPanel() {
   const [artifactsOpen, setArtifactsOpen] = useState(true);
   const [expandedConnector, setExpandedConnector] = useState<string | null>(null);
   const [mcpServers, setMcpServers] = useState<MCPServerInfo[]>([]);
+  const [sessionDisabledServers, setSessionDisabledServers] = useState<Set<string>>(new Set());
   const [copiedPath, setCopiedPath] = useState(false);
   const [isChangingDir, setIsChangingDir] = useState(false);
   const [recentWorkspaceFiles, setRecentWorkspaceFiles] = useState<
@@ -111,24 +113,34 @@ export function ContextPanel() {
     return { input, output, total: input + output };
   }, [messages]);
 
-  // Context usage: last message's input tokens ≈ current context occupation
+  // Context usage: effective budget including tool schemas + output reservation
+  // Uses live currentInputTokens from _onPayload when available (updates during
+  // tool loop), falls back to last message's tokenUsage.input for initial state.
   const contextUsage = useMemo(() => {
-    const contextWindow = activeSessionId
-      ? sessionStates[activeSessionId]?.contextWindow
-      : undefined;
+    const sessionState = activeSessionId ? sessionStates[activeSessionId] : undefined;
+    const contextWindow = sessionState?.contextWindow;
     if (!contextWindow) return null;
 
-    let lastInput = 0;
+    const toolSchemaTokens = sessionState?.toolSchemaTokens ?? 0;
+    const maxOutputTokens = sessionState?.maxOutputTokens ?? 0;
+    const currentInputTokens = sessionState?.currentInputTokens ?? 0;
+
+    // Find last reported input tokens from assistant messages (fallback)
+    let lastMessageInputTokens = 0;
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i].tokenUsage?.input) {
-        lastInput = messages[i].tokenUsage!.input;
+        lastMessageInputTokens = messages[i].tokenUsage!.input;
         break;
       }
     }
-    if (lastInput === 0) return null;
 
-    const percentage = Math.min((lastInput / contextWindow) * 100, 100);
-    return { used: lastInput, total: contextWindow, percentage };
+    return computeContextUsage({
+      contextWindow,
+      toolSchemaTokens,
+      maxOutputTokens,
+      currentInputTokens,
+      lastMessageInputTokens,
+    });
   }, [activeSessionId, sessionStates, messages]);
 
   const completedStepCount = useMemo(
@@ -241,6 +253,39 @@ export function ContextPanel() {
     return () => clearInterval(interval);
   }, [contextPanelCollapsed, getMCPServers]);
 
+  // Load session-disabled MCP servers when active session changes
+  useEffect(() => {
+    if (!activeSessionId || contextPanelCollapsed) {
+      setSessionDisabledServers(new Set());
+      return;
+    }
+    const loadDisabled = async () => {
+      try {
+        const disabled = await window.electronAPI?.mcp?.getSessionDisabledServers(activeSessionId);
+        setSessionDisabledServers(new Set(disabled || []));
+      } catch (error) {
+        console.error('Failed to load session disabled servers:', error);
+      }
+    };
+    loadDisabled();
+  }, [activeSessionId, contextPanelCollapsed]);
+
+  const handleToggleSessionServer = async (serverId: string, disabled: boolean) => {
+    if (!activeSessionId) return;
+    try {
+      const result = await window.electronAPI?.mcp?.toggleSessionServer(
+        activeSessionId,
+        serverId,
+        disabled
+      );
+      if (result?.success && result.disabledServers) {
+        setSessionDisabledServers(new Set(result.disabledServers));
+      }
+    } catch (error) {
+      console.error('Failed to toggle session MCP server:', error);
+    }
+  };
+
   if (contextPanelCollapsed) {
     return (
       <div className="w-10 bg-background border-l border-border-muted flex items-start justify-center pt-3">
@@ -316,23 +361,63 @@ export function ContextPanel() {
               {Math.round(contextUsage.percentage)}%
             </span>
           </div>
-          <div className="h-1.5 bg-surface-muted rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-500 ease-out ${
-                contextUsage.percentage > 75
-                  ? 'bg-error'
-                  : contextUsage.percentage > 50
-                    ? 'bg-warning'
-                    : 'bg-gradient-to-r from-accent to-accent-hover'
-              }`}
-              style={{ width: `${contextUsage.percentage}%` }}
-            />
+          <div className="h-1.5 bg-surface-muted rounded-full overflow-hidden flex">
+            {contextUsage.percentage > 50 ? (
+              /* Warning/Critical: single-color bar */
+              <div
+                className={`h-full rounded-full transition-all duration-500 ease-out ${
+                  contextUsage.percentage > 75 ? 'bg-error' : 'bg-warning'
+                }`}
+                style={{ width: `${contextUsage.percentage}%` }}
+              />
+            ) : (
+              /* Normal: stacked segments */
+              <>
+                {contextUsage.convPercentage > 0 && (
+                  <div
+                    className="h-full bg-accent transition-all duration-500 ease-out first:rounded-l-full"
+                    style={{ width: `${contextUsage.convPercentage}%` }}
+                  />
+                )}
+                {contextUsage.toolPercentage > 0 && (
+                  <div
+                    className="h-full bg-gray-400/60 transition-all duration-500 ease-out"
+                    style={{ width: `${contextUsage.toolPercentage}%` }}
+                  />
+                )}
+                {contextUsage.outputPercentage > 0 && (
+                  <div
+                    className="h-full bg-purple-400/60 transition-all duration-500 ease-out last:rounded-r-full"
+                    style={{ width: `${contextUsage.outputPercentage}%` }}
+                  />
+                )}
+              </>
+            )}
           </div>
           <p className="text-xs text-text-muted">
-            {t('context.contextUsageLabel', {
-              used: formatTokenCount(contextUsage.used),
-              total: formatTokenCount(contextUsage.total),
-            })}
+            <span className="text-accent">{formatTokenCount(contextUsage.conversation)}</span>
+            {contextUsage.toolSchemaTokens > 0 && (
+              <>
+                {' + '}
+                <span className="text-gray-400">
+                  {t('context.contextUsageTools', {
+                    count: formatTokenCount(contextUsage.toolSchemaTokens),
+                  })}
+                </span>
+              </>
+            )}
+            {contextUsage.maxOutputTokens > 0 && (
+              <>
+                {' + '}
+                <span className="text-purple-400">
+                  {t('context.contextUsageOutput', {
+                    count: formatTokenCount(contextUsage.maxOutputTokens),
+                  })}
+                </span>
+              </>
+            )}
+            {' / '}
+            <span>{formatTokenCount(contextUsage.total)}</span>
           </p>
         </div>
       )}
@@ -513,6 +598,8 @@ export function ContextPanel() {
                   onToggle={() =>
                     setExpandedConnector(expandedConnector === server.id ? null : server.id)
                   }
+                  sessionDisabled={sessionDisabledServers.has(server.id)}
+                  onToggleSession={handleToggleSessionServer}
                 />
               ))}
             </div>
@@ -528,11 +615,15 @@ function ConnectorItem({
   steps,
   expanded,
   onToggle,
+  sessionDisabled,
+  onToggleSession,
 }: {
   server: MCPServerInfo;
   steps: TraceStep[];
   expanded: boolean;
   onToggle: () => void;
+  sessionDisabled: boolean;
+  onToggleSession: (serverId: string, disabled: boolean) => void;
 }) {
   const { t } = useTranslation();
   // Get MCP tools used from this server
@@ -560,43 +651,66 @@ function ConnectorItem({
   ).length;
 
   return (
-    <div className="rounded-lg border border-border overflow-hidden">
-      <button
-        onClick={onToggle}
+    <div
+      className={`rounded-lg border border-border overflow-hidden ${sessionDisabled ? 'opacity-50' : ''}`}
+    >
+      <div
         className={`w-full px-3 py-2 flex items-center gap-2 transition-colors ${
-          server.connected ? 'bg-mcp/10 hover:bg-mcp/20' : 'bg-surface-muted hover:bg-surface-hover'
+          server.connected && !sessionDisabled
+            ? 'bg-mcp/10 hover:bg-mcp/20'
+            : 'bg-surface-muted hover:bg-surface-hover'
         }`}
       >
-        <div
-          className={`w-6 h-6 rounded flex items-center justify-center ${
-            server.connected ? 'bg-mcp/20' : 'bg-surface-muted'
+        {/* Toggle switch */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSession(server.id, !sessionDisabled);
+          }}
+          className={`w-7 h-4 rounded-full relative transition-colors shrink-0 ${
+            sessionDisabled ? 'bg-border' : 'bg-mcp'
           }`}
+          title={sessionDisabled ? t('mcp.enableForSession') : t('mcp.disableForSession')}
         >
-          <Plug className={`w-3.5 h-3.5 ${server.connected ? 'text-mcp' : 'text-text-muted'}`} />
-        </div>
-        <div className="flex-1 text-left min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-text-primary truncate">{server.name}</span>
-            {!server.connected && (
-              <span className="text-xs text-text-muted">({t('mcp.notConnected')})</span>
+          <div
+            className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${
+              sessionDisabled ? 'left-0.5' : 'translate-x-3.5'
+            }`}
+          />
+        </button>
+        <button onClick={onToggle} className="flex-1 flex items-center gap-2 min-w-0">
+          <div className="flex-1 text-left min-w-0">
+            <div className="flex items-center gap-2">
+              <span
+                className={`text-sm font-medium truncate ${sessionDisabled ? 'text-text-muted line-through' : 'text-text-primary'}`}
+              >
+                {server.name}
+              </span>
+              {!server.connected && (
+                <span className="text-xs text-text-muted">({t('mcp.notConnected')})</span>
+              )}
+              {sessionDisabled && (
+                <span className="text-xs text-warning">({t('mcp.sessionDisabled')})</span>
+              )}
+            </div>
+            {server.connected && !sessionDisabled && (
+              <p className="text-xs text-text-muted">
+                {t('mcp.toolCount', { count: server.toolCount })}
+                {usageCount > 0 && ` • ${t('mcp.callCount', { count: usageCount })}`}
+              </p>
             )}
           </div>
-          {server.connected && (
-            <p className="text-xs text-text-muted">
-              {t('mcp.toolCount', { count: server.toolCount })}
-              {usageCount > 0 && ` • ${t('mcp.callCount', { count: usageCount })}`}
-            </p>
-          )}
-        </div>
-        {server.connected &&
-          (expanded ? (
-            <ChevronDown className="w-4 h-4 text-text-muted" />
-          ) : (
-            <ChevronRight className="w-4 h-4 text-text-muted" />
-          ))}
-      </button>
+          {server.connected &&
+            !sessionDisabled &&
+            (expanded ? (
+              <ChevronDown className="w-4 h-4 text-text-muted" />
+            ) : (
+              <ChevronRight className="w-4 h-4 text-text-muted" />
+            ))}
+        </button>
+      </div>
 
-      {expanded && server.connected && (
+      {expanded && server.connected && !sessionDisabled && (
         <div className="px-3 pb-2 space-y-1 bg-surface">
           {mcpToolsUsed.length > 0 ? (
             <>

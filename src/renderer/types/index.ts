@@ -485,7 +485,12 @@ export interface PermissionRequest {
   sessionId: string;
 }
 
-export type PermissionResult = 'allow' | 'deny' | 'allow_always';
+export type PermissionResult = 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
+
+export interface PermissionResponse {
+  result: PermissionResult;
+  suggestion?: string;
+}
 
 // Sudo password types
 export interface SudoPasswordRequest {
@@ -524,6 +529,7 @@ export type ClientEvent =
         allowedTools?: string[];
         content?: ContentBlock[];
         memoryEnabled?: boolean;
+        initialDisabledMcpServers?: string[];
       };
     }
   | {
@@ -536,14 +542,23 @@ export type ClientEvent =
   | { type: 'session.list'; payload: Record<string, never> }
   | { type: 'session.getMessages'; payload: { sessionId: string } }
   | { type: 'session.getTraceSteps'; payload: { sessionId: string } }
-  | { type: 'permission.response'; payload: { toolUseId: string; result: PermissionResult } }
+  | {
+      type: 'permission.response';
+      payload: { toolUseId: string; result: PermissionResult; suggestion?: string };
+    }
   | { type: 'sudo.password.response'; payload: { toolUseId: string; password: string | null } }
   | { type: 'settings.update'; payload: Record<string, unknown> }
   | { type: 'folder.select'; payload: Record<string, never> }
   | { type: 'workdir.get'; payload: Record<string, never> }
   | { type: 'workdir.set'; payload: { path: string; sessionId?: string } }
   | { type: 'workdir.select'; payload: { sessionId?: string; currentPath?: string } }
-  | { type: 'scheduled-task.catch-up-response'; payload: { decisions: CatchUpDecision[] } };
+  | { type: 'scheduled-task.catch-up-response'; payload: { decisions: CatchUpDecision[] } }
+  | { type: 'prompt.getSections'; payload: Record<string, never> }
+  | { type: 'prompt.updateSection'; payload: { filename: string; content: string } }
+  | { type: 'prompt.resetSection'; payload: { filename: string } }
+  | { type: 'prompt.resetAll'; payload: Record<string, never> }
+  | { type: 'prompt.toggleSection'; payload: { filename: string; enabled: boolean } }
+  | { type: 'prompt.getDir'; payload: Record<string, never> };
 
 // Sandbox setup types (app startup)
 export type SandboxSetupPhase =
@@ -616,7 +631,16 @@ export type ServerEvent =
       payload: { sessionId: string; plugins: Array<{ name: string; path: string }> };
     }
   | { type: 'workdir.changed'; payload: { path: string } }
-  | { type: 'session.contextInfo'; payload: { sessionId: string; contextWindow: number } }
+  | {
+      type: 'session.contextInfo';
+      payload: {
+        sessionId: string;
+        contextWindow: number;
+        toolSchemaTokens?: number;
+        maxOutputTokens?: number;
+        currentInputTokens?: number;
+      };
+    }
   | {
       type: 'navigate.to';
       payload: { page: 'welcome' | 'settings' | 'session'; tab?: string; sessionId?: string };
@@ -684,6 +708,8 @@ export interface Settings {
   schedulerCatchUpPolicy?: CatchUpPolicy;
   schedulerConflictPolicy?: ConflictPolicy;
   schedulerRunHistoryDepth?: number;
+  // Permission dialog timeout in seconds. 0 = infinite (no timeout).
+  permissionTimeoutSeconds?: number;
 }
 
 // Tool types
@@ -808,6 +834,8 @@ export interface AppConfig {
   schedulerCatchUpPolicy?: CatchUpPolicy;
   schedulerConflictPolicy?: ConflictPolicy;
   schedulerRunHistoryDepth?: number;
+  // Permission dialog timeout in seconds. 0 = infinite (no timeout).
+  permissionTimeoutSeconds?: number;
 }
 
 export interface ProviderPreset {

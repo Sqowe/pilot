@@ -63,6 +63,12 @@ const ALLOWED_CLIENT_EVENTS: ReadonlySet<string> = new Set<ClientEvent['type']>(
   'workdir.set',
   'workdir.select',
   'scheduled-task.catch-up-response',
+  'prompt.getSections',
+  'prompt.updateSection',
+  'prompt.resetSection',
+  'prompt.resetAll',
+  'prompt.toggleSection',
+  'prompt.getDir',
 ]);
 
 // Expose protected methods that allow the renderer process to use
@@ -144,6 +150,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
     return ipcRenderer.invoke('shell.openExternal', safeUrl);
   },
+
+  // Get list of installed browsers (macOS)
+  getInstalledBrowsers: (): Promise<Array<{ bundleId: string; name: string }>> =>
+    ipcRenderer.invoke('shell.getInstalledBrowsers'),
+
+  // Open URL in a specific browser by bundle ID
+  openUrlInBrowser: (url: string, bundleId: string): Promise<boolean> =>
+    ipcRenderer.invoke('shell.openUrlInBrowser', url, bundleId),
+
   showItemInFolder: (filePath: string, cwd?: string) =>
     ipcRenderer.invoke('shell.showItemInFolder', filePath, cwd),
 
@@ -214,6 +229,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getTools: (): Promise<McpTool[]> => ipcRenderer.invoke('mcp.getTools'),
     getServerStatus: (): Promise<McpServerStatus[]> => ipcRenderer.invoke('mcp.getServerStatus'),
     getPresets: (): Promise<McpPresetsMap> => ipcRenderer.invoke('mcp.getPresets'),
+    regenerateDescription: (
+      serverId: string
+    ): Promise<{ success: boolean; description?: string; error?: string }> =>
+      ipcRenderer.invoke('mcp.regenerateDescription', serverId),
+    saveDescription: (
+      serverId: string,
+      description: string
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('mcp.saveDescription', serverId, description),
+    toggleSessionServer: (
+      sessionId: string,
+      serverId: string,
+      disabled: boolean
+    ): Promise<{ success: boolean; disabledServers?: string[]; error?: string }> =>
+      ipcRenderer.invoke('mcp.toggleSessionServer', sessionId, serverId, disabled),
+    getSessionDisabledServers: (sessionId: string): Promise<string[]> =>
+      ipcRenderer.invoke('mcp.getSessionDisabledServers', sessionId),
   },
 
   // Skills methods
@@ -467,6 +499,8 @@ declare global {
       getSystemTheme: () => Promise<{ shouldUseDarkColors: boolean }>;
       getVersion: () => Promise<string>;
       openExternal: (url: string) => Promise<boolean>;
+      getInstalledBrowsers: () => Promise<Array<{ bundleId: string; name: string }>>;
+      openUrlInBrowser: (url: string, bundleId: string) => Promise<boolean>;
       showItemInFolder: (filePath: string, cwd?: string) => Promise<boolean>;
       selectFiles: () => Promise<string[]>;
       artifacts: {
@@ -513,6 +547,19 @@ declare global {
         getTools: () => Promise<McpTool[]>;
         getServerStatus: () => Promise<McpServerStatus[]>;
         getPresets: () => Promise<McpPresetsMap>;
+        regenerateDescription: (
+          serverId: string
+        ) => Promise<{ success: boolean; description?: string; error?: string }>;
+        saveDescription: (
+          serverId: string,
+          description: string
+        ) => Promise<{ success: boolean; error?: string }>;
+        toggleSessionServer: (
+          sessionId: string,
+          serverId: string,
+          disabled: boolean
+        ) => Promise<{ success: boolean; disabledServers?: string[]; error?: string }>;
+        getSessionDisabledServers: (sessionId: string) => Promise<string[]>;
       };
       skills: {
         getAll: () => Promise<Skill[]>;

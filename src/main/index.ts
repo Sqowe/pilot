@@ -25,7 +25,8 @@ import {
 } from 'electron';
 import { join, resolve, dirname, isAbsolute, basename } from 'path';
 import * as fs from 'fs';
-import { execFileSync } from 'child_process';
+import { execFileSync, execFile } from 'child_process';
+import { promisify } from 'util';
 import { config } from 'dotenv';
 import { initDatabase, closeDatabase, getDatabase } from './db/database';
 import { SessionManager } from './session/session-manager';
@@ -108,6 +109,16 @@ import {
 import { listRecentWorkspaceFiles } from './utils/recent-workspace-files';
 import { buildDiagnosticsSummary } from './utils/diagnostics-summary';
 import { isValidSystemPromptFileChoice } from '../shared/system-prompt-file-choices';
+import {
+  ensurePromptFiles,
+  loadPromptSections,
+  updatePromptSection,
+  resetPromptSection,
+  resetAllPromptSections,
+  togglePromptSection,
+  openPromptsDir,
+  invalidatePromptCache,
+} from './prompts/prompt-loader';
 
 // Current working directory (persisted between sessions)
 let currentWorkingDir: string | null = null;
@@ -891,6 +902,7 @@ app
     setupTray();
 
     // Show window after core managers are ready so first-load actions can be handled.
+    ensurePromptFiles();
     createWindow();
 
     // macOS: dock menu
@@ -1308,6 +1320,197 @@ ipcMain.handle('shell.openExternal', async (_event, url: string) => {
   }
 
   return shell.openExternal(url);
+});
+
+// Detect installed web browsers (macOS: mdfind by bundle ID)
+// Uses a single mdfind query, async execution, in-memory cache, request
+// coalescing, and bounded mdls concurrency to avoid blocking the main process.
+const KNOWN_BROWSER_IDS: Array<{ bundleId: string; name: string }> = [
+  { bundleId: 'com.apple.Safari', name: 'Safari' },
+  { bundleId: 'com.google.Chrome', name: 'Google Chrome' },
+  { bundleId: 'com.google.Chrome.canary', name: 'Google Chrome Canary' },
+  { bundleId: 'org.mozilla.firefox', name: 'Firefox' },
+  { bundleId: 'org.mozilla.firefoxdeveloperedition', name: 'Firefox Developer Edition' },
+  { bundleId: 'com.microsoft.edgemac', name: 'Microsoft Edge' },
+  { bundleId: 'com.brave.Browser', name: 'Brave Browser' },
+  { bundleId: 'com.operasoftware.Opera', name: 'Opera' },
+  { bundleId: 'com.vivaldi.Vivaldi', name: 'Vivaldi' },
+  { bundleId: 'company.thebrowser.Browser', name: 'Arc' },
+  { bundleId: 'org.chromium.Chromium', name: 'Chromium' },
+  { bundleId: 'org.waterfoxproject.waterfox', name: 'Waterfox' },
+  { bundleId: 'app.zen-browser.zen', name: 'Zen Browser' },
+];
+
+// Lookup map: bundleId → display name
+const BROWSER_NAME_MAP = new Map(KNOWN_BROWSER_IDS.map((b) => [b.bundleId, b.name]));
+
+// Set of allowed bundle IDs for validation
+const ALLOWED_BROWSER_BUNDLE_IDS = new Set(KNOWN_BROWSER_IDS.map((b) => b.bundleId));
+
+// Cache for browser discovery (TTL: 5 minutes — browsers don't change often)
+let browserCache: {
+  browsers: Array<{ bundleId: string; name: string }>;
+  timestamp: number;
+} | null = null;
+const BROWSER_CACHE_TTL_MS = 300_000;
+
+// Request coalescing: if a discovery is already in-flight, share the promise
+let inFlightDiscovery: Promise<Array<{ bundleId: string; name: string }>> | null = null;
+
+const execFileAsync = promisify(execFile);
+
+// Bounded concurrency helper (avoids spawning too many child processes)
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<Array<PromiseSettledResult<R>>> {
+  const results: Array<PromiseSettledResult<R>> = new Array(items.length);
+  let index = 0;
+
+  async function worker() {
+    while (index < items.length) {
+      const i = index++;
+      try {
+        results[i] = { status: 'fulfilled', value: await fn(items[i]) };
+      } catch (reason) {
+        results[i] = { status: 'rejected', reason };
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+async function discoverInstalledBrowsers(): Promise<Array<{ bundleId: string; name: string }>> {
+  if (process.platform !== 'darwin') {
+    return [];
+  }
+
+  // Return cached result if still fresh
+  if (browserCache && Date.now() - browserCache.timestamp < BROWSER_CACHE_TTL_MS) {
+    return browserCache.browsers;
+  }
+
+  // Coalesce concurrent requests into a single discovery pass
+  if (inFlightDiscovery) {
+    return inFlightDiscovery;
+  }
+
+  inFlightDiscovery = (async () => {
+    try {
+      // Single mdfind query scoped to .app bundles in standard app directories.
+      // The kind restriction and OR-based bundle ID filter keeps results minimal.
+      const conditions = KNOWN_BROWSER_IDS.map(
+        (b) => `kMDItemCFBundleIdentifier == "${b.bundleId}"`
+      );
+      const query = `(${conditions.join(' || ')}) && kMDItemContentType == "com.apple.application-bundle"`;
+
+      const { stdout } = await execFileAsync(
+        'mdfind',
+        ['-onlyin', '/Applications', '-onlyin', '/System/Applications', query],
+        { encoding: 'utf-8', timeout: 10_000 }
+      );
+
+      const lines = stdout.trim().split('\n').filter(Boolean);
+
+      if (lines.length === 0) {
+        browserCache = { browsers: [], timestamp: Date.now() };
+        return [];
+      }
+
+      // Deduplicate paths (same app can appear from multiple Spotlight entries)
+      const uniquePaths = [...new Set(lines)];
+
+      // Use mdls to extract bundle IDs with bounded concurrency (max 4 at a time)
+      const mdlsResults = await mapWithConcurrency(uniquePaths, 4, async (appPath) => {
+        const { stdout: mdlsOut } = await execFileAsync(
+          'mdls',
+          ['-name', 'kMDItemCFBundleIdentifier', '-raw', appPath],
+          { encoding: 'utf-8', timeout: 3000 }
+        );
+        return { bundleId: mdlsOut.trim() };
+      });
+
+      const found: Array<{ bundleId: string; name: string }> = [];
+      const seen = new Set<string>();
+      for (const result of mdlsResults) {
+        if (result.status === 'fulfilled') {
+          const { bundleId } = result.value;
+          const name = BROWSER_NAME_MAP.get(bundleId);
+          if (name && !seen.has(bundleId)) {
+            seen.add(bundleId);
+            found.push({ bundleId, name });
+          }
+        }
+      }
+
+      // Sort to match the order in KNOWN_BROWSER_IDS (familiar ordering)
+      const orderMap = new Map(KNOWN_BROWSER_IDS.map((b, i) => [b.bundleId, i]));
+      found.sort((a, b) => (orderMap.get(a.bundleId) ?? 99) - (orderMap.get(b.bundleId) ?? 99));
+
+      // Update cache
+      browserCache = { browsers: found, timestamp: Date.now() };
+      return found;
+    } finally {
+      inFlightDiscovery = null;
+    }
+  })();
+
+  return inFlightDiscovery;
+}
+
+ipcMain.handle('shell.getInstalledBrowsers', async () => {
+  try {
+    return await discoverInstalledBrowsers();
+  } catch (error) {
+    logWarn('[shell.getInstalledBrowsers] Discovery failed:', error);
+    return [];
+  }
+});
+
+// Open a URL in a specific browser by bundle ID (macOS)
+ipcMain.handle('shell.openUrlInBrowser', async (_event, url: string, bundleId: string) => {
+  if (!url || !bundleId) {
+    return false;
+  }
+
+  // Validate bundle ID against allowlist (prevent launching arbitrary apps)
+  if (!ALLOWED_BROWSER_BUNDLE_IDS.has(bundleId)) {
+    logWarn('[shell.openUrlInBrowser] Blocked unknown bundle ID:', bundleId);
+    return false;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      logWarn('[shell.openUrlInBrowser] Blocked URL with disallowed protocol:', parsed.protocol);
+      return false;
+    }
+  } catch {
+    logWarn('[shell.openUrlInBrowser] Blocked invalid URL:', url);
+    return false;
+  }
+
+  if (process.platform !== 'darwin') {
+    // Fallback to default browser on non-macOS
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  try {
+    await execFileAsync('open', ['-b', bundleId, url], { timeout: 5000 });
+    return true;
+  } catch (error) {
+    logWarn('[shell.openUrlInBrowser] Failed to open URL in browser:', error);
+    return false;
+  }
 });
 
 async function revealFileInFolder(filePath: string, cwd?: string): Promise<boolean> {
@@ -1813,6 +2016,116 @@ ipcMain.handle('mcp.getPresets', () => {
   } catch (error) {
     logError('[MCP] Error getting presets:', error);
     return {};
+  }
+});
+
+ipcMain.handle('mcp.regenerateDescription', async (_event, serverId: string) => {
+  try {
+    const config = mcpConfigStore.getServer(serverId);
+    if (!config) {
+      return { success: false, error: 'Server not found' };
+    }
+
+    // Get tools for this server
+    if (!sessionManager) {
+      return { success: false, error: 'Session manager not initialized' };
+    }
+    const mcpManager = sessionManager.getMCPManager();
+    const allTools = mcpManager.getTools();
+    const serverTools = allTools.filter((t) => t.serverId === serverId);
+
+    if (serverTools.length === 0) {
+      return { success: false, error: 'No tools available for this server' };
+    }
+
+    const {
+      generateServerDescription,
+      generateHeuristicDescription,
+      computeToolsHash,
+      sanitizeDescription,
+    } = await import('./mcp/mcp-description-generator');
+
+    // Try LLM generation first (optional upgrade)
+    const llmDescription = await generateServerDescription(config.name, serverTools);
+
+    // Template-based description is the reliable primary — LLM is just an upgrade
+    const rawDescription = llmDescription || generateHeuristicDescription(config.name, serverTools);
+    const description = sanitizeDescription(rawDescription);
+    const hash = computeToolsHash(serverTools);
+
+    mcpConfigStore.saveServer({
+      ...config,
+      description,
+      descriptionToolsHash: hash,
+      descriptionSource: 'auto',
+    });
+
+    sessionManager.invalidateMcpServersCache();
+    log(
+      `[MCP] Description regenerated for ${config.name}: ${description} (source: ${llmDescription ? 'llm' : 'template'})`
+    );
+    return { success: true, description };
+  } catch (error) {
+    logError('[MCP] Error regenerating description:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { success: false, error: errorMessage };
+  }
+});
+
+ipcMain.handle('mcp.saveDescription', async (_event, serverId: string, description: string) => {
+  try {
+    const config = mcpConfigStore.getServer(serverId);
+    if (!config) {
+      return { success: false, error: 'Server not found' };
+    }
+
+    const { sanitizeDescription } = await import('./mcp/mcp-description-generator');
+
+    mcpConfigStore.saveServer({
+      ...config,
+      description: sanitizeDescription(description),
+      descriptionSource: 'manual',
+    });
+
+    if (sessionManager) {
+      sessionManager.invalidateMcpServersCache();
+    }
+    log(`[MCP] Description manually saved for ${config.name}: ${description}`);
+    return { success: true };
+  } catch (error) {
+    logError('[MCP] Error saving description:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { success: false, error: errorMessage };
+  }
+});
+
+ipcMain.handle(
+  'mcp.toggleSessionServer',
+  async (_event, sessionId: string, serverId: string, disabled: boolean) => {
+    try {
+      if (!sessionManager) {
+        return { success: false, error: 'Session manager not initialized' };
+      }
+      const disabledServers = sessionManager.toggleSessionMcpServer(sessionId, serverId, disabled);
+      log(`[MCP] Session ${sessionId}: server ${serverId} ${disabled ? 'disabled' : 'enabled'}`);
+      return { success: true, disabledServers };
+    } catch (error) {
+      logError('[MCP] Error toggling session server:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { success: false, error: errorMessage };
+    }
+  }
+);
+
+ipcMain.handle('mcp.getSessionDisabledServers', async (_event, sessionId: string) => {
+  try {
+    if (!sessionManager) {
+      return [];
+    }
+    return sessionManager.getSessionDisabledMcpServers(sessionId);
+  } catch (error) {
+    logError('[MCP] Error getting session disabled servers:', error);
+    return [];
   }
 });
 
@@ -2850,14 +3163,18 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
         });
         return null;
       }
-      return sm.startSession(
-        event.payload.title,
-        event.payload.prompt,
-        event.payload.cwd,
-        event.payload.allowedTools,
-        event.payload.content,
-        event.payload.memoryEnabled
-      );
+      {
+        const session = await sm.startSession(
+          event.payload.title,
+          event.payload.prompt,
+          event.payload.cwd,
+          event.payload.allowedTools,
+          event.payload.content,
+          event.payload.memoryEnabled,
+          event.payload.initialDisabledMcpServers
+        );
+        return session;
+      }
 
     case 'session.continue':
       return sm.continueSession(
@@ -2888,7 +3205,11 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
       return sm.getTraceSteps(event.payload.sessionId);
 
     case 'permission.response':
-      return sm.handlePermissionResponse(event.payload.toolUseId, event.payload.result);
+      return sm.handlePermissionResponse(
+        event.payload.toolUseId,
+        event.payload.result,
+        event.payload.suggestion
+      );
 
     case 'sudo.password.response':
       return sm.handleSudoPasswordResponse(event.payload.toolUseId, event.payload.password);
@@ -3008,6 +3329,24 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
             },
           });
         }
+
+        // Permission timeout setting
+        const hasOwnPerm = (key: string): boolean =>
+          Object.prototype.hasOwnProperty.call(event.payload, key);
+        if (hasOwnPerm('permissionTimeoutSeconds')) {
+          const val = (event.payload as Record<string, unknown>).permissionTimeoutSeconds;
+          if (typeof val === 'number' && Number.isFinite(val) && val >= 0) {
+            const normalized = val <= 0 ? 0 : Math.max(10, Math.min(3600, Math.floor(val)));
+            configStore.update({ permissionTimeoutSeconds: normalized });
+            sendToRenderer({
+              type: 'config.status',
+              payload: {
+                isConfigured: configStore.isConfigured(),
+                config: configStore.getAll(),
+              },
+            });
+          }
+        }
       }
 
       // Permission-related settings are gated behind a single object-guard
@@ -3062,6 +3401,35 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
         scheduledTaskManager.resolveCatchUp(event.payload.decisions);
       }
       return null;
+
+    case 'prompt.getSections':
+      // Invalidate cache to pick up external file edits (e.g. via "Open folder")
+      invalidatePromptCache();
+      return loadPromptSections();
+
+    case 'prompt.updateSection':
+      if (event.payload?.filename && typeof event.payload.content === 'string') {
+        return updatePromptSection(event.payload.filename, event.payload.content);
+      }
+      return { success: false, error: 'Invalid payload: filename and content required' };
+
+    case 'prompt.resetSection':
+      if (event.payload?.filename) {
+        return resetPromptSection(event.payload.filename);
+      }
+      return { success: false, error: 'Invalid payload: filename required' };
+
+    case 'prompt.toggleSection':
+      if (event.payload?.filename && typeof event.payload.enabled === 'boolean') {
+        return togglePromptSection(event.payload.filename, event.payload.enabled);
+      }
+      return { success: false, error: 'Invalid payload: filename and enabled required' };
+
+    case 'prompt.getDir':
+      return openPromptsDir();
+
+    case 'prompt.resetAll':
+      return resetAllPromptSections();
 
     default:
       logWarn('Unknown event type:', event);
