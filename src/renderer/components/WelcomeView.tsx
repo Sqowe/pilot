@@ -4,16 +4,8 @@ import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
 import type { ContentBlock, MCPServerInfo } from '../types';
 import { getInitialSessionTitle } from '../../shared/session-title';
-import {
-  FolderOpen,
-  ArrowRight,
-  X,
-  Paperclip,
-  Layers,
-  Plug,
-  ChevronDown,
-  ChevronUp,
-} from 'lucide-react';
+import { ArrowRight, X, Paperclip, Layers, Plug, ChevronDown, ChevronUp } from 'lucide-react';
+import { WorkspacePicker } from './WorkspacePicker';
 
 type AttachedFile = {
   name: string;
@@ -38,7 +30,8 @@ export function WelcomeView() {
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { startSession, changeWorkingDir, getMCPServers, isElectron } = useIPC();
+  const { startSession, changeWorkingDir, setWorkingDirDirect, getMCPServers, isElectron } =
+    useIPC();
   const workingDir = useAppStore((state) => state.workingDir);
   const setGlobalNotice = useAppStore((state) => state.setGlobalNotice);
   const isConfigured = useAppStore((state) => state.isConfigured);
@@ -571,21 +564,31 @@ export function WelcomeView() {
           {/* Bottom Actions */}
           <div className="flex items-center justify-between pt-3 border-t border-border-muted">
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleSelectFolder}
-                className={`flex items-center gap-2 text-sm transition-colors ${
-                  workingDir
-                    ? 'text-text-secondary hover:text-text-primary'
-                    : 'text-accent hover:text-accent-hover'
-                }`}
-                title={workingDir || t('welcome.selectWorkingFolder')}
-              >
-                <FolderOpen className="w-4 h-4" />
-                <span>
-                  {workingDir ? workingDir.split(/[/\\]/).pop() : t('welcome.selectWorkingFolder')}
-                </span>
-              </button>
+              <WorkspacePicker
+                currentPath={workingDir}
+                onSelectPath={async (path) => {
+                  try {
+                    const result = await setWorkingDirDirect(path);
+                    if (!result.success && result.error) {
+                      setGlobalNotice({
+                        id: `notice-workdir-set-${Date.now()}`,
+                        type: 'warning',
+                        message: `${t('welcome.selectWorkingFolderFailed')}: ${result.error}`,
+                      });
+                    }
+                  } catch (error) {
+                    setGlobalNotice({
+                      id: `notice-workdir-set-${Date.now()}`,
+                      type: 'error',
+                      message:
+                        error instanceof Error && error.message
+                          ? `${t('welcome.selectWorkingFolderFailed')}: ${error.message}`
+                          : t('welcome.selectWorkingFolderFailed'),
+                    });
+                  }
+                }}
+                onBrowse={handleSelectFolder}
+              />
 
               {isElectron && (
                 <button

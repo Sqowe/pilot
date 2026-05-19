@@ -812,6 +812,24 @@ export function useIPC() {
     [invoke]
   );
 
+  const setWorkingDirDirect = useCallback(
+    async (
+      path: string,
+      sessionId?: string
+    ): Promise<{ success: boolean; path: string; error?: string }> => {
+      if (!isElectron) {
+        // In non-Electron mode, update local state directly since there's no main process
+        useAppStore.getState().setWorkingDir(path);
+        return { success: true, path };
+      }
+      return invoke<{ success: boolean; path: string; error?: string }>({
+        type: 'workdir.set',
+        payload: { path, sessionId },
+      });
+    },
+    [invoke, isElectron]
+  );
+
   const getMCPServers = useCallback(async () => {
     if (!isElectron) {
       return [];
@@ -836,6 +854,7 @@ export function useIPC() {
     selectFolder,
     getWorkingDir,
     changeWorkingDir,
+    setWorkingDirDirect,
     getMCPServers,
     isElectron,
   };
