@@ -1731,6 +1731,29 @@ RULES:
       }
       logCtx('[ClaudeAgentRunner] Resolved pi-ai model:', piModel.provider, piModel.id);
 
+      // Apply user-configured contextWindow/maxTokens overrides.
+      // The pi-ai registry may report defaults that differ from what the user
+      // explicitly set in Settings → API (e.g., registry says 128K but the
+      // provider actually supports 1M via the gateway).
+      if (runtimeConfig.contextWindow && runtimeConfig.contextWindow !== piModel.contextWindow) {
+        log(
+          '[ClaudeAgentRunner] User contextWindow override:',
+          piModel.contextWindow,
+          '→',
+          runtimeConfig.contextWindow
+        );
+        piModel = { ...piModel, contextWindow: runtimeConfig.contextWindow };
+      }
+      if (runtimeConfig.maxTokens && runtimeConfig.maxTokens !== piModel.maxTokens) {
+        log(
+          '[ClaudeAgentRunner] User maxTokens override:',
+          piModel.maxTokens,
+          '→',
+          runtimeConfig.maxTokens
+        );
+        piModel = { ...piModel, maxTokens: runtimeConfig.maxTokens };
+      }
+
       // For Ollama: query actual context window from /api/show if user hasn't configured one
       const provider = runtimeConfig.provider || 'anthropic';
       if (provider === 'ollama' && !runtimeConfig.contextWindow) {
