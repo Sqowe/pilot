@@ -74,7 +74,7 @@ export function SettingsGeneral() {
       {/* About */}
       {appVer && (
         <div className="pt-4 border-t border-border">
-          <p className="text-xs text-text-muted">Open Cowork v{appVer}</p>
+          <p className="text-xs text-text-muted">Sqowe Pilot v{appVer}</p>
         </div>
       )}
     </div>
