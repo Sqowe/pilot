@@ -662,17 +662,17 @@ export function SettingsMemory() {
         description={t('memory.searchDescription')}
       >
         <div className="space-y-3 rounded-xl border border-border-muted bg-background-secondary/60 p-4">
-          <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t('memory.searchPlaceholder')}
-              className="flex-1 rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none transition-colors focus:border-accent"
+              className="min-w-0 flex-1 sm:min-w-[180px] rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none transition-colors focus:border-accent"
             />
             <select
               value={scope}
               onChange={(event) => setScope(event.target.value as SearchMode)}
-              className="rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none"
+              className="shrink-0 rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none"
             >
               {hasWorkspace && <option value="workspace">{t('memory.scopeWorkspace')}</option>}
               <option value="all">{t('memory.scopeAll')}</option>
@@ -681,7 +681,7 @@ export function SettingsMemory() {
             <select
               value={sourceWorkspaceFilter}
               onChange={(event) => setSourceWorkspaceFilter(event.target.value)}
-              className="rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none"
+              className="shrink-0 rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none"
             >
               <option value="">{t('memory.allSources')}</option>
               {overview?.topSourceWorkspaces?.map((item) => (
@@ -695,7 +695,7 @@ export function SettingsMemory() {
                 void handleSearch();
               }}
               disabled={isBusy || !query.trim()}
-              className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+              className="shrink-0 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
               {t('memory.searchAction')}
             </button>
