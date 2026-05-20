@@ -1055,6 +1055,8 @@ export class ConfigStore {
       apiKey: projected.apiKey,
       baseUrl: projected.baseUrl,
       model: projected.model,
+      contextWindow: projected.contextWindow,
+      maxTokens: projected.maxTokens,
       activeProfileKey: projected.activeProfileKey,
       profiles: projected.profiles,
       activeConfigSetId,
