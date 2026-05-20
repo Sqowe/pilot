@@ -154,6 +154,30 @@ Resolution happens in `agent-runner.ts` before building the SDK tool list each q
 
 Key files: `mcp-manager.ts`, `mcp-config-store.ts`, `mcp-workspace-profile.ts`.
 
+**Per-session skill pinning:**
+
+Skills (semantic-index, firecrawl, docx, pdf, etc.) are always available to the agent,
+but it doesn't reliably use them unless explicitly told. Skill pinning lets users
+"star" specific skills to inject explicit directives into the system prompt, telling
+the agent to prioritize those skills. This is emphasis, not restriction — unpinned
+skills remain fully available.
+
+Pinning is session-scoped and ephemeral (in-memory only):
+
+- **Welcome screen** — user selects skills before starting a chat; passed as
+  `initialPinnedSkills` in the `session.start` payload.
+- **ContextPanel** — user can pin/unpin skills mid-conversation via
+  `skills.toggleSessionPin` IPC.
+- **Prompt injection** — `agent-runner.ts` calls `buildPinnedSkillsDirective(sessionId)`
+  which assembles a `<pinned_skills>` XML block appended to the system prompt.
+
+Validation: skill IDs are validated for format (`SAFE_SKILL_ID_REGEX`), existence,
+and enabled state. Hard limit of `MAX_PINNED_SKILLS_PER_SESSION` (10) prevents
+prompt bloat. Shared constants live in `src/shared/skill-pinning-constants.ts`.
+
+Key files: `session-manager.ts` (state), `agent-runner.ts` (directive injection),
+`skill-pinning-constants.ts` (shared validation).
+
 ### 4.4 Sandbox & Security (`src/main/sandbox/`)
 
 Platform-aware execution facade: `SandboxAdapter` routes to WSL2 (Windows), Lima (macOS),
