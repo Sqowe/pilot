@@ -58,6 +58,8 @@ export function ContextPanel() {
   const skillsStorageChangedAt = useAppStore((s) => s.skillsStorageChangedAt);
   const { getMCPServers, changeWorkingDir } = useIPC();
   const [artifactsOpen, setArtifactsOpen] = useState(true);
+  const [pinnedSkillsOpen, setPinnedSkillsOpen] = useState(true);
+  const [mcpConnectorsOpen, setMcpConnectorsOpen] = useState(true);
   const [expandedConnector, setExpandedConnector] = useState<string | null>(null);
   const [mcpServers, setMcpServers] = useState<MCPServerInfo[]>([]);
   const [sessionDisabledServers, setSessionDisabledServers] = useState<Set<string>>(new Set());
@@ -370,359 +372,399 @@ export function ContextPanel() {
         </span>
       </div>
 
-      {/* Session Stats */}
-      {activeSession && (
-        <div className="px-4 py-3 border-b border-border-muted space-y-1.5">
-          <div className="flex items-center gap-1.5 text-text-primary font-medium">
-            <Cpu className="w-3.5 h-3.5 text-text-muted shrink-0" />
-            <span className="truncate">{modelName}</span>
-          </div>
-          <div className="flex items-center gap-3 text-xs text-text-muted pl-5">
-            <span className="flex items-center gap-1">
-              <MessageSquare className="w-3 h-3" />
-              {messageCount}
-            </span>
-            <span className="flex items-center gap-1">
-              <Wrench className="w-3 h-3" />
-              {toolCallCount}
-            </span>
-            {tokenUsage.total > 0 && (
-              <span className="ml-auto text-text-muted/70">
-                {t('context.inputTokens')} {formatTokenCount(tokenUsage.input)} ·{' '}
-                {t('context.outputTokens')} {formatTokenCount(tokenUsage.output)}
+      {/* Scrollable content area */}
+      <div className="flex-1 overflow-y-auto">
+        {/* Session Stats */}
+        {activeSession && (
+          <div className="px-4 py-3 border-b border-border-muted space-y-1.5">
+            <div className="flex items-center gap-1.5 text-text-primary font-medium">
+              <Cpu className="w-3.5 h-3.5 text-text-muted shrink-0" />
+              <span className="truncate">{modelName}</span>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-text-muted pl-5">
+              <span className="flex items-center gap-1">
+                <MessageSquare className="w-3 h-3" />
+                {messageCount}
               </span>
-            )}
+              <span className="flex items-center gap-1">
+                <Wrench className="w-3 h-3" />
+                {toolCallCount}
+              </span>
+              {tokenUsage.total > 0 && (
+                <span className="ml-auto text-text-muted/70">
+                  {t('context.inputTokens')} {formatTokenCount(tokenUsage.input)} ·{' '}
+                  {t('context.outputTokens')} {formatTokenCount(tokenUsage.output)}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Context Usage */}
-      {activeSession && contextUsage && (
-        <div className="px-4 py-2.5 border-b border-border-muted space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
-              {t('context.contextUsage')}
-            </span>
-            <span
-              className={`text-xs font-medium ${
-                contextUsage.percentage > 75
-                  ? 'text-error'
-                  : contextUsage.percentage > 50
-                    ? 'text-warning'
-                    : 'text-text-primary'
-              }`}
-            >
-              {Math.round(contextUsage.percentage)}%
-            </span>
-          </div>
-          <div className="h-1.5 bg-surface-muted rounded-full overflow-hidden flex">
-            {contextUsage.percentage > 50 ? (
-              /* Warning/Critical: single-color bar */
-              <div
-                className={`h-full rounded-full transition-all duration-500 ease-out ${
-                  contextUsage.percentage > 75 ? 'bg-error' : 'bg-warning'
+        {/* Context Usage */}
+        {activeSession && contextUsage && (
+          <div className="px-4 py-2.5 border-b border-border-muted space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
+                {t('context.contextUsage')}
+              </span>
+              <span
+                className={`text-xs font-medium ${
+                  contextUsage.percentage > 75
+                    ? 'text-error'
+                    : contextUsage.percentage > 50
+                      ? 'text-warning'
+                      : 'text-text-primary'
                 }`}
-                style={{ width: `${contextUsage.percentage}%` }}
-              />
-            ) : (
-              /* Normal: stacked segments */
-              <>
-                {contextUsage.convPercentage > 0 && (
-                  <div
-                    className="h-full bg-accent transition-all duration-500 ease-out first:rounded-l-full"
-                    style={{ width: `${contextUsage.convPercentage}%` }}
-                  />
-                )}
-                {contextUsage.toolPercentage > 0 && (
-                  <div
-                    className="h-full bg-gray-400/60 transition-all duration-500 ease-out"
-                    style={{ width: `${contextUsage.toolPercentage}%` }}
-                  />
-                )}
-                {contextUsage.outputPercentage > 0 && (
-                  <div
-                    className="h-full bg-purple-400/60 transition-all duration-500 ease-out last:rounded-r-full"
-                    style={{ width: `${contextUsage.outputPercentage}%` }}
-                  />
-                )}
-              </>
-            )}
-          </div>
-          <p className="text-xs text-text-muted">
-            <span className="text-accent">{formatTokenCount(contextUsage.conversation)}</span>
-            {contextUsage.toolSchemaTokens > 0 && (
-              <>
-                {' + '}
-                <span className="text-gray-400">
-                  {t('context.contextUsageTools', {
-                    count: formatTokenCount(contextUsage.toolSchemaTokens),
-                  })}
-                </span>
-              </>
-            )}
-            {contextUsage.maxOutputTokens > 0 && (
-              <>
-                {' + '}
-                <span className="text-purple-400">
-                  {t('context.contextUsageOutput', {
-                    count: formatTokenCount(contextUsage.maxOutputTokens),
-                  })}
-                </span>
-              </>
-            )}
-            {' / '}
-            <span>{formatTokenCount(contextUsage.total)}</span>
-          </p>
-        </div>
-      )}
-
-      {/* Artifacts Section */}
-      <div className="border-b border-border-muted">
-        <button
-          onClick={() => setArtifactsOpen(!artifactsOpen)}
-          className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-surface-hover transition-colors"
-        >
-          <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
-            {t('context.artifacts')}
-          </span>
-          {artifactsOpen ? (
-            <ChevronUp className="w-3.5 h-3.5 text-text-muted" />
-          ) : (
-            <ChevronDown className="w-3.5 h-3.5 text-text-muted" />
-          )}
-        </button>
-
-        {artifactsOpen && (
-          <div className="pb-2 max-h-64 overflow-y-auto">
-            {displayArtifacts.length === 0 ? (
-              <div className="flex items-center gap-2 px-4 py-2 text-xs text-text-muted">
-                <Layers className="w-3.5 h-3.5 shrink-0" />
-                <span>{t('context.noArtifactsYet')}</span>
-              </div>
-            ) : (
-              <div>
-                {displayArtifacts.map((artifact, index) => {
-                  const label = artifact.label || t('context.fileCreated');
-                  const artifactPath = artifact.path;
-                  const canClick = Boolean(artifactPath && canShowItemInFolder);
-                  const iconComponent = getArtifactIconComponent(label);
-                  const IconComponent =
-                    iconComponent === 'presentation'
-                      ? FilePieChart
-                      : iconComponent === 'table'
-                        ? FileSpreadsheet
-                        : iconComponent === 'document'
-                          ? FileText
-                          : iconComponent === 'code'
-                            ? FileCode2
-                            : iconComponent === 'image'
-                              ? ImageIcon
-                              : iconComponent === 'audio'
-                                ? FileAudio2
-                                : iconComponent === 'video'
-                                  ? FileVideo
-                                  : iconComponent === 'archive'
-                                    ? FileArchive
-                                    : iconComponent === 'text'
-                                      ? File
-                                      : File;
-
-                  return (
+              >
+                {Math.round(contextUsage.percentage)}%
+              </span>
+            </div>
+            <div className="h-1.5 bg-surface-muted rounded-full overflow-hidden flex">
+              {contextUsage.percentage > 50 ? (
+                /* Warning/Critical: single-color bar */
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ease-out ${
+                    contextUsage.percentage > 75 ? 'bg-error' : 'bg-warning'
+                  }`}
+                  style={{ width: `${contextUsage.percentage}%` }}
+                />
+              ) : (
+                /* Normal: stacked segments */
+                <>
+                  {contextUsage.convPercentage > 0 && (
                     <div
-                      key={artifact.path || artifact.label || `artifact-${index}`}
-                      className={`flex items-center gap-2 px-4 py-1.5 transition-colors ${canClick ? 'cursor-pointer hover:bg-surface-hover' : ''}`}
-                      onClick={async () => {
-                        if (!canClick) return;
-                        const revealed = await window.electronAPI.showItemInFolder(
-                          artifactPath,
-                          currentWorkingDir ?? undefined
-                        );
-                        if (!revealed) {
-                          setGlobalNotice({
-                            id: `artifact-reveal-failed-${Date.now()}`,
-                            type: 'warning',
-                            message: t('context.revealFailed'),
-                          });
-                        }
-                      }}
-                      title={artifactPath || undefined}
-                    >
-                      <IconComponent className="w-3.5 h-3.5 text-text-muted shrink-0" />
-                      <span className="text-xs text-text-primary truncate">{label}</span>
+                      className="h-full bg-accent transition-all duration-500 ease-out first:rounded-l-full"
+                      style={{ width: `${contextUsage.convPercentage}%` }}
+                    />
+                  )}
+                  {contextUsage.toolPercentage > 0 && (
+                    <div
+                      className="h-full bg-gray-400/60 transition-all duration-500 ease-out"
+                      style={{ width: `${contextUsage.toolPercentage}%` }}
+                    />
+                  )}
+                  {contextUsage.outputPercentage > 0 && (
+                    <div
+                      className="h-full bg-purple-400/60 transition-all duration-500 ease-out last:rounded-r-full"
+                      style={{ width: `${contextUsage.outputPercentage}%` }}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+            <p className="text-xs text-text-muted">
+              <span className="text-accent">{formatTokenCount(contextUsage.conversation)}</span>
+              {contextUsage.toolSchemaTokens > 0 && (
+                <>
+                  {' + '}
+                  <span className="text-gray-400">
+                    {t('context.contextUsageTools', {
+                      count: formatTokenCount(contextUsage.toolSchemaTokens),
+                    })}
+                  </span>
+                </>
+              )}
+              {contextUsage.maxOutputTokens > 0 && (
+                <>
+                  {' + '}
+                  <span className="text-purple-400">
+                    {t('context.contextUsageOutput', {
+                      count: formatTokenCount(contextUsage.maxOutputTokens),
+                    })}
+                  </span>
+                </>
+              )}
+              {' / '}
+              <span>{formatTokenCount(contextUsage.total)}</span>
+            </p>
+          </div>
+        )}
+
+        {/* Artifacts Section */}
+        <div className="border-b border-border-muted">
+          <button
+            onClick={() => setArtifactsOpen(!artifactsOpen)}
+            className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-surface-hover transition-colors"
+          >
+            <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
+              {t('context.artifacts')}
+            </span>
+            {artifactsOpen ? (
+              <ChevronUp className="w-3.5 h-3.5 text-text-muted" />
+            ) : (
+              <ChevronDown className="w-3.5 h-3.5 text-text-muted" />
+            )}
+          </button>
+
+          {artifactsOpen && (
+            <div className="pb-2 max-h-64 overflow-y-auto">
+              {displayArtifacts.length === 0 ? (
+                <div className="flex items-center gap-2 px-4 py-2 text-xs text-text-muted">
+                  <Layers className="w-3.5 h-3.5 shrink-0" />
+                  <span>{t('context.noArtifactsYet')}</span>
+                </div>
+              ) : (
+                <div>
+                  {displayArtifacts.map((artifact, index) => {
+                    const label = artifact.label || t('context.fileCreated');
+                    const artifactPath = artifact.path;
+                    const canClick = Boolean(artifactPath && canShowItemInFolder);
+                    const iconComponent = getArtifactIconComponent(label);
+                    const IconComponent =
+                      iconComponent === 'presentation'
+                        ? FilePieChart
+                        : iconComponent === 'table'
+                          ? FileSpreadsheet
+                          : iconComponent === 'document'
+                            ? FileText
+                            : iconComponent === 'code'
+                              ? FileCode2
+                              : iconComponent === 'image'
+                                ? ImageIcon
+                                : iconComponent === 'audio'
+                                  ? FileAudio2
+                                  : iconComponent === 'video'
+                                    ? FileVideo
+                                    : iconComponent === 'archive'
+                                      ? FileArchive
+                                      : iconComponent === 'text'
+                                        ? File
+                                        : File;
+
+                    return (
+                      <div
+                        key={artifact.path || artifact.label || `artifact-${index}`}
+                        className={`flex items-center gap-2 px-4 py-1.5 transition-colors ${canClick ? 'cursor-pointer hover:bg-surface-hover' : ''}`}
+                        onClick={async () => {
+                          if (!canClick) return;
+                          const revealed = await window.electronAPI.showItemInFolder(
+                            artifactPath,
+                            currentWorkingDir ?? undefined
+                          );
+                          if (!revealed) {
+                            setGlobalNotice({
+                              id: `artifact-reveal-failed-${Date.now()}`,
+                              type: 'warning',
+                              message: t('context.revealFailed'),
+                            });
+                          }
+                        }}
+                        title={artifactPath || undefined}
+                      >
+                        <IconComponent className="w-3.5 h-3.5 text-text-muted shrink-0" />
+                        <span className="text-xs text-text-primary truncate">{label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Working Directory */}
+        <div className="border-b border-border-muted">
+          <div className="px-4 py-2.5">
+            <p className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">
+              {t('context.workingDirectory')}
+            </p>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <FolderOpen className="w-3.5 h-3.5 text-text-muted shrink-0" />
+              <span
+                className={`text-xs truncate flex-1 ${currentWorkingDir ? 'text-text-primary cursor-pointer hover:text-accent-primary transition-colors' : 'text-text-muted'}`}
+                title={currentWorkingDir ? t('context.openInFileManager') : ''}
+                onClick={() =>
+                  currentWorkingDir && window.electronAPI?.showItemInFolder(currentWorkingDir)
+                }
+              >
+                {currentWorkingDir ? formatPath(currentWorkingDir) : t('context.noFolderSelected')}
+              </span>
+              {currentWorkingDir && (
+                <button
+                  onClick={() => handleCopyPath(currentWorkingDir)}
+                  className="text-text-muted hover:text-text-primary transition-colors shrink-0 ml-1"
+                  title={t('context.copyPath')}
+                >
+                  {copiedPath ? (
+                    <Check className="w-3 h-3 text-success" />
+                  ) : (
+                    <Copy className="w-3 h-3" />
+                  )}
+                </button>
+              )}
+              <button
+                onClick={async () => {
+                  setIsChangingDir(true);
+                  try {
+                    const result = await changeWorkingDir(
+                      activeSessionId || undefined,
+                      currentWorkingDir || undefined
+                    );
+                    if (!result.success && result.error && result.error !== 'User cancelled') {
+                      setGlobalNotice({
+                        id: `change-dir-failed-${Date.now()}`,
+                        type: 'warning',
+                        message: `${t('context.changeDirFailed')}: ${result.error}`,
+                      });
+                    }
+                  } catch (error) {
+                    setGlobalNotice({
+                      id: `change-dir-failed-${Date.now()}`,
+                      type: 'error',
+                      message:
+                        error instanceof Error && error.message
+                          ? `${t('context.changeDirFailed')}: ${error.message}`
+                          : t('context.changeDirFailed'),
+                    });
+                  } finally {
+                    setIsChangingDir(false);
+                  }
+                }}
+                disabled={isChangingDir}
+                className="text-text-muted hover:text-text-primary disabled:opacity-50 transition-colors shrink-0"
+                title={t('context.changeDir')}
+              >
+                {isChangingDir ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <FolderSync className="w-3 h-3" />
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Pinned Skills */}
+        {(availableSkills.length > 0 || sessionPinnedSkills.size > 0) && (
+          <div className="border-b border-border-muted">
+            <button
+              onClick={() => setPinnedSkillsOpen(!pinnedSkillsOpen)}
+              className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-surface-hover transition-colors"
+            >
+              <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
+                {t('context.pinnedSkills')}
+                {sessionPinnedSkills.size > 0 && (
+                  <span className="ml-1.5 text-amber-500">({sessionPinnedSkills.size})</span>
+                )}
+              </span>
+              {pinnedSkillsOpen ? (
+                <ChevronUp className="w-3.5 h-3.5 text-text-muted" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5 text-text-muted" />
+              )}
+            </button>
+
+            {pinnedSkillsOpen && (
+              <div className="px-4 pb-2.5">
+                {sessionPinnedSkills.size === 0 ? (
+                  <p className="text-xs text-text-muted">{t('context.noSkillsPinned')}</p>
+                ) : (
+                  <div className="space-y-1 mb-2">
+                    {Array.from(sessionPinnedSkills).map((skillId) => {
+                      const skill = availableSkills.find((s) => s.id === skillId);
+                      const isAvailable = !!skill;
+                      return (
+                        <div
+                          key={skillId}
+                          className={`flex items-center gap-2 px-2 py-1 rounded-md ${
+                            isAvailable
+                              ? 'bg-amber-500/5 border border-amber-500/20'
+                              : 'bg-red-500/5 border border-red-500/20'
+                          }`}
+                        >
+                          <Star
+                            className={`w-3.5 h-3.5 shrink-0 ${isAvailable ? 'text-amber-500 fill-amber-500' : 'text-red-400 fill-red-400'}`}
+                          />
+                          <span className="text-xs text-text-primary flex-1 truncate">
+                            {skill?.name || skillId}
+                            {!isAvailable && (
+                              <span className="text-red-400 ml-1">(unavailable)</span>
+                            )}
+                          </span>
+                          <button
+                            onClick={() => handleToggleSessionPinnedSkill(skillId, false)}
+                            className="text-text-muted hover:text-text-primary transition-colors"
+                            title={t('context.unpinSkill')}
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {/* Show unpinned skills as addable */}
+                {availableSkills.filter((s) => !sessionPinnedSkills.has(s.id)).length > 0 &&
+                  sessionPinnedSkills.size < MAX_PINNED_SKILLS_PER_SESSION && (
+                    <div className="flex flex-wrap gap-1">
+                      {availableSkills
+                        .filter((s) => !sessionPinnedSkills.has(s.id))
+                        .map((skill) => (
+                          <button
+                            key={skill.id}
+                            onClick={() => handleToggleSessionPinnedSkill(skill.id, true)}
+                            className="flex items-center gap-1 px-2 py-0.5 rounded-md text-xs text-text-muted hover:text-text-primary hover:bg-surface-hover border border-border-muted transition-colors"
+                            title={t('context.pinSkill')}
+                          >
+                            <Star className="w-3 h-3" />
+                            <span>{skill.name}</span>
+                          </button>
+                        ))}
                     </div>
-                  );
-                })}
+                  )}
               </div>
             )}
           </div>
         )}
-      </div>
 
-      {/* Working Directory */}
-      <div className="border-b border-border-muted">
-        <div className="px-4 py-2.5">
-          <p className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">
-            {t('context.workingDirectory')}
-          </p>
-          <div className="flex items-center gap-1.5 min-w-0">
-            <FolderOpen className="w-3.5 h-3.5 text-text-muted shrink-0" />
-            <span
-              className={`text-xs truncate flex-1 ${currentWorkingDir ? 'text-text-primary cursor-pointer hover:text-accent-primary transition-colors' : 'text-text-muted'}`}
-              title={currentWorkingDir ? t('context.openInFileManager') : ''}
-              onClick={() =>
-                currentWorkingDir && window.electronAPI?.showItemInFolder(currentWorkingDir)
-              }
-            >
-              {currentWorkingDir ? formatPath(currentWorkingDir) : t('context.noFolderSelected')}
-            </span>
-            {currentWorkingDir && (
-              <button
-                onClick={() => handleCopyPath(currentWorkingDir)}
-                className="text-text-muted hover:text-text-primary transition-colors shrink-0 ml-1"
-                title={t('context.copyPath')}
-              >
-                {copiedPath ? (
-                  <Check className="w-3 h-3 text-success" />
-                ) : (
-                  <Copy className="w-3 h-3" />
-                )}
-              </button>
-            )}
-            <button
-              onClick={async () => {
-                setIsChangingDir(true);
-                try {
-                  const result = await changeWorkingDir(
-                    activeSessionId || undefined,
-                    currentWorkingDir || undefined
-                  );
-                  if (!result.success && result.error && result.error !== 'User cancelled') {
-                    setGlobalNotice({
-                      id: `change-dir-failed-${Date.now()}`,
-                      type: 'warning',
-                      message: `${t('context.changeDirFailed')}: ${result.error}`,
-                    });
-                  }
-                } catch (error) {
-                  setGlobalNotice({
-                    id: `change-dir-failed-${Date.now()}`,
-                    type: 'error',
-                    message:
-                      error instanceof Error && error.message
-                        ? `${t('context.changeDirFailed')}: ${error.message}`
-                        : t('context.changeDirFailed'),
-                  });
-                } finally {
-                  setIsChangingDir(false);
-                }
-              }}
-              disabled={isChangingDir}
-              className="text-text-muted hover:text-text-primary disabled:opacity-50 transition-colors shrink-0"
-              title={t('context.changeDir')}
-            >
-              {isChangingDir ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
-              ) : (
-                <FolderSync className="w-3 h-3" />
+        {/* MCP Connectors */}
+        <div className="border-b border-border-muted">
+          <button
+            onClick={() => setMcpConnectorsOpen(!mcpConnectorsOpen)}
+            className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-surface-hover transition-colors"
+          >
+            <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
+              {t('context.mcpConnectors')}
+              {mcpServers.length > 0 && (
+                <span className="ml-1.5 text-mcp">({mcpServers.length})</span>
               )}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Pinned Skills */}
-      {(availableSkills.length > 0 || sessionPinnedSkills.size > 0) && (
-        <div className="px-4 py-2.5 border-b border-border-muted">
-          <p className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">
-            {t('context.pinnedSkills')}
-          </p>
-          {sessionPinnedSkills.size === 0 ? (
-            <p className="text-xs text-text-muted">{t('context.noSkillsPinned')}</p>
-          ) : (
-            <div className="space-y-1 mb-2">
-              {Array.from(sessionPinnedSkills).map((skillId) => {
-                const skill = availableSkills.find((s) => s.id === skillId);
-                const isAvailable = !!skill;
-                return (
-                  <div
-                    key={skillId}
-                    className={`flex items-center gap-2 px-2 py-1 rounded-md ${
-                      isAvailable
-                        ? 'bg-amber-500/5 border border-amber-500/20'
-                        : 'bg-red-500/5 border border-red-500/20'
-                    }`}
-                  >
-                    <Star
-                      className={`w-3.5 h-3.5 shrink-0 ${isAvailable ? 'text-amber-500 fill-amber-500' : 'text-red-400 fill-red-400'}`}
-                    />
-                    <span className="text-xs text-text-primary flex-1 truncate">
-                      {skill?.name || skillId}
-                      {!isAvailable && <span className="text-red-400 ml-1">(unavailable)</span>}
-                    </span>
-                    <button
-                      onClick={() => handleToggleSessionPinnedSkill(skillId, false)}
-                      className="text-text-muted hover:text-text-primary transition-colors"
-                      title={t('context.unpinSkill')}
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {/* Show unpinned skills as addable */}
-          {availableSkills.filter((s) => !sessionPinnedSkills.has(s.id)).length > 0 &&
-            sessionPinnedSkills.size < MAX_PINNED_SKILLS_PER_SESSION && (
-              <div className="flex flex-wrap gap-1">
-                {availableSkills
-                  .filter((s) => !sessionPinnedSkills.has(s.id))
-                  .map((skill) => (
-                    <button
-                      key={skill.id}
-                      onClick={() => handleToggleSessionPinnedSkill(skill.id, true)}
-                      className="flex items-center gap-1 px-2 py-0.5 rounded-md text-xs text-text-muted hover:text-text-primary hover:bg-surface-hover border border-border-muted transition-colors"
-                      title={t('context.pinSkill')}
-                    >
-                      <Star className="w-3 h-3" />
-                      <span>{skill.name}</span>
-                    </button>
-                  ))}
-              </div>
+            </span>
+            {mcpConnectorsOpen ? (
+              <ChevronUp className="w-3.5 h-3.5 text-text-muted" />
+            ) : (
+              <ChevronDown className="w-3.5 h-3.5 text-text-muted" />
             )}
-        </div>
-      )}
+          </button>
 
-      {/* MCP Connectors */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="px-4 py-2.5">
-          <p className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">
-            {t('context.mcpConnectors')}
-          </p>
-          {mcpServers.length === 0 ? (
-            <div className="flex items-center gap-2 text-xs text-text-muted py-1">
-              <Plug className="w-3.5 h-3.5 shrink-0" />
-              <span>{t('mcp.noConnectors')}</span>
-            </div>
-          ) : (
-            <div className="space-y-0.5">
-              {mcpServers.map((server) => (
-                <ConnectorItem
-                  key={server.id}
-                  server={server}
-                  steps={steps}
-                  expanded={expandedConnector === server.id}
-                  onToggle={() =>
-                    setExpandedConnector(expandedConnector === server.id ? null : server.id)
-                  }
-                  sessionDisabled={sessionDisabledServers.has(server.id)}
-                  onToggleSession={handleToggleSessionServer}
-                />
-              ))}
+          {mcpConnectorsOpen && (
+            <div className="px-4 pb-2.5">
+              {mcpServers.length === 0 ? (
+                <div className="flex items-center gap-2 text-xs text-text-muted py-1">
+                  <Plug className="w-3.5 h-3.5 shrink-0" />
+                  <span>{t('mcp.noConnectors')}</span>
+                </div>
+              ) : (
+                <div className="space-y-0.5">
+                  {mcpServers.map((server) => (
+                    <ConnectorItem
+                      key={server.id}
+                      server={server}
+                      steps={steps}
+                      expanded={expandedConnector === server.id}
+                      onToggle={() =>
+                        setExpandedConnector(expandedConnector === server.id ? null : server.id)
+                      }
+                      sessionDisabled={sessionDisabledServers.has(server.id)}
+                      onToggleSession={handleToggleSessionServer}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
       </div>
+      {/* End scrollable content area */}
     </div>
   );
 }
