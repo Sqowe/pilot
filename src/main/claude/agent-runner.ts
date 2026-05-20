@@ -575,6 +575,45 @@ export class ClaudeAgentRunner {
   private _skillsSetupDone = false;
 
   /**
+   * Tracks sessions currently waiting for a permission dialog response.
+   * While a session has a non-zero count, the activity timeout is paused to
+   * avoid aborting the agent while the user is deciding whether to allow a
+   * tool call. Uses a reference count (not a boolean) because the SDK may
+   * issue multiple parallel tool calls that each require permission.
+   * This prevents the "No timeout (wait forever)" permission setting from
+   * being contradicted by the 5-minute activity timeout.
+   *
+   * Keyed by sessionId. Each entry stores a generation token (runId) and a
+   * count. Stale completions from cancelled runs are ignored by comparing
+   * the runId at exit time against the current entry's runId.
+   */
+  private permissionWaitState: Map<string, { runId: string; count: number }> = new Map();
+
+  /**
+   * The current run generation token per session. Updated at the start of
+   * each run() call. Permission hooks capture this value on enter and compare
+   * it on exit — if it has changed (due to cancel + restart), the exit is
+   * treated as stale and becomes a no-op.
+   */
+  private currentRunId: Map<string, string> = new Map();
+
+  /**
+   * Per-session activity timeout handle. Stored on the class so that the
+   * permission hook can directly cancel an already-scheduled timer when
+   * entering permission-wait state (not only on the next resetActivityTimeout
+   * call).
+   */
+  private activityTimeoutHandles: Map<string, ReturnType<typeof setTimeout>> = new Map();
+
+  /**
+   * Per-session callback to restart the activity timeout. Set by run() so
+   * that the permission hook's finally block can immediately reschedule the
+   * timer when permission wait count reaches 0, without waiting for the next
+   * SDK event (which may never come if the tool was blocked).
+   */
+  private restartActivityTimeout: Map<string, () => void> = new Map();
+
+  /**
    * Clear SDK session cache for a session
    * Called when session's cwd changes - SDK sessions are bound to cwd
    */
@@ -588,6 +627,16 @@ export class ClaudeAgentRunner {
       }
       this.piSessions.delete(sessionId);
       log('[ClaudeAgentRunner] Disposed pi session for:', sessionId);
+    }
+    // Always clean up permission/timeout state regardless of piSessions membership.
+    // These maps can have entries even if the piSession was already evicted from cache.
+    this.permissionWaitState.delete(sessionId);
+    this.currentRunId.delete(sessionId);
+    this.restartActivityTimeout.delete(sessionId);
+    const handle = this.activityTimeoutHandles.get(sessionId);
+    if (handle) {
+      clearTimeout(handle);
+      this.activityTimeoutHandles.delete(sessionId);
     }
   }
 
@@ -1064,7 +1113,37 @@ RULES:
           result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
           suggestion?: string;
         };
+        // Capture the current runId BEFORE the try block so it's accessible in finally.
+        // This is the generation token used to detect stale completions from cancelled runs.
+        const capturedRunId = this.currentRunId.get(sessionId) ?? '';
         try {
+          // Pause the activity timeout while waiting for user's permission decision.
+          // Without this, the 5-minute inactivity timer would abort the agent even
+          // when the user has configured "No timeout (wait forever)" for permissions.
+          //
+          // We use a reference count (not boolean) because the SDK may issue
+          // multiple parallel tool calls that each require permission.
+          //
+          // We also use capturedRunId (declared above) to detect stale completions:
+          // if the session is cancelled and restarted while this await is pending,
+          // the finally block will see a different runId and become a no-op.
+          const existing = this.permissionWaitState.get(sessionId);
+          if (existing && existing.runId === capturedRunId) {
+            existing.count += 1;
+          } else {
+            // New run or first permission request — initialize state
+            this.permissionWaitState.set(sessionId, { runId: capturedRunId, count: 1 });
+          }
+
+          // CRITICAL: Cancel any already-scheduled activity timeout immediately.
+          // Without this, a timer started by the last SDK event could still fire
+          // during the permission dialog wait and abort the session.
+          const existingHandle = this.activityTimeoutHandles.get(sessionId);
+          if (existingHandle) {
+            clearTimeout(existingHandle);
+            this.activityTimeoutHandles.delete(sessionId);
+          }
+
           const rawResult = await requestPermission(sessionId, toolUseId, toolName, input);
           // Normalize: accept both legacy string responses and new object shape.
           // Fail-closed on malformed/unknown values.
@@ -1117,6 +1196,30 @@ RULES:
             block: true,
             reason: `Permission request failed for '${toolName}'; tool not executed.`,
           };
+        } finally {
+          // Decrement the permission-wait reference count. The activity timeout
+          // resumes only when all concurrent permission dialogs have resolved
+          // (count reaches 0).
+          //
+          // STALE COMPLETION GUARD: If the session was cancelled and restarted
+          // while this await was pending, the runId will have changed. In that
+          // case, this finally block is stale and must be a no-op to avoid
+          // corrupting the new run's permission state.
+          const state = this.permissionWaitState.get(sessionId);
+          if (state && state.runId === capturedRunId) {
+            if (state.count <= 1) {
+              this.permissionWaitState.delete(sessionId);
+              // Immediately restart the activity timeout now that all permission
+              // dialogs have resolved. Without this, if no further SDK event
+              // arrives (e.g., tool was blocked), the session could hang
+              // indefinitely with no inactivity timeout.
+              const restart = this.restartActivityTimeout.get(sessionId);
+              if (restart) restart();
+            } else {
+              state.count -= 1;
+            }
+          }
+          // If runId doesn't match, this is a stale completion — ignore it.
         }
 
         if (result.result === 'deny') {
@@ -1340,6 +1443,10 @@ RULES:
     };
 
     const thinkingStepId = uuidv4();
+
+    // Set the current run generation token. Permission hooks compare against
+    // this to detect stale completions from cancelled runs.
+    this.currentRunId.set(session.id, thinkingStepId);
     let abortedByTimeout = false;
 
     try {
@@ -2828,12 +2935,24 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
       let activityTimeoutId: ReturnType<typeof setTimeout> | undefined;
       const resetActivityTimeout = () => {
         if (activityTimeoutId) clearTimeout(activityTimeoutId);
+        this.activityTimeoutHandles.delete(session.id);
+        // Don't start the inactivity timer while waiting for a permission dialog.
+        // The user may have configured "No timeout (wait forever)" for permissions;
+        // firing the activity timeout would contradict that setting and abort the
+        // agent while the user is still deciding.
+        const waitState = this.permissionWaitState.get(session.id);
+        if (waitState && waitState.count > 0) return;
         activityTimeoutId = setTimeout(() => {
           logWarn('[ClaudeAgentRunner] Prompt timed out (no activity for 5 min), aborting');
           abortedByTimeout = true;
           controller.abort();
         }, PROMPT_TIMEOUT_MS);
+        this.activityTimeoutHandles.set(session.id, activityTimeoutId);
       };
+
+      // Expose resetActivityTimeout to the permission hook so it can immediately
+      // reschedule the timer when permission wait count reaches 0.
+      this.restartActivityTimeout.set(session.id, resetActivityTimeout);
 
       const recordStreamEvent = (eventType: string) => {
         streamEventCounts.set(eventType, (streamEventCounts.get(eventType) ?? 0) + 1);
@@ -3414,6 +3533,11 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
           logWarn('[ClaudeAgentRunner] unsubscribe error:', e);
         }
         if (activityTimeoutId) clearTimeout(activityTimeoutId);
+        this.activityTimeoutHandles.delete(session.id);
+        this.restartActivityTimeout.delete(session.id);
+        // Clean up run-scoped state on normal completion (not only cancel/dispose).
+        this.currentRunId.delete(session.id);
+        this.permissionWaitState.delete(session.id);
         if (ollamaColdStartTimerId) clearTimeout(ollamaColdStartTimerId);
       }
 
@@ -3549,6 +3673,17 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
   cancel(sessionId: string): void {
     const controller = this.activeControllers.get(sessionId);
     if (controller) controller.abort();
+    // Clean up permission-waiting state so the flag doesn't leak.
+    // This also invalidates any in-flight permission awaits from this run —
+    // their finally blocks will see a mismatched runId and become no-ops.
+    this.permissionWaitState.delete(sessionId);
+    this.currentRunId.delete(sessionId);
+    this.restartActivityTimeout.delete(sessionId);
+    const handle = this.activityTimeoutHandles.get(sessionId);
+    if (handle) {
+      clearTimeout(handle);
+      this.activityTimeoutHandles.delete(sessionId);
+    }
   }
 
   private sendTraceStep(sessionId: string, step: TraceStep): void {
