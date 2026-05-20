@@ -155,9 +155,9 @@ describe('setWorkingDirDirect (useIPC)', () => {
     const source = readUseIPC();
     // Find the setWorkingDirDirect useCallback and check its deps
     const fnStart = source.indexOf('const setWorkingDirDirect = useCallback(');
-    const fnEnd = source.indexOf(');', source.indexOf('[invoke, isElectron]', fnStart));
+    const fnEnd = source.indexOf(');', source.indexOf('[invoke]', fnStart));
     const fnSource = source.slice(fnStart, fnEnd + 2);
-    expect(fnSource).toContain('[invoke, isElectron]');
+    expect(fnSource).toContain('[invoke]');
   });
 });
 
