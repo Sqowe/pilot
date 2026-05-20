@@ -37,6 +37,7 @@ import {
   captureExistingHook,
   installBeforeToolCallHook,
 } from './before-tool-call-hook';
+import { wrapMcpToolsWithTimeout } from './mcp-tool-timeout';
 import { PathResolver } from '../sandbox/path-resolver';
 import { MCPManager } from '../mcp/mcp-manager';
 import { mcpConfigStore } from '../mcp/mcp-config-store';
@@ -614,6 +615,13 @@ export class ClaudeAgentRunner {
   private restartActivityTimeout: Map<string, () => void> = new Map();
 
   /**
+   * Tracks sessions with active MCP tool executions. While a session has
+   * tools running, the activity timeout is paused — the tool-level timeout
+   * is the sole guard against hung tools.
+   */
+  private toolExecutionCount: Map<string, number> = new Map();
+
+  /**
    * Clear SDK session cache for a session
    * Called when session's cwd changes - SDK sessions are bound to cwd
    */
@@ -633,6 +641,7 @@ export class ClaudeAgentRunner {
     this.permissionWaitState.delete(sessionId);
     this.currentRunId.delete(sessionId);
     this.restartActivityTimeout.delete(sessionId);
+    this.toolExecutionCount.delete(sessionId);
     const handle = this.activityTimeoutHandles.get(sessionId);
     if (handle) {
       clearTimeout(handle);
@@ -2447,8 +2456,40 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
       // Filter to only include tools from servers that survived workspace/session overrides.
       const allMcpCustomTools = this.mcpManager ? buildMcpCustomTools(this.mcpManager) : [];
       const mcpCustomTools = filterMcpCustomTools(allMcpCustomTools, effectiveServerNames);
+
+      // Wrap MCP tools with per-server timeout. When a tool exceeds its timeout,
+      // the wrapper returns a structured error to the LLM instead of hanging forever.
+      // Callbacks pause/resume the activity timeout during tool execution.
+      const sessionId = session.id;
+      const mcpToolsWithTimeout = wrapMcpToolsWithTimeout(
+        mcpCustomTools as import('./mcp-tool-timeout').ToolDefinition[],
+        (_serverName, _toolName) => {
+          // Tool execution started — pause activity timeout
+          const count = (this.toolExecutionCount.get(sessionId) ?? 0) + 1;
+          this.toolExecutionCount.set(sessionId, count);
+          // Cancel existing activity timer
+          const handle = this.activityTimeoutHandles.get(sessionId);
+          if (handle) {
+            clearTimeout(handle);
+            this.activityTimeoutHandles.delete(sessionId);
+          }
+        },
+        (_serverName, _toolName) => {
+          // Tool execution ended — resume activity timeout if no more tools running
+          const count = Math.max(0, (this.toolExecutionCount.get(sessionId) ?? 1) - 1);
+          if (count === 0) {
+            this.toolExecutionCount.delete(sessionId);
+            // Restart activity timeout
+            const restart = this.restartActivityTimeout.get(sessionId);
+            if (restart) restart();
+          } else {
+            this.toolExecutionCount.set(sessionId, count);
+          }
+        }
+      ) as McpToolDefinition[];
+
       const extensionCustomTools = extensionResult.customTools || [];
-      const customTools = [...mcpCustomTools, ...extensionCustomTools];
+      const customTools = [...mcpToolsWithTimeout, ...extensionCustomTools];
       if (mcpCustomTools.length > 0) {
         log(
           `[ClaudeAgentRunner] Registered ${mcpCustomTools.length} MCP tools as customTools (filtered from ${allMcpCustomTools.length}):`,
@@ -2639,7 +2680,7 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
           noTools: 'builtin',
           customTools: [
             ...(wrappedTools as ToolDefinition[]),
-            ...mcpCustomTools,
+            ...mcpToolsWithTimeout,
             ...extensionCustomTools,
           ],
           sessionManager: PiSessionManager.inMemory(),
@@ -2942,6 +2983,9 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
         // agent while the user is still deciding.
         const waitState = this.permissionWaitState.get(session.id);
         if (waitState && waitState.count > 0) return;
+        // Don't start the inactivity timer while MCP tools are executing.
+        // Tool-level timeouts are the sole guard against hung tools.
+        if ((this.toolExecutionCount.get(session.id) ?? 0) > 0) return;
         activityTimeoutId = setTimeout(() => {
           logWarn('[ClaudeAgentRunner] Prompt timed out (no activity for 5 min), aborting');
           abortedByTimeout = true;
@@ -3538,6 +3582,7 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
         // Clean up run-scoped state on normal completion (not only cancel/dispose).
         this.currentRunId.delete(session.id);
         this.permissionWaitState.delete(session.id);
+        this.toolExecutionCount.delete(session.id);
         if (ollamaColdStartTimerId) clearTimeout(ollamaColdStartTimerId);
       }
 
@@ -3679,6 +3724,7 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
     this.permissionWaitState.delete(sessionId);
     this.currentRunId.delete(sessionId);
     this.restartActivityTimeout.delete(sessionId);
+    this.toolExecutionCount.delete(sessionId);
     const handle = this.activityTimeoutHandles.get(sessionId);
     if (handle) {
       clearTimeout(handle);

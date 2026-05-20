@@ -3398,6 +3398,22 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
             });
           }
         }
+
+        // MCP tool timeout setting
+        if (hasOwnPerm('mcpToolTimeoutSeconds')) {
+          const val = (event.payload as Record<string, unknown>).mcpToolTimeoutSeconds;
+          if (typeof val === 'number' && Number.isFinite(val) && val >= 0) {
+            const normalized = val <= 0 ? 0 : Math.max(10, Math.min(600, Math.floor(val)));
+            configStore.update({ mcpToolTimeoutSeconds: normalized });
+            sendToRenderer({
+              type: 'config.status',
+              payload: {
+                isConfigured: configStore.isConfigured(),
+                config: configStore.getAll(),
+              },
+            });
+          }
+        }
       }
 
       // Permission-related settings are gated behind a single object-guard

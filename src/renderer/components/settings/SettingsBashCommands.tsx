@@ -200,6 +200,65 @@ export function SettingsBashCommands() {
           </div>
         )}
       </div>
+
+      {/* MCP Tool Execution Timeout */}
+      <div className="pt-4 border-t border-border space-y-2">
+        <div className="flex items-center gap-2">
+          <Clock className="w-4 h-4 text-text-secondary" />
+          <h4 className="text-sm font-medium text-text-primary">
+            {t('bashCommands.mcpToolTimeoutTitle', 'MCP tool execution timeout')}
+          </h4>
+        </div>
+        <p className="text-xs leading-5 text-text-muted">
+          {t(
+            'bashCommands.mcpToolTimeoutDesc',
+            'Maximum time to wait for an MCP tool to respond. On timeout, the AI receives an error and can retry or try a different approach. Set to 0 to disable (not recommended).'
+          )}
+        </p>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={(settings.mcpToolTimeoutSeconds ?? 240) === 0}
+              onChange={(e) => {
+                updateSettings({
+                  mcpToolTimeoutSeconds: e.target.checked ? 0 : 240,
+                });
+              }}
+              className="w-4 h-4 rounded border-border text-accent focus:ring-accent"
+            />
+            <span className="text-sm text-text-secondary">
+              {t('bashCommands.mcpToolTimeoutDisabled', 'No timeout (not recommended)')}
+            </span>
+          </label>
+        </div>
+        {(settings.mcpToolTimeoutSeconds ?? 240) !== 0 && (
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={10}
+              max={600}
+              step={10}
+              value={settings.mcpToolTimeoutSeconds ?? 240}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (!isNaN(val) && val >= 10 && val <= 600) {
+                  updateSettings({ mcpToolTimeoutSeconds: val });
+                }
+              }}
+              className="w-24 px-3 py-1.5 rounded-lg border border-border bg-surface text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+              aria-label={t('bashCommands.mcpToolTimeoutTitle', 'MCP tool execution timeout')}
+            />
+            <span className="text-sm text-text-secondary">
+              {t('bashCommands.mcpToolTimeoutUnit', 'seconds')}
+            </span>
+            <span className="text-xs text-text-muted">
+              ({Math.floor((settings.mcpToolTimeoutSeconds ?? 240) / 60)}
+              {t('bashCommands.mcpToolTimeoutMinLabel', ' min')})
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -44,6 +44,7 @@ export interface MCPServerConfig {
   url?: string; // For SSE / Streamable HTTP: server URL
   headers?: Record<string, string>; // For SSE / Streamable HTTP: HTTP headers
   enabled: boolean;
+  toolTimeoutSeconds?: number; // Per-server tool timeout override (0 = use global default)
 }
 
 /**

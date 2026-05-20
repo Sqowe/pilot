@@ -681,6 +681,8 @@ function ServerForm({
   const [args, setArgs] = useState(server?.args?.join(' ') || '');
   const [url, setUrl] = useState(server?.url || '');
   const [enabled, setEnabled] = useState(server?.enabled ?? true);
+  // Tool timeout override (0 = use global default)
+  const [toolTimeoutSeconds, setToolTimeoutSeconds] = useState(server?.toolTimeoutSeconds ?? 0);
   // Environment variables (for tokens, etc.)
   const [envVars, setEnvVars] = useState<Record<string, string>>(server?.env || {});
   const [showEnvSection, setShowEnvSection] = useState(Object.keys(server?.env || {}).length > 0);
@@ -773,6 +775,7 @@ function ServerForm({
       name: name.trim(),
       type,
       enabled,
+      toolTimeoutSeconds: toolTimeoutSeconds > 0 ? toolTimeoutSeconds : undefined,
     };
 
     // Description field handling:
@@ -1148,6 +1151,34 @@ function ServerForm({
         <label htmlFor="enabled" className="text-sm text-text-primary">
           {t('mcp.enableConnector')}
         </label>
+      </div>
+
+      {/* Per-server tool timeout override */}
+      <div className="space-y-1">
+        <label htmlFor="toolTimeout" className="text-sm text-text-secondary">
+          {t('mcp.toolTimeoutLabel', 'Tool timeout (seconds)')}
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            id="toolTimeout"
+            min={0}
+            max={600}
+            step={10}
+            value={toolTimeoutSeconds}
+            onChange={(e) => {
+              const val = parseInt(e.target.value, 10);
+              if (!isNaN(val) && val >= 0 && val <= 600) {
+                // Normalize: 0 = global default, otherwise clamp to 10-600
+                setToolTimeoutSeconds(val === 0 ? 0 : Math.max(10, val));
+              }
+            }}
+            className="w-24 px-3 py-1.5 rounded-lg border border-border bg-surface text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+          />
+          <span className="text-xs text-text-muted">
+            {t('mcp.toolTimeoutHint', '0 = use global default, min 10s')}
+          </span>
+        </div>
       </div>
 
       <div className="flex gap-2">

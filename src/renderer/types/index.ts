@@ -711,6 +711,8 @@ export interface Settings {
   schedulerRunHistoryDepth?: number;
   // Permission dialog timeout in seconds. 0 = infinite (no timeout).
   permissionTimeoutSeconds?: number;
+  // MCP tool execution timeout in seconds. 0 = no timeout (not recommended).
+  mcpToolTimeoutSeconds?: number;
 }
 
 // Tool types
@@ -837,6 +839,8 @@ export interface AppConfig {
   schedulerRunHistoryDepth?: number;
   // Permission dialog timeout in seconds. 0 = infinite (no timeout).
   permissionTimeoutSeconds?: number;
+  // MCP tool execution timeout in seconds. 0 = no timeout (not recommended).
+  mcpToolTimeoutSeconds?: number;
 }
 
 export interface ProviderPreset {

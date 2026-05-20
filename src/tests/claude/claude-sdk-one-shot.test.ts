@@ -67,6 +67,7 @@ function makeConfig(): AppConfig {
     schedulerConflictPolicy: 'queue',
     schedulerRunHistoryDepth: 10,
     permissionTimeoutSeconds: 300,
+    mcpToolTimeoutSeconds: 240,
     isConfigured: true,
   };
 }
