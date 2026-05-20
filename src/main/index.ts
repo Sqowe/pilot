@@ -2236,6 +2236,47 @@ ipcMain.handle('skills.openStoragePath', async () => {
   return { success: true, path: storagePath };
 });
 
+ipcMain.handle(
+  'skills.toggleSessionPin',
+  async (_event, sessionId: string, skillId: string, pinned: boolean) => {
+    try {
+      if (!sessionManager) {
+        return { success: false, error: 'Session manager not initialized' };
+      }
+      // Validate skill exists and is enabled before pinning
+      if (pinned && skillsManager) {
+        const allSkills = skillsManager.getAllSkills();
+        const skill = allSkills.find((s) => s.id === skillId);
+        if (!skill) {
+          return { success: false, error: `Skill not found: ${skillId}` };
+        }
+        if (!skill.enabled) {
+          return { success: false, error: `Skill is disabled: ${skillId}` };
+        }
+      }
+      const pinnedSkills = sessionManager.toggleSessionPinnedSkill(sessionId, skillId, pinned);
+      log(`[Skills] Session ${sessionId}: skill ${skillId} ${pinned ? 'pinned' : 'unpinned'}`);
+      return { success: true, pinnedSkills };
+    } catch (error) {
+      logError('[Skills] Error toggling session pinned skill:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { success: false, error: errorMessage };
+    }
+  }
+);
+
+ipcMain.handle('skills.getSessionPinnedSkills', async (_event, sessionId: string) => {
+  try {
+    if (!sessionManager) {
+      return [];
+    }
+    return sessionManager.getSessionPinnedSkills(sessionId);
+  } catch (error) {
+    logError('[Skills] Error getting session pinned skills:', error);
+    return [];
+  }
+});
+
 ipcMain.handle('plugins.listCatalog', async (_event, options?: { installableOnly?: boolean }) => {
   try {
     if (!pluginRuntimeService) {
@@ -3164,6 +3205,15 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
         return null;
       }
       {
+        // Validate initialPinnedSkills against actual installed+enabled skills
+        // (same validation as skills.toggleSessionPin IPC handler)
+        let validatedPinnedSkills = event.payload.initialPinnedSkills;
+        if (validatedPinnedSkills && validatedPinnedSkills.length > 0 && skillsManager) {
+          const allSkills = skillsManager.getAllSkills();
+          const enabledSkillIds = new Set(allSkills.filter((s) => s.enabled).map((s) => s.id));
+          validatedPinnedSkills = validatedPinnedSkills.filter((id) => enabledSkillIds.has(id));
+        }
+
         const session = await sm.startSession(
           event.payload.title,
           event.payload.prompt,
@@ -3171,7 +3221,8 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
           event.payload.allowedTools,
           event.payload.content,
           event.payload.memoryEnabled,
-          event.payload.initialDisabledMcpServers
+          event.payload.initialDisabledMcpServers,
+          validatedPinnedSkills
         );
         return session;
       }

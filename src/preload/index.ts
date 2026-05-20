@@ -272,6 +272,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }> => ipcRenderer.invoke('skills.setStoragePath', targetPath, migrate),
     openStoragePath: (): Promise<{ success: boolean; path: string; error?: string }> =>
       ipcRenderer.invoke('skills.openStoragePath'),
+    toggleSessionPin: (
+      sessionId: string,
+      skillId: string,
+      pinned: boolean
+    ): Promise<{ success: boolean; pinnedSkills?: string[]; error?: string }> =>
+      ipcRenderer.invoke('skills.toggleSessionPin', sessionId, skillId, pinned),
+    getSessionPinnedSkills: (sessionId: string): Promise<string[]> =>
+      ipcRenderer.invoke('skills.getSessionPinnedSkills', sessionId),
   },
 
   // Environment methods
@@ -579,6 +587,12 @@ declare global {
           error?: string;
         }>;
         openStoragePath: () => Promise<{ success: boolean; path: string; error?: string }>;
+        toggleSessionPin: (
+          sessionId: string,
+          skillId: string,
+          pinned: boolean
+        ) => Promise<{ success: boolean; pinnedSkills?: string[]; error?: string }>;
+        getSessionPinnedSkills: (sessionId: string) => Promise<string[]>;
       };
       env: {
         getEffectivePath: () => Promise<string>;

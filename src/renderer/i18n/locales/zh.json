@@ -52,7 +52,11 @@
     "mcpTokensSaved": "已禁用 {{count}} 个",
     "mcpServersForChat": "本次对话的 MCP 服务器",
     "mcpAllOn": "全部启用",
-    "mcpAllOff": "全部禁用"
+    "mcpAllOff": "全部禁用",
+    "skillsPinned": "已固定 {{count}} 个技能",
+    "skillsForChat": "为本次对话优先使用的技能",
+    "skillsNone": "暂无可用技能",
+    "skillsClearAll": "清除全部"
   },
   "settings": {
     "title": "设置",
@@ -711,6 +715,11 @@
     "workingDirectory": "工作目录",
     "toolsUsed": "使用的工具",
     "mcpConnectors": "MCP 连接器",
+    "pinnedSkills": "固定技能",
+    "pinSkill": "固定技能",
+    "unpinSkill": "取消固定",
+    "noSkillsPinned": "暂无固定技能",
+    "addPinnedSkill": "+ 固定技能...",
     "copied": "已复制！",
     "noToolsUsedYet": "尚未使用工具",
     "toolsUsedLabel": "使用的工具：",

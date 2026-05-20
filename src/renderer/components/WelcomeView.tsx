@@ -2,9 +2,10 @@ import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
-import type { ContentBlock, MCPServerInfo } from '../types';
+import type { ContentBlock, MCPServerInfo, Skill } from '../types';
 import { getInitialSessionTitle } from '../../shared/session-title';
-import { ArrowRight, X, Paperclip, Layers, Plug, ChevronDown, ChevronUp } from 'lucide-react';
+import { MAX_PINNED_SKILLS_PER_SESSION } from '../../shared/skill-pinning-constants';
+import { ArrowRight, X, Paperclip, Layers, Plug, ChevronDown, ChevronUp, Star } from 'lucide-react';
 import { WorkspacePicker } from './WorkspacePicker';
 
 type AttachedFile = {
@@ -42,6 +43,11 @@ export function WelcomeView() {
   const [mcpServers, setMcpServers] = useState<MCPServerInfo[]>([]);
   const [mcpDisabledIds, setMcpDisabledIds] = useState<Set<string>>(new Set());
   const [mcpExpanded, setMcpExpanded] = useState(false);
+
+  // Skill pinning state
+  const [availableSkills, setAvailableSkills] = useState<Skill[]>([]);
+  const [pinnedSkillIds, setPinnedSkillIds] = useState<Set<string>>(new Set());
+  const [skillsExpanded, setSkillsExpanded] = useState(false);
 
   // Sync local prompt to store on every change (persists across navigation)
   const setPrompt = (value: string) => {
@@ -114,6 +120,19 @@ export function WelcomeView() {
     };
     loadServers();
   }, [getMCPServers]);
+
+  // Load available skills on mount
+  useEffect(() => {
+    const loadSkills = async () => {
+      try {
+        const skills = await window.electronAPI?.skills?.getAll();
+        setAvailableSkills((skills || []).filter((s) => s.enabled));
+      } catch (error) {
+        console.error('[WelcomeView] Failed to load skills:', error);
+      }
+    };
+    loadSkills();
+  }, []);
 
   // Handle paste event for images
   const handlePaste = async (e: React.ClipboardEvent) => {
@@ -400,7 +419,8 @@ export function WelcomeView() {
         sessionTitle,
         contentBlocks,
         workingDir || undefined,
-        mcpDisabledIds.size > 0 ? Array.from(mcpDisabledIds) : undefined
+        mcpDisabledIds.size > 0 ? Array.from(mcpDisabledIds) : undefined,
+        pinnedSkillIds.size > 0 ? Array.from(pinnedSkillIds) : undefined
       );
       if (session) {
         setPrompt('');
@@ -733,6 +753,104 @@ export function WelcomeView() {
                           {server.name}
                         </span>
                         <span className="text-xs text-text-muted shrink-0">{server.toolCount}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Skill Pinning Picker */}
+        {availableSkills.length > 0 && (
+          <div className="space-y-2">
+            {/* Collapsed summary line */}
+            <button
+              type="button"
+              onClick={() => setSkillsExpanded(!skillsExpanded)}
+              className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl border border-border-muted bg-background/60 hover:bg-surface-hover transition-colors"
+            >
+              <div className="flex items-center gap-2 text-sm text-text-secondary">
+                <Star className="w-4 h-4 text-amber-500" />
+                <span>
+                  {pinnedSkillIds.size > 0
+                    ? `${pinnedSkillIds.size}/${MAX_PINNED_SKILLS_PER_SESSION} ${t('welcome.skillsPinned', { count: pinnedSkillIds.size })}`
+                    : t('welcome.skillsForChat')}
+                </span>
+              </div>
+              {skillsExpanded ? (
+                <ChevronUp className="w-4 h-4 text-text-muted" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-text-muted" />
+              )}
+            </button>
+
+            {/* Expanded grid */}
+            {skillsExpanded && (
+              <div className="rounded-xl border border-border-muted bg-background/60 px-4 py-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
+                    {t('welcome.skillsForChat')}
+                  </span>
+                  {pinnedSkillIds.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPinnedSkillIds(new Set())}
+                      className="text-xs text-text-muted hover:text-text-primary transition-colors"
+                    >
+                      {t('welcome.skillsClearAll')}
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {availableSkills.map((skill) => {
+                    const isPinned = pinnedSkillIds.has(skill.id);
+                    return (
+                      <button
+                        key={skill.id}
+                        type="button"
+                        onClick={() => {
+                          setPinnedSkillIds((prev) => {
+                            const next = new Set(prev);
+                            if (prev.has(skill.id)) {
+                              next.delete(skill.id);
+                            } else {
+                              // Enforce client-side limit
+                              if (next.size >= MAX_PINNED_SKILLS_PER_SESSION) return prev;
+                              next.add(skill.id);
+                            }
+                            return next;
+                          });
+                        }}
+                        disabled={!isPinned && pinnedSkillIds.size >= MAX_PINNED_SKILLS_PER_SESSION}
+                        className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-colors text-left ${
+                          isPinned
+                            ? 'border-amber-500/30 bg-amber-500/5 hover:bg-amber-500/10'
+                            : pinnedSkillIds.size >= MAX_PINNED_SKILLS_PER_SESSION
+                              ? 'border-border-muted bg-surface-muted opacity-40 cursor-not-allowed'
+                              : 'border-border-muted bg-surface-muted hover:bg-surface-hover'
+                        }`}
+                      >
+                        <Star
+                          className={`w-4 h-4 shrink-0 transition-colors ${
+                            isPinned ? 'text-amber-500 fill-amber-500' : 'text-text-muted'
+                          }`}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <span
+                            className={`text-sm truncate block ${
+                              isPinned ? 'text-text-primary' : 'text-text-muted'
+                            }`}
+                          >
+                            {skill.name}
+                          </span>
+                          {skill.description && (
+                            <span className="text-xs text-text-muted truncate block">
+                              {skill.description}
+                            </span>
+                          )}
+                        </div>
                       </button>
                     );
                   })}

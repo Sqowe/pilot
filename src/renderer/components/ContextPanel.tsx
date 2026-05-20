@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import { resolveArtifactPath } from '../utils/artifact-path';
+import { MAX_PINNED_SKILLS_PER_SESSION } from '../../shared/skill-pinning-constants';
 import {
   extractFilePathFromToolInput,
   extractFilePathFromToolOutput,
@@ -36,6 +37,8 @@ import {
   Cpu,
   Copy,
   Layers,
+  Star,
+  X,
 } from 'lucide-react';
 import type { TraceStep, MCPServerInfo } from '../types';
 import { computeContextUsage } from '../utils/context-usage';
@@ -52,11 +55,16 @@ export function ContextPanel() {
   const toggleContextPanel = useAppStore((s) => s.toggleContextPanel);
   const workingDir = useAppStore((s) => s.workingDir);
   const setGlobalNotice = useAppStore((s) => s.setGlobalNotice);
+  const skillsStorageChangedAt = useAppStore((s) => s.skillsStorageChangedAt);
   const { getMCPServers, changeWorkingDir } = useIPC();
   const [artifactsOpen, setArtifactsOpen] = useState(true);
   const [expandedConnector, setExpandedConnector] = useState<string | null>(null);
   const [mcpServers, setMcpServers] = useState<MCPServerInfo[]>([]);
   const [sessionDisabledServers, setSessionDisabledServers] = useState<Set<string>>(new Set());
+  const [sessionPinnedSkills, setSessionPinnedSkills] = useState<Set<string>>(new Set());
+  const [availableSkills, setAvailableSkills] = useState<
+    Array<{ id: string; name: string; description?: string }>
+  >([]);
   const [copiedPath, setCopiedPath] = useState(false);
   const [isChangingDir, setIsChangingDir] = useState(false);
   const [recentWorkspaceFiles, setRecentWorkspaceFiles] = useState<
@@ -270,6 +278,36 @@ export function ContextPanel() {
     loadDisabled();
   }, [activeSessionId, contextPanelCollapsed]);
 
+  // Load session-pinned skills and available skills when active session changes
+  useEffect(() => {
+    if (!activeSessionId || contextPanelCollapsed) {
+      setSessionPinnedSkills(new Set());
+      return;
+    }
+    const loadPinnedSkills = async () => {
+      try {
+        const pinned = await window.electronAPI?.skills?.getSessionPinnedSkills(activeSessionId);
+        setSessionPinnedSkills(new Set(pinned || []));
+      } catch (error) {
+        console.error('Failed to load session pinned skills:', error);
+      }
+    };
+    const loadAvailableSkills = async () => {
+      try {
+        const skills = await window.electronAPI?.skills?.getAll();
+        setAvailableSkills(
+          (skills || [])
+            .filter((s) => s.enabled)
+            .map((s) => ({ id: s.id, name: s.name, description: s.description }))
+        );
+      } catch (error) {
+        console.error('Failed to load available skills:', error);
+      }
+    };
+    loadPinnedSkills();
+    loadAvailableSkills();
+  }, [activeSessionId, contextPanelCollapsed, skillsStorageChangedAt]);
+
   const handleToggleSessionServer = async (serverId: string, disabled: boolean) => {
     if (!activeSessionId) return;
     try {
@@ -283,6 +321,22 @@ export function ContextPanel() {
       }
     } catch (error) {
       console.error('Failed to toggle session MCP server:', error);
+    }
+  };
+
+  const handleToggleSessionPinnedSkill = async (skillId: string, pinned: boolean) => {
+    if (!activeSessionId) return;
+    try {
+      const result = await window.electronAPI?.skills?.toggleSessionPin(
+        activeSessionId,
+        skillId,
+        pinned
+      );
+      if (result?.success && result.pinnedSkills) {
+        setSessionPinnedSkills(new Set(result.pinnedSkills));
+      }
+    } catch (error) {
+      console.error('Failed to toggle session pinned skill:', error);
     }
   };
 
@@ -575,6 +629,69 @@ export function ContextPanel() {
           </div>
         </div>
       </div>
+
+      {/* Pinned Skills */}
+      {(availableSkills.length > 0 || sessionPinnedSkills.size > 0) && (
+        <div className="px-4 py-2.5 border-b border-border-muted">
+          <p className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">
+            {t('context.pinnedSkills')}
+          </p>
+          {sessionPinnedSkills.size === 0 ? (
+            <p className="text-xs text-text-muted">{t('context.noSkillsPinned')}</p>
+          ) : (
+            <div className="space-y-1 mb-2">
+              {Array.from(sessionPinnedSkills).map((skillId) => {
+                const skill = availableSkills.find((s) => s.id === skillId);
+                const isAvailable = !!skill;
+                return (
+                  <div
+                    key={skillId}
+                    className={`flex items-center gap-2 px-2 py-1 rounded-md ${
+                      isAvailable
+                        ? 'bg-amber-500/5 border border-amber-500/20'
+                        : 'bg-red-500/5 border border-red-500/20'
+                    }`}
+                  >
+                    <Star
+                      className={`w-3.5 h-3.5 shrink-0 ${isAvailable ? 'text-amber-500 fill-amber-500' : 'text-red-400 fill-red-400'}`}
+                    />
+                    <span className="text-xs text-text-primary flex-1 truncate">
+                      {skill?.name || skillId}
+                      {!isAvailable && <span className="text-red-400 ml-1">(unavailable)</span>}
+                    </span>
+                    <button
+                      onClick={() => handleToggleSessionPinnedSkill(skillId, false)}
+                      className="text-text-muted hover:text-text-primary transition-colors"
+                      title={t('context.unpinSkill')}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {/* Show unpinned skills as addable */}
+          {availableSkills.filter((s) => !sessionPinnedSkills.has(s.id)).length > 0 &&
+            sessionPinnedSkills.size < MAX_PINNED_SKILLS_PER_SESSION && (
+              <div className="flex flex-wrap gap-1">
+                {availableSkills
+                  .filter((s) => !sessionPinnedSkills.has(s.id))
+                  .map((skill) => (
+                    <button
+                      key={skill.id}
+                      onClick={() => handleToggleSessionPinnedSkill(skill.id, true)}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-md text-xs text-text-muted hover:text-text-primary hover:bg-surface-hover border border-border-muted transition-colors"
+                      title={t('context.pinSkill')}
+                    >
+                      <Star className="w-3 h-3" />
+                      <span>{skill.name}</span>
+                    </button>
+                  ))}
+              </div>
+            )}
+        </div>
+      )}
 
       {/* MCP Connectors */}
       <div className="flex-1 overflow-y-auto">

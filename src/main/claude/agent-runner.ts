@@ -65,6 +65,7 @@ import { extractArtifactsFromText, buildArtifactTraceSteps } from '../utils/arti
 import { getDefaultShell } from '../utils/shell-resolver';
 import { PluginRuntimeService } from '../skills/plugin-runtime-service';
 import type { SkillsAdapter } from '../skills/skills-adapter';
+import { SAFE_SKILL_ID_REGEX } from '../../shared/skill-pinning-constants';
 import { AgentRuntimeExtensionManager } from '../extensions/agent-runtime-extension-manager';
 import { configStore } from '../config/config-store';
 import { setBasePath, applyLocalDevPath } from '../utils/path-env';
@@ -517,6 +518,8 @@ interface AgentRunnerOptions {
   }>;
   /** Get session-level disabled MCP server IDs (ephemeral, in-memory) */
   getSessionDisabledMcpServers?: (sessionId: string) => string[];
+  /** Get session-level pinned skill IDs (ephemeral, in-memory) */
+  getSessionPinnedSkills?: (sessionId: string) => string[];
 }
 
 interface CachedPiSession {
@@ -565,6 +568,7 @@ export class ClaudeAgentRunner {
   private piSessions: Map<string, CachedPiSession> = new Map();
   private static readonly MAX_CACHED_SESSIONS = 50;
   private _getSessionDisabledMcpServers?: (sessionId: string) => string[];
+  private _getSessionPinnedSkills?: (sessionId: string) => string[];
 
   // Per-instance caches — invalidated when the underlying config changes.
   private _mcpServersCache: { fingerprint: string; servers: Record<string, unknown> } | null = null;
@@ -608,6 +612,31 @@ export class ClaudeAgentRunner {
   /** Get session-level disabled MCP server IDs via the injected callback. */
   private getSessionDisabledMcpServers(sessionId: string): string[] | null {
     return this._getSessionDisabledMcpServers?.(sessionId) ?? null;
+  }
+
+  /** Get session-level pinned skill IDs via the injected callback. */
+  private getSessionPinnedSkills(sessionId: string): string[] {
+    return this._getSessionPinnedSkills?.(sessionId) ?? [];
+  }
+
+  /**
+   * Build the pinned skills directive prompt for injection into the system prompt.
+   * Returns empty string if no skills are pinned.
+   */
+  private buildPinnedSkillsDirective(sessionId: string): string {
+    const pinnedSkillIds = this.getSessionPinnedSkills(sessionId);
+    if (pinnedSkillIds.length === 0) return '';
+
+    // Validate and sanitize skill IDs before prompt interpolation (defense-in-depth).
+    const sanitizedIds = pinnedSkillIds.filter((id) => SAFE_SKILL_ID_REGEX.test(id));
+    if (sanitizedIds.length === 0) return '';
+
+    const directives = sanitizedIds.map((id) => `- Use ${id} for this request`);
+
+    return `<pinned_skills>
+PRIORITIZED SKILLS — The user has explicitly requested that you use these skills/tools for this conversation. Actively use them when relevant:
+${directives.join('\n')}
+</pinned_skills>`;
   }
 
   // TODO: Credentials should be served via a secure MCP tool or IPC channel,
@@ -893,6 +922,7 @@ RULES:
     this.requestSudoPassword = options.requestSudoPassword;
     this.requestPermission = options.requestPermission;
     this._getSessionDisabledMcpServers = options.getSessionDisabledMcpServers;
+    this._getSessionPinnedSkills = options.getSessionPinnedSkills;
     this.pathResolver = pathResolver;
     this.mcpManager = mcpManager;
     this._pluginRuntimeService = pluginRuntimeService;
@@ -2297,6 +2327,7 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
         workspaceInfoPrompt,
         this.getBundledPathHints(),
         this.mcpManager ? buildMcpServerDirectory(this.mcpManager) : '',
+        this.buildPinnedSkillsDirective(session.id),
       ]
         .filter((section): section is string => Boolean(section && section.trim()))
         .join('\n\n');

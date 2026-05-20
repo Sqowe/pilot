@@ -52,7 +52,11 @@
     "mcpTokensSaved": "{{count}} disabled",
     "mcpServersForChat": "MCP Servers for this chat",
     "mcpAllOn": "All on",
-    "mcpAllOff": "All off"
+    "mcpAllOff": "All off",
+    "skillsPinned": "{{count}} skills pinned",
+    "skillsForChat": "Prioritize skills for this chat",
+    "skillsNone": "No skills available",
+    "skillsClearAll": "Clear all"
   },
   "settings": {
     "title": "Settings",
@@ -716,6 +720,11 @@
     "workingDirectory": "Working Directory",
     "toolsUsed": "Tools Used",
     "mcpConnectors": "MCP Connectors",
+    "pinnedSkills": "Pinned Skills",
+    "pinSkill": "Pin skill",
+    "unpinSkill": "Unpin",
+    "noSkillsPinned": "No skills pinned",
+    "addPinnedSkill": "+ Pin skill...",
     "copied": "Copied!",
     "noToolsUsedYet": "No tools used yet",
     "toolsUsedLabel": "Tools used:",

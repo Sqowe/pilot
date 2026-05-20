@@ -452,7 +452,8 @@ export function useIPC() {
       title: string,
       promptOrContent: string | ContentBlock[],
       cwd?: string,
-      initialDisabledMcpServers?: string[]
+      initialDisabledMcpServers?: string[],
+      initialPinnedSkills?: string[]
     ) => {
       setLoading(true);
       console.log('[useIPC] Starting session:', title);
@@ -534,6 +535,7 @@ export function useIPC() {
             cwd,
             content, // Send full content blocks including images
             initialDisabledMcpServers,
+            initialPinnedSkills,
           },
         });
         if (session) {
@@ -827,7 +829,7 @@ export function useIPC() {
         payload: { path, sessionId },
       });
     },
-    [invoke, isElectron]
+    [invoke]
   );
 
   const getMCPServers = useCallback(async () => {

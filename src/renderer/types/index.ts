@@ -530,6 +530,7 @@ export type ClientEvent =
         content?: ContentBlock[];
         memoryEnabled?: boolean;
         initialDisabledMcpServers?: string[];
+        initialPinnedSkills?: string[];
       };
     }
   | {
