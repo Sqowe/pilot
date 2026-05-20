@@ -1727,6 +1727,13 @@ export class ConfigStore {
           : resolveOpenAICredentials(projectedConfig);
       if (resolvedOpenAI?.apiKey) {
         process.env.OPENAI_API_KEY = resolvedOpenAI.apiKey;
+        // Also set ANTHROPIC_API_KEY for custom providers routing Anthropic models
+        // through an OpenAI-compatible gateway. The pi-ai SDK may look up the key
+        // by the model's registry provider ("anthropic") rather than the configured
+        // protocol ("openai"), causing auth failures on follow-up requests.
+        if (projectedConfig.provider === 'custom') {
+          process.env.ANTHROPIC_API_KEY = resolvedOpenAI.apiKey;
+        }
       }
       const openAIBaseUrl = resolvedOpenAI?.baseUrl || projectedConfig.baseUrl;
       if (openAIBaseUrl) {
