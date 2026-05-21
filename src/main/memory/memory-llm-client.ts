@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { completeSimple, type UserMessage as PiUserMessage } from '@earendil-works/pi-ai';
 import type { AppConfig, CustomProtocolType, ProviderType } from '../config/config-store';
 import { configStore } from '../config/config-store';
 import {
@@ -6,8 +7,16 @@ import {
   resolveOllamaCredentials,
   resolveOpenAICredentials,
 } from '../config/auth-utils';
-import { runPiAiOneShot } from '../claude/claude-sdk-one-shot';
-import { logWarn } from '../utils/logger';
+import {
+  buildSyntheticPiModel,
+  resolvePiRegistryModel,
+  resolvePiModelString,
+  resolvePiRouteProtocol,
+  resolveSyntheticPiModelFallback,
+  applyPiModelRuntimeOverrides,
+  inferPiApi,
+} from '../claude/pi-model-resolution';
+import { log, logWarn } from '../utils/logger';
 
 export interface MemoryCompletionRequest {
   systemPrompt: string;
@@ -105,12 +114,81 @@ export class MemoryLLMClient implements MemoryLLMClientLike {
         }, llmConfig.timeoutMs);
         timeout.unref?.();
       });
-      const result = await Promise.race([
-        runPiAiOneShot(
-          request.userPrompt,
-          request.systemPrompt,
-          buildAppConfig(appConfig, llmConfig),
+
+      // Resolve the model for the memory system's own config — without mutating
+      // the shared authStorage. This avoids credential contamination between the
+      // memory system and the main agent when they use different providers/keys.
+      const memoryAppConfig = buildAppConfig(appConfig, llmConfig);
+      const provider = resolvePiRouteProtocol(
+        memoryAppConfig.provider,
+        memoryAppConfig.customProtocol
+      );
+      const modelString = resolvePiModelString({
+        model: memoryAppConfig.model,
+        provider: memoryAppConfig.provider,
+        customProtocol: memoryAppConfig.customProtocol,
+      });
+      const effectiveBaseUrl = memoryAppConfig.baseUrl?.trim()
+        ? normalizeOpenAICompatibleBaseUrl(memoryAppConfig.baseUrl)
+        : undefined;
+
+      let piModel = resolvePiRegistryModel(modelString, {
+        configProvider: provider,
+        customBaseUrl: effectiveBaseUrl,
+        rawProvider: memoryAppConfig.provider,
+        customProtocol: memoryAppConfig.customProtocol,
+      });
+
+      if (!piModel) {
+        const effectiveProtocol = provider as CustomProtocolType;
+        const api = effectiveBaseUrl ? inferPiApi(effectiveProtocol) : undefined;
+        const synthetic = resolveSyntheticPiModelFallback({
+          rawModel: memoryAppConfig.model,
+          resolvedModelString: modelString,
+          rawProvider: memoryAppConfig.provider,
+          routeProtocol: effectiveProtocol,
+          baseUrl: effectiveBaseUrl,
+        });
+        piModel = buildSyntheticPiModel(
+          synthetic.modelId,
+          synthetic.provider,
+          effectiveProtocol,
+          effectiveBaseUrl || '',
+          api
+        );
+        piModel = applyPiModelRuntimeOverrides(piModel, {
+          configProvider: provider,
+          customBaseUrl: effectiveBaseUrl,
+          rawProvider: memoryAppConfig.provider,
+          customProtocol: memoryAppConfig.customProtocol,
+        });
+      }
+
+      // Call completeSimple directly with explicit apiKey — no shared state mutation
+      const apiKey = memoryAppConfig.apiKey?.trim() || '';
+      const userMsg: PiUserMessage = {
+        role: 'user',
+        content: request.userPrompt,
+        timestamp: Date.now(),
+      };
+
+      log(
+        '[MemoryLLM] Calling completeSimple:',
+        piModel.provider,
+        piModel.id,
+        'baseUrl:',
+        piModel.baseUrl
+      );
+
+      const response = await Promise.race([
+        completeSimple(
+          piModel,
           {
+            systemPrompt: request.systemPrompt,
+            messages: [userMsg],
+          },
+          {
+            apiKey: apiKey || undefined,
             temperature: request.temperature ?? 0,
             maxTokens: request.maxTokens ?? 16_000,
             signal: controller.signal,
@@ -118,7 +196,18 @@ export class MemoryLLMClient implements MemoryLLMClientLike {
         ),
         timeoutPromise,
       ]);
-      return { text: result.text };
+
+      if (response.stopReason === 'error' || response.stopReason === 'aborted') {
+        throw new Error(response.errorMessage || 'Memory LLM provider returned an error');
+      }
+
+      const text = response.content
+        .filter((b) => b.type === 'text')
+        .map((b) => (b as { text: string }).text)
+        .join('')
+        .trim();
+
+      return { text };
     } finally {
       if (timeout) {
         clearTimeout(timeout);
