@@ -15,7 +15,7 @@ export const searchLegislationSchema = z.object({
     .number()
     .int()
     .min(1827)
-    .max(2030)
+    .max(new Date().getFullYear() + 2)
     .optional()
     .describe('Year of the legislation (e.g., 2017)'),
   number: z
@@ -28,8 +28,10 @@ export const searchLegislationSchema = z.object({
   onlyInForce: z
     .boolean()
     .optional()
-    .default(true)
-    .describe('Only return currently in-force legislation (default: true)'),
+    .default(false)
+    .describe(
+      'Filter to only in-force legislation (best-effort: excludes explicitly repealed laws, but cannot guarantee status for all results). Default: false.'
+    ),
   titleOnly: z
     .boolean()
     .optional()
@@ -40,13 +42,17 @@ export const searchLegislationSchema = z.object({
 export type SearchLegislationInput = z.infer<typeof searchLegislationSchema>;
 
 export async function handleSearchLegislation(input: SearchLegislationInput) {
+  // Apply runtime defaults for fields that may not be set when using schema.shape
+  const onlyInForce = input.onlyInForce ?? false;
+  const titleOnly = input.titleOnly ?? false;
+
   const results = await searchLegislation({
     keyword: input.keyword,
     year: input.year,
     number: input.number,
     type: input.type,
-    onlyInForce: input.onlyInForce,
-    titleOnly: input.titleOnly,
+    onlyInForce,
+    titleOnly,
   });
 
   if (results.length === 0) {

@@ -9,7 +9,13 @@ import { getLawBySlug, getLawByUrl, getLawByReference, getLawSection } from '../
 // --- get_law_text ---
 
 export const getLawTextSchema = z.object({
-  year: z.number().int().min(1827).max(2030).optional().describe('Year of the legislation'),
+  year: z
+    .number()
+    .int()
+    .min(1827)
+    .max(new Date().getFullYear() + 2)
+    .optional()
+    .describe('Year of the legislation'),
   number: z.number().int().positive().optional().describe('Number of the legislation (Arabic)'),
   type: z.string().optional().describe("Type (e.g., 'törvény', 'Korm. rendelet')"),
   url: z.string().url().optional().describe('Direct njt.hu URL of the legislation'),
@@ -25,10 +31,31 @@ export const getLawTextSchema = z.object({
 
 export type GetLawTextInput = z.infer<typeof getLawTextSchema>;
 
+const ALLOWED_HOSTS = ['njt.jog.gov.hu', 'www.njt.jog.gov.hu'];
+
 export async function handleGetLawText(input: GetLawTextInput) {
   let law = null;
 
   if (input.url) {
+    // Validate URL to prevent SSRF — only allow njt.hu domains
+    let parsed: URL;
+    try {
+      parsed = new URL(input.url);
+    } catch {
+      return {
+        content: [{ type: 'text' as const, text: 'Invalid URL format.' }],
+      };
+    }
+    if (parsed.protocol !== 'https:' || !ALLOWED_HOSTS.includes(parsed.hostname)) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `URL must be an https:// link to njt.jog.gov.hu. Received host: "${parsed.hostname}".`,
+          },
+        ],
+      };
+    }
     law = await getLawByUrl(input.url);
   } else if (input.slug) {
     law = await getLawBySlug(input.slug);

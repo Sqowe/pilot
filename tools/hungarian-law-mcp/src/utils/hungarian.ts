@@ -18,7 +18,20 @@ const ROMAN_VALUES: [string, number][] = [
   ['I', 1],
 ];
 
-export function romanToArabic(roman: string): number {
+/** Strict regex for valid Roman numerals (1-3999). */
+const VALID_ROMAN_REGEX = /^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/i;
+
+/**
+ * Validate whether a string is a valid Roman numeral.
+ */
+export function isValidRoman(roman: string): boolean {
+  if (!roman || roman.length === 0) return false;
+  return VALID_ROMAN_REGEX.test(roman.toUpperCase());
+}
+
+export function romanToArabic(roman: string): number | null {
+  if (!isValidRoman(roman)) return null;
+
   let result = 0;
   let remaining = roman.toUpperCase();
 
@@ -28,6 +41,9 @@ export function romanToArabic(roman: string): number {
       remaining = remaining.slice(numeral.length);
     }
   }
+
+  // Final safety: if there are leftover characters, it's invalid
+  if (remaining.length > 0) return null;
 
   return result;
 }
@@ -88,6 +104,7 @@ export function parseLawReference(ref: string): LawReference | null {
     const year = parseInt(actMatch[1], 10);
     const romanNumber = actMatch[2];
     const number = romanToArabic(romanNumber);
+    if (number === null) return null; // Invalid Roman numeral
     const type = actMatch[3].trim();
     return { year, number, romanNumber, type };
   }

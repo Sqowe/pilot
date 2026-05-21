@@ -9,6 +9,28 @@ import { Cache } from '../utils/cache.js';
 
 const KOZLONY_BASE = 'https://www.magyarkozlony.hu';
 
+/** Hungarian month names for date parsing. */
+const HUNGARIAN_MONTHS = [
+  'január',
+  'február',
+  'március',
+  'április',
+  'május',
+  'június',
+  'július',
+  'augusztus',
+  'szeptember',
+  'október',
+  'november',
+  'december',
+] as const;
+
+/** Regex that matches only real Hungarian dates like "2026. május 19." */
+const HUNGARIAN_DATE_REGEX = new RegExp(
+  `(\\d{4})\\.\\s*(${HUNGARIAN_MONTHS.join('|')})\\s*(\\d{1,2})\\.`,
+  'u'
+);
+
 // Cache gazette listings for 15 minutes
 const listingCache = new Cache<GazetteIssue[]>(15);
 
@@ -18,7 +40,7 @@ export interface GazetteIssue {
   viewUrl?: string;
   downloadUrl?: string;
   type: 'magyar_kozlony' | 'hivatalos_ertesito' | 'other';
-  year: number;
+  year?: number;
   issueNumber?: number;
 }
 
@@ -42,27 +64,59 @@ export async function listGazetteIssues(params: {
     queryParams.push(`page=${params.page}`);
   }
 
-  // The site uses form-based filtering, but we can try URL params
   if (queryParams.length > 0) {
     url += '?' + queryParams.join('&');
   }
 
-  try {
+  const html = await fetchHtml(url);
+  const issues = parseGazetteList(html, params.year, params.month);
+  listingCache.set(cacheKey, issues);
+  return issues;
+}
+
+/**
+ * Fetch a page of gazette issues (unfiltered) and return both raw and filtered results.
+ * Single fetch per page — avoids double network traffic.
+ */
+async function fetchGazettePage(
+  page: number,
+  year?: number,
+  type?: GazetteIssue['type']
+): Promise<{ raw: GazetteIssue[]; filtered: GazetteIssue[] }> {
+  const rawCacheKey = `gazette-raw-page-${page}`;
+  let raw = listingCache.get(rawCacheKey);
+
+  if (!raw) {
+    let url = KOZLONY_BASE;
+    if (page > 1) {
+      url += `?page=${page}`;
+    }
     const html = await fetchHtml(url);
-    const issues = parseGazetteList(html, params.year, params.month);
-    listingCache.set(cacheKey, issues);
-    return issues;
-  } catch (error) {
-    return [];
+    raw = parseGazetteList(html); // no filters
+    listingCache.set(rawCacheKey, raw);
   }
+
+  // Apply year + type filter in-memory from the raw results
+  const filtered = raw.filter((i) => {
+    if (year && i.year !== year) return false;
+    if (type && i.type !== type) return false;
+    return true;
+  });
+
+  return { raw, filtered };
 }
 
 /**
  * Parse the gazette listing page.
  */
-function parseGazetteList(html: string, filterYear?: number, filterMonth?: number): GazetteIssue[] {
+export function parseGazetteList(
+  html: string,
+  filterYear?: number,
+  filterMonth?: number
+): GazetteIssue[] {
   const $ = cheerio.load(html);
   const issues: GazetteIssue[] = [];
+  const issueMap = new Map<string, number>(); // dedupKey → index in issues array
 
   // Find gazette issue links
   $("a[href*='/dokumentumok/']").each((_, el) => {
@@ -84,11 +138,11 @@ function parseGazetteList(html: string, filterYear?: number, filterMonth?: numbe
     // Pattern: "Magyar Közlöny 2026. évi 55. szám"
     const yearMatch = title.match(/(\d{4})\.\s*évi/);
     const numberMatch = title.match(/(\d+)\.\s*szám/);
-    const year = yearMatch ? parseInt(yearMatch[1], 10) : new Date().getFullYear();
+    const year = yearMatch ? parseInt(yearMatch[1], 10) : undefined;
     const issueNumber = numberMatch ? parseInt(numberMatch[1], 10) : undefined;
 
-    // Apply filters
-    if (filterYear && year !== filterYear) return;
+    // Apply year filter — skip entries with unknown year when filter is set
+    if (filterYear && (!year || year !== filterYear)) return;
 
     // Determine if this is a view or download link
     const isDownload = href.includes('/letoltes');
@@ -96,21 +150,56 @@ function parseGazetteList(html: string, filterYear?: number, filterMonth?: numbe
 
     const fullUrl = href.startsWith('http') ? href : `${KOZLONY_BASE}${href}`;
 
-    // Find the date - usually in a sibling or parent element
-    const parentText = $el.parent().text();
-    const dateMatch = parentText.match(/(\d{4})\.\s*\w+\s*(\d{1,2})\./);
-    const date = dateMatch ? `${dateMatch[0]}` : '';
+    // Find the date - look for a sibling span/time element first, then fall back to parent text
+    // Use strict regex with explicit Hungarian month names to avoid matching "évi" from titles
+    let date = '';
+    const $siblings = $el.siblings('span, time');
+    if ($siblings.length > 0) {
+      $siblings.each((_, sib) => {
+        if (date) return; // already found
+        const sibText = $(sib).text().trim();
+        const sibMatch = sibText.match(HUNGARIAN_DATE_REGEX);
+        if (sibMatch) {
+          date = sibMatch[0];
+        }
+      });
+    }
+    if (!date) {
+      // Fallback: search parent text but with strict month-name regex
+      const parentText = $el.parent().text();
+      const dateMatch = parentText.match(HUNGARIAN_DATE_REGEX);
+      if (dateMatch) {
+        date = dateMatch[0];
+      }
+    }
 
-    // Avoid duplicates - only add if we haven't seen this title
-    const existing = issues.find((i) => i.title === title);
-    if (existing) {
+    // Avoid duplicates — use canonical fields (type + year + issueNumber) when available,
+    // fall back to normalized title when identifiers are missing.
+    const dedupKey =
+      year && issueNumber
+        ? `${type}|${year}|${issueNumber}`
+        : `title:${title.replace(/\s+/g, ' ').trim()}|${type}`;
+    const existingIdx = issueMap.get(dedupKey);
+    if (existingIdx !== undefined) {
+      const existing = issues[existingIdx];
       if (isDownload && !existing.downloadUrl) {
         existing.downloadUrl = fullUrl;
       }
       if (isView && !existing.viewUrl) {
         existing.viewUrl = fullUrl;
       }
+      // Backfill missing metadata from later duplicate entries
+      if (!existing.date && date) {
+        existing.date = date;
+      }
+      if (!existing.year && year) {
+        existing.year = year;
+      }
+      if (!existing.issueNumber && issueNumber) {
+        existing.issueNumber = issueNumber;
+      }
     } else {
+      issueMap.set(dedupKey, issues.length);
       issues.push({
         title,
         date,
@@ -123,8 +212,12 @@ function parseGazetteList(html: string, filterYear?: number, filterMonth?: numbe
     }
   });
 
-  // Apply month filter on dates
+  // Apply month filter on dates — exclude entries with unknown dates
   if (filterMonth) {
+    // Fail fast for invalid month values
+    if (filterMonth < 1 || filterMonth > 12 || !Number.isInteger(filterMonth)) {
+      return [];
+    }
     const monthNames = [
       'január',
       'február',
@@ -140,7 +233,7 @@ function parseGazetteList(html: string, filterYear?: number, filterMonth?: numbe
       'december',
     ];
     const monthName = monthNames[filterMonth - 1];
-    return issues.filter((i) => i.date.includes(monthName) || !i.date);
+    return issues.filter((i) => i.date && i.date.includes(monthName));
   }
 
   return issues;
@@ -148,13 +241,24 @@ function parseGazetteList(html: string, filterYear?: number, filterMonth?: numbe
 
 /**
  * Get details about a specific gazette issue by year and number.
+ * Iterates through pages until the issue is found or no more raw results exist.
+ * Uses single fetch per page (no double network traffic).
  */
 export async function getGazetteIssue(
   year: number,
-  issueNumber: number
+  issueNumber: number,
+  type: GazetteIssue['type'] = 'magyar_kozlony',
+  maxPages: number = 10
 ): Promise<GazetteIssue | null> {
-  const issues = await listGazetteIssues({ year });
-  return issues.find((i) => i.year === year && i.issueNumber === issueNumber) ?? null;
+  for (let page = 1; page <= maxPages; page++) {
+    const { raw, filtered } = await fetchGazettePage(page, year, type);
+    const found = filtered.find((i) => i.issueNumber === issueNumber);
+    if (found) return found;
+
+    // Terminate when raw page has no entries (end of available pages)
+    if (raw.length === 0) break;
+  }
+  return null;
 }
 
 /**

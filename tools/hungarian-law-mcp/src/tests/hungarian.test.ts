@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   romanToArabic,
+  isValidRoman,
   arabicToRoman,
   parseLawReference,
   buildNjtSlug,
@@ -39,6 +40,33 @@ describe('romanToArabic', () => {
   it('is case-insensitive', () => {
     assert.equal(romanToArabic('lxxviii'), 78);
     assert.equal(romanToArabic('Ci'), 101);
+  });
+
+  it('returns null for invalid Roman numerals', () => {
+    assert.equal(romanToArabic(''), null);
+    assert.equal(romanToArabic('ABC'), null);
+    assert.equal(romanToArabic('IIII'), null); // invalid: should be IV
+    assert.equal(romanToArabic('VV'), null); // invalid: V cannot repeat
+    assert.equal(romanToArabic('hello'), null);
+    assert.equal(romanToArabic('123'), null);
+    assert.equal(romanToArabic('XXXX'), null); // invalid: max 3 X's
+  });
+});
+
+describe('isValidRoman', () => {
+  it('validates correct Roman numerals', () => {
+    assert.equal(isValidRoman('I'), true);
+    assert.equal(isValidRoman('MCMXCIX'), true); // 1999
+    assert.equal(isValidRoman('MMMCMXCIX'), true); // 3999
+    assert.equal(isValidRoman('LXXVIII'), true);
+  });
+
+  it('rejects invalid Roman numerals', () => {
+    assert.equal(isValidRoman(''), false);
+    assert.equal(isValidRoman('IIII'), false);
+    assert.equal(isValidRoman('VV'), false);
+    assert.equal(isValidRoman('ABC'), false);
+    assert.equal(isValidRoman('MMMM'), false); // > 3999
   });
 });
 
@@ -80,6 +108,12 @@ describe('parseLawReference', () => {
   it('returns null for unparseable input', () => {
     assert.equal(parseLawReference('not a law reference'), null);
     assert.equal(parseLawReference(''), null);
+  });
+
+  it('returns null for invalid Roman numerals in Act references', () => {
+    // "IIII" is not a valid Roman numeral
+    assert.equal(parseLawReference('2017. évi IIII. törvény'), null);
+    assert.equal(parseLawReference('2017. évi ABC. törvény'), null);
   });
 });
 
