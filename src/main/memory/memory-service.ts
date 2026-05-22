@@ -529,6 +529,27 @@ export class MemoryService {
     return { success: true };
   }
 
+  updateCoreEntry(combinedKey: string, newValue: string): { success: boolean } {
+    const trimmed = newValue.trim();
+    if (!trimmed) return { success: false };
+    // Verify the entry exists — true update, not upsert
+    const store = this.getCoreStore();
+    const existing = store.getRaw();
+    if (!Object.prototype.hasOwnProperty.call(existing, combinedKey)) {
+      return { success: false };
+    }
+    const parsed = parseCoreCombinedKey(combinedKey);
+    store.applyActions([
+      {
+        op: 'upsert',
+        category: parsed.category,
+        key: parsed.key,
+        value: trimmed,
+      },
+    ]);
+    return { success: true };
+  }
+
   deleteSession(sessionId: string): Promise<void> {
     this.deletedSessionIds.add(sessionId);
     this.retrievalMetricsBySession.delete(sessionId);

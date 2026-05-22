@@ -486,6 +486,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('memory.clearCoreMemory'),
     deleteCoreEntry: (combinedKey: string): Promise<{ success: boolean }> =>
       ipcRenderer.invoke('memory.deleteCoreEntry', combinedKey),
+    updateCoreEntry: (combinedKey: string, newValue: string): Promise<{ success: boolean }> =>
+      ipcRenderer.invoke('memory.updateCoreEntry', combinedKey, newValue),
     rebuildAll: (): Promise<{ success: boolean; workspaceCount: number; sessionCount: number }> =>
       ipcRenderer.invoke('memory.rebuildAll'),
     listFiles: (): Promise<MemoryDebugFileInfo[]> => ipcRenderer.invoke('memory.listFiles'),
@@ -756,6 +758,7 @@ declare global {
         clearWorkspace: (cwd: string) => Promise<{ success: boolean; workspaceKey: string }>;
         clearCoreMemory: () => Promise<{ success: boolean }>;
         deleteCoreEntry: (combinedKey: string) => Promise<{ success: boolean }>;
+        updateCoreEntry: (combinedKey: string, newValue: string) => Promise<{ success: boolean }>;
         rebuildAll: () => Promise<{
           success: boolean;
           workspaceCount: number;

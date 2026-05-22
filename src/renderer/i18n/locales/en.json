@@ -774,6 +774,7 @@
     "noWorkspaceData": "No sessions recorded for this workspace yet.",
     "total": "Total",
     "workspaces": "Workspaces",
+    "viewAll": "View all →",
     "lastRetrieval": "Last Retrieval",
     "coreMatched": "Core entries",
     "chunksRetrieved": "Chunks retrieved",
@@ -783,6 +784,7 @@
     "sources": "Sources",
     "noRetrievalYet": "Send a message to see memory activity.",
     "deleteEntry": "Delete memory entry",
+    "clickToEdit": "Click to edit",
     "expandSource": "Click to expand",
     "collapse": "Click to collapse"
   },

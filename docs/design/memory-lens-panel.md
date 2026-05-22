@@ -341,12 +341,12 @@ interface MemoryPanelState {
 3. Emit `memory.retrievalUpdate` event to renderer
 4. Update "Last Retrieval" section in real-time after each turn
 
-### Phase 3: Interactive Features ✅ DONE (2026-05-22)
+### Phase 3: Interactive Features (2026-05-22)
 
-1. [×] delete buttons for core entries
-2. Inline editing of core memory values
-3. "Full Memory View" modal with search/filter
-4. Click-to-expand on retrieval sources (show full chunk text)
+1. [×] delete buttons for core entries ✅
+2. Inline editing of core memory values ✅
+3. "Full Memory View" modal with search/filter — deferred (added "View all →" link to Settings → Memory as interim)
+4. Click-to-expand on retrieval sources (show full chunk text) ✅
 
 ### Phase 4: Polish
 

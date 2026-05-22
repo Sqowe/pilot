@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronUp, Brain, FolderOpen, Database, Zap, X } from 'lucide-react';
 import { useAppStore } from '../store';
@@ -13,10 +13,18 @@ interface MemoryLensSectionProps {
 export function MemoryLensSection({ cwd, collapsed, sessionId }: MemoryLensSectionProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [editError, setEditError] = useState(false);
+  const isSaving = useRef(false);
+  const isCancelling = useRef(false);
   const [panelState, setPanelState] = useState<MemoryPanelState | null>(null);
   const [error, setError] = useState(false);
   const [expandedSource, setExpandedSource] = useState<number | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  const setShowSettings = useAppStore((s) => s.setShowSettings);
+  const setSettingsTab = useAppStore((s) => s.setSettingsTab);
 
   // Watch for message count changes to trigger a refresh after each turn
   const sessionStates = useAppStore((s) => s.sessionStates);
@@ -71,6 +79,47 @@ export function MemoryLensSection({ cwd, collapsed, sessionId }: MemoryLensSecti
     } catch {
       // Silently fail — panel will show stale data until next refresh
     }
+  };
+
+  const handleStartEdit = (combinedKey: string, currentValue: string) => {
+    setEditingKey(combinedKey);
+    setEditValue(currentValue);
+    setEditError(false);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingKey || isSaving.current || isCancelling.current) return;
+    const trimmed = editValue.trim();
+    if (!trimmed) {
+      setEditingKey(null);
+      setEditError(false);
+      return;
+    }
+    isSaving.current = true;
+    try {
+      const result = await window.electronAPI.memory.updateCoreEntry(editingKey, trimmed);
+      if (result.success) {
+        setEditingKey(null);
+        setEditError(false);
+        setRefreshKey((k) => k + 1);
+      } else {
+        setEditError(true);
+      }
+    } catch {
+      setEditError(true);
+    } finally {
+      isSaving.current = false;
+    }
+  };
+
+  const handleCancelEdit = () => {
+    isCancelling.current = true;
+    setEditingKey(null);
+    setEditError(false);
+    // Reset flag after React processes the state update
+    setTimeout(() => {
+      isCancelling.current = false;
+    }, 0);
   };
 
   if (collapsed || panelState === null) return null;
@@ -168,17 +217,48 @@ export function MemoryLensSection({ cwd, collapsed, sessionId }: MemoryLensSecti
                               <div
                                 key={entry.combinedKey}
                                 className="group flex items-center gap-1 text-xs text-text-primary pl-2 border-l-2 border-border-muted"
-                                title={entry.value}
                               >
-                                <span className="truncate flex-1">{entry.value}</span>
-                                <button
-                                  onClick={() => handleDeleteEntry(entry.combinedKey)}
-                                  className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-red-500 transition-all shrink-0"
-                                  aria-label={`${t('memoryLens.deleteEntry')}: ${entry.value}`}
-                                  title={t('memoryLens.deleteEntry')}
-                                >
-                                  <X className="w-3 h-3" />
-                                </button>
+                                {editingKey === entry.combinedKey ? (
+                                  <input
+                                    type="text"
+                                    value={editValue}
+                                    onChange={(e) => {
+                                      setEditValue(e.target.value);
+                                      setEditError(false);
+                                    }}
+                                    onBlur={() => {
+                                      if (!isSaving.current) handleSaveEdit();
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.currentTarget.blur();
+                                      }
+                                      if (e.key === 'Escape') handleCancelEdit();
+                                    }}
+                                    autoFocus
+                                    className={`flex-1 text-xs bg-surface-muted border rounded px-1 py-0.5 outline-none focus:border-accent ${
+                                      editError ? 'border-red-400' : 'border-border-muted'
+                                    }`}
+                                  />
+                                ) : (
+                                  <span
+                                    className="truncate flex-1 cursor-pointer hover:text-accent transition-colors"
+                                    title={`${entry.value}\n\n${t('memoryLens.clickToEdit')}`}
+                                    onClick={() => handleStartEdit(entry.combinedKey, entry.value)}
+                                  >
+                                    {entry.value}
+                                  </span>
+                                )}
+                                {editingKey !== entry.combinedKey && (
+                                  <button
+                                    onClick={() => handleDeleteEntry(entry.combinedKey)}
+                                    className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-red-500 transition-all shrink-0"
+                                    aria-label={`${t('memoryLens.deleteEntry')}: ${entry.value}`}
+                                    title={t('memoryLens.deleteEntry')}
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -320,14 +400,23 @@ export function MemoryLensSection({ cwd, collapsed, sessionId }: MemoryLensSecti
                 </p>
               )}
 
-              {/* Total Stats (compact) */}
-              <div className="flex items-center gap-3 text-[10px] text-text-muted pt-1 border-t border-border-muted">
+              {/* Total Stats + View All */}
+              <div className="flex items-center justify-between text-[10px] text-text-muted pt-1 border-t border-border-muted">
                 <span>
                   {t('memoryLens.total')}: {totalStats.sessionCount}{' '}
                   {t('memoryLens.sessions').toLowerCase()} · {totalStats.chunkCount}{' '}
                   {t('memoryLens.chunks').toLowerCase()} · {totalStats.workspaceCount}{' '}
                   {t('memoryLens.workspaces').toLowerCase()}
                 </span>
+                <button
+                  onClick={() => {
+                    setSettingsTab('memory');
+                    setShowSettings(true);
+                  }}
+                  className="text-[10px] text-accent hover:underline"
+                >
+                  {t('memoryLens.viewAll')}
+                </button>
               </div>
             </>
           )}

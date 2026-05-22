@@ -3161,7 +3161,41 @@ ipcMain.handle('memory.deleteCoreEntry', (_event, combinedKey: string) => {
   if (!memoryService) {
     throw new Error('Memory service not initialized');
   }
-  return memoryService.deleteCoreEntry(combinedKey);
+  if (typeof combinedKey !== 'string' || !combinedKey.trim()) {
+    return { success: false };
+  }
+  if (combinedKey.length > 200 || /[/\\<>]/.test(combinedKey)) {
+    return { success: false };
+  }
+  try {
+    return memoryService.deleteCoreEntry(combinedKey.trim());
+  } catch {
+    return { success: false };
+  }
+});
+ipcMain.handle('memory.updateCoreEntry', (_event, combinedKey: string, newValue: string) => {
+  if (!memoryService) {
+    throw new Error('Memory service not initialized');
+  }
+  if (typeof combinedKey !== 'string' || !combinedKey.trim()) {
+    return { success: false };
+  }
+  if (typeof newValue !== 'string' || !newValue.trim()) {
+    return { success: false };
+  }
+  // Limit value length to prevent abuse
+  if (newValue.length > 1000) {
+    return { success: false };
+  }
+  // Validate combinedKey format (category.key or plain key)
+  if (combinedKey.length > 200 || /[/\\<>]/.test(combinedKey)) {
+    return { success: false };
+  }
+  try {
+    return memoryService.updateCoreEntry(combinedKey.trim(), newValue.trim());
+  } catch {
+    return { success: false };
+  }
 });
 
 ipcMain.handle('memory.rebuildAll', async () => {
