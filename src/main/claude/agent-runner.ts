@@ -55,6 +55,7 @@ import {
 import { ReadLoopGuard, extractReadFilePath } from './read-loop-guard';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import * as os from 'os';
 import { execFileSync, spawn } from 'child_process';
 import { app } from 'electron';
@@ -2059,17 +2060,21 @@ RULES:
           fs.mkdirSync(appSkillsDir, { recursive: true });
         }
 
-        // Copy built-in skills to app Claude skills directory if they don't exist
+        // Sync built-in skills to app Claude skills directory.
+        // Uses content-hash versioning: each built-in skill's SKILL.md is hashed
+        // and compared against a `.builtin-hash` stamp in the runtime copy. If the
+        // hash differs (or no stamp exists), the runtime copy is replaced with the
+        // bundled version. User-modified skills (marked with `.user-modified`) are
+        // preserved and never overwritten.
         const builtinSkillsPath = this.getBuiltinSkillsPath();
         if (builtinSkillsPath && fs.existsSync(builtinSkillsPath)) {
-          // Symlinks into .asar archives don't work at the OS level (ENOTDIR),
-          // so always copy when the source is inside an asar archive.
-          // Use regex to match .asar/ but NOT .asar.unpacked/ (which is a real directory).
           const sourceInsideAsar = /\.asar[/\\]/.test(builtinSkillsPath);
           const builtinSkills = fs.readdirSync(builtinSkillsPath);
           for (const skillName of builtinSkills) {
             const builtinSkillPath = path.join(builtinSkillsPath, skillName);
             const userSkillPath = path.join(appSkillsDir, skillName);
+
+            if (!fs.statSync(builtinSkillPath).isDirectory()) continue;
 
             // Clean up broken symlinks pointing into .asar from previous versions
             try {
@@ -2082,27 +2087,89 @@ RULES:
                 }
               }
             } catch {
-              // Path doesn't exist — fine, we'll create it below
+              // Path doesn't exist — fine, we'll handle it below
             }
 
-            // Only set up if it's a directory and doesn't exist in app directory
-            if (fs.statSync(builtinSkillPath).isDirectory() && !fs.existsSync(userSkillPath)) {
-              if (sourceInsideAsar) {
-                // Source is inside .asar — must copy (symlinks to asar paths fail at OS level)
+            // Compute content hash of the bundled skill's SKILL.md
+            const builtinHashFile = path.join(userSkillPath, '.builtin-hash');
+            const builtinSkillMd = path.join(builtinSkillPath, 'SKILL.md');
+            const builtinHash = fs.existsSync(builtinSkillMd)
+              ? crypto
+                  .createHash('sha256')
+                  .update(fs.readFileSync(builtinSkillMd))
+                  .digest('hex')
+                  .slice(0, 16)
+              : 'no-skill-md';
+
+            // Check if runtime copy exists and whether it needs updating
+            const runtimeExists = fs.existsSync(userSkillPath);
+            let runtimeHash = '';
+            if (runtimeExists) {
+              try {
+                runtimeHash = fs.readFileSync(builtinHashFile, 'utf-8').trim();
+              } catch {
+                // No hash file — treat as outdated (pre-versioning install)
+                runtimeHash = '';
+              }
+            }
+
+            const needsUpdate = !runtimeExists || runtimeHash !== builtinHash;
+
+            if (!needsUpdate) continue;
+
+            // Respect user modifications — never overwrite user-customized skills
+            const userModifiedMarker = path.join(userSkillPath, '.user-modified');
+            if (runtimeExists && fs.existsSync(userModifiedMarker)) {
+              logWarn(
+                `[ClaudeAgentRunner] Skipping update for user-modified skill: ${skillName} (bundled hash: ${builtinHash}, runtime hash: ${runtimeHash})`
+              );
+              continue;
+            }
+
+            // Remove stale runtime copy before replacing
+            if (runtimeExists) {
+              try {
+                fs.rmSync(userSkillPath, { recursive: true, force: true });
+                log(
+                  `[ClaudeAgentRunner] Removed outdated skill: ${skillName} (hash: ${runtimeHash} → ${builtinHash})`
+                );
+              } catch (rmErr) {
+                logError(
+                  `[ClaudeAgentRunner] Failed to remove outdated skill ${skillName}:`,
+                  rmErr
+                );
+                continue;
+              }
+            }
+
+            // Install fresh copy from bundled source
+            if (sourceInsideAsar) {
+              this.copyDirectorySync(builtinSkillPath, userSkillPath);
+              log(`[ClaudeAgentRunner] Copied built-in skill from asar: ${skillName}`);
+            } else {
+              // In dev mode, symlink for instant updates during development
+              try {
+                fs.symlinkSync(builtinSkillPath, userSkillPath, 'dir');
+                log(`[ClaudeAgentRunner] Linked built-in skill: ${skillName}`);
+              } catch (err) {
+                logWarn(
+                  `[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`,
+                  err
+                );
                 this.copyDirectorySync(builtinSkillPath, userSkillPath);
-                log(`[ClaudeAgentRunner] Copied built-in skill from asar: ${skillName}`);
-              } else {
-                // Source is a real directory — symlink for space efficiency
-                try {
-                  fs.symlinkSync(builtinSkillPath, userSkillPath, 'dir');
-                  log(`[ClaudeAgentRunner] Linked built-in skill: ${skillName}`);
-                } catch (err) {
-                  logWarn(
-                    `[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`,
-                    err
-                  );
-                  this.copyDirectorySync(builtinSkillPath, userSkillPath);
-                }
+              }
+            }
+
+            // Write the content hash stamp (only for copies, not symlinks)
+            // Symlinks always point to the source so they're inherently up-to-date
+            if (sourceInsideAsar || !fs.lstatSync(userSkillPath).isSymbolicLink()) {
+              try {
+                fs.writeFileSync(builtinHashFile, builtinHash, 'utf-8');
+              } catch (hashErr) {
+                logWarn(
+                  `[ClaudeAgentRunner] Failed to write hash stamp for ${skillName}:`,
+                  hashErr
+                );
               }
             }
           }
