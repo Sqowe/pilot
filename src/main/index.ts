@@ -152,6 +152,51 @@ let scheduledTaskManager: ScheduledTaskManager | null = null;
 /** Maps sessionId → taskId for autonomous scheduled task sessions. */
 const scheduledSessionToTaskId = new Map<string, string>();
 
+/**
+ * Skill ID for the cowork-memory skill (Python scripts for manual memory).
+ * When the in-app memory system is active, this skill is redundant and should be disabled.
+ */
+const COWORK_MEMORY_SKILL_ID = 'global-cowork-memory';
+
+/** Monotonic token to prevent stale async sync completions from overwriting newer state. */
+let syncCoworkMemoryGeneration = 0;
+
+/**
+ * Sync the cowork-memory skill enabled state with the in-app memory toggle.
+ * The skill should be disabled when in-app memory is ON (automated system handles it),
+ * and enabled when in-app memory is OFF (fall back to manual skill scripts).
+ *
+ * Only mutates skill state if it's currently out of sync.
+ * Uses a generation token to discard stale completions from concurrent calls.
+ * Returns silently if skillsManager is unavailable or the skill is not installed.
+ *
+ * Note: skillsManager.setSkillEnabled() is synchronous (mutates in-memory Map + stops
+ * MCP server if applicable). No disk persistence to await.
+ */
+async function syncCoworkMemorySkillState(memoryEnabled: boolean): Promise<void> {
+  if (!skillsManager) return;
+
+  const generation = ++syncCoworkMemoryGeneration;
+
+  // Ensure skills are loaded from disk before checking state.
+  const allSkills = await skillsManager.listSkills();
+
+  // If a newer sync was requested while we awaited, discard this one.
+  if (generation !== syncCoworkMemoryGeneration) return;
+
+  const skill = allSkills.find((s) => s.id === COWORK_MEMORY_SKILL_ID);
+  if (!skill) return;
+
+  // Re-check effective memory state to avoid applying stale input.
+  const effectiveMemoryEnabled = memoryService?.isEnabled() ?? memoryEnabled;
+  const skillShouldBeEnabled = !effectiveMemoryEnabled;
+
+  if (skill.enabled !== skillShouldBeEnabled) {
+    skillsManager.setSkillEnabled(COWORK_MEMORY_SKILL_ID, skillShouldBeEnabled);
+    sessionManager?.invalidateSkillsSetup();
+  }
+}
+
 function sanitizeDiagnosticBaseUrl(value: string | undefined): string | null {
   if (!value) {
     return null;
@@ -894,6 +939,17 @@ app
         type: 'skills.storageChanged',
         payload: event,
       });
+      // Re-sync cowork-memory skill state when skills are reloaded/installed/changed.
+      syncCoworkMemorySkillState(memoryService!.isEnabled()).catch((err) => {
+        logWarn('[Memory] Failed to sync cowork-memory skill state after storage change:', err);
+      });
+    });
+
+    // Sync cowork-memory skill state with in-app memory toggle on startup.
+    // When in-app memory is enabled, the skill is redundant (the MemoryExtension
+    // handles ingestion/retrieval automatically). Disable it to avoid confusion.
+    syncCoworkMemorySkillState(memoryService.isEnabled()).catch((err) => {
+      logWarn('[Memory] Failed to sync cowork-memory skill state on startup:', err);
     });
     // pi-ai handles model routing natively — no proxy warmup needed
 
@@ -3094,6 +3150,13 @@ ipcMain.handle('memory.setEnabled', (_event, enabled: boolean) => {
   }
   const result = memoryService.setEnabled(enabled);
   sessionManager?.clearAllCachedAgentSessions();
+
+  // Toggle cowork-memory skill based on the effective memory state (not the input),
+  // so we stay in sync even if setEnabled applies a different final state.
+  syncCoworkMemorySkillState(result.enabled).catch((err) => {
+    logWarn('[Memory] Failed to sync cowork-memory skill state:', err);
+  });
+
   sendToRenderer({
     type: 'config.status',
     payload: {
