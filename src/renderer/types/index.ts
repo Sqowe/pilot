@@ -421,6 +421,24 @@ export interface MemoryInspectSessionResult {
   chunks: ChunkMemoryItem[];
 }
 
+export interface MemoryPanelState {
+  enabled: boolean;
+  skillFallbackEnabled: boolean;
+  coreEntries: Array<{ category: string; key: string; value: string }>;
+  workspaceStats: {
+    name: string;
+    sessionCount: number;
+    chunkCount: number;
+    lastIngestedAt: number | null;
+  } | null;
+  totalStats: {
+    coreCount: number;
+    sessionCount: number;
+    chunkCount: number;
+    workspaceCount: number;
+  };
+}
+
 export interface MemoryOverview {
   enabled: boolean;
   storageRoot: string;

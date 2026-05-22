@@ -13,6 +13,7 @@ import {
   getArtifactSteps,
 } from '../utils/artifact-steps';
 import { useIPC } from '../hooks/useIPC';
+import { MemoryLensSection } from './MemoryLensSection';
 import {
   ChevronDown,
   ChevronUp,
@@ -479,6 +480,9 @@ export function ContextPanel() {
             </p>
           </div>
         )}
+
+        {/* Memory Lens */}
+        <MemoryLensSection cwd={currentWorkingDir || undefined} collapsed={contextPanelCollapsed} />
 
         {/* Artifacts Section */}
         <div className="border-b border-border-muted">

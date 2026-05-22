@@ -20,6 +20,7 @@ import type {
   ProviderModelInfo,
   LocalOllamaDiscoveryResult,
   MemoryOverview,
+  MemoryPanelState,
   MemorySearchResult,
   MemoryReadResult,
   MemorySearchScope,
@@ -467,6 +468,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   memory: {
     getOverview: (cwd?: string): Promise<MemoryOverview> =>
       ipcRenderer.invoke('memory.getOverview', cwd),
+    getPanelState: (cwd?: string): Promise<MemoryPanelState> =>
+      ipcRenderer.invoke('memory.getPanelState', cwd),
     search: (payload: {
       query: string;
       cwd?: string;
@@ -738,6 +741,7 @@ declare global {
       };
       memory: {
         getOverview: (cwd?: string) => Promise<MemoryOverview>;
+        getPanelState: (cwd?: string) => Promise<MemoryPanelState>;
         search: (payload: {
           query: string;
           cwd?: string;

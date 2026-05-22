@@ -3069,6 +3069,45 @@ ipcMain.handle('memory.getOverview', (_event, cwd?: string) => {
   return memoryService.getOverview(cwd);
 });
 
+ipcMain.handle('memory.getPanelState', (_event, cwd?: string) => {
+  if (!memoryService) {
+    throw new Error('Memory service not initialized');
+  }
+  const overview = memoryService.getOverview(cwd);
+  const coreEntries = memoryService.getCoreEntries();
+
+  // Determine cowork-memory skill state
+  let skillFallbackEnabled = false;
+  if (skillsManager) {
+    const skill = skillsManager.getAllSkills().find((s) => s.id === COWORK_MEMORY_SKILL_ID);
+    skillFallbackEnabled = skill?.enabled ?? false;
+  }
+
+  return {
+    enabled: overview.enabled,
+    skillFallbackEnabled,
+    coreEntries: coreEntries.map((e) => ({
+      category: e.category || 'other',
+      key: e.key,
+      value: e.value,
+    })),
+    workspaceStats: overview.currentWorkspace
+      ? {
+          name: cwd ? cwd.split('/').pop() || cwd : '',
+          sessionCount: overview.currentWorkspace.experienceSessionCount,
+          chunkCount: overview.currentWorkspace.experienceChunkCount,
+          lastIngestedAt: overview.latestIngestionAt,
+        }
+      : null,
+    totalStats: {
+      coreCount: overview.coreCount,
+      sessionCount: overview.experienceSessionCount,
+      chunkCount: overview.experienceChunkCount,
+      workspaceCount: overview.sourceWorkspaceCount,
+    },
+  };
+});
+
 ipcMain.handle(
   'memory.search',
   (

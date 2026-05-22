@@ -197,6 +197,11 @@ export class MemoryService {
     return this.tools;
   }
 
+  getCoreEntries(): Array<{ combinedKey: string; category?: string; key: string; value: string }> {
+    if (!this.isEnabled()) return [];
+    return this.getCoreStore().getEntries();
+  }
+
   search(params: MemorySearchParams): MemorySearchResult[] {
     return this.retriever.search(params);
   }
