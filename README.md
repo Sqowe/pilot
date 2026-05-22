@@ -15,6 +15,7 @@
   <a href="#installation">Downloads</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#skills">Skills Library</a> •
+  <a href="#-memory-subsystem">Memory</a> •
   <a href="#sqowe-specific-features">Sqowe Features</a>
 </p>
 
@@ -255,6 +256,116 @@ This is the **Sqowe** variant of Open Cowork. It tracks upstream functionality a
 - **Customizable System Prompt**: The AI's system prompt is fully editable via Settings → System Prompt. Each section (identity, behavioral rules, citations, tool routing) is a separate file that can be independently edited, disabled, or reset. Workspace-level overrides in `.cowork/prompts/` replace global sections per-project. Template variables (`{{cwd}}`, `{{project_name}}`, `{{date}}`, `{{model}}`) are resolved at runtime.
 - **Per-Session MCP Server Toggle**: Disable/enable MCP servers on-the-fly from the Context Panel without restarting the session. Reduces context window token usage by shedding unused tool schemas mid-conversation. Supports workspace-level profiles via `.cowork/mcp-servers.json` (committable to git) for team-wide defaults.
 - **Skill Pinning**: Star/pin specific skills (semantic-index, firecrawl, docx, etc.) to explicitly tell the AI to prioritize them for the current session. All skills remain available — pinning adds emphasis, not restriction. Select skills on the Welcome screen before starting a chat, or pin/unpin mid-conversation from the Context Panel. Enforces a max of 10 pinned skills per session with full validation.
+
+---
+
+## 🧠 Memory Subsystem
+
+Open Cowork includes an automatic memory system that persists knowledge across sessions. The agent accumulates learnings from past conversations and uses them to provide better, more contextual responses in future sessions.
+
+### How It Works
+
+Memory is **fully automatic** — the LLM does not decide whether to use memory. Instead, relevant memory is searched and injected into the prompt **before** the LLM sees the user's message:
+
+```
+User sends message
+       │
+       ▼
+Memory Extension (beforeSessionRun)
+       │
+       ├─ 1. Embed the user's prompt (vector representation)
+       ├─ 2. Search memory stores (vector + lexical hybrid)
+       ├─ 3. Navigator LLM decides if expansion is needed
+       ├─ 4. Build <memory_context> XML block
+       │
+       ▼
+Combined prompt = memory_context + user_message
+       │
+       ▼
+LLM receives the combined prompt (memory is already there)
+       │
+       ▼
+LLM responds
+       │
+       ▼
+Memory Extension (afterSessionRun)
+       │
+       ├─ Extract reusable chunks from the conversation
+       ├─ Update core memory if stable preferences were revealed
+       │
+       ▼
+Done — knowledge persisted for future sessions
+```
+
+### Two Levels of Memory
+
+**Core Memory** — stable user profile (always included in full)
+
+Stores durable information that persists across all sessions and workspaces:
+
+- Identity: role, background, recurring context
+- Preferences: communication style, workflow, tools
+- Skills: competencies, toolchains, strengths
+- Interests: recurring domains and deep topics
+
+Core memory is small (typically <20 entries) and updated conservatively. Only information with strong evidence of being stable across time gets stored here.
+
+**Experience Memory** — past session knowledge (searched per-query)
+
+Stores reusable work units extracted from past conversations:
+
+- Goals the user was trying to accomplish
+- Decisions and their rationale
+- Implementation choices and important steps
+- Constraints, caveats, failure modes, tradeoffs
+- Concrete outcomes and unresolved follow-ups
+
+Each session produces 1–8 chunks, each with an embedding vector for semantic search.
+
+### Retrieval Scoring
+
+Experience memory is ranked using a hybrid scoring algorithm:
+
+| Signal                         | Description                                                   |
+| ------------------------------ | ------------------------------------------------------------- |
+| Vector similarity              | Cosine similarity between query embedding and chunk embedding |
+| Lexical score                  | Keyword overlap between query and chunk text                  |
+| Workspace boost (+0.3)         | Chunks from the same workspace rank higher                    |
+| Recency boost (+0.02 to +0.08) | Newer chunks get a small boost (decays over 45 days)          |
+
+Top 10 chunks and top 5 sessions are retrieved. A Navigator LLM then decides whether to expand any results (get full details or raw session transcripts) based on relevance.
+
+### Search Scope
+
+- **Core memory** is always global — included regardless of workspace
+- **Experience memory** prioritizes the current workspace (+0.3 boost) but does not filter out other workspaces. Knowledge from other projects still surfaces if semantically relevant — it just ranks lower.
+
+### Progressive Retrieval
+
+The system uses a multi-step retrieval process:
+
+1. **Broad summaries** — initial ranked list of chunk/session summaries
+2. **Navigator decision** — a lightweight LLM call decides if more detail is needed
+3. **Expansion** — specific chunks or sessions are expanded (details, raw text, or full transcript)
+4. **Repeat** — up to `maxNavSteps` iterations until the navigator deems context sufficient
+
+This avoids injecting too much irrelevant context while ensuring important details are available when needed.
+
+### Storage
+
+Memory data lives at `~/Library/Application Support/open-cowork/memory/` (macOS):
+
+| File                     | Contents                                             |
+| ------------------------ | ---------------------------------------------------- |
+| `core_memory.json`       | Stable user profile (interests, preferences, skills) |
+| `experience_memory.json` | Session summaries, chunks, and embeddings            |
+| `session_state.json`     | Tracks which sessions have been ingested             |
+
+### Configuration
+
+Memory is enabled by default. Toggle it in **Settings → Memory** or via the Memory panel in the sidebar. Disabling memory stops future ingestion and auto-recall but keeps existing records intact.
+
+When in-app memory is enabled, the legacy `cowork-memory` skill (manual Python scripts) is automatically disabled to avoid redundancy. If you disable in-app memory, the skill is re-enabled as a fallback.
 
 ---
 
