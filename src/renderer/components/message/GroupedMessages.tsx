@@ -12,11 +12,15 @@ import { groupMessagesIntoTurns, shouldCollapseTurn, splitTurnMessages } from '.
 interface GroupedMessagesProps {
   messages: Message[];
   hasActiveTurn: boolean;
+  memoryEnabled?: boolean;
+  lastRetrievalTimestamp?: number;
 }
 
 export const GroupedMessages = memo(function GroupedMessages({
   messages,
   hasActiveTurn,
+  memoryEnabled,
+  lastRetrievalTimestamp,
 }: GroupedMessagesProps) {
   // Group messages into turns
   const turns = useMemo(() => groupMessagesIntoTurns(messages), [messages]);
@@ -63,11 +67,26 @@ export const GroupedMessages = memo(function GroupedMessages({
             )}
 
             {/* Final answer messages (or all messages if no collapse) */}
-            {answerMessages.map((msg) => {
+            {answerMessages.map((msg, msgIndex) => {
               const isStreaming = typeof msg.id === 'string' && msg.id.startsWith('partial-');
+              // Show memory indicator only on the first assistant answer of the last turn,
+              // and only when retrieval actually happened (timestamp is after the turn's user message)
+              const isFirstAssistantInAnswers =
+                msg.role === 'assistant' &&
+                answerMessages.findIndex((m) => m.role === 'assistant') === msgIndex;
+              const retrievalIsForThisTurn =
+                !!turn.userMessage &&
+                !!lastRetrievalTimestamp &&
+                lastRetrievalTimestamp >= turn.userMessage.timestamp;
+              const showMemoryBadge =
+                memoryEnabled && isLastTurn && isFirstAssistantInAnswers && retrievalIsForThisTurn;
               return (
                 <div key={msg.id}>
-                  <MessageCard message={msg} isStreaming={isStreaming} />
+                  <MessageCard
+                    message={msg}
+                    isStreaming={isStreaming}
+                    memoryContributed={showMemoryBadge}
+                  />
                 </div>
               );
             })}

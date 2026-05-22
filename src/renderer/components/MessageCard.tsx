@@ -2,16 +2,21 @@
 // Delegates block rendering to ContentBlockView and its sub-components.
 import { useState, memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Copy, Check, Clock, XCircle } from 'lucide-react';
+import { Copy, Check, Clock, XCircle, Brain } from 'lucide-react';
 import type { Message, ContentBlock, ToolUseContent, ToolResultContent } from '../types';
 import { ContentBlockView } from './message/ContentBlockView';
 
 interface MessageCardProps {
   message: Message;
   isStreaming?: boolean;
+  memoryContributed?: boolean;
 }
 
-export const MessageCard = memo(function MessageCard({ message, isStreaming }: MessageCardProps) {
+export const MessageCard = memo(function MessageCard({
+  message,
+  isStreaming,
+  memoryContributed,
+}: MessageCardProps) {
   const { t } = useTranslation();
   const isUser = message.role === 'user';
   const isQueued = message.localStatus === 'queued';
@@ -109,6 +114,12 @@ export const MessageCard = memo(function MessageCard({ message, isStreaming }: M
       ) : (
         // Assistant message — no bubble, direct content (Claude style)
         <div className="space-y-1.5">
+          {memoryContributed && (
+            <div className="flex items-center gap-1 text-[10px] text-purple-400/80 mb-0.5">
+              <Brain className="w-3 h-3" />
+              <span>{t('messageCard.memoryContributed')}</span>
+            </div>
+          )}
           {contentBlocks.map((block, index) => {
             // Skip tool_result blocks that are merged into their tool_use card
             if (

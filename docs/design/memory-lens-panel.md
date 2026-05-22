@@ -351,9 +351,9 @@ interface MemoryPanelState {
 ### Phase 4: Polish
 
 1. Animations (pulse on update, smooth expand/collapse)
-2. Token budget visualization (bar showing memory % of total context)
+2. Token budget visualization (bar showing memory % of total context) ✅ DONE (2026-05-22)
 3. Historical retrieval log (last 5 turns, not just the latest)
-4. "Memory contributed to this response" indicator in chat messages
+4. "Memory contributed to this response" indicator in chat messages ✅ DONE (2026-05-22)
 
 ---
 

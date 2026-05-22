@@ -72,6 +72,60 @@ export function ChatView() {
   const isSessionRunning = activeSession?.status === 'running';
   const canStop = isSessionRunning || hasActiveTurn || pendingCount > 0;
 
+  // Track last memory retrieval timestamp for the "memory contributed" badge
+  const [lastRetrievalTimestamp, setLastRetrievalTimestamp] = useState<number | undefined>();
+  const fetchRetrievalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevSessionIdRef = useRef<string | null>(null);
+
+  // Derive a stable signal for "last turn completed" — the latest assistant message timestamp
+  const lastAssistantTimestamp = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant' && !messages[i].id.startsWith('partial-')) {
+        return messages[i].timestamp;
+      }
+    }
+    return 0;
+  }, [messages]);
+
+  useEffect(() => {
+    // Reset only on session switch or memory disabled
+    if (prevSessionIdRef.current !== activeSessionId) {
+      prevSessionIdRef.current = activeSessionId ?? null;
+      setLastRetrievalTimestamp(undefined);
+    }
+
+    if (!activeSessionId || !activeSession?.memoryEnabled) {
+      setLastRetrievalTimestamp(undefined);
+      return;
+    }
+
+    let cancelled = false;
+
+    // Debounce: wait 500ms after last assistant message changes before fetching
+    if (fetchRetrievalRef.current) clearTimeout(fetchRetrievalRef.current);
+    fetchRetrievalRef.current = setTimeout(async () => {
+      try {
+        const state = await window.electronAPI.memory.getPanelState(
+          activeSession.cwd || undefined,
+          activeSessionId
+        );
+        if (cancelled) return;
+        if (state?.lastRetrieval?.tokensInjected && state.lastRetrieval.tokensInjected > 0) {
+          setLastRetrievalTimestamp(state.lastRetrieval.timestamp);
+        } else {
+          setLastRetrievalTimestamp(undefined);
+        }
+      } catch {
+        // Ignore — badge just won't show
+      }
+    }, 500);
+
+    return () => {
+      cancelled = true;
+      if (fetchRetrievalRef.current) clearTimeout(fetchRetrievalRef.current);
+    };
+  }, [activeSessionId, activeSession?.memoryEnabled, activeSession?.cwd, lastAssistantTimestamp]);
+
   // Config set selection
   const configSets = appConfig?.configSets ?? [];
   const activeConfigSetId = appConfig?.activeConfigSetId ?? '';
@@ -841,7 +895,12 @@ export function ChatView() {
               <p className="text-base text-text-secondary">{t('chat.startConversation')}</p>
             </div>
           ) : (
-            <GroupedMessages messages={displayedMessages} hasActiveTurn={hasActiveTurn} />
+            <GroupedMessages
+              messages={displayedMessages}
+              hasActiveTurn={hasActiveTurn}
+              memoryEnabled={activeSession?.memoryEnabled}
+              lastRetrievalTimestamp={lastRetrievalTimestamp}
+            />
           )}
 
           {/* Processing indicator - show when we have an active turn but no streaming content yet */}

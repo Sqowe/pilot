@@ -4,6 +4,9 @@ import { ChevronDown, ChevronUp, Brain, FolderOpen, Database, Zap, X } from 'luc
 import { useAppStore } from '../store';
 import type { MemoryPanelState } from '../types';
 
+/** Reference budget for the token bar visualization (absolute, not model-specific). */
+const MEMORY_TOKEN_BUDGET_REFERENCE = 4000;
+
 interface MemoryLensSectionProps {
   cwd: string | undefined;
   collapsed: boolean;
@@ -343,6 +346,18 @@ export function MemoryLensSection({ cwd, collapsed, sessionId }: MemoryLensSecti
                       <span className="text-amber-600 font-medium">
                         ~{panelState.lastRetrieval.tokensInjected.toLocaleString()}
                       </span>
+                    </div>
+                    {/* Token budget bar */}
+                    <div className="pt-0.5">
+                      <div className="h-1 bg-surface-muted rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-amber-500/70 rounded-full transition-all duration-500 ease-out"
+                          style={{
+                            width: `${Math.min(100, (panelState.lastRetrieval.tokensInjected / MEMORY_TOKEN_BUDGET_REFERENCE) * 100)}%`,
+                          }}
+                          title={`~${panelState.lastRetrieval.tokensInjected} / ${MEMORY_TOKEN_BUDGET_REFERENCE.toLocaleString()} ${t('memoryLens.tokenBudget')}`}
+                        />
+                      </div>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-text-muted">{t('memoryLens.retrievalTime')}</span>
