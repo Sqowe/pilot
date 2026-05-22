@@ -40,6 +40,7 @@ import {
   loadJsonFile,
   messagesToTranscript,
   normalizeWorkspaceKey,
+  parseCoreCombinedKey,
   safeRemoveFile,
 } from './memory-utils';
 import { createMemoryTools } from './memory-tools';
@@ -513,6 +514,18 @@ export class MemoryService {
 
   clearCoreMemory(): { success: boolean } {
     this.getCoreStore().clear();
+    return { success: true };
+  }
+
+  deleteCoreEntry(combinedKey: string): { success: boolean } {
+    const parsed = parseCoreCombinedKey(combinedKey);
+    this.getCoreStore().applyActions([
+      {
+        op: 'delete',
+        category: parsed.category,
+        key: parsed.key,
+      },
+    ]);
     return { success: true };
   }
 

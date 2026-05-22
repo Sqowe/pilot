@@ -3090,6 +3090,7 @@ ipcMain.handle('memory.getPanelState', (_event, cwd?: string, sessionId?: string
       category: e.category || 'other',
       key: e.key,
       value: e.value,
+      combinedKey: e.combinedKey || `${e.category || 'other'}.${e.key}`,
     })),
     workspaceStats: overview.currentWorkspace
       ? {
@@ -3154,6 +3155,13 @@ ipcMain.handle('memory.clearCoreMemory', () => {
     throw new Error('Memory service not initialized');
   }
   return memoryService.clearCoreMemory();
+});
+
+ipcMain.handle('memory.deleteCoreEntry', (_event, combinedKey: string) => {
+  if (!memoryService) {
+    throw new Error('Memory service not initialized');
+  }
+  return memoryService.deleteCoreEntry(combinedKey);
 });
 
 ipcMain.handle('memory.rebuildAll', async () => {

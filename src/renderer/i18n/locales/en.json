@@ -781,7 +781,10 @@
     "tokensInjected": "Tokens injected",
     "retrievalTime": "Retrieval time",
     "sources": "Sources",
-    "noRetrievalYet": "Send a message to see memory activity."
+    "noRetrievalYet": "Send a message to see memory activity.",
+    "deleteEntry": "Delete memory entry",
+    "expandSource": "Click to expand",
+    "collapse": "Click to collapse"
   },
   "messageCard": {
     "request": "Request",

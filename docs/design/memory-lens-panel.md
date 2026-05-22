@@ -341,7 +341,7 @@ interface MemoryPanelState {
 3. Emit `memory.retrievalUpdate` event to renderer
 4. Update "Last Retrieval" section in real-time after each turn
 
-### Phase 3: Interactive Features
+### Phase 3: Interactive Features ✅ DONE (2026-05-22)
 
 1. [×] delete buttons for core entries
 2. Inline editing of core memory values

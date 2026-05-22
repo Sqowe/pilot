@@ -424,7 +424,7 @@ export interface MemoryInspectSessionResult {
 export interface MemoryPanelState {
   enabled: boolean;
   skillFallbackEnabled: boolean;
-  coreEntries: Array<{ category: string; key: string; value: string }>;
+  coreEntries: Array<{ category: string; key: string; value: string; combinedKey: string }>;
   workspaceStats: {
     name: string;
     sessionCount: number;

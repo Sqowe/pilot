@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronUp, Brain, FolderOpen, Database, Zap } from 'lucide-react';
+import { ChevronDown, ChevronUp, Brain, FolderOpen, Database, Zap, X } from 'lucide-react';
 import { useAppStore } from '../store';
 import type { MemoryPanelState } from '../types';
 
@@ -15,50 +15,77 @@ export function MemoryLensSection({ cwd, collapsed, sessionId }: MemoryLensSecti
   const [open, setOpen] = useState(true);
   const [panelState, setPanelState] = useState<MemoryPanelState | null>(null);
   const [error, setError] = useState(false);
+  const [expandedSource, setExpandedSource] = useState<number | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Watch for message count changes to trigger a refresh after each turn
   const sessionStates = useAppStore((s) => s.sessionStates);
   const messageCount = sessionId ? (sessionStates[sessionId]?.traceSteps?.length ?? 0) : 0;
 
+  const load = useCallback(async () => {
+    try {
+      const state = await window.electronAPI.memory.getPanelState(cwd, sessionId);
+      return state;
+    } catch {
+      return null;
+    }
+  }, [cwd, sessionId]);
+
   useEffect(() => {
     if (collapsed) return;
 
     let cancelled = false;
-    const load = async () => {
-      try {
-        const state = await window.electronAPI.memory.getPanelState(cwd, sessionId);
-        if (!cancelled) {
-          setPanelState(state);
-          setError(false);
-        }
-      } catch {
-        if (!cancelled) setError(true);
+
+    const doLoad = async () => {
+      const state = await load();
+      if (cancelled) return;
+      if (state) {
+        setPanelState(state);
+        setError(false);
+      } else {
+        setError(true);
       }
     };
-    load();
+    doLoad();
 
     // Refresh every 30s while visible
-    const interval = setInterval(load, 30_000);
+    const interval = setInterval(async () => {
+      const state = await load();
+      if (cancelled) return;
+      if (state) {
+        setPanelState(state);
+        setError(false);
+      }
+    }, 30_000);
+
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [cwd, collapsed, messageCount, sessionId]);
+  }, [cwd, collapsed, messageCount, sessionId, refreshKey, load]);
+
+  const handleDeleteEntry = async (combinedKey: string) => {
+    try {
+      await window.electronAPI.memory.deleteCoreEntry(combinedKey);
+      setRefreshKey((k) => k + 1);
+    } catch {
+      // Silently fail — panel will show stale data until next refresh
+    }
+  };
 
   if (collapsed || panelState === null) return null;
 
   const { enabled, skillFallbackEnabled, coreEntries, workspaceStats, totalStats } = panelState;
 
-  // Group core entries by category
-  const grouped = coreEntries.reduce<Record<string, Array<{ key: string; value: string }>>>(
-    (acc, entry) => {
-      const cat = entry.category || 'other';
-      if (!acc[cat]) acc[cat] = [];
-      acc[cat].push({ key: entry.key, value: entry.value });
-      return acc;
-    },
-    {}
-  );
+  // Group core entries by category (preserve combinedKey for delete)
+  const grouped = coreEntries.reduce<
+    Record<string, Array<{ key: string; value: string; combinedKey: string }>>
+  >((acc, entry) => {
+    const cat = entry.category || 'other';
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push({ key: entry.key, value: entry.value, combinedKey: entry.combinedKey });
+    return acc;
+  }, {});
 
   const categoryLabels: Record<string, string> = {
     interests: t('memoryLens.interests'),
@@ -139,11 +166,19 @@ export function MemoryLensSection({ cwd, collapsed, sessionId }: MemoryLensSecti
                           <div className="space-y-0.5 mt-0.5">
                             {grouped[cat].map((entry) => (
                               <div
-                                key={entry.key}
-                                className="text-xs text-text-primary truncate pl-2 border-l-2 border-border-muted"
+                                key={entry.combinedKey}
+                                className="group flex items-center gap-1 text-xs text-text-primary pl-2 border-l-2 border-border-muted"
                                 title={entry.value}
                               >
-                                {entry.value}
+                                <span className="truncate flex-1">{entry.value}</span>
+                                <button
+                                  onClick={() => handleDeleteEntry(entry.combinedKey)}
+                                  className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-red-500 transition-all shrink-0"
+                                  aria-label={`${t('memoryLens.deleteEntry')}: ${entry.value}`}
+                                  title={t('memoryLens.deleteEntry')}
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
                               </div>
                             ))}
                           </div>
@@ -242,17 +277,36 @@ export function MemoryLensSection({ cwd, collapsed, sessionId }: MemoryLensSecti
                         {t('memoryLens.sources')}
                       </span>
                       {panelState.lastRetrieval.sources.map((source, i) => (
-                        <div
-                          key={i}
-                          className="text-xs text-text-secondary truncate pl-2 border-l-2 border-border-muted"
-                          title={source.summary}
-                        >
-                          {source.expanded && <span className="text-accent mr-1">↳</span>}
-                          <span className="text-text-muted">
-                            {source.workspace ? source.workspace.split('/').pop() : 'global'}
-                          </span>
-                          {' — '}
-                          {source.summary}
+                        <div key={i}>
+                          <button
+                            onClick={() => setExpandedSource(expandedSource === i ? null : i)}
+                            className="w-full text-left text-xs text-text-secondary pl-2 border-l-2 border-border-muted hover:bg-surface-hover rounded-r-sm transition-colors py-0.5"
+                            title={
+                              expandedSource === i
+                                ? t('memoryLens.collapse')
+                                : t('memoryLens.expandSource')
+                            }
+                          >
+                            {source.expanded && <span className="text-accent mr-1">↳</span>}
+                            <span className="text-text-muted">
+                              {source.workspace ? source.workspace.split('/').pop() : 'global'}
+                            </span>
+                            {' — '}
+                            <span
+                              className={
+                                expandedSource === i
+                                  ? ''
+                                  : 'truncate inline-block max-w-[160px] align-bottom'
+                              }
+                            >
+                              {source.summary}
+                            </span>
+                          </button>
+                          {expandedSource === i && (
+                            <div className="text-xs text-text-secondary pl-4 py-1 bg-surface-muted/50 rounded-sm mt-0.5 whitespace-pre-wrap break-words">
+                              {source.summary}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
