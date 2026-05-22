@@ -217,6 +217,31 @@ Open Cowork ships with built-in skills under `.claude/skills/`, and supports use
 - `xlsx` for Excel spreadsheet support
 - `skill-creator` for creating custom skills
 
+### Built-in Skill Auto-Update
+
+Built-in skills are automatically kept in sync with app updates using content-hash versioning. When you install a new version of Open Cowork:
+
+1. Each bundled skill's `SKILL.md` is hashed (SHA-256)
+2. The hash is compared against the runtime copy's `.builtin-hash` stamp
+3. If the hash differs (or no stamp exists), the runtime copy is replaced with the fresh bundled version
+4. Skills that haven't changed are left untouched — no unnecessary I/O
+
+This means app updates reliably deliver skill improvements without requiring manual cache clearing or reinstallation.
+
+### Protecting Customized Skills
+
+If you've modified a built-in skill and want to prevent it from being overwritten on app updates, create a `.user-modified` marker file inside the skill's runtime directory:
+
+```bash
+# macOS
+touch ~/Library/Application\ Support/open-cowork/.claude/skills/docx/.user-modified
+
+# Windows
+type nul > "%APPDATA%\open-cowork\.claude\skills\docx\.user-modified"
+```
+
+When the marker is present, the auto-update will skip that skill and log a warning instead. To resume receiving updates, simply delete the `.user-modified` file.
+
 ---
 
 <a id="sqowe-specific-features"></a>
