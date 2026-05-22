@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import { resolveArtifactPath } from '../utils/artifact-path';
@@ -77,6 +77,86 @@ export function ContextPanel() {
       size: number;
     }>
   >([]);
+
+  // Resizable panel width
+  const [panelWidth, setPanelWidth] = useState(() => {
+    try {
+      const stored = localStorage.getItem('context-panel-width');
+      if (stored) {
+        const parsed = Number(stored);
+        return Number.isFinite(parsed) ? Math.max(200, Math.min(400, parsed)) : 288;
+      }
+    } catch {
+      // localStorage unavailable
+    }
+    return 288; // default w-72 = 288px
+  });
+  const isResizingRef = useRef(false);
+  const currentWidthRef = useRef(panelWidth);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+
+  const handlePanelResizeStart = useCallback(
+    (e: React.PointerEvent) => {
+      if (isResizingRef.current) return;
+      e.preventDefault();
+      isResizingRef.current = true;
+      const startX = e.clientX;
+      const startWidth = panelWidth;
+      currentWidthRef.current = startWidth;
+
+      const target = e.currentTarget as HTMLElement;
+      target.setPointerCapture(e.pointerId);
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        // Dragging left = wider (panel is on the right side)
+        const newWidth = Math.max(200, Math.min(400, startWidth + (startX - moveEvent.clientX)));
+        currentWidthRef.current = newWidth;
+        setPanelWidth(newWidth);
+      };
+
+      const cleanup = () => {
+        if (!isResizingRef.current) return;
+        isResizingRef.current = false;
+        try {
+          if (target.hasPointerCapture(e.pointerId)) {
+            target.releasePointerCapture(e.pointerId);
+          }
+        } catch {
+          // Already released
+        }
+        target.removeEventListener('pointermove', handlePointerMove);
+        target.removeEventListener('pointerup', handlePointerUp);
+        target.removeEventListener('lostpointercapture', handlePointerUp);
+        window.removeEventListener('blur', cleanup);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        dragCleanupRef.current = null;
+        try {
+          localStorage.setItem('context-panel-width', String(currentWidthRef.current));
+        } catch {
+          // localStorage unavailable
+        }
+      };
+
+      const handlePointerUp = () => cleanup();
+
+      dragCleanupRef.current = cleanup;
+      target.addEventListener('pointermove', handlePointerMove);
+      target.addEventListener('pointerup', handlePointerUp);
+      target.addEventListener('lostpointercapture', handlePointerUp);
+      window.addEventListener('blur', cleanup);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [panelWidth]
+  );
+
+  // Cleanup drag on unmount
+  useEffect(() => {
+    return () => {
+      dragCleanupRef.current?.();
+    };
+  }, []);
 
   const handleCopyPath = async (path: string) => {
     try {
@@ -358,7 +438,15 @@ export function ContextPanel() {
   }
 
   return (
-    <div className="w-72 bg-background border-l border-border-muted flex flex-col overflow-hidden text-sm">
+    <div
+      className="bg-background border-l border-border-muted flex flex-col overflow-hidden text-sm relative"
+      style={{ width: `${panelWidth}px` }}
+    >
+      {/* Resize handle (left edge) */}
+      <div
+        onPointerDown={handlePanelResizeStart}
+        className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:bg-accent/30 transition-colors z-10 touch-none"
+      />
       {/* Header */}
       <div className="px-3 h-10 flex items-center gap-2 border-b border-border-muted shrink-0">
         <button
