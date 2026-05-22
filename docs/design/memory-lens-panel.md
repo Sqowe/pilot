@@ -368,6 +368,9 @@ interface MemoryPanelState {
    let users manually pin facts. This blurs the line with the cowork-memory skill.
 
 3. **Token budget visualization — absolute or relative?**
+   **Decision: absolute.** Show `~1,200 tokens` as-is. Users who care about token
+   budgets think in absolute numbers. The relative % is already visible in the
+   Context Usage bar above.
    "~1,200 tokens" is absolute. Could also show "3% of context window" as a
    progress bar. Depends on whether the user cares about absolute numbers or
    relative impact.
