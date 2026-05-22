@@ -482,7 +482,11 @@ export function ContextPanel() {
         )}
 
         {/* Memory Lens */}
-        <MemoryLensSection cwd={currentWorkingDir || undefined} collapsed={contextPanelCollapsed} />
+        <MemoryLensSection
+          cwd={currentWorkingDir || undefined}
+          collapsed={contextPanelCollapsed}
+          sessionId={activeSessionId || undefined}
+        />
 
         {/* Artifacts Section */}
         <div className="border-b border-border-muted">

@@ -3069,7 +3069,7 @@ ipcMain.handle('memory.getOverview', (_event, cwd?: string) => {
   return memoryService.getOverview(cwd);
 });
 
-ipcMain.handle('memory.getPanelState', (_event, cwd?: string) => {
+ipcMain.handle('memory.getPanelState', (_event, cwd?: string, sessionId?: string) => {
   if (!memoryService) {
     throw new Error('Memory service not initialized');
   }
@@ -3105,6 +3105,7 @@ ipcMain.handle('memory.getPanelState', (_event, cwd?: string) => {
       chunkCount: overview.experienceChunkCount,
       workspaceCount: overview.sourceWorkspaceCount,
     },
+    lastRetrieval: memoryService.getLastRetrievalMetrics(sessionId || undefined),
   };
 });
 

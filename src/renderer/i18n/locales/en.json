@@ -773,7 +773,15 @@
     "lastLearned": "Last learned",
     "noWorkspaceData": "No sessions recorded for this workspace yet.",
     "total": "Total",
-    "workspaces": "Workspaces"
+    "workspaces": "Workspaces",
+    "lastRetrieval": "Last Retrieval",
+    "coreMatched": "Core entries",
+    "chunksRetrieved": "Chunks retrieved",
+    "expanded": "Expanded (navigator)",
+    "tokensInjected": "Tokens injected",
+    "retrievalTime": "Retrieval time",
+    "sources": "Sources",
+    "noRetrievalYet": "Send a message to see memory activity."
   },
   "messageCard": {
     "request": "Request",

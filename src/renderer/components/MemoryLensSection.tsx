@@ -1,18 +1,24 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronUp, Brain, FolderOpen, Database } from 'lucide-react';
+import { ChevronDown, ChevronUp, Brain, FolderOpen, Database, Zap } from 'lucide-react';
+import { useAppStore } from '../store';
 import type { MemoryPanelState } from '../types';
 
 interface MemoryLensSectionProps {
   cwd: string | undefined;
   collapsed: boolean;
+  sessionId: string | undefined;
 }
 
-export function MemoryLensSection({ cwd, collapsed }: MemoryLensSectionProps) {
+export function MemoryLensSection({ cwd, collapsed, sessionId }: MemoryLensSectionProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
   const [panelState, setPanelState] = useState<MemoryPanelState | null>(null);
   const [error, setError] = useState(false);
+
+  // Watch for message count changes to trigger a refresh after each turn
+  const sessionStates = useAppStore((s) => s.sessionStates);
+  const messageCount = sessionId ? (sessionStates[sessionId]?.traceSteps?.length ?? 0) : 0;
 
   useEffect(() => {
     if (collapsed) return;
@@ -20,7 +26,7 @@ export function MemoryLensSection({ cwd, collapsed }: MemoryLensSectionProps) {
     let cancelled = false;
     const load = async () => {
       try {
-        const state = await window.electronAPI.memory.getPanelState(cwd);
+        const state = await window.electronAPI.memory.getPanelState(cwd, sessionId);
         if (!cancelled) {
           setPanelState(state);
           setError(false);
@@ -37,7 +43,7 @@ export function MemoryLensSection({ cwd, collapsed }: MemoryLensSectionProps) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [cwd, collapsed]);
+  }, [cwd, collapsed, messageCount, sessionId]);
 
   if (collapsed || panelState === null) return null;
 
@@ -187,6 +193,77 @@ export function MemoryLensSection({ cwd, collapsed }: MemoryLensSectionProps) {
 
               {!workspaceStats && (
                 <p className="text-xs text-text-muted italic">{t('memoryLens.noWorkspaceData')}</p>
+              )}
+
+              {/* Last Retrieval */}
+              {panelState.lastRetrieval && (
+                <div className="space-y-1.5 pt-1 border-t border-border-muted">
+                  <span className="text-xs font-medium text-text-muted flex items-center gap-1">
+                    <Zap className="w-3 h-3" />
+                    {t('memoryLens.lastRetrieval')}
+                  </span>
+                  <div className="space-y-0.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-text-muted">{t('memoryLens.coreMatched')}</span>
+                      <span className="text-text-primary font-medium">
+                        {panelState.lastRetrieval.coreMatched}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-text-muted">{t('memoryLens.chunksRetrieved')}</span>
+                      <span className="text-text-primary font-medium">
+                        {panelState.lastRetrieval.chunksRetrieved}
+                      </span>
+                    </div>
+                    {panelState.lastRetrieval.chunksExpanded > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-text-muted">{t('memoryLens.expanded')}</span>
+                        <span className="text-accent font-medium">
+                          {panelState.lastRetrieval.chunksExpanded}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <span className="text-text-muted">{t('memoryLens.tokensInjected')}</span>
+                      <span className="text-amber-600 font-medium">
+                        ~{panelState.lastRetrieval.tokensInjected.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-text-muted">{t('memoryLens.retrievalTime')}</span>
+                      <span className="text-text-muted">
+                        {panelState.lastRetrieval.durationMs}ms
+                      </span>
+                    </div>
+                  </div>
+                  {panelState.lastRetrieval.sources.length > 0 && (
+                    <div className="space-y-0.5 mt-1">
+                      <span className="text-[10px] uppercase tracking-wider text-text-muted/70">
+                        {t('memoryLens.sources')}
+                      </span>
+                      {panelState.lastRetrieval.sources.map((source, i) => (
+                        <div
+                          key={i}
+                          className="text-xs text-text-secondary truncate pl-2 border-l-2 border-border-muted"
+                          title={source.summary}
+                        >
+                          {source.expanded && <span className="text-accent mr-1">↳</span>}
+                          <span className="text-text-muted">
+                            {source.workspace ? source.workspace.split('/').pop() : 'global'}
+                          </span>
+                          {' — '}
+                          {source.summary}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!panelState.lastRetrieval && (
+                <p className="text-xs text-text-muted italic pt-1 border-t border-border-muted">
+                  {t('memoryLens.noRetrievalYet')}
+                </p>
               )}
 
               {/* Total Stats (compact) */}

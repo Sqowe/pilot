@@ -437,6 +437,15 @@ export interface MemoryPanelState {
     chunkCount: number;
     workspaceCount: number;
   };
+  lastRetrieval: {
+    coreMatched: number;
+    chunksRetrieved: number;
+    chunksExpanded: number;
+    tokensInjected: number;
+    sources: Array<{ workspace: string | null; summary: string; expanded: boolean }>;
+    durationMs: number;
+    timestamp: number;
+  } | null;
 }
 
 export interface MemoryOverview {

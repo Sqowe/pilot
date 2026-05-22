@@ -326,7 +326,7 @@ interface MemoryPanelState {
 
 ## Implementation Plan
 
-### Phase 1: Static Panel (read-only)
+### Phase 1: Static Panel (read-only) ✅ DONE (2026-05-22)
 
 1. Create `MemoryLensSection.tsx` component
 2. Add `memory.getPanelState` IPC handler
@@ -334,7 +334,7 @@ interface MemoryPanelState {
 4. Display status + core entries + workspace stats
 5. "Last Retrieval" shows placeholder until Phase 2
 
-### Phase 2: Live Retrieval Metrics
+### Phase 2: Live Retrieval Metrics ✅ DONE (2026-05-22)
 
 1. Instrument `buildPromptPrefix()` to capture metrics
 2. Store metrics per-session in memory
