@@ -15,8 +15,17 @@ import {
   X,
   ChevronDown,
   ChevronRight,
+  Shield,
+  ShieldOff,
+  Link,
 } from 'lucide-react';
-import type { Skill, PluginCatalogItemV2, InstalledPlugin, PluginComponentKind } from '../../types';
+import type {
+  Skill,
+  PluginCatalogItemV2,
+  InstalledPlugin,
+  PluginComponentKind,
+  BuiltinSkillStatus,
+} from '../../types';
 import { useAppStore } from '../../store';
 import { SettingsContentSection } from './shared';
 import type { LocalizedBanner } from './shared';
@@ -48,6 +57,7 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
   const [localDevPathDraft, setLocalDevPathDraft] = useState('');
   const [effectivePath, setEffectivePath] = useState('');
   const [showEffectivePath, setShowEffectivePath] = useState(false);
+  const [builtinStatuses, setBuiltinStatuses] = useState<BuiltinSkillStatus[]>([]);
   const pluginToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const componentOrder: PluginComponentKind[] = ['skills', 'commands', 'agents', 'hooks', 'mcp'];
 
@@ -118,9 +128,10 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
 
   const loadSkills = useCallback(async (silent = false) => {
     try {
-      const [skillsResult, storagePathResult] = await Promise.allSettled([
+      const [skillsResult, storagePathResult, builtinStatusResult] = await Promise.allSettled([
         window.electronAPI.skills.getAll(),
         window.electronAPI.skills.getStoragePath(),
+        window.electronAPI.skills.getBuiltinStatus(),
       ]);
       const errors: string[] = [];
 
@@ -141,6 +152,9 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
             ? storagePathResult.reason.message
             : tRef.current('skills.storagePathUnavailable')
         );
+      }
+      if (builtinStatusResult.status === 'fulfilled') {
+        setBuiltinStatuses(builtinStatusResult.value || []);
       }
 
       if (errors.length > 0) {
@@ -547,15 +561,67 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
         title={t('skills.builtinSkills')}
         description={t('skills.builtinSkillsDesc')}
       >
-        {builtinSkills.map((skill) => (
-          <SkillCard
-            key={skill.id}
-            skill={skill}
-            onToggleEnabled={() => handleToggleEnabled(skill)}
-            onDelete={null}
-            isLoading={isLoading}
-          />
-        ))}
+        {builtinSkills.map((skill) => {
+          const skillName = skill.id.replace(/^builtin-/, '');
+          const status = builtinStatuses.find((s) => s.skillName === skillName);
+          return (
+            <SkillCard
+              key={skill.id}
+              skill={skill}
+              onToggleEnabled={() => handleToggleEnabled(skill)}
+              onDelete={null}
+              isLoading={isLoading}
+              builtinStatus={status}
+              onToggleProtect={
+                status && !status.isSymlink && status.isInstalled
+                  ? async () => {
+                      try {
+                        const result = await window.electronAPI.skills.setUserModified(
+                          skillName,
+                          !status.isUserModified
+                        );
+                        if (!result.success) {
+                          setError({ text: result.error || t('skills.protectFailed') });
+                          return;
+                        }
+                        setSuccess({
+                          text: status.isUserModified
+                            ? t('skills.unprotectSuccess', { name: skill.name })
+                            : t('skills.protectSuccess', { name: skill.name }),
+                        });
+                        setTimeout(() => setSuccess(null), 3000);
+                        await loadSkills(true);
+                      } catch {
+                        setError({ text: t('skills.protectFailed') });
+                      }
+                    }
+                  : undefined
+              }
+              onForceRefresh={
+                status && !status.isSymlink && !status.isUpToDate
+                  ? async () => {
+                      if (!confirm(t('skills.forceRefreshConfirm', { name: skill.name }))) return;
+                      try {
+                        const result =
+                          await window.electronAPI.skills.forceRefreshBuiltin(skillName);
+                        if (!result.success) {
+                          setError({ text: result.error || t('skills.forceRefreshFailed') });
+                          return;
+                        }
+                        setSuccess({
+                          text: t('skills.forceRefreshSuccess', { name: skill.name }),
+                        });
+                        setTimeout(() => setSuccess(null), 3000);
+                        await loadSkills(true);
+                      } catch {
+                        setError({ text: t('skills.forceRefreshFailed') });
+                      }
+                    }
+                  : undefined
+              }
+            />
+          );
+        })}
       </SettingsContentSection>
 
       {/* Custom Skills */}
@@ -833,11 +899,17 @@ function SkillCard({
   onToggleEnabled,
   onDelete,
   isLoading,
+  builtinStatus,
+  onToggleProtect,
+  onForceRefresh,
 }: {
   skill: Skill;
   onToggleEnabled: () => void;
   onDelete: (() => void) | null;
   isLoading: boolean;
+  builtinStatus?: BuiltinSkillStatus;
+  onToggleProtect?: () => void;
+  onForceRefresh?: () => void;
 }) {
   const { t } = useTranslation();
   const isBuiltin = skill.type === 'builtin';
@@ -865,6 +937,71 @@ function SkillCard({
           </div>
           {skill.description && (
             <p className="text-sm text-text-muted ml-6 line-clamp-2">{skill.description}</p>
+          )}
+          {isBuiltin && builtinStatus && (
+            <div className="flex items-center gap-2 mt-2 ml-6 flex-wrap">
+              <code className="px-1.5 py-0.5 bg-surface-muted rounded text-[11px] font-mono text-text-muted">
+                {builtinStatus.bundledHash.slice(0, 8)}
+              </code>
+              {builtinStatus.isSymlink ? (
+                <span className="inline-flex items-center gap-1 text-[11px] text-text-muted">
+                  <Link className="w-3 h-3" />
+                  {t('skills.statusDevMode')}
+                </span>
+              ) : builtinStatus.isUserModified ? (
+                <span className="inline-flex items-center gap-1 text-[11px] text-accent">
+                  <Shield className="w-3 h-3" />
+                  {t('skills.statusUserModified')}
+                </span>
+              ) : builtinStatus.isUpToDate ? (
+                <span className="inline-flex items-center gap-1 text-[11px] text-success">
+                  <CheckCircle className="w-3 h-3" />
+                  {t('skills.statusUpToDate')}
+                </span>
+              ) : builtinStatus.isLegacy ? (
+                <span className="inline-flex items-center gap-1 text-[11px] text-warning">
+                  <AlertCircle className="w-3 h-3" />
+                  {t('skills.statusLegacy')}
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[11px] text-warning">
+                  <AlertCircle className="w-3 h-3" />
+                  {t('skills.statusOutdated')}
+                </span>
+              )}
+              {!builtinStatus.isSymlink && onToggleProtect && (
+                <button
+                  onClick={onToggleProtect}
+                  disabled={isLoading}
+                  className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text-primary transition-colors"
+                  title={
+                    builtinStatus.isUserModified
+                      ? t('skills.unprotectSkill')
+                      : t('skills.protectSkill')
+                  }
+                >
+                  {builtinStatus.isUserModified ? (
+                    <ShieldOff className="w-3 h-3" />
+                  ) : (
+                    <Shield className="w-3 h-3" />
+                  )}
+                  {builtinStatus.isUserModified
+                    ? t('skills.unprotectSkill')
+                    : t('skills.protectSkill')}
+                </button>
+              )}
+              {!builtinStatus.isSymlink && !builtinStatus.isUpToDate && onForceRefresh && (
+                <button
+                  onClick={onForceRefresh}
+                  disabled={isLoading}
+                  className="inline-flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
+                  title={t('skills.forceRefresh')}
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  {t('skills.forceRefresh')}
+                </button>
+              )}
+            </div>
           )}
         </div>
         <div className="flex items-center gap-2">

@@ -6,6 +6,7 @@ import type {
   CreateSetPayload,
   ProviderPresets,
   Skill,
+  BuiltinSkillStatus,
   ApiTestInput,
   ApiTestResult,
   PluginCatalogItemV2,
@@ -281,6 +282,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('skills.toggleSessionPin', sessionId, skillId, pinned),
     getSessionPinnedSkills: (sessionId: string): Promise<string[]> =>
       ipcRenderer.invoke('skills.getSessionPinnedSkills', sessionId),
+    getBuiltinStatus: (): Promise<BuiltinSkillStatus[]> =>
+      ipcRenderer.invoke('skills.getBuiltinStatus'),
+    setUserModified: (
+      skillName: string,
+      protect: boolean
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.setUserModified', skillName, protect),
+    forceRefreshBuiltin: (skillName: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.forceRefreshBuiltin', skillName),
   },
 
   // Environment methods
@@ -600,6 +610,12 @@ declare global {
           pinned: boolean
         ) => Promise<{ success: boolean; pinnedSkills?: string[]; error?: string }>;
         getSessionPinnedSkills: (sessionId: string) => Promise<string[]>;
+        getBuiltinStatus: () => Promise<BuiltinSkillStatus[]>;
+        setUserModified: (
+          skillName: string,
+          protect: boolean
+        ) => Promise<{ success: boolean; error?: string }>;
+        forceRefreshBuiltin: (skillName: string) => Promise<{ success: boolean; error?: string }>;
       };
       env: {
         getEffectivePath: () => Promise<string>;

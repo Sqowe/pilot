@@ -23,9 +23,10 @@ import {
   Tray,
   clipboard,
 } from 'electron';
-import { join, resolve, dirname, isAbsolute, basename } from 'path';
+import { join, resolve, relative, dirname, isAbsolute, basename } from 'path';
 import * as fs from 'fs';
 import { execFileSync, execFile } from 'child_process';
+import * as crypto from 'crypto';
 import { promisify } from 'util';
 import { config } from 'dotenv';
 import { initDatabase, closeDatabase, getDatabase } from './db/database';
@@ -2330,6 +2331,200 @@ ipcMain.handle('skills.getSessionPinnedSkills', async (_event, sessionId: string
   } catch (error) {
     logError('[Skills] Error getting session pinned skills:', error);
     return [];
+  }
+});
+
+ipcMain.handle('skills.getBuiltinStatus', async () => {
+  try {
+    const appPath = app.getAppPath();
+    const unpackedPath = appPath.replace(/\.asar$/, '.asar.unpacked');
+    const possiblePaths = [
+      join(__dirname, '..', '..', '..', '.claude', 'skills'),
+      join(process.resourcesPath || '', 'skills'),
+      ...(fs.existsSync(join(unpackedPath, '.claude', 'skills'))
+        ? [join(unpackedPath, '.claude', 'skills')]
+        : []),
+      join(appPath, '.claude', 'skills'),
+    ];
+    let builtinSkillsPath = '';
+    for (const p of possiblePaths) {
+      if (fs.existsSync(p)) {
+        builtinSkillsPath = p;
+        break;
+      }
+    }
+    if (!builtinSkillsPath) return [];
+
+    const runtimeSkillsDir = join(app.getPath('userData'), 'claude', 'skills');
+    const builtinSkills = fs.readdirSync(builtinSkillsPath).filter((name) => {
+      try {
+        return fs.statSync(join(builtinSkillsPath, name)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+
+    const results: Array<{
+      skillName: string;
+      bundledHash: string;
+      runtimeHash: string;
+      isSymlink: boolean;
+      isUserModified: boolean;
+      isUpToDate: boolean;
+      isLegacy: boolean;
+      isInstalled: boolean;
+      lastUpdated: number | null;
+    }> = [];
+
+    for (const skillName of builtinSkills) {
+      const builtinSkillMd = join(builtinSkillsPath, skillName, 'SKILL.md');
+      const builtinSkillDir = join(builtinSkillsPath, skillName);
+      const runtimePath = join(runtimeSkillsDir, skillName);
+      const runtimeHashFile = join(runtimePath, '.builtin-hash');
+      const userModifiedFile = join(runtimePath, '.user-modified');
+
+      // Compute bundled hash from SKILL.md + all root-level .md files (sorted).
+      // This covers the primary skill definition and any supplementary reference
+      // docs (e.g., forms.md, editing.md) that the LLM reads.
+      let bundledHash = 'no-skill-md';
+      if (fs.existsSync(builtinSkillMd)) {
+        const hash = crypto.createHash('sha256');
+        const mdFiles = fs
+          .readdirSync(builtinSkillDir)
+          .filter((f) => f.endsWith('.md'))
+          .sort();
+        for (const mdFile of mdFiles) {
+          hash.update(mdFile); // include filename as separator
+          hash.update(fs.readFileSync(join(builtinSkillDir, mdFile)));
+        }
+        bundledHash = hash.digest('hex').slice(0, 16);
+      }
+
+      // Check runtime state
+      let runtimeHash = '';
+      let isSymlink = false;
+      let isUserModified = false;
+      let lastUpdated: number | null = null;
+      let isLegacy = false;
+      const isInstalled = fs.existsSync(runtimePath);
+
+      if (isInstalled) {
+        try {
+          const lstat = fs.lstatSync(runtimePath);
+          isSymlink = lstat.isSymbolicLink();
+          lastUpdated = Math.floor(lstat.mtimeMs);
+        } catch {
+          // ignore
+        }
+
+        try {
+          runtimeHash = fs.readFileSync(runtimeHashFile, 'utf-8').trim();
+        } catch {
+          // No hash file — pre-versioning install or symlink
+          if (!isSymlink) {
+            isLegacy = true;
+          }
+        }
+
+        isUserModified = fs.existsSync(userModifiedFile);
+      }
+
+      // Symlinks are always up-to-date (they point to the source)
+      const isUpToDate = isSymlink || runtimeHash === bundledHash;
+
+      results.push({
+        skillName,
+        bundledHash,
+        runtimeHash,
+        isSymlink,
+        isUserModified,
+        isUpToDate,
+        isLegacy,
+        isInstalled,
+        lastUpdated,
+      });
+    }
+
+    return results;
+  } catch (error) {
+    logError('[Skills] Error getting builtin status:', error);
+    return [];
+  }
+});
+
+ipcMain.handle('skills.setUserModified', async (_event, skillName: string, protect: boolean) => {
+  try {
+    // Validate skillName: reject path separators, traversal, and empty values
+    if (!skillName || /[/\\]|\.\./.test(skillName)) {
+      return { success: false, error: 'Invalid skill name' };
+    }
+
+    const runtimeSkillsDir = resolve(join(app.getPath('userData'), 'claude', 'skills'));
+    const targetDir = resolve(runtimeSkillsDir, skillName);
+
+    // Platform-safe path containment: relative path must not escape parent
+    const rel = relative(runtimeSkillsDir, targetDir);
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
+      return { success: false, error: 'Invalid skill name' };
+    }
+
+    // Ensure the runtime skill directory exists before writing marker
+    if (!fs.existsSync(targetDir)) {
+      return { success: false, error: 'Skill runtime directory does not exist' };
+    }
+
+    // Reject symlinked skill directories — writes would escape the runtime root
+    const lstat = fs.lstatSync(targetDir);
+    if (lstat.isSymbolicLink() || !lstat.isDirectory()) {
+      return { success: false, error: 'Cannot modify a symlinked or non-directory skill' };
+    }
+
+    const markerPath = join(targetDir, '.user-modified');
+
+    if (protect) {
+      fs.writeFileSync(markerPath, `Protected at ${new Date().toISOString()}\n`, 'utf-8');
+    } else {
+      if (fs.existsSync(markerPath)) {
+        fs.unlinkSync(markerPath);
+      }
+    }
+    return { success: true };
+  } catch (error) {
+    logError('[Skills] Error setting user-modified:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('skills.forceRefreshBuiltin', async (_event, skillName: string) => {
+  try {
+    // Validate skillName: reject path separators, traversal, and empty values
+    if (!skillName || /[/\\]|\.\./.test(skillName)) {
+      return { success: false, error: 'Invalid skill name' };
+    }
+
+    const runtimeSkillsDir = resolve(join(app.getPath('userData'), 'claude', 'skills'));
+    const runtimePath = resolve(runtimeSkillsDir, skillName);
+
+    // Platform-safe path containment: relative path must not escape parent
+    const rel = relative(runtimeSkillsDir, runtimePath);
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
+      return { success: false, error: 'Invalid skill name' };
+    }
+
+    // Remove the runtime copy
+    if (fs.existsSync(runtimePath)) {
+      fs.rmSync(runtimePath, { recursive: true, force: true });
+    }
+
+    // Invalidate skills setup so next query re-copies from bundled source
+    if (sessionManager) {
+      sessionManager.invalidateSkillsSetup();
+    }
+
+    return { success: true };
+  } catch (error) {
+    logError('[Skills] Error force-refreshing builtin skill:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 });
 

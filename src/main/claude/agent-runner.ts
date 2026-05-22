@@ -2090,16 +2090,23 @@ RULES:
               // Path doesn't exist — fine, we'll handle it below
             }
 
-            // Compute content hash of the bundled skill's SKILL.md
+            // Compute content hash of the bundled skill's .md files (SKILL.md + reference docs).
+            // Must match the algorithm in skills.getBuiltinStatus IPC handler.
             const builtinHashFile = path.join(userSkillPath, '.builtin-hash');
             const builtinSkillMd = path.join(builtinSkillPath, 'SKILL.md');
-            const builtinHash = fs.existsSync(builtinSkillMd)
-              ? crypto
-                  .createHash('sha256')
-                  .update(fs.readFileSync(builtinSkillMd))
-                  .digest('hex')
-                  .slice(0, 16)
-              : 'no-skill-md';
+            let builtinHash = 'no-skill-md';
+            if (fs.existsSync(builtinSkillMd)) {
+              const hash = crypto.createHash('sha256');
+              const mdFiles = fs
+                .readdirSync(builtinSkillPath)
+                .filter((f) => f.endsWith('.md'))
+                .sort();
+              for (const mdFile of mdFiles) {
+                hash.update(mdFile);
+                hash.update(fs.readFileSync(path.join(builtinSkillPath, mdFile)));
+              }
+              builtinHash = hash.digest('hex').slice(0, 16);
+            }
 
             // Check if runtime copy exists and whether it needs updating
             const runtimeExists = fs.existsSync(userSkillPath);

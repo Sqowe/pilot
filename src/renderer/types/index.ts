@@ -256,6 +256,18 @@ export interface Skill {
 
 export type SkillType = 'builtin' | 'mcp' | 'custom';
 
+export interface BuiltinSkillStatus {
+  skillName: string;
+  bundledHash: string;
+  runtimeHash: string;
+  isSymlink: boolean;
+  isUserModified: boolean;
+  isUpToDate: boolean;
+  isLegacy: boolean;
+  isInstalled: boolean;
+  lastUpdated: number | null;
+}
+
 export type PluginComponentKind = 'skills' | 'commands' | 'agents' | 'hooks' | 'mcp';
 
 export interface PluginComponentCounts {
