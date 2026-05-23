@@ -14,6 +14,10 @@ interface GroupedMessagesProps {
   hasActiveTurn: boolean;
   memoryEnabled?: boolean;
   lastRetrievalTimestamp?: number;
+  selectable?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (messageId: string) => void;
+  isExportable?: (msg: Message) => boolean;
 }
 
 export const GroupedMessages = memo(function GroupedMessages({
@@ -21,13 +25,29 @@ export const GroupedMessages = memo(function GroupedMessages({
   hasActiveTurn,
   memoryEnabled,
   lastRetrievalTimestamp,
+  selectable,
+  selectedIds,
+  onToggleSelect,
+  isExportable,
 }: GroupedMessagesProps) {
+  // Helper: determine if a message is exportable (uses passed-in helper or default)
+  const isMessageExportable = (msg: Message): boolean =>
+    isExportable ? isExportable(msg) : !msg.id.startsWith('partial-') && msg.role !== 'system';
+
   // Group messages into turns
   const turns = useMemo(() => groupMessagesIntoTurns(messages), [messages]);
 
   const renderMessage = useCallback(
-    (msg: Message, isStreaming: boolean) => <MessageCard message={msg} isStreaming={isStreaming} />,
-    []
+    (msg: Message, isStreaming: boolean) => (
+      <MessageCard
+        message={msg}
+        isStreaming={isStreaming}
+        selectable={selectable && isMessageExportable(msg)}
+        selected={selectedIds?.has(msg.id)}
+        onToggleSelect={onToggleSelect}
+      />
+    ),
+    [selectable, selectedIds, onToggleSelect]
   );
 
   return (
@@ -53,7 +73,12 @@ export const GroupedMessages = memo(function GroupedMessages({
             {/* User message */}
             {turn.userMessage && (
               <div key={turn.userMessage.id}>
-                <MessageCard message={turn.userMessage} />
+                <MessageCard
+                  message={turn.userMessage}
+                  selectable={selectable && isMessageExportable(turn.userMessage)}
+                  selected={selectedIds?.has(turn.userMessage.id)}
+                  onToggleSelect={onToggleSelect}
+                />
               </div>
             )}
 
@@ -86,6 +111,9 @@ export const GroupedMessages = memo(function GroupedMessages({
                     message={msg}
                     isStreaming={isStreaming}
                     memoryContributed={showMemoryBadge}
+                    selectable={selectable && isMessageExportable(msg)}
+                    selected={selectedIds?.has(msg.id)}
+                    onToggleSelect={onToggleSelect}
                   />
                 </div>
               );

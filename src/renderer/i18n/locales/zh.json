@@ -712,6 +712,22 @@
     "exportFailed": "导出失败：{{error}}",
     "nothingToExport": "没有可导出的内容"
   },
+  "export": {
+    "fullExport": "导出完整对话",
+    "selectExport": "导出选中内容…",
+    "dialogTitle": "导出选项",
+    "messageCount": "{{count}} 条消息待导出",
+    "selectedCount": "已选 {{count}} 条",
+    "selectAll": "全选",
+    "exportButton": "导出",
+    "includeToolCalls": "包含工具调用（折叠）",
+    "includeThinking": "包含思考/推理过程",
+    "includeTimestamps": "包含时间戳",
+    "includeTokenUsage": "包含 Token 用量",
+    "imageHandling": "图片处理",
+    "image_placeholder": "占位符",
+    "image_skip": "跳过"
+  },
   "context": {
     "progress": "进度",
     "artifacts": "产物",

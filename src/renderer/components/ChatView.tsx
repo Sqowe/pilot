@@ -13,6 +13,9 @@ import {
 import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
 import { GroupedMessages } from './message/GroupedMessages';
+import { ExportSelectionBar } from './ExportSelectionBar';
+import { ExportOptionsDialog } from './ExportOptionsDialog';
+import type { ExportOptions } from './ExportOptionsDialog';
 import type { Message, ContentBlock } from '../types';
 import { Send, Square, Plus, Loader2, Plug, X, Clock, Layers, Download } from 'lucide-react';
 
@@ -55,6 +58,25 @@ export function ChatView() {
   >([]);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  // Export selection mode
+  const [isExportSelectMode, setIsExportSelectMode] = useState(false);
+  const [exportSelectedIds, setExportSelectedIds] = useState<Set<string>>(new Set());
+  const [showExportOptions, setShowExportOptions] = useState(false);
+  const [showExportDropdown, setShowExportDropdown] = useState(false);
+
+  // Reset export selection state when switching sessions
+  useEffect(() => {
+    setIsExportSelectMode(false);
+    setExportSelectedIds(new Set());
+    setShowExportOptions(false);
+    setShowExportDropdown(false);
+  }, [activeSessionId]);
+
+  // Shared helper: determine if a message is exportable
+  const isExportableMessage = useCallback(
+    (m: Message) => !m.id.startsWith('partial-') && m.role !== 'system',
+    []
+  );
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -831,7 +853,7 @@ export function ChatView() {
     }
   };
 
-  const handleExportMarkdown = async () => {
+  const handleExportFull = async () => {
     if (!activeSessionId) return;
     try {
       const result = await window.electronAPI.chat.exportMarkdown({
@@ -860,6 +882,115 @@ export function ChatView() {
     }
   };
 
+  const handleExportSelectedWithOptions = async (options: ExportOptions) => {
+    if (!activeSessionId) return;
+    try {
+      // Build messageIds in chat chronological order, filtered by selection and exportability
+      const messageIds = displayedMessages
+        .filter((m) => isExportableMessage(m) && exportSelectedIds.has(m.id))
+        .map((m) => m.id);
+      if (messageIds.length === 0) {
+        setGlobalNotice({
+          id: `chat-export-empty-${Date.now()}`,
+          type: 'warning',
+          message: t('chat.nothingToExport'),
+        });
+        return;
+      }
+      const result = await window.electronAPI.chat.exportMarkdown({
+        sessionId: activeSessionId,
+        messageIds,
+        options,
+      });
+      if (result.success && result.path) {
+        setGlobalNotice({
+          id: `chat-export-${Date.now()}`,
+          type: 'info',
+          message: t('chat.exportSuccess'),
+        });
+        setIsExportSelectMode(false);
+        setExportSelectedIds(new Set());
+      } else if (result.error && result.error !== 'Export cancelled') {
+        setGlobalNotice({
+          id: `chat-export-error-${Date.now()}`,
+          type: 'warning',
+          message: t('chat.exportFailed', { error: result.error }),
+        });
+      }
+    } catch (error) {
+      console.error('[ChatView] Export failed:', error);
+      setGlobalNotice({
+        id: `chat-export-error-${Date.now()}`,
+        type: 'warning',
+        message: t('chat.exportFailed', { error: 'Unexpected error' }),
+      });
+    }
+  };
+
+  const handleEnterSelectMode = () => {
+    setIsExportSelectMode(true);
+    setExportSelectedIds(new Set());
+    setShowExportDropdown(false);
+  };
+
+  const handleExitSelectMode = () => {
+    setIsExportSelectMode(false);
+    setExportSelectedIds(new Set());
+    setShowExportOptions(false);
+  };
+
+  const handleToggleSelectMessage = useCallback((messageId: string) => {
+    setExportSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback(() => {
+    const allIds = new Set(displayedMessages.filter(isExportableMessage).map((m) => m.id));
+    setExportSelectedIds(allIds);
+  }, [displayedMessages, isExportableMessage]);
+
+  const handleExportSelected = () => {
+    setShowExportOptions(true);
+  };
+
+  const handleExportWithOptions = (options: ExportOptions) => {
+    setShowExportOptions(false);
+    handleExportSelectedWithOptions(options);
+  };
+
+  // Keyboard shortcuts for export selection mode
+  useEffect(() => {
+    if (!isExportSelectMode) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleExitSelectMode();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+        // Don't intercept when focus is in an editable element
+        const target = e.target as HTMLElement;
+        const tagName = target.tagName.toLowerCase();
+        if (
+          tagName === 'input' ||
+          tagName === 'textarea' ||
+          tagName === 'select' ||
+          target.isContentEditable
+        ) {
+          return;
+        }
+        e.preventDefault();
+        handleSelectAll();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isExportSelectMode, handleSelectAll]);
+
   if (!activeSession) {
     return (
       <div className="flex-1 flex items-center justify-center text-text-muted">
@@ -886,13 +1017,40 @@ export function ChatView() {
             {activeSession.title}
           </h2>
           {displayedMessages.length > 0 && (
-            <button
-              onClick={handleExportMarkdown}
-              className="w-6 h-6 rounded-md flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors flex-shrink-0"
-              title={t('chat.exportMarkdown')}
-            >
-              <Download className="w-3.5 h-3.5" />
-            </button>
+            <div className="relative flex-shrink-0">
+              <button
+                onClick={() => setShowExportDropdown((prev) => !prev)}
+                className="w-6 h-6 rounded-md flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+                title={t('chat.exportMarkdown')}
+              >
+                <Download className="w-3.5 h-3.5" />
+              </button>
+              {showExportDropdown && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setShowExportDropdown(false)}
+                  />
+                  <div className="absolute top-full right-0 mt-1 z-50 bg-background border border-border-muted rounded-xl shadow-lg py-1 min-w-[180px] animate-fade-in">
+                    <button
+                      onClick={() => {
+                        setShowExportDropdown(false);
+                        handleExportFull();
+                      }}
+                      className="w-full px-4 py-2 text-left text-[13px] text-text-primary hover:bg-surface-hover transition-colors"
+                    >
+                      {t('export.fullExport')}
+                    </button>
+                    <button
+                      onClick={handleEnterSelectMode}
+                      className="w-full px-4 py-2 text-left text-[13px] text-text-primary hover:bg-surface-hover transition-colors"
+                    >
+                      {t('export.selectExport')}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </div>
         {activeConnectors.length > 0 && (
@@ -940,6 +1098,10 @@ export function ChatView() {
               hasActiveTurn={hasActiveTurn}
               memoryEnabled={activeSession?.memoryEnabled}
               lastRetrievalTimestamp={lastRetrievalTimestamp}
+              selectable={isExportSelectMode}
+              selectedIds={exportSelectedIds}
+              onToggleSelect={handleToggleSelectMessage}
+              isExportable={isExportableMessage}
             />
           )}
 
@@ -968,6 +1130,26 @@ export function ChatView() {
           <div ref={messagesEndRef} />
         </div>
       </div>
+
+      {/* Export Selection Bar */}
+      {isExportSelectMode && (
+        <ExportSelectionBar
+          selectedCount={exportSelectedIds.size}
+          totalCount={displayedMessages.filter(isExportableMessage).length}
+          onSelectAll={handleSelectAll}
+          onExport={handleExportSelected}
+          onCancel={handleExitSelectMode}
+        />
+      )}
+
+      {/* Export Options Dialog */}
+      {showExportOptions && (
+        <ExportOptionsDialog
+          messageCount={exportSelectedIds.size || displayedMessages.length}
+          onExport={handleExportWithOptions}
+          onCancel={() => setShowExportOptions(false)}
+        />
+      )}
 
       {/* Input */}
       <div className="border-t border-border-muted bg-background/92 backdrop-blur-md">

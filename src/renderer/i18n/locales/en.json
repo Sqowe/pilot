@@ -732,6 +732,22 @@
     "exportFailed": "Export failed: {{error}}",
     "nothingToExport": "Nothing to export"
   },
+  "export": {
+    "fullExport": "Export full chat",
+    "selectExport": "Export selected…",
+    "dialogTitle": "Export Options",
+    "messageCount": "{{count}} messages to export",
+    "selectedCount": "{{count}} selected",
+    "selectAll": "Select all",
+    "exportButton": "Export",
+    "includeToolCalls": "Include tool calls (collapsed)",
+    "includeThinking": "Include thinking/reasoning",
+    "includeTimestamps": "Include timestamps",
+    "includeTokenUsage": "Include token usage",
+    "imageHandling": "Images",
+    "image_placeholder": "Placeholder",
+    "image_skip": "Skip"
+  },
   "context": {
     "progress": "Progress",
     "artifacts": "Artifacts",
