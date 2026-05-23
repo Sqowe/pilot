@@ -502,19 +502,24 @@ const defaultName = `${sanitize(session.title || 'chat')}-${new Date().toISOStri
 **Effort:** ~2-3 hours
 **Dependencies:** None
 
-### Phase 2 — Selective Export
+### Phase 2 — Selective Export ✅ DONE
 
 **Scope:** Cherry-pick messages with checkboxes, export options dialog.
 
 **Tasks:**
 
-1. Add selection mode state to ChatView (or a new `useExportSelection` hook)
-2. Create `ExportSelectionBar` component (top toolbar + bottom action bar)
-3. Modify `MessageCard` to accept `selectable` + `selected` props, render checkbox
-4. Create `ExportOptionsDialog` component
-5. Pass selected message IDs to the IPC handler
-6. Add "Export selected…" option to header dropdown
+1. ✅ Add selection mode state to ChatView with shared `isExportableMessage` helper
+2. ✅ Create `ExportSelectionBar` component (floating bottom action bar)
+3. ✅ Modify `MessageCard` to accept `selectable`/`selected` props, render checkbox
+4. ✅ Create `ExportOptionsDialog` component (tool calls, thinking, timestamps, token usage, images)
+5. ✅ Pass selected message IDs (chronological order) to the IPC handler
+6. ✅ Add "Export selected…" option to header dropdown
+7. ✅ Keyboard shortcuts: Escape exits, Cmd/Ctrl+A selects all
+8. ✅ Split handlers: `handleExportFull` vs `handleExportSelectedWithOptions`
+9. ✅ Reset selection state on session switch
+10. ✅ Non-exportable messages (partial/system) cannot be selected
 
+**Completed:** 2026-05-23
 **Effort:** ~4-6 hours
 **Dependencies:** Phase 1
 
