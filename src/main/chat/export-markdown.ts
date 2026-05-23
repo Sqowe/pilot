@@ -190,7 +190,7 @@ export function serializeMessagesToMarkdown(
     if (!hasVisibleContent) continue;
 
     // Role header
-    const roleHeader = msg.role === 'user' ? '## 👤 User' : '## 🤖 Assistant';
+    const roleHeader = msg.role === 'user' ? '👤 **USER:**' : '## 🤖 Assistant';
     lines.push(roleHeader);
 
     if (options.includeTimestamps && msg.timestamp) {
@@ -198,12 +198,26 @@ export function serializeMessagesToMarkdown(
     }
     lines.push('');
 
+    // For user messages, wrap content in blockquote for visual distinction
+    const linePrefix = msg.role === 'user' ? '> ' : '';
+
     for (const block of contentBlocks) {
       switch (block.type) {
-        case 'text':
-          lines.push((block as TextContent).text);
+        case 'text': {
+          const text = (block as TextContent).text;
+          if (linePrefix) {
+            // Wrap each line in blockquote for user messages
+            const quoted = text
+              .split('\n')
+              .map((l) => `${linePrefix}${l}`)
+              .join('\n');
+            lines.push(quoted);
+          } else {
+            lines.push(text);
+          }
           lines.push('');
           break;
+        }
 
         case 'thinking':
           if (options.includeThinking) {
@@ -258,12 +272,12 @@ export function serializeMessagesToMarkdown(
 
         case 'image':
           if (options.imageHandling === 'placeholder') {
-            lines.push('*[Image was attached]*');
+            lines.push(`${linePrefix}*[Image was attached]*`);
             lines.push('');
           } else if (options.imageHandling === 'inline') {
             const imgBlock = block as ImageContent;
             lines.push(
-              `![Image](data:${imgBlock.source.media_type};base64,${imgBlock.source.data})`
+              `${linePrefix}![Image](data:${imgBlock.source.media_type};base64,${imgBlock.source.data})`
             );
             lines.push('');
           }
@@ -272,7 +286,9 @@ export function serializeMessagesToMarkdown(
 
         case 'file_attachment': {
           const fileBlock = block as FileAttachmentContent;
-          lines.push(`📎 **Attached:** \`${fileBlock.filename}\` (${formatSize(fileBlock.size)})`);
+          lines.push(
+            `${linePrefix}📎 **Attached:** \`${fileBlock.filename}\` (${formatSize(fileBlock.size)})`
+          );
           lines.push('');
           break;
         }
