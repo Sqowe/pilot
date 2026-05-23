@@ -822,7 +822,14 @@ export function ContextPanel() {
             <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
               {t('context.mcpConnectors')}
               {mcpServers.length > 0 && (
-                <span className="ml-1.5 text-mcp">({mcpServers.length})</span>
+                <span className="ml-1.5 text-mcp">
+                  ({mcpServers.length}/{mcpServers.filter((s) => s.connected).length}/
+                  {
+                    mcpServers.filter((s) => s.connected && !sessionDisabledServers.has(s.id))
+                      .length
+                  }
+                  )
+                </span>
               )}
             </span>
             {mcpConnectorsOpen ? (
