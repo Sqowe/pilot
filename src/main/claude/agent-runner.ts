@@ -73,6 +73,7 @@ import { configStore } from '../config/config-store';
 import { setBasePath, applyLocalDevPath } from '../utils/path-env';
 import { loadWorkspaceSystemPrompt } from '../utils/workspace-system-prompt';
 import { assembleUserPrompt } from '../prompts/prompt-loader';
+import { enrichToolErrorWithThinking, selectThinkingSource } from './tool-error-enrichment';
 import { normalizeOpenAICompatibleBaseUrl } from '../config/auth-utils';
 import { resolveMessageEndPayload, toUserFacingErrorText } from './agent-runner-message-end';
 import {
@@ -2999,6 +3000,12 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
       let compactionStepId: string | undefined;
       let hasEmittedError = false;
       let terminalErrorText: string | undefined;
+      // Track the last assistant message's thinking content so we can provide
+      // context when a tool call fails with empty arguments (the thinking often
+      // contains the intended file path/content that the model failed to emit).
+      // Reset per assistant message to avoid leaking stale context across turns.
+      let lastAssistantThinking = '';
+      let lastAssistantThinkingDeltas = '';
       const thinkParser = new ThinkTagStreamParser();
       const promptStartedAt = Date.now();
       const streamEventCounts = new Map<string, number>();
@@ -3137,6 +3144,9 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
                 }
               } else if (ame.type === 'thinking_delta') {
                 markFirstStreamEvent(ame.type);
+                // Accumulate thinking for tool error context (in case message_end
+                // doesn't include the full thinking due to summarization).
+                lastAssistantThinkingDeltas += ame.delta;
                 // Forward thinking delta to renderer for real-time display
                 this.sendToRenderer({
                   type: 'stream.thinking',
@@ -3198,6 +3208,21 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
                 streamedText,
               });
               streamedText = resolvedPayload.nextStreamedText;
+
+              // Finalize thinking context for this assistant message.
+              // Must happen on EVERY message_end path (error, suppressed, or emitted)
+              // to prevent stale thinking from leaking across turns.
+              {
+                const thinkingFromContent = resolvedPayload.effectiveContent
+                  .filter((b: { type: string }) => b.type === 'thinking')
+                  .map((b: { type: string; thinking?: string }) => b.thinking || '')
+                  .join('\n');
+                lastAssistantThinking = selectThinkingSource(
+                  lastAssistantThinkingDeltas,
+                  thinkingFromContent
+                );
+                lastAssistantThinkingDeltas = '';
+              }
               if (provider === 'ollama') {
                 log(
                   '[ClaudeAgentRunner] Ollama message_end diagnostics',
@@ -3332,7 +3357,14 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
               const toolCallId = event.toolCallId;
               const isError = event.isError;
               const normalizedToolResult = normalizeToolExecutionResultForUi(event.result);
-              const outputText = normalizedToolResult.content;
+              let outputText = normalizedToolResult.content;
+
+              // Enrich error display when a tool call fails with empty arguments.
+              // The model's thinking often contains the intended file path/content,
+              // but the tool call arguments were truncated (output token issue).
+              // Show the user what the model was trying to do so they have context.
+              outputText = enrichToolErrorWithThinking(outputText, isError, lastAssistantThinking);
+
               this.sendTraceUpdate(session.id, toolCallId, {
                 status: isError ? 'error' : 'completed',
                 toolName: event.toolName,
