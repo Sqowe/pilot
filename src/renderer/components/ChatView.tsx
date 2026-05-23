@@ -17,7 +17,7 @@ import { ExportSelectionBar } from './ExportSelectionBar';
 import { ExportOptionsDialog } from './ExportOptionsDialog';
 import type { ExportOptions } from './ExportOptionsDialog';
 import type { Message, ContentBlock } from '../types';
-import { Send, Square, Plus, Loader2, Plug, X, Clock, Layers, Download } from 'lucide-react';
+import { Send, Square, Plus, Loader2, X, Clock, Layers, Download } from 'lucide-react';
 
 type AttachedFile = {
   name: string;
@@ -46,13 +46,8 @@ export function ChatView() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSwitchingSet, setIsSwitchingSet] = useState(false);
   const switchRequestRef = useRef(0);
-  const [activeConnectors, setActiveConnectors] = useState<
-    { id: string; name: string; connected: boolean; toolCount: number }[]
-  >([]);
-  const [showConnectorLabel, setShowConnectorLabel] = useState(true);
   const headerRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
-  const connectorMeasureRef = useRef<HTMLDivElement>(null);
   const [pastedImages, setPastedImages] = useState<
     Array<{ url: string; base64: string; mediaType: string }>
   >([]);
@@ -732,56 +727,6 @@ export function ChatView() {
     }
   };
 
-  // Load active MCP connectors
-  useEffect(() => {
-    if (isElectron && typeof window !== 'undefined' && window.electronAPI) {
-      const loadConnectors = async () => {
-        try {
-          const statuses = await window.electronAPI.mcp.getServerStatus();
-          const active =
-            (
-              statuses as Array<{ id: string; name: string; connected: boolean; toolCount: number }>
-            )?.filter((s) => s.connected && s.toolCount > 0) || [];
-          setActiveConnectors(active);
-        } catch (err) {
-          console.error('Failed to load MCP connectors:', err);
-        }
-      };
-      loadConnectors();
-      // Refresh every 5 seconds
-      const interval = setInterval(loadConnectors, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [isElectron]);
-
-  useEffect(() => {
-    const titleEl = titleRef.current;
-    const headerEl = headerRef.current;
-    const measureEl = connectorMeasureRef.current;
-    if (!titleEl || !headerEl || !measureEl) {
-      setShowConnectorLabel(true);
-      return;
-    }
-    const updateLabelVisibility = () => {
-      const isTruncated = titleEl.scrollWidth > titleEl.clientWidth;
-      const headerStyle = window.getComputedStyle(headerEl);
-      const paddingLeft = Number.parseFloat(headerStyle.paddingLeft) || 0;
-      const paddingRight = Number.parseFloat(headerStyle.paddingRight) || 0;
-      const contentWidth = headerEl.clientWidth - paddingLeft - paddingRight;
-      const titleWidth = titleEl.getBoundingClientRect().width;
-      const rightColumnWidth = Math.max(0, (contentWidth - titleWidth) / 2);
-      const connectorFullWidth = measureEl.getBoundingClientRect().width;
-      setShowConnectorLabel(!isTruncated && rightColumnWidth >= connectorFullWidth);
-    };
-    updateLabelVisibility();
-    const observer = new ResizeObserver(() => {
-      updateLabelVisibility();
-    });
-    observer.observe(titleEl);
-    observer.observe(headerEl);
-    return () => observer.disconnect();
-  }, [activeSession?.title, activeConnectors.length]);
-
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
 
@@ -1021,15 +966,16 @@ export function ChatView() {
         <div className="text-[11px] font-medium tracking-[0.08em] uppercase text-text-muted">
           Sqowe Pilot
         </div>
-        <div className="flex items-center gap-1.5 justify-center">
-          <h2
-            ref={titleRef}
-            className="text-[15px] font-medium text-text-primary text-center truncate max-w-[40vw] lg:max-w-[32rem]"
-          >
-            {activeSession.title}
-          </h2>
+        <h2
+          ref={titleRef}
+          className="text-[15px] font-medium text-text-primary text-center truncate max-w-[40vw] lg:max-w-[32rem]"
+        >
+          {activeSession.title}
+        </h2>
+        {/* Right toolbar — action icons in a badge */}
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-muted/60 border border-border-subtle justify-self-end">
           {displayedMessages.length > 0 && (
-            <div className="relative flex-shrink-0">
+            <div className="relative">
               <button
                 onClick={() => setShowExportDropdown((prev) => !prev)}
                 className="w-6 h-6 rounded-md flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
@@ -1065,30 +1011,6 @@ export function ChatView() {
             </div>
           )}
         </div>
-        {activeConnectors.length > 0 && (
-          <>
-            <div
-              ref={connectorMeasureRef}
-              aria-hidden="true"
-              className="absolute left-0 top-0 -z-10 opacity-0 pointer-events-none"
-            >
-              <div className="flex items-center gap-2 px-2 py-1 rounded-lg border border-mcp/20">
-                <Plug className="w-3.5 h-3.5" />
-                <span className="text-xs font-medium whitespace-nowrap">
-                  {t('chat.connectorCount', { count: activeConnectors.length })}
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-mcp/8 border border-mcp/15 justify-self-end">
-              <Plug className="w-3.5 h-3.5 text-mcp" />
-              <span className="text-xs text-mcp font-medium">
-                {showConnectorLabel
-                  ? t('chat.connectorCount', { count: activeConnectors.length })
-                  : activeConnectors.length}
-              </span>
-            </div>
-          </>
-        )}
       </div>
 
       {/* Messages */}
