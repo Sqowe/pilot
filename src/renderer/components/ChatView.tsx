@@ -73,6 +73,8 @@ export function ChatView() {
   }, [activeSessionId]);
 
   // Shared helper: determine if a message is exportable
+  // A message is exportable if it's not partial/system.
+  // The serializer handles skipping messages with no visible content.
   const isExportableMessage = useCallback(
     (m: Message) => !m.id.startsWith('partial-') && m.role !== 'system',
     []
@@ -885,11 +887,21 @@ export function ChatView() {
   const handleExportSelectedWithOptions = async (options: ExportOptions) => {
     if (!activeSessionId) return;
     try {
-      // Build messageIds in chat chronological order, filtered by selection and exportability
-      const messageIds = displayedMessages
-        .filter((m) => isExportableMessage(m) && exportSelectedIds.has(m.id))
-        .map((m) => m.id);
-      if (messageIds.length === 0) {
+      // Build messageIds in chat chronological order, filtered by selection and exportability.
+      // Note: splitTurnMessages creates synthetic IDs with -answer/-process suffixes.
+      // We need to map those back to the original message IDs for the backend.
+      const resolveOriginalId = (id: string): string => id.replace(/-(?:answer|process)$/, '');
+
+      const allExportable = displayedMessages.filter(isExportableMessage);
+      // Resolve selected IDs to original DB IDs and deduplicate
+      const resolvedSelectedIds = new Set(Array.from(exportSelectedIds).map(resolveOriginalId));
+      const messageIds = allExportable
+        .filter((m) => resolvedSelectedIds.has(resolveOriginalId(m.id)))
+        .map((m) => resolveOriginalId(m.id));
+      // Deduplicate (a message split into -answer and -process maps to same original)
+      const uniqueMessageIds = [...new Set(messageIds)];
+
+      if (uniqueMessageIds.length === 0) {
         setGlobalNotice({
           id: `chat-export-empty-${Date.now()}`,
           type: 'warning',
@@ -899,7 +911,7 @@ export function ChatView() {
       }
       const result = await window.electronAPI.chat.exportMarkdown({
         sessionId: activeSessionId,
-        messageIds,
+        messageIds: uniqueMessageIds,
         options,
       });
       if (result.success && result.path) {

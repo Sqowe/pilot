@@ -339,7 +339,22 @@ export async function exportChatToMarkdown(
     // Filter by message IDs if specified
     if (request.messageIds && request.messageIds.length > 0) {
       const idSet = new Set(request.messageIds);
+      const beforeCount = messages.length;
       messages = messages.filter((m) => idSet.has(m.id));
+      log(
+        '[ChatExport] Filtered by messageIds:',
+        'requested:',
+        request.messageIds.length,
+        'matched:',
+        messages.length,
+        'total in DB:',
+        beforeCount
+      );
+      if (messages.length < request.messageIds.length) {
+        const dbIds = new Set(messages.map((m) => m.id));
+        const missing = request.messageIds.filter((id) => !dbIds.has(id));
+        log('[ChatExport] Missing IDs (not in DB):', missing);
+      }
     }
 
     // Filter out partial/streaming messages and system messages

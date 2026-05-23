@@ -88,6 +88,7 @@ export const GroupedMessages = memo(function GroupedMessages({
                 messages={processMessages}
                 isStreaming={turnIsStreaming}
                 renderMessage={renderMessage}
+                forceExpanded={selectable}
               />
             )}
 
