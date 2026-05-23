@@ -14,6 +14,7 @@ import {
   Plus,
   ListChecks,
   Check,
+  Download,
 } from 'lucide-react';
 import type { Session } from '../types';
 import { SearchOverlay } from './SearchOverlay';
@@ -40,6 +41,7 @@ export function Sidebar() {
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const setShowSettings = useAppStore((s) => s.setShowSettings);
+  const setGlobalNotice = useAppStore((s) => s.setGlobalNotice);
   const {
     deleteSession,
     batchDeleteSessions,
@@ -232,6 +234,28 @@ export function Sidebar() {
   const handleDeleteSession = (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
     deleteSession(sessionId);
+  };
+
+  const handleExportSession = async (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    try {
+      const result = await window.electronAPI.chat.exportMarkdown({ sessionId });
+      if (result.success && result.path) {
+        setGlobalNotice({
+          id: `chat-export-${Date.now()}`,
+          type: 'info',
+          message: t('chat.exportSuccess'),
+        });
+      } else if (result.error && result.error !== 'Export cancelled') {
+        setGlobalNotice({
+          id: `chat-export-error-${Date.now()}`,
+          type: 'warning',
+          message: t('chat.exportFailed', { error: result.error }),
+        });
+      }
+    } catch (error) {
+      console.error('[Sidebar] Export failed:', error);
+    }
   };
 
   const toggleTheme = () => {
@@ -519,13 +543,22 @@ export function Sidebar() {
                           </div>
 
                           {!isSelectMode && hoveredSession === session.id && (
-                            <button
-                              onClick={(e) => handleDeleteSession(e, session.id)}
-                              className="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-lg flex items-center justify-center text-text-muted hover:text-error hover:bg-surface-active transition-colors"
-                              title={t('common.delete')}
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
+                            <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                              <button
+                                onClick={(e) => handleExportSession(e, session.id)}
+                                className="w-6 h-6 rounded-lg flex items-center justify-center text-text-muted hover:text-accent hover:bg-surface-active transition-colors"
+                                title={t('chat.exportMarkdown')}
+                              >
+                                <Download className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={(e) => handleDeleteSession(e, session.id)}
+                                className="w-6 h-6 rounded-lg flex items-center justify-center text-text-muted hover:text-error hover:bg-surface-active transition-colors"
+                                title={t('common.delete')}
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
                           )}
                         </div>
                       );

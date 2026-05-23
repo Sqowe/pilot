@@ -3015,6 +3015,37 @@ ipcMain.handle('logs.isEnabled', () => {
 });
 
 // ============================================================================
+// Chat Export IPC
+// ============================================================================
+
+ipcMain.handle(
+  'chat.exportMarkdown',
+  async (
+    _event,
+    request: {
+      sessionId: string;
+      messageIds?: string[];
+      options?: Partial<import('./chat/export-markdown').ExportOptions>;
+    }
+  ) => {
+    const { exportChatToMarkdown } = await import('./chat/export-markdown');
+
+    const getSession = (sessionId: string) => {
+      if (!sessionManager) return undefined;
+      const sessions = sessionManager.listSessions();
+      return sessions.find((s) => s.id === sessionId);
+    };
+
+    const getMessages = (sessionId: string) => {
+      if (!sessionManager) return [];
+      return sessionManager.getMessages(sessionId);
+    };
+
+    return exportChatToMarkdown(request, getSession, getMessages);
+  }
+);
+
+// ============================================================================
 // 远程控制 IPC 处理
 // ============================================================================
 

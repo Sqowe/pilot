@@ -219,6 +219,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     writeText: (text: string): Promise<void> => ipcRenderer.invoke('clipboard.writeText', text),
   },
 
+  // Chat export
+  chat: {
+    exportMarkdown: (request: {
+      sessionId: string;
+      messageIds?: string[];
+      options?: Partial<{
+        includeToolCalls: boolean;
+        includeThinking: boolean;
+        includeTimestamps: boolean;
+        includeTokenUsage: boolean;
+        imageHandling: 'skip' | 'placeholder' | 'inline';
+      }>;
+    }): Promise<{ success: boolean; path?: string; error?: string }> =>
+      ipcRenderer.invoke('chat.exportMarkdown', request),
+  },
+
   // MCP methods
   mcp: {
     getServers: (): Promise<McpServerConfig[]> => ipcRenderer.invoke('mcp.getServers'),
@@ -563,6 +579,19 @@ declare global {
       };
       clipboard: {
         writeText: (text: string) => Promise<void>;
+      };
+      chat: {
+        exportMarkdown: (request: {
+          sessionId: string;
+          messageIds?: string[];
+          options?: Partial<{
+            includeToolCalls: boolean;
+            includeThinking: boolean;
+            includeTimestamps: boolean;
+            includeTokenUsage: boolean;
+            imageHandling: 'skip' | 'placeholder' | 'inline';
+          }>;
+        }) => Promise<{ success: boolean; path?: string; error?: string }>;
       };
       mcp: {
         getServers: () => Promise<McpServerConfig[]>;

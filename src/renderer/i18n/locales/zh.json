@@ -706,7 +706,11 @@
     "noModel": "无模型",
     "configSetRestored": "已切换到「{{name}}」配置方案",
     "connectorCount_one": "{{count}} 个连接器",
-    "connectorCount_other": "{{count}} 个连接器"
+    "connectorCount_other": "{{count}} 个连接器",
+    "exportMarkdown": "导出为 Markdown",
+    "exportSuccess": "对话导出成功",
+    "exportFailed": "导出失败：{{error}}",
+    "nothingToExport": "没有可导出的内容"
   },
   "context": {
     "progress": "进度",

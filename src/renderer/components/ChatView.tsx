@@ -14,7 +14,7 @@ import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
 import { GroupedMessages } from './message/GroupedMessages';
 import type { Message, ContentBlock } from '../types';
-import { Send, Square, Plus, Loader2, Plug, X, Clock, Layers } from 'lucide-react';
+import { Send, Square, Plus, Loader2, Plug, X, Clock, Layers, Download } from 'lucide-react';
 
 type AttachedFile = {
   name: string;
@@ -831,6 +831,35 @@ export function ChatView() {
     }
   };
 
+  const handleExportMarkdown = async () => {
+    if (!activeSessionId) return;
+    try {
+      const result = await window.electronAPI.chat.exportMarkdown({
+        sessionId: activeSessionId,
+      });
+      if (result.success && result.path) {
+        setGlobalNotice({
+          id: `chat-export-${Date.now()}`,
+          type: 'info',
+          message: t('chat.exportSuccess'),
+        });
+      } else if (result.error && result.error !== 'Export cancelled') {
+        setGlobalNotice({
+          id: `chat-export-error-${Date.now()}`,
+          type: 'warning',
+          message: t('chat.exportFailed', { error: result.error }),
+        });
+      }
+    } catch (error) {
+      console.error('[ChatView] Export failed:', error);
+      setGlobalNotice({
+        id: `chat-export-error-${Date.now()}`,
+        type: 'warning',
+        message: t('chat.exportFailed', { error: 'Unexpected error' }),
+      });
+    }
+  };
+
   if (!activeSession) {
     return (
       <div className="flex-1 flex items-center justify-center text-text-muted">
@@ -846,8 +875,17 @@ export function ChatView() {
         ref={headerRef}
         className="relative h-12 border-b border-border-muted grid grid-cols-[1fr_auto_1fr] items-center px-4 lg:px-8 bg-background/88 backdrop-blur-md"
       >
-        <div className="text-[11px] font-medium tracking-[0.08em] uppercase text-text-muted">
-          Sqowe Pilot
+        <div className="text-[11px] font-medium tracking-[0.08em] uppercase text-text-muted flex items-center gap-2">
+          <span>Sqowe Pilot</span>
+          {displayedMessages.length > 0 && (
+            <button
+              onClick={handleExportMarkdown}
+              className="w-6 h-6 rounded-md flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+              title={t('chat.exportMarkdown')}
+            >
+              <Download className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
         <h2
           ref={titleRef}

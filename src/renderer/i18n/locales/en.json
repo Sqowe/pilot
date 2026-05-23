@@ -726,7 +726,11 @@
     "noModel": "No model",
     "configSetRestored": "Switched to \"{{name}}\" config set",
     "connectorCount_one": "{{count}} connector",
-    "connectorCount_other": "{{count}} connectors"
+    "connectorCount_other": "{{count}} connectors",
+    "exportMarkdown": "Export as Markdown",
+    "exportSuccess": "Chat exported successfully",
+    "exportFailed": "Export failed: {{error}}",
+    "nothingToExport": "Nothing to export"
   },
   "context": {
     "progress": "Progress",
