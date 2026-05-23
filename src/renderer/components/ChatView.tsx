@@ -875,24 +875,26 @@ export function ChatView() {
         ref={headerRef}
         className="relative h-12 border-b border-border-muted grid grid-cols-[1fr_auto_1fr] items-center px-4 lg:px-8 bg-background/88 backdrop-blur-md"
       >
-        <div className="text-[11px] font-medium tracking-[0.08em] uppercase text-text-muted flex items-center gap-2">
-          <span>Sqowe Pilot</span>
+        <div className="text-[11px] font-medium tracking-[0.08em] uppercase text-text-muted">
+          Sqowe Pilot
+        </div>
+        <div className="flex items-center gap-1.5 justify-center">
+          <h2
+            ref={titleRef}
+            className="text-[15px] font-medium text-text-primary text-center truncate max-w-[40vw] lg:max-w-[32rem]"
+          >
+            {activeSession.title}
+          </h2>
           {displayedMessages.length > 0 && (
             <button
               onClick={handleExportMarkdown}
-              className="w-6 h-6 rounded-md flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+              className="w-6 h-6 rounded-md flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors flex-shrink-0"
               title={t('chat.exportMarkdown')}
             >
               <Download className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
-        <h2
-          ref={titleRef}
-          className="text-[15px] font-medium text-text-primary text-center truncate max-w-[40vw] lg:max-w-[32rem]"
-        >
-          {activeSession.title}
-        </h2>
         {activeConnectors.length > 0 && (
           <>
             <div
