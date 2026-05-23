@@ -164,6 +164,31 @@ export function serializeMessagesToMarkdown(
     // Skip system messages
     if (msg.role === 'system') continue;
 
+    // Content blocks
+    const contentBlocks = Array.isArray(msg.content) ? msg.content : [];
+
+    // Check if this message will produce any visible output with current options.
+    // Skip empty assistant messages (e.g., tool-only turns when includeToolCalls is off).
+    const hasVisibleContent = contentBlocks.some((block) => {
+      switch (block.type) {
+        case 'text':
+          return Boolean((block as TextContent).text.trim());
+        case 'thinking':
+          return options.includeThinking;
+        case 'tool_use':
+        case 'tool_result':
+          return options.includeToolCalls;
+        case 'image':
+          return options.imageHandling !== 'skip';
+        case 'file_attachment':
+          return true;
+        default:
+          return false;
+      }
+    });
+
+    if (!hasVisibleContent) continue;
+
     // Role header
     const roleHeader = msg.role === 'user' ? '## 👤 User' : '## 🤖 Assistant';
     lines.push(roleHeader);
@@ -172,9 +197,6 @@ export function serializeMessagesToMarkdown(
       lines.push(`*${new Date(msg.timestamp).toLocaleString()}*`);
     }
     lines.push('');
-
-    // Content blocks
-    const contentBlocks = Array.isArray(msg.content) ? msg.content : [];
 
     for (const block of contentBlocks) {
       switch (block.type) {
