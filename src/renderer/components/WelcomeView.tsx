@@ -114,7 +114,7 @@ export function WelcomeView() {
     }
   };
 
-  // Load MCP servers on mount
+  // Load MCP servers on mount and poll for connection status updates
   useEffect(() => {
     const loadServers = async () => {
       try {
@@ -129,6 +129,9 @@ export function WelcomeView() {
       }
     };
     loadServers();
+    // Poll every 10s to pick up connection status changes (servers may still be connecting)
+    const interval = setInterval(loadServers, 10000);
+    return () => clearInterval(interval);
   }, [getMCPServers]);
 
   // Raw workspace profile — fetched only when workingDir changes
