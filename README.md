@@ -328,7 +328,7 @@ MCP tool schemas consume significant context window tokens. To optimize usage, s
 - Servers in `disabled` are excluded from the session (overrides global enabled state)
 - Servers in `enabled` are explicitly included (overrides the `disabled` list)
 - Servers not mentioned in either array pass through unchanged — their global config `enabled` state is preserved as-is (globally enabled → stays enabled, globally disabled → stays disabled)
-- Uses server IDs (immutable) rather than display names
+- Accepts both server IDs (`mcp-1716547200000`) and display names (`"EU Law"`) — the resolver matches against both
 
 ### Configuration
 
