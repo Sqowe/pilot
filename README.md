@@ -316,6 +316,8 @@ MCP tool schemas consume significant context window tokens. To optimize usage, s
 2. **Workspace profile** — `.cowork/mcp-servers.json` with `disabled`/`enabled` arrays. Committable to git for team-wide defaults.
 3. **Global config** — Per-server `enabled` boolean in Settings UI.
 
+**Save to Workspace button** — The MCP Connectors section header includes a 💾 save icon that appears when you have session-disabled servers and a working directory set. Clicking it writes the current session toggle state to `.cowork/mcp-servers.json`, making your MCP setup persistent and shareable with your team via git.
+
 **Workspace profile example** (`.cowork/mcp-servers.json`):
 
 ```json

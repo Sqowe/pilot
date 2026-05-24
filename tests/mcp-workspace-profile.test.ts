@@ -10,6 +10,7 @@ import {
   applyWorkspaceOverrides,
   applySessionOverrides,
   invalidateWorkspaceProfileCache,
+  saveWorkspaceMcpProfile,
 } from '../src/main/mcp/mcp-workspace-profile';
 import type { MCPServerConfig } from '../src/main/mcp/mcp-manager';
 
@@ -225,6 +226,241 @@ describe('mcp-workspace-profile', () => {
       result = applySessionOverrides(result, []);
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe('s2');
+    });
+  });
+
+  describe('saveWorkspaceMcpProfile', () => {
+    it('creates .cowork directory and writes profile', async () => {
+      const result = await saveWorkspaceMcpProfile(tmpDir, { disabled: ['s1', 's2'] });
+      expect(result.success).toBe(true);
+
+      const filePath = path.join(tmpDir, '.cowork', 'mcp-servers.json');
+      expect(fs.existsSync(filePath)).toBe(true);
+
+      const content = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      expect(content).toEqual({ disabled: ['s1', 's2'] });
+    });
+
+    it('returns error for empty cwd', async () => {
+      const result = await saveWorkspaceMcpProfile('', { disabled: ['s1'] });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('No working directory');
+    });
+
+    it('merges with existing profile — preserves enabled when only disabled is updated', async () => {
+      // Pre-create a profile with enabled entries
+      const coworkDir = path.join(tmpDir, '.cowork');
+      fs.mkdirSync(coworkDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(coworkDir, 'mcp-servers.json'),
+        JSON.stringify({ disabled: ['old-disabled'], enabled: ['keep-this'] })
+      );
+
+      // Save only disabled — enabled should be preserved
+      const result = await saveWorkspaceMcpProfile(tmpDir, { disabled: ['new-disabled'] });
+      expect(result.success).toBe(true);
+
+      const content = JSON.parse(
+        fs.readFileSync(path.join(coworkDir, 'mcp-servers.json'), 'utf-8')
+      );
+      expect(content.disabled).toEqual(['new-disabled']);
+      expect(content.enabled).toEqual(['keep-this']);
+    });
+
+    it('removes file when profile becomes empty (clearing overrides)', async () => {
+      // Pre-create a profile
+      const coworkDir = path.join(tmpDir, '.cowork');
+      fs.mkdirSync(coworkDir, { recursive: true });
+      const filePath = path.join(coworkDir, 'mcp-servers.json');
+      fs.writeFileSync(filePath, JSON.stringify({ disabled: ['s1'] }));
+
+      // Save with empty disabled array — should remove the file
+      const result = await saveWorkspaceMcpProfile(tmpDir, { disabled: [], enabled: [] });
+      expect(result.success).toBe(true);
+      expect(fs.existsSync(filePath)).toBe(false);
+    });
+
+    it('invalidates cache after save so next load reads fresh data', async () => {
+      // Load once to populate cache (returns null — no file)
+      expect(loadWorkspaceMcpProfile(tmpDir)).toBeNull();
+
+      // Save a profile
+      await saveWorkspaceMcpProfile(tmpDir, { disabled: ['s1'] });
+
+      // Load should now return the saved profile (cache was invalidated)
+      const profile = loadWorkspaceMcpProfile(tmpDir);
+      expect(profile).toEqual({ disabled: ['s1'] });
+    });
+
+    it('overwrites existing disabled when new disabled is provided', async () => {
+      const coworkDir = path.join(tmpDir, '.cowork');
+      fs.mkdirSync(coworkDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(coworkDir, 'mcp-servers.json'),
+        JSON.stringify({ disabled: ['old-a', 'old-b'] })
+      );
+
+      await saveWorkspaceMcpProfile(tmpDir, { disabled: ['new-x'] });
+
+      const content = JSON.parse(
+        fs.readFileSync(path.join(coworkDir, 'mcp-servers.json'), 'utf-8')
+      );
+      expect(content.disabled).toEqual(['new-x']);
+    });
+
+    it('handles write permission errors gracefully', async () => {
+      // chmod-based test only works reliably on POSIX systems (not Windows/CI)
+      if (process.platform === 'win32') {
+        return; // Skip on Windows — chmod semantics differ
+      }
+
+      // Create a read-only directory to trigger a write error
+      const readOnlyDir = path.join(tmpDir, 'readonly');
+      fs.mkdirSync(readOnlyDir);
+      fs.mkdirSync(path.join(readOnlyDir, '.cowork'));
+      fs.chmodSync(path.join(readOnlyDir, '.cowork'), 0o444);
+
+      const result = await saveWorkspaceMcpProfile(readOnlyDir, { disabled: ['s1'] });
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+
+      // Restore permissions for cleanup
+      fs.chmodSync(path.join(readOnlyDir, '.cowork'), 0o755);
+    });
+
+    it('does not leave temp files on successful save', async () => {
+      await saveWorkspaceMcpProfile(tmpDir, { disabled: ['s1'] });
+
+      const coworkDir = path.join(tmpDir, '.cowork');
+      const files = fs.readdirSync(coworkDir);
+      const tmpFiles = files.filter((f) => f.endsWith('.tmp'));
+      expect(tmpFiles).toHaveLength(0);
+    });
+
+    it('handles concurrent saves without corruption', async () => {
+      // Fire multiple saves concurrently
+      const results = await Promise.all([
+        saveWorkspaceMcpProfile(tmpDir, { disabled: ['a'] }),
+        saveWorkspaceMcpProfile(tmpDir, { disabled: ['b'] }),
+        saveWorkspaceMcpProfile(tmpDir, { disabled: ['c'] }),
+      ]);
+
+      // All should succeed
+      for (const r of results) {
+        expect(r.success).toBe(true);
+      }
+
+      // File should be valid JSON with one of the values (last writer wins)
+      const content = JSON.parse(
+        fs.readFileSync(path.join(tmpDir, '.cowork', 'mcp-servers.json'), 'utf-8')
+      );
+      expect(content.disabled).toBeDefined();
+      expect(content.disabled.length).toBe(1);
+      expect(['a', 'b', 'c']).toContain(content.disabled[0]);
+
+      // No leftover temp files
+      const files = fs.readdirSync(path.join(tmpDir, '.cowork'));
+      const tmpFiles = files.filter((f) => f.endsWith('.tmp'));
+      expect(tmpFiles).toHaveLength(0);
+    });
+
+    it('concurrent mixed-field saves preserve both disabled and enabled', async () => {
+      // With write serialization, sequential execution means both fields survive.
+      const results = await Promise.all([
+        saveWorkspaceMcpProfile(tmpDir, { disabled: ['d1', 'd2'] }),
+        saveWorkspaceMcpProfile(tmpDir, { enabled: ['e1'] }),
+      ]);
+
+      for (const r of results) {
+        expect(r.success).toBe(true);
+      }
+
+      // Both fields should be present — serialization ensures the second save
+      // reads the result of the first before merging.
+      const content = JSON.parse(
+        fs.readFileSync(path.join(tmpDir, '.cowork', 'mcp-servers.json'), 'utf-8')
+      );
+      expect(content.disabled).toEqual(['d1', 'd2']);
+      expect(content.enabled).toEqual(['e1']);
+    });
+
+    it('validates and sanitizes malformed existing profile on disk', async () => {
+      // Write a malformed profile with non-string-array fields
+      const coworkDir = path.join(tmpDir, '.cowork');
+      fs.mkdirSync(coworkDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(coworkDir, 'mcp-servers.json'),
+        JSON.stringify({ disabled: 'not-an-array', enabled: [123, '', 'valid-id'] })
+      );
+
+      // Save new disabled — should sanitize existing enabled (drop invalid entries)
+      const result = await saveWorkspaceMcpProfile(tmpDir, { disabled: ['new-d'] });
+      expect(result.success).toBe(true);
+
+      const content = JSON.parse(
+        fs.readFileSync(path.join(coworkDir, 'mcp-servers.json'), 'utf-8')
+      );
+      expect(content.disabled).toEqual(['new-d']);
+      // Only 'valid-id' survives validation from existing enabled
+      expect(content.enabled).toEqual(['valid-id']);
+    });
+
+    it('fails save when existing file has non-ENOENT read error', async () => {
+      // chmod-based test only works reliably on POSIX systems
+      if (process.platform === 'win32') {
+        return;
+      }
+
+      // Create a profile file that cannot be read (no read permission)
+      const coworkDir = path.join(tmpDir, '.cowork');
+      fs.mkdirSync(coworkDir, { recursive: true });
+      const filePath = path.join(coworkDir, 'mcp-servers.json');
+      fs.writeFileSync(filePath, JSON.stringify({ enabled: ['important'] }));
+      fs.chmodSync(filePath, 0o000); // No read permission
+
+      // Save should fail — not silently overwrite
+      const result = await saveWorkspaceMcpProfile(tmpDir, { disabled: ['new-d'] });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Failed to read existing profile');
+
+      // Restore permissions for cleanup
+      fs.chmodSync(filePath, 0o644);
+
+      // Verify original file is untouched
+      const content = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      expect(content.enabled).toEqual(['important']);
+    });
+
+    it('handles invalid JSON in existing file gracefully (starts fresh)', async () => {
+      const coworkDir = path.join(tmpDir, '.cowork');
+      fs.mkdirSync(coworkDir, { recursive: true });
+      fs.writeFileSync(path.join(coworkDir, 'mcp-servers.json'), '{broken json!!!');
+
+      // Should succeed — treats invalid JSON as empty and writes new profile
+      const result = await saveWorkspaceMcpProfile(tmpDir, { disabled: ['d1'] });
+      expect(result.success).toBe(true);
+
+      const content = JSON.parse(
+        fs.readFileSync(path.join(coworkDir, 'mcp-servers.json'), 'utf-8')
+      );
+      expect(content.disabled).toEqual(['d1']);
+      expect(content.enabled).toBeUndefined();
+    });
+
+    it('normalizes incoming profile fields (trims, dedupes, drops invalid)', async () => {
+      // Call saveWorkspaceMcpProfile directly with messy input
+      const result = await saveWorkspaceMcpProfile(tmpDir, {
+        disabled: ['  s1  ', 's2', 's1', '   ', 's3'],
+        enabled: ['e1', 'e1', '  e2  '],
+      });
+      expect(result.success).toBe(true);
+
+      const content = JSON.parse(
+        fs.readFileSync(path.join(tmpDir, '.cowork', 'mcp-servers.json'), 'utf-8')
+      );
+      // Trimmed, deduped, empty strings removed
+      expect(content.disabled).toEqual(['s1', 's2', 's3']);
+      expect(content.enabled).toEqual(['e1', 'e2']);
     });
   });
 });

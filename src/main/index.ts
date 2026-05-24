@@ -56,6 +56,7 @@ import {
   forgetSessionPermissions,
 } from './config/permission-rules-store';
 import { mcpConfigStore } from './mcp/mcp-config-store';
+import { saveWorkspaceMcpProfile } from './mcp/mcp-workspace-profile';
 import { getSandboxAdapter, shutdownSandbox } from './sandbox/sandbox-adapter';
 import { SandboxSync } from './sandbox/sandbox-sync';
 import { WSLBridge } from './sandbox/wsl-bridge';
@@ -2185,6 +2186,65 @@ ipcMain.handle('mcp.getSessionDisabledServers', async (_event, sessionId: string
     return [];
   }
 });
+
+ipcMain.handle(
+  'mcp.saveWorkspaceProfile',
+  async (_event, cwd: string, disabledServerIds: string[]) => {
+    try {
+      // Validate cwd: must be an absolute path and match the current working directory
+      // to prevent arbitrary filesystem writes from a compromised renderer.
+      if (!cwd || !isAbsolute(cwd)) {
+        return { success: false, error: 'Invalid working directory: must be an absolute path' };
+      }
+      const trustedCwd = getWorkingDir();
+      if (!trustedCwd || resolve(cwd) !== resolve(trustedCwd)) {
+        return {
+          success: false,
+          error: 'Working directory does not match the current trusted workspace',
+        };
+      }
+
+      // Validate disabledServerIds: must be an array of non-empty strings, bounded size.
+      if (!Array.isArray(disabledServerIds)) {
+        return { success: false, error: 'disabledServerIds must be an array' };
+      }
+      const MAX_ENTRIES = 100;
+      const MAX_ID_LENGTH = 256;
+      if (disabledServerIds.length > MAX_ENTRIES) {
+        return { success: false, error: `Too many entries (max ${MAX_ENTRIES})` };
+      }
+      const sanitizedIds: string[] = [];
+      for (const id of disabledServerIds) {
+        if (typeof id !== 'string') {
+          return {
+            success: false,
+            error: 'Each server ID must be a non-empty string (max 256 chars)',
+          };
+        }
+        const normalized = id.trim();
+        if (normalized.length === 0 || normalized.length > MAX_ID_LENGTH) {
+          return {
+            success: false,
+            error: 'Each server ID must be a non-empty string (max 256 chars)',
+          };
+        }
+        sanitizedIds.push(normalized);
+      }
+      // Deduplicate
+      const uniqueIds = [...new Set(sanitizedIds)];
+
+      const result = await saveWorkspaceMcpProfile(cwd, { disabled: uniqueIds });
+      if (result.success) {
+        log(`[MCP] Workspace profile saved to ${cwd}/.cowork/mcp-servers.json`);
+      }
+      return result;
+    } catch (error) {
+      logError('[MCP] Error saving workspace profile:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { success: false, error: errorMessage };
+    }
+  }
+);
 
 // Skills API handlers
 ipcMain.handle('skills.getAll', async () => {

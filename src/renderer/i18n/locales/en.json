@@ -522,6 +522,9 @@
   "mcp": {
     "noConnectors": "No connectors configured",
     "addConnector": "Add a connector to enable MCP tools",
+    "saveToWorkspace": "Save current setup to workspace",
+    "savedToWorkspace": "MCP setup saved to .cowork/mcp-servers.json",
+    "saveToWorkspaceFailed": "Failed to save MCP workspace profile",
     "toolsAvailable": "{{count}} tool available",
     "toolsAvailable_plural": "{{count}} tools available",
     "connected": "Connected",

@@ -40,6 +40,7 @@ import {
   Layers,
   Star,
   X,
+  Save,
 } from 'lucide-react';
 import type { TraceStep, MCPServerInfo } from '../types';
 import { computeContextUsage } from '../utils/context-usage';
@@ -404,6 +405,36 @@ export function ContextPanel() {
       }
     } catch (error) {
       console.error('Failed to toggle session MCP server:', error);
+    }
+  };
+
+  const handleSaveWorkspaceProfile = async () => {
+    if (!currentWorkingDir) return;
+    try {
+      const result = await window.electronAPI?.mcp?.saveWorkspaceProfile(
+        currentWorkingDir,
+        Array.from(sessionDisabledServers)
+      );
+      if (result?.success) {
+        setGlobalNotice({
+          id: `mcp-profile-saved-${Date.now()}`,
+          type: 'success',
+          message: t('mcp.savedToWorkspace'),
+        });
+      } else {
+        setGlobalNotice({
+          id: `mcp-profile-save-failed-${Date.now()}`,
+          type: 'error',
+          message: `${t('mcp.saveToWorkspaceFailed')}: ${result?.error || 'Unknown error'}`,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to save MCP workspace profile:', error);
+      setGlobalNotice({
+        id: `mcp-profile-save-failed-${Date.now()}`,
+        type: 'error',
+        message: t('mcp.saveToWorkspaceFailed'),
+      });
     }
   };
 
@@ -815,29 +846,47 @@ export function ContextPanel() {
 
         {/* MCP Connectors */}
         <div className="border-b border-border-muted">
-          <button
-            onClick={() => setMcpConnectorsOpen(!mcpConnectorsOpen)}
-            className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-surface-hover transition-colors"
-          >
-            <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
-              {t('context.mcpConnectors')}
-              {mcpServers.length > 0 && (
-                <span className="ml-1.5 text-mcp">
-                  ({mcpServers.length}/{mcpServers.filter((s) => s.connected).length}/
-                  {
-                    mcpServers.filter((s) => s.connected && !sessionDisabledServers.has(s.id))
-                      .length
-                  }
-                  )
-                </span>
+          <div className="w-full px-4 py-2.5 flex items-center justify-between">
+            <button
+              onClick={() => setMcpConnectorsOpen(!mcpConnectorsOpen)}
+              className="flex items-center gap-1 flex-1 hover:bg-surface-hover transition-colors rounded -ml-1 px-1"
+            >
+              <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
+                {t('context.mcpConnectors')}
+                {mcpServers.length > 0 && (
+                  <span className="ml-1.5 text-mcp">
+                    ({mcpServers.length}/{mcpServers.filter((s) => s.connected).length}/
+                    {
+                      mcpServers.filter((s) => s.connected && !sessionDisabledServers.has(s.id))
+                        .length
+                    }
+                    )
+                  </span>
+                )}
+              </span>
+            </button>
+            <div className="flex items-center gap-1">
+              {currentWorkingDir && mcpServers.length > 0 && (
+                <button
+                  onClick={handleSaveWorkspaceProfile}
+                  className="text-text-muted hover:text-accent-primary transition-colors"
+                  title={t('mcp.saveToWorkspace')}
+                >
+                  <Save className="w-3.5 h-3.5" />
+                </button>
               )}
-            </span>
-            {mcpConnectorsOpen ? (
-              <ChevronUp className="w-3.5 h-3.5 text-text-muted" />
-            ) : (
-              <ChevronDown className="w-3.5 h-3.5 text-text-muted" />
-            )}
-          </button>
+              <button
+                onClick={() => setMcpConnectorsOpen(!mcpConnectorsOpen)}
+                className="text-text-muted hover:text-text-primary transition-colors"
+              >
+                {mcpConnectorsOpen ? (
+                  <ChevronUp className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </div>
+          </div>
 
           {mcpConnectorsOpen && (
             <div className="px-4 pb-2.5">

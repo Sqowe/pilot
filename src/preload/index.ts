@@ -264,6 +264,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('mcp.toggleSessionServer', sessionId, serverId, disabled),
     getSessionDisabledServers: (sessionId: string): Promise<string[]> =>
       ipcRenderer.invoke('mcp.getSessionDisabledServers', sessionId),
+    saveWorkspaceProfile: (
+      cwd: string,
+      disabledServerIds: string[]
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('mcp.saveWorkspaceProfile', cwd, disabledServerIds),
   },
 
   // Skills methods
@@ -614,6 +619,10 @@ declare global {
           disabled: boolean
         ) => Promise<{ success: boolean; disabledServers?: string[]; error?: string }>;
         getSessionDisabledServers: (sessionId: string) => Promise<string[]>;
+        saveWorkspaceProfile: (
+          cwd: string,
+          disabledServerIds: string[]
+        ) => Promise<{ success: boolean; error?: string }>;
       };
       skills: {
         getAll: () => Promise<Skill[]>;
