@@ -463,4 +463,59 @@ describe('mcp-workspace-profile', () => {
       expect(content.enabled).toEqual(['e1', 'e2']);
     });
   });
+
+  describe('loadWorkspaceMcpProfile (IPC getWorkspaceProfile scenarios)', () => {
+    it('returns null for non-absolute cwd', () => {
+      expect(loadWorkspaceMcpProfile('')).toBeNull();
+      expect(loadWorkspaceMcpProfile(null)).toBeNull();
+      expect(loadWorkspaceMcpProfile(undefined)).toBeNull();
+    });
+
+    it('returns profile with disabled array for standard profiles', () => {
+      const coworkDir = path.join(tmpDir, '.cowork');
+      fs.mkdirSync(coworkDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(coworkDir, 'mcp-servers.json'),
+        JSON.stringify({ disabled: ['server-a', 'server-b'] })
+      );
+
+      const profile = loadWorkspaceMcpProfile(tmpDir);
+      expect(profile).toEqual({ disabled: ['server-a', 'server-b'] });
+    });
+
+    it('returns raw profile with enabled array for allowlist-mode profiles', () => {
+      const coworkDir = path.join(tmpDir, '.cowork');
+      fs.mkdirSync(coworkDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(coworkDir, 'mcp-servers.json'),
+        JSON.stringify({ enabled: ['only-this-one'] })
+      );
+
+      // IPC returns raw profile — renderer derives disabled from its server list
+      const profile = loadWorkspaceMcpProfile(tmpDir);
+      expect(profile).toEqual({ enabled: ['only-this-one'] });
+      expect(profile?.disabled).toBeUndefined();
+    });
+
+    it('returns profile with both disabled and enabled arrays', () => {
+      const coworkDir = path.join(tmpDir, '.cowork');
+      fs.mkdirSync(coworkDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(coworkDir, 'mcp-servers.json'),
+        JSON.stringify({ disabled: ['d1'], enabled: ['e1'] })
+      );
+
+      const profile = loadWorkspaceMcpProfile(tmpDir);
+      expect(profile).toEqual({ disabled: ['d1'], enabled: ['e1'] });
+    });
+
+    it('returns null for missing .cowork directory', () => {
+      const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-empty-'));
+      try {
+        expect(loadWorkspaceMcpProfile(emptyDir)).toBeNull();
+      } finally {
+        fs.rmSync(emptyDir, { recursive: true, force: true });
+      }
+    });
+  });
 });

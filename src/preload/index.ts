@@ -269,6 +269,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       disabledServerIds: string[]
     ): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('mcp.saveWorkspaceProfile', cwd, disabledServerIds),
+    getWorkspaceProfile: (
+      cwd: string
+    ): Promise<{ disabled?: string[]; enabled?: string[] } | null> =>
+      ipcRenderer.invoke('mcp.getWorkspaceProfile', cwd),
   },
 
   // Skills methods
@@ -623,6 +627,9 @@ declare global {
           cwd: string,
           disabledServerIds: string[]
         ) => Promise<{ success: boolean; error?: string }>;
+        getWorkspaceProfile: (
+          cwd: string
+        ) => Promise<{ disabled?: string[]; enabled?: string[] } | null>;
       };
       skills: {
         getAll: () => Promise<Skill[]>;

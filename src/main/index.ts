@@ -56,7 +56,7 @@ import {
   forgetSessionPermissions,
 } from './config/permission-rules-store';
 import { mcpConfigStore } from './mcp/mcp-config-store';
-import { saveWorkspaceMcpProfile } from './mcp/mcp-workspace-profile';
+import { saveWorkspaceMcpProfile, loadWorkspaceMcpProfile } from './mcp/mcp-workspace-profile';
 import { getSandboxAdapter, shutdownSandbox } from './sandbox/sandbox-adapter';
 import { SandboxSync } from './sandbox/sandbox-sync';
 import { WSLBridge } from './sandbox/wsl-bridge';
@@ -2245,6 +2245,20 @@ ipcMain.handle(
     }
   }
 );
+
+ipcMain.handle('mcp.getWorkspaceProfile', async (_event, cwd: string) => {
+  try {
+    if (!cwd || !isAbsolute(cwd)) {
+      return null;
+    }
+    // Return the raw profile as-is. The renderer handles both `disabled` and `enabled`
+    // modes using its own server list, avoiding lossy normalization here.
+    return loadWorkspaceMcpProfile(cwd);
+  } catch (error) {
+    logError('[MCP] Error loading workspace profile:', error);
+    return null;
+  }
+});
 
 // Skills API handlers
 ipcMain.handle('skills.getAll', async () => {

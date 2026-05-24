@@ -7,6 +7,7 @@ import { getInitialSessionTitle } from '../../shared/session-title';
 import { MAX_PINNED_SKILLS_PER_SESSION } from '../../shared/skill-pinning-constants';
 import { ArrowRight, X, Paperclip, Layers, Plug, ChevronDown, ChevronUp, Star } from 'lucide-react';
 import { WorkspacePicker } from './WorkspacePicker';
+import { deriveDisabledServerIds } from '../utils/mcp-profile-derive';
 
 type AttachedFile = {
   name: string;
@@ -41,8 +42,11 @@ export function WelcomeView() {
 
   // MCP server selection state
   const [mcpServers, setMcpServers] = useState<MCPServerInfo[]>([]);
+  const [mcpServersLoaded, setMcpServersLoaded] = useState(false);
+  const [mcpServersLoadFailed, setMcpServersLoadFailed] = useState(false);
   const [mcpDisabledIds, setMcpDisabledIds] = useState<Set<string>>(new Set());
   const [mcpExpanded, setMcpExpanded] = useState(false);
+  const [mcpProfilePending, setMcpProfilePending] = useState(false);
 
   // Skill pinning state
   const [availableSkills, setAvailableSkills] = useState<Skill[]>([]);
@@ -55,7 +59,9 @@ export function WelcomeView() {
     setWelcomeDraft(value);
   };
 
-  const canSubmit = prompt.trim().length > 0 || pastedImages.length > 0 || attachedFiles.length > 0;
+  const canSubmit =
+    (prompt.trim().length > 0 || pastedImages.length > 0 || attachedFiles.length > 0) &&
+    !mcpProfilePending;
 
   // Config set selection
   const appConfig = useAppStore((state) => state.appConfig);
@@ -114,12 +120,93 @@ export function WelcomeView() {
       try {
         const servers = await getMCPServers();
         setMcpServers(servers || []);
+        setMcpServersLoadFailed(false);
       } catch (error) {
         console.error('[WelcomeView] Failed to load MCP servers:', error);
+        setMcpServersLoadFailed(true);
+      } finally {
+        setMcpServersLoaded(true);
       }
     };
     loadServers();
   }, [getMCPServers]);
+
+  // Raw workspace profile — fetched only when workingDir changes
+  const [workspaceProfile, setWorkspaceProfile] = useState<{
+    disabled?: string[];
+    enabled?: string[];
+  } | null>(null);
+  // Track whether user has manually toggled servers (overrides profile derivation)
+  const [userToggledMcp, setUserToggledMcp] = useState(false);
+
+  // Load workspace MCP profile when workingDir changes (fetch only, no derivation)
+  useEffect(() => {
+    if (!isElectron || !workingDir) {
+      setWorkspaceProfile(null);
+      setUserToggledMcp(false);
+      setMcpDisabledIds(new Set());
+      return;
+    }
+    let cancelled = false;
+    // Immediately clear stale state from previous workspace before async fetch
+    setWorkspaceProfile(null);
+    setUserToggledMcp(false);
+    setMcpDisabledIds(new Set());
+    const loadProfile = async () => {
+      try {
+        const profile = await window.electronAPI?.mcp?.getWorkspaceProfile(workingDir);
+        if (cancelled) return;
+        setWorkspaceProfile(profile || null);
+      } catch (error) {
+        if (!cancelled) {
+          console.error('[WelcomeView] Failed to load workspace MCP profile:', error);
+          setWorkspaceProfile(null);
+        }
+      }
+    };
+    loadProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [workingDir, isElectron]);
+
+  // Derive disabled IDs from profile + server list (no IPC, no re-fetch).
+  // Only applies when user hasn't manually toggled servers this session.
+  // `mcpProfilePending` tracks whether derivation is incomplete (allowlist waiting for servers).
+
+  useEffect(() => {
+    if (userToggledMcp) {
+      setMcpProfilePending(false);
+      return; // User overrode — don't reset
+    }
+
+    if (!workspaceProfile) {
+      setMcpDisabledIds(new Set());
+      setMcpProfilePending(false);
+      return;
+    }
+
+    const derived = deriveDisabledServerIds(workspaceProfile, mcpServers);
+    if (derived === null) {
+      // Allowlist mode but servers not loaded yet.
+      if (mcpServersLoaded) {
+        if (mcpServersLoadFailed) {
+          // Server load failed — keep pending (fail-safe: don't enable everything)
+          setMcpProfilePending(true);
+        } else {
+          // Loaded successfully with zero servers — nothing to disable, unblock
+          setMcpDisabledIds(new Set());
+          setMcpProfilePending(false);
+        }
+      } else {
+        setMcpProfilePending(true);
+      }
+      return;
+    }
+
+    setMcpDisabledIds(derived);
+    setMcpProfilePending(false);
+  }, [workspaceProfile, mcpServers, mcpServersLoaded, mcpServersLoadFailed, userToggledMcp]);
 
   // Load available skills on mount
   useEffect(() => {
@@ -669,7 +756,8 @@ export function WelcomeView() {
               <div className="flex items-center gap-2 text-sm text-text-secondary">
                 <Plug className="w-4 h-4 text-mcp" />
                 <span>
-                  {mcpServers.length - mcpDisabledIds.size}/{mcpServers.length}{' '}
+                  {mcpServers.length}/{mcpServers.filter((s) => s.connected).length}/
+                  {mcpServers.filter((s) => s.connected && !mcpDisabledIds.has(s.id)).length}{' '}
                   {t('welcome.mcpServersActive')}
                 </span>
                 {mcpDisabledIds.size > 0 && (
@@ -695,7 +783,10 @@ export function WelcomeView() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setMcpDisabledIds(new Set())}
+                      onClick={() => {
+                        setUserToggledMcp(true);
+                        setMcpDisabledIds(new Set());
+                      }}
                       className="text-xs text-text-muted hover:text-text-primary transition-colors"
                     >
                       {t('welcome.mcpAllOn')}
@@ -703,7 +794,10 @@ export function WelcomeView() {
                     <span className="text-text-muted">·</span>
                     <button
                       type="button"
-                      onClick={() => setMcpDisabledIds(new Set(mcpServers.map((s) => s.id)))}
+                      onClick={() => {
+                        setUserToggledMcp(true);
+                        setMcpDisabledIds(new Set(mcpServers.map((s) => s.id)));
+                      }}
                       className="text-xs text-text-muted hover:text-text-primary transition-colors"
                     >
                       {t('welcome.mcpAllOff')}
@@ -718,6 +812,7 @@ export function WelcomeView() {
                         key={server.id}
                         type="button"
                         onClick={() => {
+                          setUserToggledMcp(true);
                           setMcpDisabledIds((prev) => {
                             const next = new Set(prev);
                             if (prev.has(server.id)) {
