@@ -56,7 +56,11 @@ import {
   forgetSessionPermissions,
 } from './config/permission-rules-store';
 import { mcpConfigStore } from './mcp/mcp-config-store';
-import { saveWorkspaceMcpProfile, loadWorkspaceMcpProfile } from './mcp/mcp-workspace-profile';
+import {
+  saveWorkspaceMcpProfile,
+  loadWorkspaceMcpProfile,
+  validateWorkspaceCwd,
+} from './mcp/mcp-workspace-profile';
 import { getSandboxAdapter, shutdownSandbox } from './sandbox/sandbox-adapter';
 import { SandboxSync } from './sandbox/sandbox-sync';
 import { WSLBridge } from './sandbox/wsl-bridge';
@@ -2191,18 +2195,27 @@ ipcMain.handle(
   'mcp.saveWorkspaceProfile',
   async (_event, cwd: string, disabledServerIds: string[]) => {
     try {
-      // Validate cwd: must be an absolute path and match the current working directory
-      // to prevent arbitrary filesystem writes from a compromised renderer.
-      if (!cwd || !isAbsolute(cwd)) {
-        return { success: false, error: 'Invalid working directory: must be an absolute path' };
+      // Validate cwd: must be an absolute path that matches an authorized workspace.
+      // Authorized workspaces are: the global working directory OR any session's cwd.
+      // Trust chain: session cwds are validated at creation time via setWorkingDir() and
+      // getWorkspacePathUnsupportedReason(), so they are main-process-trusted by the time
+      // they appear in listSessions(). This prevents a compromised renderer from writing
+      // to arbitrary filesystem paths.
+      const authorizedWorkspaces: string[] = [];
+      const globalCwd = getWorkingDir();
+      if (globalCwd) authorizedWorkspaces.push(globalCwd);
+      if (sessionManager) {
+        for (const session of sessionManager.listSessions()) {
+          if (session.cwd) authorizedWorkspaces.push(session.cwd);
+        }
       }
-      const trustedCwd = getWorkingDir();
-      if (!trustedCwd || resolve(cwd) !== resolve(trustedCwd)) {
-        return {
-          success: false,
-          error: 'Working directory does not match the current trusted workspace',
-        };
+
+      const validation = validateWorkspaceCwd(cwd, authorizedWorkspaces);
+      if (!validation.valid) {
+        return { success: false, error: validation.error };
       }
+      // Use the canonical path for all downstream writes to prevent TOCTOU symlink attacks
+      const trustedCwd = validation.canonicalCwd;
 
       // Validate disabledServerIds: must be an array of non-empty strings, bounded size.
       if (!Array.isArray(disabledServerIds)) {
@@ -2233,9 +2246,9 @@ ipcMain.handle(
       // Deduplicate
       const uniqueIds = [...new Set(sanitizedIds)];
 
-      const result = await saveWorkspaceMcpProfile(cwd, { disabled: uniqueIds });
+      const result = await saveWorkspaceMcpProfile(trustedCwd, { disabled: uniqueIds });
       if (result.success) {
-        log(`[MCP] Workspace profile saved to ${cwd}/.cowork/mcp-servers.json`);
+        log(`[MCP] Workspace profile saved to ${trustedCwd}/.cowork/mcp-servers.json`);
       }
       return result;
     } catch (error) {

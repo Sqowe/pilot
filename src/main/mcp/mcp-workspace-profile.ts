@@ -32,6 +32,70 @@ export interface McpWorkspaceProfile {
   enabled?: string[];
 }
 
+/**
+ * Validate that a renderer-provided cwd is authorized for workspace profile writes.
+ *
+ * Authorization rules:
+ * 1. Must be an absolute path
+ * 2. Must exist on disk and be a directory
+ * 3. Must match the global working directory OR a known session workspace
+ *
+ * Trust model: The `authorizedWorkspaces` list is built from main-process-owned state
+ * (global working directory + session cwds). Session cwds are validated at creation time
+ * via `getWorkspacePathUnsupportedReason` and `setWorkingDir`, so they are already
+ * trusted by the time they appear in `listSessions()`.
+ *
+ * Returns `{ valid: true, canonicalCwd: string }` (canonical path for downstream use)
+ * or `{ valid: false, error: string }`.
+ */
+export function validateWorkspaceCwd(
+  cwd: string | null | undefined,
+  authorizedWorkspaces: string[]
+): { valid: true; canonicalCwd: string } | { valid: false; error: string } {
+  if (!cwd || !path.isAbsolute(cwd)) {
+    return { valid: false, error: 'Invalid working directory: must be an absolute path' };
+  }
+
+  const resolvedCwd = safeRealpath(cwd);
+
+  // Verify the path exists and is a directory (not a file or special path)
+  try {
+    const stat = fs.statSync(resolvedCwd);
+    if (!stat.isDirectory()) {
+      return { valid: false, error: 'Working directory path is not a directory' };
+    }
+  } catch {
+    return { valid: false, error: 'Working directory does not exist' };
+  }
+
+  // Authorization: cwd must match one of the authorized workspaces (canonicalized)
+  const authorizedSet = new Set(authorizedWorkspaces.map((p) => safeRealpath(p)));
+  if (!authorizedSet.has(resolvedCwd)) {
+    return { valid: false, error: 'Working directory is not an authorized workspace' };
+  }
+
+  return { valid: true, canonicalCwd: resolvedCwd };
+}
+
+/**
+ * Canonicalize a path using realpath (resolves symlinks) with fallback to path.resolve.
+ * On Windows, normalizes to lowercase for case-insensitive comparison.
+ */
+function safeRealpath(p: string): string {
+  let resolved: string;
+  try {
+    resolved = fs.realpathSync.native(p);
+  } catch {
+    // If realpath fails (e.g., path doesn't exist yet), fall back to resolve
+    resolved = path.resolve(p);
+  }
+  // Windows paths are case-insensitive
+  if (process.platform === 'win32') {
+    resolved = resolved.toLowerCase();
+  }
+  return resolved;
+}
+
 const PROFILE_FILENAME = 'mcp-servers.json';
 const COWORK_DIR = '.cowork';
 
