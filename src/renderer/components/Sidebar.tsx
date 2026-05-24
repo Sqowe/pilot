@@ -5,6 +5,7 @@ import { useIPC } from '../hooks/useIPC';
 import {
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Trash2,
   Moon,
   Sun,
@@ -15,6 +16,8 @@ import {
   ListChecks,
   Check,
   Download,
+  FolderOpen,
+  Clock,
 } from 'lucide-react';
 import type { Session } from '../types';
 import { SearchOverlay } from './SearchOverlay';
@@ -26,6 +29,8 @@ type SessionGroup = {
   label: string;
   sessions: Session[];
 };
+
+type GroupMode = 'date' | 'workspace';
 
 export function Sidebar() {
   const { t } = useTranslation();
@@ -54,6 +59,24 @@ export function Sidebar() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [groupMode, setGroupMode] = useState<GroupMode>(() => {
+    try {
+      const stored = localStorage.getItem('sidebar-group-mode');
+      if (stored === 'workspace' || stored === 'date') return stored;
+    } catch {
+      // localStorage unavailable
+    }
+    return 'date';
+  });
+  const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem('sidebar-collapsed-workspaces');
+      if (stored) return new Set(JSON.parse(stored));
+    } catch {
+      // localStorage unavailable or invalid JSON
+    }
+    return new Set();
+  });
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     try {
       const stored = localStorage.getItem('sidebar-width');
@@ -76,9 +99,39 @@ export function Sidebar() {
   }, [sessions]);
 
   const groupedSessions = useMemo(
-    () => groupSessionsByDate(filteredSessions, t),
-    [filteredSessions, t]
+    () =>
+      groupMode === 'workspace'
+        ? groupSessionsByWorkspace(filteredSessions, t)
+        : groupSessionsByDate(filteredSessions, t),
+    [filteredSessions, t, groupMode]
   );
+
+  const toggleGroupMode = useCallback(() => {
+    const next = groupMode === 'date' ? 'workspace' : 'date';
+    setGroupMode(next);
+    try {
+      localStorage.setItem('sidebar-group-mode', next);
+    } catch {
+      // localStorage unavailable
+    }
+  }, [groupMode]);
+
+  const toggleWorkspaceCollapsed = useCallback((key: string) => {
+    setCollapsedWorkspaces((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      try {
+        localStorage.setItem('sidebar-collapsed-workspaces', JSON.stringify([...next]));
+      } catch {
+        // localStorage unavailable
+      }
+      return next;
+    });
+  }, []);
 
   // Exit select mode when sidebar collapses
   useEffect(() => {
@@ -463,6 +516,25 @@ export function Sidebar() {
                 <kbd className="ml-auto text-[10px] font-mono opacity-60">⌘K</kbd>
               </button>
               <button
+                onClick={toggleGroupMode}
+                className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors ${
+                  groupMode === 'workspace'
+                    ? 'bg-accent/15 text-accent'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                }`}
+                title={
+                  groupMode === 'workspace'
+                    ? t('sidebar.groupByDate')
+                    : t('sidebar.groupByWorkspace')
+                }
+              >
+                {groupMode === 'workspace' ? (
+                  <FolderOpen className="w-3.5 h-3.5" />
+                ) : (
+                  <Clock className="w-3.5 h-3.5" />
+                )}
+              </button>
+              <button
                 onClick={() => {
                   if (isSelectMode) {
                     exitSelectMode();
@@ -493,77 +565,99 @@ export function Sidebar() {
             <div className="space-y-3">
               {groupedSessions.map((group) => (
                 <section key={group.key}>
-                  <div className="px-3 pb-2 text-[11px] font-medium tracking-[0.04em] text-text-muted">
-                    {group.label}
-                  </div>
-                  <div className="space-y-0.5">
-                    {group.sessions.map((session) => {
-                      const isActive = activeSessionId === session.id;
-                      const isSelected = selectedIds.has(session.id);
-                      return (
-                        <div
-                          key={session.id}
-                          onClick={() => {
-                            if (isSelectMode) {
-                              toggleSelectSession(session.id);
-                            } else {
-                              handleSessionClick(session.id);
-                            }
-                          }}
-                          onMouseEnter={() => setHoveredSession(session.id)}
-                          onMouseLeave={() => setHoveredSession(null)}
-                          className={`group relative cursor-pointer rounded-lg px-2.5 py-1.5 transition-colors ${
-                            isSelectMode && isSelected
-                              ? 'bg-accent-muted/20'
-                              : isActive && !isSelectMode
-                                ? 'bg-surface-hover/80'
-                                : 'hover:bg-surface-hover/60'
-                          }`}
-                        >
-                          <div className={`flex items-center gap-2 ${!isSelectMode ? 'pr-6' : ''}`}>
-                            {isSelectMode && (
-                              <div
-                                className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
-                                  isSelected
-                                    ? 'bg-accent text-white'
-                                    : 'border border-border-muted bg-background'
-                                }`}
-                              >
-                                {isSelected && <Check className="w-2.5 h-2.5" />}
+                  {groupMode === 'workspace' ? (
+                    <button
+                      onClick={() => toggleWorkspaceCollapsed(group.key)}
+                      className="w-full flex items-center gap-1.5 px-3 pb-2 text-[11px] font-medium tracking-[0.04em] text-text-muted hover:text-text-secondary transition-colors"
+                      aria-expanded={!collapsedWorkspaces.has(group.key)}
+                    >
+                      <ChevronDown
+                        className={`w-3 h-3 flex-shrink-0 transition-transform ${
+                          collapsedWorkspaces.has(group.key) ? '-rotate-90' : ''
+                        }`}
+                      />
+                      <span className="truncate">{group.label}</span>
+                      <span className="ml-auto text-[10px] opacity-60 flex-shrink-0">
+                        {group.sessions.length}
+                      </span>
+                    </button>
+                  ) : (
+                    <div className="px-3 pb-2 text-[11px] font-medium tracking-[0.04em] text-text-muted">
+                      {group.label}
+                    </div>
+                  )}
+                  {!(groupMode === 'workspace' && collapsedWorkspaces.has(group.key)) && (
+                    <div className="space-y-0.5">
+                      {group.sessions.map((session) => {
+                        const isActive = activeSessionId === session.id;
+                        const isSelected = selectedIds.has(session.id);
+                        return (
+                          <div
+                            key={session.id}
+                            onClick={() => {
+                              if (isSelectMode) {
+                                toggleSelectSession(session.id);
+                              } else {
+                                handleSessionClick(session.id);
+                              }
+                            }}
+                            onMouseEnter={() => setHoveredSession(session.id)}
+                            onMouseLeave={() => setHoveredSession(null)}
+                            className={`group relative cursor-pointer rounded-lg px-2.5 py-1.5 transition-colors ${
+                              isSelectMode && isSelected
+                                ? 'bg-accent-muted/20'
+                                : isActive && !isSelectMode
+                                  ? 'bg-surface-hover/80'
+                                  : 'hover:bg-surface-hover/60'
+                            }`}
+                          >
+                            <div
+                              className={`flex items-center gap-2 ${!isSelectMode ? 'pr-6' : ''}`}
+                            >
+                              {isSelectMode && (
+                                <div
+                                  className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                                    isSelected
+                                      ? 'bg-accent text-white'
+                                      : 'border border-border-muted bg-background'
+                                  }`}
+                                >
+                                  {isSelected && <Check className="w-2.5 h-2.5" />}
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <div
+                                  className="text-[13px] font-medium leading-5 text-text-primary truncate"
+                                  title={session.title}
+                                >
+                                  {session.title}
+                                </div>
+                              </div>
+                            </div>
+
+                            {!isSelectMode && hoveredSession === session.id && (
+                              <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                                <button
+                                  onClick={(e) => handleExportSession(e, session.id)}
+                                  className="w-6 h-6 rounded-lg flex items-center justify-center text-text-muted hover:text-accent hover:bg-surface-active transition-colors"
+                                  title={t('chat.exportMarkdown')}
+                                >
+                                  <Download className="w-3 h-3" />
+                                </button>
+                                <button
+                                  onClick={(e) => handleDeleteSession(e, session.id)}
+                                  className="w-6 h-6 rounded-lg flex items-center justify-center text-text-muted hover:text-error hover:bg-surface-active transition-colors"
+                                  title={t('common.delete')}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
                               </div>
                             )}
-                            <div className="min-w-0 flex-1">
-                              <div
-                                className="text-[13px] font-medium leading-5 text-text-primary truncate"
-                                title={session.title}
-                              >
-                                {session.title}
-                              </div>
-                            </div>
                           </div>
-
-                          {!isSelectMode && hoveredSession === session.id && (
-                            <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
-                              <button
-                                onClick={(e) => handleExportSession(e, session.id)}
-                                className="w-6 h-6 rounded-lg flex items-center justify-center text-text-muted hover:text-accent hover:bg-surface-active transition-colors"
-                                title={t('chat.exportMarkdown')}
-                              >
-                                <Download className="w-3 h-3" />
-                              </button>
-                              <button
-                                onClick={(e) => handleDeleteSession(e, session.id)}
-                                className="w-6 h-6 rounded-lg flex items-center justify-center text-text-muted hover:text-error hover:bg-surface-active transition-colors"
-                                title={t('common.delete')}
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </section>
               ))}
             </div>
@@ -692,4 +786,38 @@ function groupSessionsByDate(sessions: Session[], t: (key: string) => string): S
   }
 
   return buckets.filter((bucket) => bucket.sessions.length > 0);
+}
+
+function groupSessionsByWorkspace(sessions: Session[], t: (key: string) => string): SessionGroup[] {
+  const workspaceMap = new Map<string, { label: string; sessions: Session[] }>();
+
+  const sortedSessions = [...sessions].sort(
+    (a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)
+  );
+
+  for (const session of sortedSessions) {
+    const cwd = session.cwd;
+    const key = cwd || '__ungrouped__';
+    const label = cwd ? cwd.split('/').filter(Boolean).pop() || cwd : t('sidebar.ungrouped');
+
+    if (!workspaceMap.has(key)) {
+      workspaceMap.set(key, { label, sessions: [] });
+    }
+    workspaceMap.get(key)!.sessions.push(session);
+  }
+
+  // Convert to array and sort workspace groups by their most recent session
+  const groups: SessionGroup[] = [];
+  for (const [key, { label, sessions: groupSessions }] of workspaceMap) {
+    groups.push({ key, label, sessions: groupSessions });
+  }
+
+  // Sort by the most recent session timestamp in each group (already sorted within)
+  groups.sort((a, b) => {
+    const aLatest = a.sessions[0]?.updatedAt || a.sessions[0]?.createdAt || 0;
+    const bLatest = b.sessions[0]?.updatedAt || b.sessions[0]?.createdAt || 0;
+    return bLatest - aLatest;
+  });
+
+  return groups;
 }

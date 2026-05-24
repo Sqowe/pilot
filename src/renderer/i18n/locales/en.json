@@ -705,7 +705,10 @@
     "nSelected": "{{count}} selected",
     "batchDeleteConfirm": "Delete {{count}} conversations? This cannot be undone.",
     "cancel": "Cancel",
-    "confirmDelete": "Delete"
+    "confirmDelete": "Delete",
+    "groupByWorkspace": "Group by workspace",
+    "groupByDate": "Group by date",
+    "ungrouped": "No workspace"
   },
   "searchOverlay": {
     "placeholder": "Search conversations...",
