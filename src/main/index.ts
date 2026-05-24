@@ -3387,7 +3387,11 @@ ipcMain.handle('memory.getPanelState', (_event, cwd?: string, sessionId?: string
     throw new Error('Memory service not initialized');
   }
   const overview = memoryService.getOverview(cwd);
-  const coreEntries = memoryService.getCoreEntries();
+  // When cwd is available, show workspace-filtered entries (what gets injected).
+  // When cwd is missing, show all entries so user can still manage them.
+  const coreEntries = cwd
+    ? memoryService.getCoreEntriesForWorkspace(cwd)
+    : memoryService.getCoreEntries();
 
   // Determine cowork-memory skill state
   let skillFallbackEnabled = false;

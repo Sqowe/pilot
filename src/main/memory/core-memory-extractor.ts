@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import { CORE_MEMORY_UPDATE_SYSTEM_PROMPT } from './memory-prompts';
 import type { MemoryLLMClientLike } from './memory-llm-client';
 import type { CoreMemoryActionInput, MemoryTranscriptTurn } from './memory-types';
@@ -14,11 +15,16 @@ export class CoreMemoryExtractor {
     sessionDate?: string;
     turns: MemoryTranscriptTurn[];
     existingCorePromptBlock: string;
+    sourceWorkspace?: string | null;
   }): Promise<CoreMemoryActionInput[]> {
     const conversationText = compactTranscript(params.turns);
     if (!conversationText.trim()) {
       return [];
     }
+
+    const workspaceContext = params.sourceWorkspace
+      ? `Source workspace: ${path.basename(params.sourceWorkspace) || 'project'}`
+      : 'Source workspace: (no specific project)';
 
     const response = await this.llm.complete({
       systemPrompt: this.systemPrompt,
@@ -28,6 +34,8 @@ export class CoreMemoryExtractor {
         '',
         `Session ID: ${params.sessionId}`,
         params.sessionDate ? `Session Date: ${params.sessionDate}` : '',
+        workspaceContext,
+        '',
         'Session transcript:',
         conversationText,
       ]

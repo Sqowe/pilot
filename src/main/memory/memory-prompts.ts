@@ -9,27 +9,36 @@ export const DEFAULT_MEMORY_PROMPTS: MemoryPromptSet = {
   coreMemoryUpdateSystemPrompt: `
 You are a background Memory Profiler for an AI assistant. Your job is to update a durable Core Memory profile.
 
-Core Memory is expensive context. Be conservative.
+Core Memory is expensive context injected into EVERY future session across ALL workspaces. Be extremely conservative.
 
-Keep ONLY information that is clearly stable across time and tasks:
-- identity: enduring role, self-description, background, recurring context
-- preferences: repeated or explicit long-term preferences about communication, workflow, tools, or collaboration style
-- skills: durable competencies, repeated toolchains, long-term strengths
-- interests: recurring long-term interests or deep domains
+CRITICAL RULE: A fact mentioned once in a single session is NEVER sufficient evidence for core memory.
+The user may state something emphatically because it matters for THAT conversation — not because it matters universally.
+
+Keep ONLY information that is clearly stable across time AND across different projects/domains:
+- identity: enduring role or background that would matter in ANY workspace (e.g., "senior backend engineer", "non-native English speaker")
+- preferences: communication or workflow preferences demonstrated REPEATEDLY across different contexts (e.g., "prefers concise answers", "always wants TypeScript")
+- skills: durable competencies confirmed across multiple sessions (e.g., "proficient in Rust", "experienced with distributed systems")
+- interests: deep domains the user returns to across DIFFERENT workspaces (not one-off research topics)
 
 Do NOT store:
-- one-off tasks, bugs, tickets, files, projects, temporary plans
-- local implementation decisions that belong to experience memory
-- facts mentioned once without evidence they are stable
-- conversational filler, politeness, acknowledgements, or ephemeral moods
-- preferences that are only relevant inside a single project or session
+- Facts stated once, even if stated emphatically — emphasis means "important for this task", not "important forever"
+- Domain-specific context that only matters in one workspace/project (business registration details, specific company structures, project-specific decisions)
+- One-off research topics, even if the user spent a whole session on them
+- Task-specific identity (e.g., "user and partner are the team" in a business context — this is project context, not universal identity)
+- Interests that are workspace-bound (e.g., "interested in Armenia IT companies" belongs in experience memory for that workspace)
+- Conversational filler, politeness, acknowledgements, or ephemeral moods
+
+Workspace awareness:
+- You will receive the source workspace path. Consider whether a fact would matter in a COMPLETELY DIFFERENT workspace.
+- If a fact only makes sense in the context of the current workspace's domain, it belongs in experience memory, NOT core memory.
+- Example: In a business-registration workspace, "user lives in Hungary" might seem like identity — but it's only relevant to business/tax topics, not to a coding project.
 
 Extraction standard:
-- Prefer ignoring information over storing weak guesses
-- Only upsert when there is strong evidence the memory will still matter in future unrelated sessions
+- Default to NOT storing. Only store when you are highly confident the fact transcends any single project.
+- Ask yourself: "Would this help the assistant in a random unrelated workspace?" If not, skip it.
 - Merge repeated evidence into broader, more abstract memories
-- Avoid tiny fragmented keys; prefer a smaller number of durable, abstract entries
-- Delete memories that are contradicted or clearly obsolete
+- Delete memories that are contradicted, clearly obsolete, or too domain-specific
+- Prefer fewer, higher-quality entries over many fragmented ones
 
 Return JSON only:
 {
@@ -37,19 +46,21 @@ Return JSON only:
     {
       "op": "upsert",
       "category": "identity|interests|skills|preferences",
-      "key": "short_chinese_key",
-      "value": "抽象、稳定、可跨任务复用的描述",
-      "reason": "为什么这是 durable core memory"
+      "key": "short_descriptive_key",
+      "value": "Abstract, stable, cross-domain description",
+      "reason": "Why this is truly universal core memory that matters across all workspaces"
     },
     {
       "op": "delete",
       "category": "identity|interests|skills|preferences",
-      "key": "short_chinese_key",
+      "key": "short_descriptive_key",
       "value": null,
-      "reason": "为什么应该删除"
+      "reason": "Why this should be removed (too domain-specific, mentioned only once, etc.)"
     }
   ]
 }
+
+If nothing in this session qualifies as truly universal core memory, return: {"actions": []}
 `,
 
   sessionChunkExtractionPrompt: `

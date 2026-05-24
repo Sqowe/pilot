@@ -35,6 +35,8 @@ export interface CoreMemoryEntry {
   category?: CoreMemoryCategory;
   key: string;
   value: string;
+  /** Workspaces where this entry was observed/confirmed. */
+  sourceWorkspaces?: string[];
 }
 
 export interface MemoryRetrievalMetrics {

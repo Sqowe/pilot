@@ -208,6 +208,14 @@ export class MemoryService {
     return this.getCoreStore().getEntries();
   }
 
+  getCoreEntriesForWorkspace(
+    cwd?: string | null
+  ): Array<{ combinedKey: string; category?: string; key: string; value: string }> {
+    if (!this.isEnabled()) return [];
+    const currentWorkspace = normalizeWorkspaceKey(cwd ?? null);
+    return this.getCoreStore().getEntriesForWorkspace(currentWorkspace);
+  }
+
   getLastRetrievalMetrics(
     sessionId?: string
   ): import('./memory-types').MemoryRetrievalMetrics | null {
@@ -393,12 +401,16 @@ export class MemoryService {
 
     const startTime = Date.now();
     let coreMatched = 0;
+    const currentWorkspace = normalizeWorkspaceKey(session.cwd);
 
     const sections: string[] = [];
-    const corePromptBlock = this.getCoreStore().toPromptBlock();
-    if (corePromptBlock !== 'None') {
-      sections.push(`<core_memory>\n${escapeMemoryContextText(corePromptBlock)}\n</core_memory>`);
-      coreMatched = this.getCoreStore().getEntries().length;
+    // Filter core memory by workspace relevance:
+    // Only inject entries that are from the current workspace OR confirmed across 2+ workspaces
+    const relevantEntries = this.getCoreStore().getEntriesForWorkspace(currentWorkspace);
+    if (relevantEntries.length) {
+      const coreBlock = relevantEntries.map((e) => `- ${e.combinedKey}: ${e.value}`).join('\n');
+      sections.push(`<core_memory>\n${escapeMemoryContextText(coreBlock)}\n</core_memory>`);
+      coreMatched = relevantEntries.length;
     }
 
     const { context: experienceContext, metrics: expMetrics } = await this.buildExperienceContext(
@@ -599,7 +611,7 @@ export class MemoryService {
     const sessionDate = this.resolveSessionDate(session, messages);
 
     try {
-      await this.updateCoreMemory(session.id, sessionDate, deltaTurns);
+      await this.updateCoreMemory(session.id, sessionDate, deltaTurns, sourceWorkspace);
       if (this.deletedSessionIds.has(session.id)) {
         stateStore.delete(session.id);
         return;
@@ -651,7 +663,12 @@ export class MemoryService {
   }
 
   private async ingestExtractedBundle(bundle: ExtractionBundle): Promise<void> {
-    await this.updateCoreMemory(bundle.session.id, bundle.sessionDate, bundle.fullTurns);
+    await this.updateCoreMemory(
+      bundle.session.id,
+      bundle.sessionDate,
+      bundle.fullTurns,
+      bundle.sourceWorkspace
+    );
     if (bundle.fullTurns.length) {
       await this.storeExperienceSession({
         sourceWorkspace: bundle.sourceWorkspace,
@@ -716,7 +733,8 @@ export class MemoryService {
   private async updateCoreMemory(
     sessionId: string,
     sessionDate: string,
-    turns: MemoryTranscriptTurn[]
+    turns: MemoryTranscriptTurn[],
+    sourceWorkspace?: string | null
   ): Promise<void> {
     if (!turns.length) {
       return;
@@ -727,9 +745,10 @@ export class MemoryService {
       sessionDate,
       turns,
       existingCorePromptBlock: coreStore.toPromptBlock(),
+      sourceWorkspace,
     });
     if (actions.length) {
-      coreStore.applyActions(actions);
+      coreStore.applyActions(actions, sourceWorkspace);
     }
   }
 
