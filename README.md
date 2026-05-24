@@ -15,6 +15,7 @@
   <a href="#installation">Downloads</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#skills">Skills Library</a> •
+  <a href="#-mcp-subsystem">MCP</a> •
   <a href="#-memory-subsystem">Memory</a> •
   <a href="#sqowe-specific-features">Sqowe Features</a>
 </p>
@@ -256,6 +257,78 @@ This is the **Sqowe** variant of Open Cowork. It tracks upstream functionality a
 - **Customizable System Prompt**: The AI's system prompt is fully editable via Settings → System Prompt. Each section (identity, behavioral rules, citations, tool routing) is a separate file that can be independently edited, disabled, or reset. Workspace-level overrides in `.cowork/prompts/` replace global sections per-project. Template variables (`{{cwd}}`, `{{project_name}}`, `{{date}}`, `{{model}}`) are resolved at runtime.
 - **Per-Session MCP Server Toggle**: Disable/enable MCP servers on-the-fly from the Context Panel without restarting the session. Reduces context window token usage by shedding unused tool schemas mid-conversation. Supports workspace-level profiles via `.cowork/mcp-servers.json` (committable to git) for team-wide defaults.
 - **Skill Pinning**: Star/pin specific skills (semantic-index, firecrawl, docx, etc.) to explicitly tell the AI to prioritize them for the current session. All skills remain available — pinning adds emphasis, not restriction. Select skills on the Welcome screen before starting a chat, or pin/unpin mid-conversation from the Context Panel. Enforces a max of 10 pinned skills per session with full validation.
+
+---
+
+## 🔌 MCP Subsystem
+
+Open Cowork integrates [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) to connect the AI agent with external tools and services — browsers, databases, Notion, custom APIs, and more. MCP servers run on the host machine and their tools are bridged into the agent's tool dispatch layer as first-class capabilities.
+
+### Transport Types
+
+| Transport           | Use Case                                    | Example                         |
+| ------------------- | ------------------------------------------- | ------------------------------- |
+| **stdio**           | Local CLI tools, spawned as child processes | Firecrawl, Context7, filesystem |
+| **SSE**             | Remote servers with HTTP streaming          | Self-hosted services            |
+| **Streamable HTTP** | Modern remote servers (MCP 2025+)           | Cloud-hosted MCP endpoints      |
+
+### Server Descriptions (Auto-Generated LLM Routing)
+
+When multiple MCP servers are connected, the LLM sees a flat list of tools named `mcp__<ServerName>__<toolName>`. Without additional context, it can struggle to pick the right server for a task. Open Cowork solves this with **server-level descriptions** — concise summaries of what each server does, injected into the system prompt as a routing map.
+
+**How it works:**
+
+1. **Auto-generation on first connect** — When a server's tools are discovered for the first time, Open Cowork generates a description using the user's configured LLM (one-shot call, ~150–300 input tokens, negligible cost). The prompt asks for a single sentence (max 25 words) describing the server's domain and capabilities.
+
+2. **Heuristic fallback** — If no LLM is available (no API key configured, network error), a template-based summary is generated from tool names and descriptions. Examples:
+   - Firecrawl → `"Web scraping, crawling, search, and structured data extraction from websites."`
+   - Context7 → `"Library and framework documentation lookup with version-specific code examples."`
+   - A generic server → `"My Server (8 tools)"`
+
+3. **MCP Server Directory in system prompt** — All descriptions are assembled into a `<mcp_server_directory>` block injected into the agent's system prompt:
+
+   ```
+   Available MCP servers and their capabilities:
+   - Firecrawl: Web scraping, crawling, search, and structured data extraction from websites.
+   - Context7: Library and framework documentation lookup with version-specific code examples.
+   - Software_Development: File system operations, code search, and project workspace management.
+
+   Use the appropriate server's tools based on the task domain.
+   ```
+
+   Token cost: ~15–25 tokens per server (negligible compared to tool schemas themselves).
+
+4. **Change detection** — A SHA-256 hash of the tool list (names + descriptions) is stored alongside the description. When tools change (server update, new tools added), the system detects the mismatch and notifies the user — it never silently overwrites.
+
+5. **User control** — Descriptions can be manually edited at any time. The system tracks whether a description is `auto` (generated) or `manual` (user-written). Manual descriptions suppress stale-tool notifications, since the user wrote them intentionally.
+
+**UI actions:**
+
+- **Edit** — Make the description field editable, sets source to `manual` on save
+- **Regenerate** — Re-run LLM one-shot, replaces description, source stays `auto`
+- **Dismiss** — Acknowledge tool changes without regenerating (keeps current description)
+
+### Per-Session & Per-Workspace Server Toggle
+
+MCP tool schemas consume significant context window tokens. To optimize usage, servers can be selectively disabled at three levels (highest priority wins):
+
+1. **Session override** (ephemeral) — Toggle in the Context Panel mid-conversation. Stored in-memory, cleared on session delete.
+2. **Workspace profile** — `.cowork/mcp-servers.json` with `disabled`/`enabled` arrays. Committable to git for team-wide defaults.
+3. **Global config** — Per-server `enabled` boolean in Settings UI.
+
+### Configuration
+
+MCP servers are configured in the app's Settings panel. Each server entry includes:
+
+- **Name** — Display name (used in tool prefixes)
+- **Type** — `stdio`, `sse`, or `streamable-http`
+- **Command/URL** — How to connect (command + args for stdio, URL for HTTP-based)
+- **Environment variables** — Passed to stdio processes
+- **Description** — Auto-generated or manually written routing hint
+- **Enabled** — Global on/off toggle
+- **Tool timeout** — Per-server timeout override (0 = use global default)
+
+Key files: `src/main/mcp/mcp-manager.ts`, `src/main/mcp/mcp-config-store.ts`, `src/main/mcp/mcp-description-generator.ts`.
 
 ---
 
