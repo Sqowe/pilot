@@ -316,6 +316,20 @@ MCP tool schemas consume significant context window tokens. To optimize usage, s
 2. **Workspace profile** — `.cowork/mcp-servers.json` with `disabled`/`enabled` arrays. Committable to git for team-wide defaults.
 3. **Global config** — Per-server `enabled` boolean in Settings UI.
 
+**Workspace profile example** (`.cowork/mcp-servers.json`):
+
+```json
+{
+  "disabled": ["firecrawl", "gui-operate"],
+  "enabled": ["context7"]
+}
+```
+
+- Servers in `disabled` are excluded from the session (overrides global enabled state)
+- Servers in `enabled` are explicitly included (overrides the `disabled` list)
+- Servers not mentioned in either array pass through unchanged — their global config `enabled` state is preserved as-is (globally enabled → stays enabled, globally disabled → stays disabled)
+- Uses server IDs (immutable) rather than display names
+
 ### Configuration
 
 MCP servers are configured in the app's Settings panel. Each server entry includes:
