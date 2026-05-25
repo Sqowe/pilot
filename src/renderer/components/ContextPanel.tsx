@@ -44,6 +44,7 @@ import {
 } from 'lucide-react';
 import type { TraceStep, MCPServerInfo } from '../types';
 import { computeContextUsage } from '../utils/context-usage';
+import { deriveDisabledServerIds } from '../utils/mcp-profile-derive';
 
 const EMPTY_STEPS: TraceStep[] = [];
 
@@ -65,6 +66,14 @@ export function ContextPanel() {
   const [expandedConnector, setExpandedConnector] = useState<string | null>(null);
   const [mcpServers, setMcpServers] = useState<MCPServerInfo[]>([]);
   const [sessionDisabledServers, setSessionDisabledServers] = useState<Set<string>>(new Set());
+  // Workspace profile state — mirrors WelcomeView pattern
+  const [workspaceProfileDisabled, setWorkspaceProfileDisabled] = useState<Set<string>>(new Set());
+  const [userToggledMcp, setUserToggledMcp] = useState(false);
+  // Track which session the user-toggle applies to (session-scoped override)
+  const [userToggledSessionId, setUserToggledSessionId] = useState<string | null>(null);
+  // Ref to track latest activeSessionId for stale-async guards
+  const activeSessionIdRef = useRef(activeSessionId);
+  activeSessionIdRef.current = activeSessionId;
   const [sessionPinnedSkills, setSessionPinnedSkills] = useState<Set<string>>(new Set());
   const [availableSkills, setAvailableSkills] = useState<
     Array<{ id: string; name: string; description?: string }>
@@ -362,6 +371,69 @@ export function ContextPanel() {
     loadDisabled();
   }, [activeSessionId, contextPanelCollapsed]);
 
+  // Load workspace MCP profile and derive disabled IDs (mirrors WelcomeView pattern)
+  // Effect 1: Reset user-override state on session or workspace change
+  useEffect(() => {
+    setUserToggledMcp(false);
+    setUserToggledSessionId(null);
+  }, [activeSessionId, currentWorkingDir]);
+
+  // Effect 2: Load and derive workspace profile disabled IDs
+  // Does NOT reset userToggledMcp — that's handled by the effect above.
+  useEffect(() => {
+    if (contextPanelCollapsed || !currentWorkingDir) {
+      setWorkspaceProfileDisabled(new Set());
+      return;
+    }
+    let cancelled = false;
+    const loadProfile = async () => {
+      try {
+        const profile = await window.electronAPI?.mcp?.getWorkspaceProfile(currentWorkingDir);
+        if (cancelled) return;
+        if (!profile) {
+          setWorkspaceProfileDisabled(new Set());
+          return;
+        }
+        const derived = deriveDisabledServerIds(profile, mcpServers);
+        if (derived === null) {
+          // Allowlist mode but servers not loaded yet — keep empty for now
+          setWorkspaceProfileDisabled(new Set());
+        } else {
+          setWorkspaceProfileDisabled(derived);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('[ContextPanel] Failed to load workspace MCP profile:', error);
+          setWorkspaceProfileDisabled(new Set());
+        }
+      }
+    };
+    loadProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentWorkingDir, contextPanelCollapsed, mcpServers]);
+
+  // Effective disabled set: union of session-disabled and workspace-profile-disabled
+  // Once user manually toggles in THIS session, workspace profile is ignored (session state takes over)
+  const effectiveDisabledServers = useMemo(() => {
+    if (userToggledMcp && userToggledSessionId === activeSessionId) {
+      return sessionDisabledServers;
+    }
+    // Merge both sets — a server is disabled if either source says so
+    const merged = new Set(sessionDisabledServers);
+    for (const id of workspaceProfileDisabled) {
+      merged.add(id);
+    }
+    return merged;
+  }, [
+    sessionDisabledServers,
+    workspaceProfileDisabled,
+    userToggledMcp,
+    userToggledSessionId,
+    activeSessionId,
+  ]);
+
   // Load session-pinned skills and available skills when active session changes
   useEffect(() => {
     if (!activeSessionId || contextPanelCollapsed) {
@@ -394,17 +466,59 @@ export function ContextPanel() {
 
   const handleToggleSessionServer = async (serverId: string, disabled: boolean) => {
     if (!activeSessionId) return;
+    // Capture session ID to guard against stale updates from session switches
+    const sessionId = activeSessionId;
     try {
+      // If user hasn't toggled yet this session, seed session state from effective state.
+      // This ensures workspace-profile-disabled servers are reflected in session state
+      // so a single click correctly enables/disables them.
+      if (!userToggledMcp || userToggledSessionId !== sessionId) {
+        // Seed workspace-profile-disabled servers into session state in parallel
+        const serversToSeed = Array.from(workspaceProfileDisabled).filter(
+          (wpId) => !sessionDisabledServers.has(wpId)
+        );
+        if (serversToSeed.length > 0) {
+          await Promise.all(
+            serversToSeed.map((wpId) =>
+              window.electronAPI?.mcp?.toggleSessionServer(sessionId, wpId, true)
+            )
+          );
+        }
+        // Stale guard: abort if session changed during seeding (uses ref for latest value)
+        if (activeSessionIdRef.current !== sessionId) return;
+        // Refresh session disabled state after seeding
+        const refreshed = await window.electronAPI?.mcp?.getSessionDisabledServers(sessionId);
+        if (activeSessionIdRef.current !== sessionId) return;
+        setSessionDisabledServers(new Set(refreshed || []));
+      }
+
+      // Now apply the actual user toggle
       const result = await window.electronAPI?.mcp?.toggleSessionServer(
-        activeSessionId,
+        sessionId,
         serverId,
         disabled
       );
+      // Stale guard: abort if session changed during toggle (uses ref for latest value)
+      if (activeSessionIdRef.current !== sessionId) return;
       if (result?.success && result.disabledServers) {
         setSessionDisabledServers(new Set(result.disabledServers));
+        // Only mark user-override after successful toggle
+        setUserToggledMcp(true);
+        setUserToggledSessionId(sessionId);
       }
     } catch (error) {
       console.error('Failed to toggle session MCP server:', error);
+      // On failure, refresh session state to ensure consistency
+      if (activeSessionIdRef.current === sessionId) {
+        try {
+          const refreshed = await window.electronAPI?.mcp?.getSessionDisabledServers(sessionId);
+          if (activeSessionIdRef.current === sessionId) {
+            setSessionDisabledServers(new Set(refreshed || []));
+          }
+        } catch {
+          // Ignore refresh errors
+        }
+      }
     }
   };
 
@@ -413,7 +527,7 @@ export function ContextPanel() {
     try {
       const result = await window.electronAPI?.mcp?.saveWorkspaceProfile(
         currentWorkingDir,
-        Array.from(sessionDisabledServers)
+        Array.from(effectiveDisabledServers)
       );
       if (result?.success) {
         setGlobalNotice({
@@ -857,7 +971,7 @@ export function ContextPanel() {
                   <span className="ml-1.5 text-mcp">
                     ({mcpServers.length}/{mcpServers.filter((s) => s.connected).length}/
                     {
-                      mcpServers.filter((s) => s.connected && !sessionDisabledServers.has(s.id))
+                      mcpServers.filter((s) => s.connected && !effectiveDisabledServers.has(s.id))
                         .length
                     }
                     )
@@ -906,7 +1020,7 @@ export function ContextPanel() {
                       onToggle={() =>
                         setExpandedConnector(expandedConnector === server.id ? null : server.id)
                       }
-                      sessionDisabled={sessionDisabledServers.has(server.id)}
+                      sessionDisabled={effectiveDisabledServers.has(server.id)}
                       onToggleSession={handleToggleSessionServer}
                     />
                   ))}
