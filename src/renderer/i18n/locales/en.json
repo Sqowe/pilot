@@ -405,6 +405,26 @@
         "ollama_model_loading": "Model {{model}} may still be loading. Try the deep check again in a moment.",
         "model_cold_start": "The model may still be loading into GPU/CPU memory. Large models (7B+) can take 30–120 seconds on first use. Try again shortly."
       }
+    },
+    "providerHints": {
+      "openrouter": {
+        "keyHint": "Get from openrouter.ai/keys"
+      },
+      "anthropic": {
+        "keyHint": "Get from console.anthropic.com"
+      },
+      "openai": {
+        "keyHint": "Get from platform.openai.com"
+      },
+      "gemini": {
+        "keyHint": "Get from aistudio.google.com"
+      },
+      "ollama": {
+        "keyHint": "Most Ollama deployments don't need a key; fill one in if your proxy requires auth"
+      },
+      "custom": {
+        "keyHint": "Enter your API Key"
+      }
     }
   },
   "window": {

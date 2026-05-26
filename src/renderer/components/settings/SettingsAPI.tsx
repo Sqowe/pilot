@@ -166,7 +166,7 @@ export function SettingsAPI() {
           className="w-full px-4 py-3 rounded-lg bg-background border border-border text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all"
         />
         {currentPreset?.keyHint && (
-          <p className="text-xs text-text-muted">{currentPreset.keyHint}</p>
+          <p className="text-xs text-text-muted">{t(currentPreset.keyHint)}</p>
         )}
       </div>
 

@@ -405,6 +405,26 @@
         "ollama_model_loading": "模型 {{model}} 可能仍在加载中，稍后再试深度验证。",
         "model_cold_start": "模型可能仍在加载到 GPU/CPU 内存中。大型模型（7B+）首次使用可能需要 30–120 秒，请稍后重试。"
       }
+    },
+    "providerHints": {
+      "openrouter": {
+        "keyHint": "从 openrouter.ai/keys 获取"
+      },
+      "anthropic": {
+        "keyHint": "从 console.anthropic.com 获取"
+      },
+      "openai": {
+        "keyHint": "从 platform.openai.com 获取"
+      },
+      "gemini": {
+        "keyHint": "从 aistudio.google.com 获取"
+      },
+      "ollama": {
+        "keyHint": "多数 Ollama 部署可留空；如果你的代理层要求鉴权，也可以填写 Key"
+      },
+      "custom": {
+        "keyHint": "输入你的 API Key"
+      }
     }
   },
   "window": {
