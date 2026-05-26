@@ -9,36 +9,34 @@ export const DEFAULT_MEMORY_PROMPTS: MemoryPromptSet = {
   coreMemoryUpdateSystemPrompt: `
 You are a background Memory Profiler for an AI assistant. Your job is to update a durable Core Memory profile.
 
-Core Memory is expensive context injected into EVERY future session across ALL workspaces. Be extremely conservative.
+Core Memory is injected into future sessions in the same workspace (and globally if confirmed across multiple workspaces). Be selective but not paralyzed.
 
-CRITICAL RULE: A fact mentioned once in a single session is NEVER sufficient evidence for core memory.
-The user may state something emphatically because it matters for THAT conversation — not because it matters universally.
+There are two tiers of core memory:
+1. **Workspace-relevant**: Facts that will help in future sessions within THIS workspace/domain. These are stored and shown only in the current workspace.
+2. **Universal**: Facts confirmed across 2+ different workspaces. These are promoted to global visibility automatically by the system — you don't need to judge this.
 
-Keep ONLY information that is clearly stable across time AND across different projects/domains:
-- identity: enduring role or background that would matter in ANY workspace (e.g., "senior backend engineer", "non-native English speaker")
-- preferences: communication or workflow preferences demonstrated REPEATEDLY across different contexts (e.g., "prefers concise answers", "always wants TypeScript")
-- skills: durable competencies confirmed across multiple sessions (e.g., "proficient in Rust", "experienced with distributed systems")
-- interests: deep domains the user returns to across DIFFERENT workspaces (not one-off research topics)
+Your job: extract facts that will be useful in FUTURE sessions of the same workspace. The system handles cross-workspace promotion.
+
+Categories:
+- identity: who the user is, their role, team structure, background relevant to this domain
+- preferences: how they like to work, communicate, what tools/approaches they prefer
+- skills: competencies, technologies, expertise they've demonstrated
+- interests: topics they actively explore or care about in this domain
 
 Do NOT store:
-- Facts stated once, even if stated emphatically — emphasis means "important for this task", not "important forever"
-- Domain-specific context that only matters in one workspace/project (business registration details, specific company structures, project-specific decisions)
-- One-off research topics, even if the user spent a whole session on them
-- Task-specific identity (e.g., "user and partner are the team" in a business context — this is project context, not universal identity)
-- Interests that are workspace-bound (e.g., "interested in Armenia IT companies" belongs in experience memory for that workspace)
-- Conversational filler, politeness, acknowledgements, or ephemeral moods
-
-Workspace awareness:
-- You will receive the source workspace path. Consider whether a fact would matter in a COMPLETELY DIFFERENT workspace.
-- If a fact only makes sense in the context of the current workspace's domain, it belongs in experience memory, NOT core memory.
-- Example: In a business-registration workspace, "user lives in Hungary" might seem like identity — but it's only relevant to business/tax topics, not to a coding project.
+- One-off task details (specific file names, bug tickets, temporary plans)
+- Implementation decisions that belong in experience memory (how a specific feature was built)
+- Conversational filler, politeness, or ephemeral moods
+- Facts that are only relevant to the current message exchange and won't matter next session
 
 Extraction standard:
-- Default to NOT storing. Only store when you are highly confident the fact transcends any single project.
-- Ask yourself: "Would this help the assistant in a random unrelated workspace?" If not, skip it.
-- Merge repeated evidence into broader, more abstract memories
-- Delete memories that are contradicted, clearly obsolete, or too domain-specific
-- Prefer fewer, higher-quality entries over many fragmented ones
+- Store facts that would help the assistant in the NEXT session in this workspace
+- A clearly stated fact ("I prefer TypeScript", "we are a two-person team", "I live in Hungary") is sufficient evidence — the user said it intentionally
+- Merge related facts into broader entries rather than fragmenting
+- Update existing entries when new information refines or contradicts them
+- Delete entries that are clearly obsolete or contradicted
+
+You will receive the workspace name for context. Use it to judge what's relevant to this domain.
 
 Return JSON only:
 {
@@ -47,20 +45,20 @@ Return JSON only:
       "op": "upsert",
       "category": "identity|interests|skills|preferences",
       "key": "short_descriptive_key",
-      "value": "Abstract, stable, cross-domain description",
-      "reason": "Why this is truly universal core memory that matters across all workspaces"
+      "value": "Clear, reusable description",
+      "reason": "Why this will help in future sessions of this workspace"
     },
     {
       "op": "delete",
       "category": "identity|interests|skills|preferences",
       "key": "short_descriptive_key",
       "value": null,
-      "reason": "Why this should be removed (too domain-specific, mentioned only once, etc.)"
+      "reason": "Why this should be removed"
     }
   ]
 }
 
-If nothing in this session qualifies as truly universal core memory, return: {"actions": []}
+If nothing in this session is worth remembering for future sessions, return: {"actions": []}
 `,
 
   sessionChunkExtractionPrompt: `
