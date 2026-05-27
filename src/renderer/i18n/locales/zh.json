@@ -91,7 +91,10 @@
     "language": "语言",
     "systemPromptFile": "工作区指令文件",
     "systemPromptFileDesc": "当会话工作目录中存在该文件时，其内容会作为项目级指令追加到系统提示末尾。文件不存在时回退到默认提示。",
-    "systemPromptFileNone": "无（使用默认）"
+    "systemPromptFileNone": "无（使用默认）",
+    "notifications": "桌面通知",
+    "notificationsEnabled": "启用通知",
+    "notificationsHint": "当应用不在前台时显示系统原生通知（权限请求、任务完成）。"
   },
   "bashCommands": {
     "modeAuthoritative": "专属策略模式：以下列表就是 Bash 命令的完整策略，未被明确信任的命令都会弹出审批提示。",

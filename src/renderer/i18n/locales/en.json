@@ -91,7 +91,10 @@
     "language": "Language",
     "systemPromptFile": "Workspace instructions file",
     "systemPromptFileDesc": "When this file exists at the session working directory, its contents are appended to the system prompt as project-level instructions. Missing file falls back to the default.",
-    "systemPromptFileNone": "None (use default)"
+    "systemPromptFileNone": "None (use default)",
+    "notifications": "Desktop Notifications",
+    "notificationsEnabled": "Enable notifications",
+    "notificationsHint": "Show native OS notifications when the app is not focused (permission requests, task completion)."
   },
   "bashCommands": {
     "modeAuthoritative": "Authoritative mode: these lists are the complete policy for bash commands. Anything not explicitly trusted will prompt for approval.",

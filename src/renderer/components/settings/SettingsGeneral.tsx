@@ -6,6 +6,7 @@ export function SettingsGeneral() {
   const { i18n, t } = useTranslation();
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
+  const appConfig = useAppStore((s) => s.appConfig);
   const currentLang = i18n.language.startsWith('zh') ? 'zh' : 'en';
   const [appVer, setAppVer] = useState('');
   useEffect(() => {
@@ -17,6 +18,8 @@ export function SettingsGeneral() {
       /* ignore */
     }
   }, []);
+
+  const notificationsEnabled = appConfig?.notificationsEnabled ?? true;
 
   const languages = [
     { code: 'en', nativeName: 'English' },
@@ -69,6 +72,23 @@ export function SettingsGeneral() {
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Notifications */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-medium text-text-primary">{t('general.notifications')}</h4>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={notificationsEnabled}
+            onChange={(e) => updateSettings({ notificationsEnabled: e.target.checked })}
+            className="w-4 h-4 rounded border-border text-accent focus:ring-accent/50"
+          />
+          <div>
+            <span className="text-sm text-text-primary">{t('general.notificationsEnabled')}</span>
+            <p className="text-xs text-text-muted mt-0.5">{t('general.notificationsHint')}</p>
+          </div>
+        </label>
       </div>
 
       {/* About */}

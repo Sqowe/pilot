@@ -752,6 +752,8 @@ export interface Settings {
   permissionTimeoutSeconds?: number;
   // MCP tool execution timeout in seconds. 0 = no timeout (not recommended).
   mcpToolTimeoutSeconds?: number;
+  // Native desktop notifications when the app is not focused.
+  notificationsEnabled?: boolean;
 }
 
 // Tool types
@@ -880,6 +882,8 @@ export interface AppConfig {
   permissionTimeoutSeconds?: number;
   // MCP tool execution timeout in seconds. 0 = no timeout (not recommended).
   mcpToolTimeoutSeconds?: number;
+  // Native desktop notifications when the app is not focused.
+  notificationsEnabled?: boolean;
 }
 
 export interface ProviderPreset {

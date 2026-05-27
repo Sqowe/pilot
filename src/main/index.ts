@@ -3876,6 +3876,21 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
             });
           }
         }
+
+        // Notifications toggle
+        if (hasOwnPerm('notificationsEnabled')) {
+          const val = (event.payload as Record<string, unknown>).notificationsEnabled;
+          if (typeof val === 'boolean') {
+            configStore.update({ notificationsEnabled: val });
+            sendToRenderer({
+              type: 'config.status',
+              payload: {
+                isConfigured: configStore.isConfigured(),
+                config: configStore.getAll(),
+              },
+            });
+          }
+        }
       }
 
       // Permission-related settings are gated behind a single object-guard

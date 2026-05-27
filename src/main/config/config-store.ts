@@ -166,6 +166,10 @@ export interface AppConfig {
   // Per-server overrides take precedence over this global default.
   // 0 means no timeout (wait indefinitely — not recommended).
   mcpToolTimeoutSeconds: number;
+
+  // Native desktop notifications when the app is not focused.
+  // Fires on permission requests and agent response completion.
+  notificationsEnabled: boolean;
 }
 
 export interface MemoryModelRuntimeConfig {
@@ -330,6 +334,7 @@ const defaultConfig: AppConfig = {
   schedulerRunHistoryDepth: 10,
   permissionTimeoutSeconds: 300,
   mcpToolTimeoutSeconds: 240,
+  notificationsEnabled: true,
 };
 
 export const PROVIDER_PRESETS = API_PROVIDER_PRESETS;
@@ -1115,6 +1120,7 @@ export class ConfigStore {
       schedulerRunHistoryDepth: normalizeRunHistoryDepth(raw.schedulerRunHistoryDepth),
       permissionTimeoutSeconds: normalizePermissionTimeout(raw.permissionTimeoutSeconds),
       mcpToolTimeoutSeconds: normalizeMcpToolTimeout(raw.mcpToolTimeoutSeconds),
+      notificationsEnabled: toBoolean(raw.notificationsEnabled, defaultConfig.notificationsEnabled),
     };
     this.normalizeModelIds(result);
     return result;
@@ -1568,6 +1574,10 @@ export class ConfigStore {
         updates.mcpToolTimeoutSeconds !== undefined
           ? normalizeMcpToolTimeout(updates.mcpToolTimeoutSeconds)
           : current.mcpToolTimeoutSeconds,
+      notificationsEnabled:
+        updates.notificationsEnabled !== undefined
+          ? toBoolean(updates.notificationsEnabled, current.notificationsEnabled)
+          : current.notificationsEnabled,
     });
   }
 
