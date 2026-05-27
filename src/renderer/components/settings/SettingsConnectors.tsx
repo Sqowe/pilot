@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import type { MCPServerConfig, MCPServerStatus, MCPToolInfo, MCPPreset } from './shared';
+import { McpToolPermissions } from './McpToolPermissions';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
@@ -250,6 +251,21 @@ export function SettingsConnectors({ isActive }: { isActive: boolean }) {
                   onDelete={() => handleDeleteServer(server.id)}
                   onToggleEnabled={() => handleToggleEnabled(server)}
                   onRegenerateDescription={() => handleRegenerateDescription(server.id)}
+                  onUpdateToolPolicy={(policy) => {
+                    void handleSaveServer({ ...server, defaultToolPolicy: policy });
+                  }}
+                  onUpdateToolPermission={(toolShortName, action) => {
+                    const current = { ...(server.toolPermissions || {}) };
+                    if (action === undefined) {
+                      delete current[toolShortName];
+                    } else {
+                      current[toolShortName] = action;
+                    }
+                    void handleSaveServer({
+                      ...server,
+                      toolPermissions: Object.keys(current).length > 0 ? current : undefined,
+                    });
+                  }}
                   isLoading={isLoading}
                 />
               );
@@ -425,6 +441,8 @@ function ServerCard({
   onDelete,
   onToggleEnabled,
   onRegenerateDescription,
+  onUpdateToolPolicy,
+  onUpdateToolPermission,
   isLoading,
 }: {
   server: MCPServerConfig;
@@ -435,6 +453,11 @@ function ServerCard({
   onDelete: () => void;
   onToggleEnabled: () => void;
   onRegenerateDescription: () => void;
+  onUpdateToolPolicy: (policy: 'allow-all' | 'allow-reads' | 'ask-all' | 'deny-all') => void;
+  onUpdateToolPermission: (
+    toolShortName: string,
+    action: 'allow' | 'ask' | 'deny' | undefined
+  ) => void;
   isLoading: boolean;
 }) {
   const { t } = useTranslation();
@@ -621,6 +644,16 @@ function ServerCard({
                 <div className="mt-3 p-3 rounded-lg bg-surface-muted text-xs text-text-muted">
                   {t('mcp.notConnected')}
                 </div>
+              )}
+
+              {/* Tool Permissions Panel */}
+              {server.enabled && tools.length > 0 && (
+                <McpToolPermissions
+                  server={server}
+                  tools={tools}
+                  onUpdatePolicy={onUpdateToolPolicy}
+                  onUpdateToolPermission={onUpdateToolPermission}
+                />
               )}
             </div>
           </div>

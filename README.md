@@ -343,8 +343,38 @@ MCP servers are configured in the app's Settings panel. Each server entry includ
 - **Description** — Auto-generated or manually written routing hint
 - **Enabled** — Global on/off toggle
 - **Tool timeout** — Per-server timeout override (0 = use global default)
+- **Tool permissions** — Per-server default policy + per-tool overrides
 
-Key files: `src/main/mcp/mcp-manager.ts`, `src/main/mcp/mcp-config-store.ts`, `src/main/mcp/mcp-description-generator.ts`.
+### Tool Permissions
+
+Each MCP server supports a default tool permission policy to reduce "permission fatigue":
+
+| Policy        | Behavior                                                                      |
+| ------------- | ----------------------------------------------------------------------------- |
+| `ask-all`     | Every tool requires manual approval (default)                                 |
+| `allow-reads` | Read-only tools (get*\*, list*_, search\__) auto-approved; write tools prompt |
+| `allow-all`   | All tools auto-approved without prompting                                     |
+| `deny-all`    | All tools blocked                                                             |
+
+Per-tool overrides let you make exceptions (e.g., allow-reads but always ask for `capture_realtime_ws`).
+
+**Workspace-level policies** can be shared via `.cowork/mcp-permissions.json`:
+
+```json
+{
+  "EODHD": {
+    "defaultPolicy": "allow-reads",
+    "overrides": {
+      "execute_trade": "deny",
+      "capture_realtime_ws": "ask"
+    }
+  }
+}
+```
+
+**Progressive trust:** The system tracks manual approvals per tool. After 5 approvals of the same tool, it suggests promoting it to permanent auto-allow.
+
+Key files: `src/main/mcp/mcp-manager.ts`, `src/main/mcp/mcp-config-store.ts`, `src/main/mcp/mcp-tool-permissions.ts`, `src/main/mcp/mcp-description-generator.ts`.
 
 ---
 

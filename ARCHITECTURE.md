@@ -138,6 +138,30 @@ is a built-in MCP server providing GUI automation via vision models.
 
 MCP servers run on the HOST, never inside the sandbox VM.
 
+**Per-server tool permission policies:**
+
+Each MCP server can have a default tool permission policy that controls whether its
+tools are auto-approved, require prompting, or are blocked. This eliminates "permission
+fatigue" for trusted read-only servers while maintaining security for write-capable ones.
+
+Policy levels (first match wins):
+
+1. **Workspace override** — `.cowork/mcp-permissions.json` (committable to git, team-shared)
+2. **Per-tool override** — `MCPServerConfig.toolPermissions` (sparse, exception-based)
+3. **Server default policy** — `MCPServerConfig.defaultToolPolicy`:
+   - `allow-all`: auto-approve every tool without prompting
+   - `allow-reads`: auto-approve tools classified as read-only (heuristic: `get_*`, `list_*`, etc.)
+   - `ask-all`: always prompt (default, backward-compatible)
+   - `deny-all`: block all tools from this server
+4. **Generic permission rules** — existing `PermissionRule[]` engine (fallback)
+
+**Progressive trust:** The system tracks how many times each MCP tool is manually
+approved across sessions. After 5 approvals, it can suggest promoting the tool to
+permanent auto-allow in the server's `toolPermissions`.
+
+Key files: `mcp-manager.ts`, `mcp-config-store.ts`, `mcp-tool-permissions.ts`,
+`mcp-description-generator.ts`, `mcp-workspace-profile.ts`.
+
 **Per-session & per-workspace MCP toggle:**
 
 MCP tool definitions consume significant context window tokens. To optimize usage,

@@ -27,6 +27,10 @@ export interface McpServerConfig {
   url?: string;
   headers?: Record<string, string>;
   enabled: boolean;
+  /** Default permission policy for all tools from this server. */
+  defaultToolPolicy?: 'allow-all' | 'allow-reads' | 'ask-all' | 'deny-all';
+  /** Per-tool permission overrides (sparse — only exceptions). */
+  toolPermissions?: Record<string, 'allow' | 'ask' | 'deny'>;
 }
 
 /** Tool exposed by an MCP server (mirrors MCPTool in mcp-manager.ts). */

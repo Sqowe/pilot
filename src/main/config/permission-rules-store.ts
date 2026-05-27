@@ -14,6 +14,13 @@
  * harmless extra prompt, never an unintended auto-allow.
  */
 import type { PermissionRule } from '../../renderer/types';
+import {
+  parseMcpToolName,
+  decideMcpToolPermission,
+  loadWorkspaceMcpPermissions,
+  recordMcpToolApproval,
+} from '../mcp/mcp-tool-permissions';
+import type { MCPServerConfig } from '../mcp/mcp-manager';
 
 // Mirrors the renderer defaults in src/renderer/store/index.ts
 const DEFAULT_RULES: PermissionRule[] = [
@@ -33,6 +40,40 @@ let rules: PermissionRule[] = [...DEFAULT_RULES];
 
 /** Session-scoped "always allow" decisions, keyed by sessionId → set of lowercase tool names. */
 const alwaysAllowBySession = new Map<string, Set<string>>();
+
+// ---------------------------------------------------------------------------
+// MCP server config lookup (for per-server tool permission policies)
+// ---------------------------------------------------------------------------
+
+/** Callback to look up an MCP server config by server name. Set by the agent runner. */
+let mcpServerConfigLookup: ((serverName: string) => MCPServerConfig | undefined) | null = null;
+
+/** Per-session working directory, used to load workspace MCP permission files. */
+const sessionCwdMap = new Map<string, string>();
+
+/**
+ * Register the MCP server config lookup function.
+ * Called once during app initialization (from agent-runner or main/index.ts).
+ */
+export function setMcpServerConfigLookup(
+  lookup: (serverName: string) => MCPServerConfig | undefined
+): void {
+  mcpServerConfigLookup = lookup;
+}
+
+/**
+ * Set the working directory for a session (used for workspace policy lookup).
+ */
+export function setSessionCwd(sessionId: string, cwd: string): void {
+  sessionCwdMap.set(sessionId, cwd);
+}
+
+/**
+ * Clear session CWD when session is deleted.
+ */
+export function clearSessionCwd(sessionId: string): void {
+  sessionCwdMap.delete(sessionId);
+}
 
 /**
  * Sessions running in autonomous mode (executionMode: 'auto').
@@ -463,8 +504,38 @@ export function decidePermission(
     if (bashDecision) return bashDecision;
   }
 
+  // --- MCP tool permission engine (per-server policies) ---
+  // Consulted BEFORE session-scoped "always allow" so that server-level
+  // deny policies cannot be overridden by a stale session memory entry.
+  // However, if the MCP policy resolves to 'ask', we still check session
+  // memory — otherwise previously remembered approvals would be ignored.
+  let mcpDecision: 'allow' | 'deny' | 'ask' | null = null;
+  const mcpParsed = parseMcpToolName(toolName);
+  if (mcpParsed && mcpServerConfigLookup) {
+    const serverConfig = mcpServerConfigLookup(mcpParsed.serverName);
+    const cwd = sessionCwdMap.get(sessionId);
+    const workspacePolicy = cwd ? loadWorkspaceMcpPermissions(cwd) : null;
+    // Workspace policies from .cowork/mcp-permissions.json are untrusted by default.
+    // They can restrict (deny/ask) but cannot grant (allow) unless workspace is trusted.
+    // TODO: integrate with workspace trust system when available.
+    const workspaceTrusted = false;
+    mcpDecision = decideMcpToolPermission(
+      serverConfig,
+      mcpParsed.toolName,
+      workspacePolicy,
+      workspaceTrusted
+    );
+    // 'deny' and 'allow' are authoritative — short-circuit immediately.
+    // 'ask' falls through to session memory check below.
+    if (mcpDecision === 'deny' || mcpDecision === 'allow') return mcpDecision;
+  }
+
   const session = alwaysAllowBySession.get(sessionId);
   if (session?.has(lowered)) return 'allow';
+
+  // If MCP policy said 'ask', honour it (don't fall through to generic rules
+  // which might have a blanket allow for the mcp__ prefixed name).
+  if (mcpDecision === 'ask') return 'ask';
 
   const inputStr = safeStringify(input);
 
@@ -480,11 +551,17 @@ export function rememberAlwaysAllow(sessionId: string, toolName: string): void {
   const set = alwaysAllowBySession.get(sessionId) ?? new Set<string>();
   set.add(toolName.toLowerCase());
   alwaysAllowBySession.set(sessionId, set);
+
+  // Track MCP tool approvals for progressive trust suggestions
+  if (toolName.startsWith('mcp__')) {
+    recordMcpToolApproval(toolName);
+  }
 }
 
 export function forgetSessionPermissions(sessionId: string): void {
   alwaysAllowBySession.delete(sessionId);
   autonomousSessions.delete(sessionId);
+  sessionCwdMap.delete(sessionId);
 }
 
 // --- Autonomous session management ---

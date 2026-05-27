@@ -26,6 +26,7 @@ import {
   generateHeuristicDescription,
   computeToolsHash,
 } from './mcp-description-generator';
+import { canonicalizeMcpServerName } from '../../shared/mcp-tool-classification';
 
 /**
  * MCP Server Configuration
@@ -45,6 +46,20 @@ export interface MCPServerConfig {
   headers?: Record<string, string>; // For SSE / Streamable HTTP: HTTP headers
   enabled: boolean;
   toolTimeoutSeconds?: number; // Per-server tool timeout override (0 = use global default)
+  /**
+   * Default permission policy for all tools from this server.
+   * - 'allow-all': auto-approve every tool without prompting
+   * - 'allow-reads': auto-approve tools classified as read-only (get_*, list_*, search_*)
+   * - 'ask-all': always prompt for every tool (default behavior)
+   * - 'deny-all': block all tools from this server
+   */
+  defaultToolPolicy?: 'allow-all' | 'allow-reads' | 'ask-all' | 'deny-all';
+  /**
+   * Per-tool permission overrides. Sparse map — only exceptions to the
+   * defaultToolPolicy need to be listed. Keys are the tool's short name
+   * (without the mcp__ServerName__ prefix), values are the permission action.
+   */
+  toolPermissions?: Record<string, 'allow' | 'ask' | 'deny'>;
 }
 
 /**
@@ -1365,6 +1380,8 @@ export class MCPManager {
   async refreshTools(): Promise<void> {
     log('[MCPManager] Refreshing tools from all servers');
     const newTools = new Map<string, MCPTool>();
+    // Track which server ID owns each canonical key to detect collisions
+    const serverKeyOwners = new Map<string, string>();
 
     for (const [serverId, client] of this.clients.entries()) {
       try {
@@ -1392,11 +1409,22 @@ export class MCPManager {
 
         log(`[MCPManager] Raw tools from ${config.name}:`, listToolsResult);
 
+        // Detect canonical key collision with other servers
+        const serverKey = canonicalizeMcpServerName(config.name);
+        const existingServerForKey = serverKeyOwners.get(serverKey);
+        if (existingServerForKey && existingServerForKey !== config.id) {
+          logError(
+            `[MCPManager] SKIPPING server "${config.name}" (id=${config.id}): ` +
+              `canonical key "${serverKey}" collides with server id=${existingServerForKey}. ` +
+              `Rename one of the servers to avoid ambiguity. Tools from this server will NOT be registered.`
+          );
+          continue; // Skip this server entirely — fail closed
+        }
+        serverKeyOwners.set(serverKey, config.id);
+
         for (const tool of listToolsResult.tools) {
           // Prefix tool name with server name to avoid conflicts
           // Format: mcp__<ServerName>__<toolName> (double underscores, preserve case)
-          // Sanitize: collapse whitespace and collapse any accidental __ sequences
-          const serverKey = config.name.replace(/\s+/g, '_').replace(/__/g, '_');
           const prefixedName = `mcp__${serverKey}__${tool.name}`;
 
           newTools.set(prefixedName, {

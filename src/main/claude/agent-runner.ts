@@ -30,7 +30,10 @@ import {
   rememberAlwaysAllow,
   isSessionAutonomous,
   getAutonomousBlockCallback,
+  setMcpServerConfigLookup,
+  setSessionCwd,
 } from '../config/permission-rules-store';
+import { canonicalizeMcpServerName } from '../../shared/mcp-tool-classification';
 import {
   type AgentLike,
   type BeforeToolCallHook,
@@ -993,6 +996,19 @@ RULES:
     log('[ClaudeAgentRunner] Skills enabled: settingSources=[user, project], Skill tool enabled');
     if (mcpManager) {
       log('[ClaudeAgentRunner] MCP support enabled');
+      // Register MCP server config lookup for the permission engine.
+      // This allows decidePermission to consult per-server tool policies.
+      setMcpServerConfigLookup((serverName: string) => {
+        const servers = mcpConfigStore.getServers();
+        const match = servers.find((s) => canonicalizeMcpServerName(s.name) === serverName);
+        if (!match) {
+          logWarn(
+            `[ClaudeAgentRunner] MCP tool permission lookup: no server config found for key "${serverName}". ` +
+              `Tool will fall through to generic permission rules.`
+          );
+        }
+        return match;
+      });
     }
   }
 
@@ -2647,6 +2663,8 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
         if (cachedSession.cwdRef) {
           cachedSession.cwdRef.value = effectiveCwd;
         }
+        // Update session CWD for workspace MCP permission policy lookup
+        setSessionCwd(session.id, effectiveCwd);
         logTiming('pi-coding-agent session reused', runStartTime);
       } else {
         // First query in this session — create new pi-coding-agent session
@@ -2797,6 +2815,8 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
           skillsSignature,
           cwdRef,
         });
+        // Set session CWD for workspace MCP permission policy lookup
+        setSessionCwd(session.id, effectiveCwd);
 
         // ─── Mid-loop overflow guard via _onPayload ─────────────────────────
         // The pre-request guard only runs before the initial piSession.prompt().
