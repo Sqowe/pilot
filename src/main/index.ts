@@ -162,7 +162,7 @@ const scheduledSessionToTaskId = new Map<string, string>();
  * Skill ID for the cowork-memory skill (Python scripts for manual memory).
  * When the in-app memory system is active, this skill is redundant and should be disabled.
  */
-const COWORK_MEMORY_SKILL_ID = 'global-cowork-memory';
+const COWORK_MEMORY_SKILL_ID = 'builtin-cowork-memory';
 
 /** Monotonic token to prevent stale async sync completions from overwriting newer state. */
 let syncCoworkMemoryGeneration = 0;
