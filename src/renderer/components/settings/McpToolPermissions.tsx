@@ -400,22 +400,34 @@ function ActionToggle({
   value: ToolAction;
   onChange: (action: ToolAction) => void;
 }) {
-  const actions: Array<{ action: ToolAction; label: string; color: string }> = [
-    { action: 'allow', label: '✓', color: 'text-success bg-success/10 border-success/30' },
-    { action: 'ask', label: '🤚', color: 'text-warning bg-warning/10 border-warning/30' },
-    { action: 'deny', label: '⊘', color: 'text-error bg-error/10 border-error/30' },
+  const actions: Array<{ action: ToolAction; label: string; activeColor: string }> = [
+    {
+      action: 'allow',
+      label: '✓',
+      activeColor: 'text-success bg-success/20 border-2 border-success/60 shadow-sm',
+    },
+    {
+      action: 'ask',
+      label: '🤚',
+      activeColor: 'text-warning bg-warning/20 border-2 border-warning/60 shadow-sm',
+    },
+    {
+      action: 'deny',
+      label: '⊘',
+      activeColor: 'text-error bg-error/20 border-2 border-error/60 shadow-sm',
+    },
   ];
 
   return (
-    <div className="flex items-center gap-0.5">
-      {actions.map(({ action, label, color }) => (
+    <div className="flex items-center gap-1">
+      {actions.map(({ action, label, activeColor }) => (
         <button
           key={action}
           onClick={() => onChange(action)}
-          className={`w-6 h-6 flex items-center justify-center rounded text-[11px] border transition-colors ${
+          className={`w-7 h-7 flex items-center justify-center rounded-md text-xs transition-all ${
             value === action
-              ? color
-              : 'text-text-muted bg-surface border-border hover:bg-surface-muted'
+              ? activeColor
+              : 'text-text-muted bg-surface border border-border hover:bg-surface-muted hover:border-border-active'
           }`}
           title={action}
         >
