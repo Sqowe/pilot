@@ -170,13 +170,13 @@ export function McpToolPermissions({
                 <button
                   key={value}
                   onClick={() => onUpdatePolicy(value)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs transition-colors ${
+                  className={`flex items-center gap-1.5 px-2.5 py-2 rounded-md text-xs font-medium transition-all ${
                     currentPolicy === value
-                      ? 'bg-accent/10 text-accent border border-accent/30'
-                      : 'bg-surface border border-border text-text-secondary hover:bg-surface-muted'
+                      ? 'bg-accent/15 text-accent border-2 border-accent/50 shadow-sm'
+                      : 'bg-surface border border-border text-text-secondary hover:bg-surface-muted hover:border-border-active'
                   }`}
                 >
-                  <Icon className="w-3.5 h-3.5" />
+                  <Icon className={`w-3.5 h-3.5 ${currentPolicy === value ? 'text-accent' : ''}`} />
                   {t(labelKey, { defaultValue: value })}
                 </button>
               ))}
