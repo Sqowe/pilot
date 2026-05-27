@@ -486,6 +486,21 @@ Memory is enabled by default. Toggle it in **Settings → Memory** or via the Me
 
 When in-app memory is enabled, the legacy `cowork-memory` skill (manual Python scripts) is automatically disabled to avoid redundancy. If you disable in-app memory, the skill is re-enabled as a fallback.
 
+### Memory Sources Indicator (UI)
+
+When the model uses `search_workspace_chats` to retrieve context from past conversations, a visual indicator appears at the top of the response:
+
+- **Simple case** (core memory only): `🧠 Memory contributed to this response`
+- **Active search** (workspace chats searched): `🧠 Referenced N past conversation(s) from this workspace` — clickable to expand a list of referenced sessions with titles and summaries
+
+This indicator is positioned above the response content (not below) because:
+
+- It frames the response as grounded in prior context before you read it
+- It reflects the actual action order (search happened before generation)
+- It builds trust by signaling provenance upfront
+
+The expanded sources list shows which specific past conversations were referenced, giving full transparency into what the model "remembered."
+
 ---
 
 ## 🏗️ Architecture

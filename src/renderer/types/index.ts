@@ -516,6 +516,16 @@ export interface MemoryReadResult extends MemorySearchResult {
   sourceExcerpt?: string;
 }
 
+/** A referenced past conversation surfaced by workspace chat search tools. */
+export interface MemorySource {
+  /** Session or chunk title */
+  title: string;
+  /** Brief summary of what was found */
+  summary?: string;
+  /** The search query that found this */
+  query?: string;
+}
+
 // Permission types
 export interface PermissionRequest {
   toolUseId: string;

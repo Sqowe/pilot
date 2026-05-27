@@ -2,9 +2,11 @@
 // Delegates block rendering to ContentBlockView and its sub-components.
 import { useState, memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Copy, Check, Clock, XCircle, Brain } from 'lucide-react';
+import { Copy, Check, Clock, XCircle } from 'lucide-react';
 import type { Message, ContentBlock, ToolUseContent, ToolResultContent } from '../types';
 import { ContentBlockView } from './message/ContentBlockView';
+import { MemorySourcesBadge } from './message/MemorySourcesBadge';
+import { extractMemorySources } from '../utils/memory-source-extractor';
 
 interface MessageCardProps {
   message: Message;
@@ -47,6 +49,12 @@ export const MessageCard = memo(function MessageCard({
     }
     return ids;
   }, [contentBlocks]);
+
+  // Extract memory sources from workspace chat search tool calls
+  const memorySources = useMemo(
+    () => (memoryContributed ? extractMemorySources(contentBlocks) : []),
+    [contentBlocks, memoryContributed]
+  );
 
   // Extract text content for copying
   const getTextContent = () =>
@@ -149,10 +157,7 @@ export const MessageCard = memo(function MessageCard({
         // Assistant message — no bubble, direct content (Claude style)
         <div className="space-y-1.5">
           {memoryContributed && (
-            <div className="flex items-center gap-1 text-[10px] text-purple-400/80 mb-0.5">
-              <Brain className="w-3 h-3" />
-              <span>{t('messageCard.memoryContributed')}</span>
-            </div>
+            <MemorySourcesBadge coreMemoryActive={true} sources={memorySources} />
           )}
           {contentBlocks.map((block, index) => {
             // Skip tool_result blocks that are merged into their tool_use card

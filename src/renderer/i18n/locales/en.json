@@ -858,6 +858,7 @@
     "queued": "Queued",
     "cancelled": "Cancelled",
     "memoryContributed": "Memory contributed to this response",
+    "memorySearched": "Referenced {{count}} past conversation(s) from this workspace",
     "emptyMessage": "Empty message",
     "emptyText": "(empty text)",
     "copyMessage": "Copy message",
