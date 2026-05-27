@@ -1,7 +1,7 @@
 {
   "_description": "Machine-readable dependency tiering for open-cowork. Tier 1 = LLM/model/agent core, Tier 2 = platform & integrations, Tier 3 = supporting utilities. Use this as input for future uplift research.",
   "generated_at": "2026-05-01 (updated: 2026-05-23 pi-* 0.74→0.75.5)",
-  "generated_from": "package.json v3.3.0-sqowe.6",
+  "generated_from": "package.json v3.3.0-sqowe.7",
   "scope": "runtime dependencies only (devDependencies excluded per user request)",
   "tiers": {
     "tier_1_core": {
