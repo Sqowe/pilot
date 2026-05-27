@@ -350,11 +350,14 @@ Key files: `src/main/mcp/mcp-manager.ts`, `src/main/mcp/mcp-config-store.ts`, `s
 
 ## 🧠 Memory Subsystem
 
-Open Cowork includes an automatic memory system that persists knowledge across sessions. The agent accumulates learnings from past conversations and uses them to provide better, more contextual responses in future sessions.
+Open Cowork includes a two-layer memory system that persists knowledge across sessions. The agent accumulates learnings from past conversations and uses them to provide better, more contextual responses in future sessions.
 
 ### How It Works
 
-Memory is **fully automatic** — the LLM does not decide whether to use memory. Instead, relevant memory is searched and injected into the prompt **before** the LLM sees the user's message:
+Memory uses a **passive + active** architecture:
+
+- **Core memory** (preferences, identity) is passively injected into every prompt
+- **Experience memory** (past conversations) is actively retrieved on-demand via tools the model can call
 
 ```
 User sends message
@@ -362,19 +365,27 @@ User sends message
        ▼
 Memory Extension (beforeSessionRun)
        │
-       ├─ 1. Embed the user's prompt (vector representation)
-       ├─ 2. Search memory stores (vector + lexical hybrid)
-       ├─ 3. Navigator LLM decides if expansion is needed
-       ├─ 4. Build <memory_context> XML block
+       ├─ 1. Inject core memory into prompt (passive, always present)
+       ├─ 2. Register search_workspace_chats tool (active, on-demand)
+       ├─ 3. Register read_workspace_chat tool (active, on-demand)
        │
        ▼
-Combined prompt = memory_context + user_message
+LLM receives: core_memory context + workspace chat search tools
        │
        ▼
-LLM receives the combined prompt (memory is already there)
+LLM decides: "Do I need context from past conversations?"
+       │ YES                              │ NO
+       ▼                                  ▼
+tool_call: search_workspace_chats    Respond directly
        │
        ▼
-LLM responds
+Workspace-scoped results from experience memory
+       │
+       ▼
+(optional) tool_call: read_workspace_chat for full details
+       │
+       ▼
+LLM synthesizes answer with retrieved context
        │
        ▼
 Memory Extension (afterSessionRun)
@@ -388,7 +399,7 @@ Done — knowledge persisted for future sessions
 
 ### Two Levels of Memory
 
-**Core Memory** — stable user profile (always included in full)
+**Core Memory** — stable user profile (passively injected every turn)
 
 Stores durable information that persists across all sessions and workspaces:
 
@@ -397,9 +408,9 @@ Stores durable information that persists across all sessions and workspaces:
 - Skills: competencies, toolchains, strengths
 - Interests: recurring domains and deep topics
 
-Core memory is small (typically <20 entries) and updated conservatively. Only information with strong evidence of being stable across time gets stored here.
+Core memory is small (typically <20 entries) and updated conservatively. Only information with strong evidence of being stable across time gets stored here. It's always present in the prompt — no tool call needed.
 
-**Experience Memory** — past session knowledge (searched per-query)
+**Experience Memory** — past session knowledge (actively retrieved via tools)
 
 Stores reusable work units extracted from past conversations:
 
@@ -409,7 +420,28 @@ Stores reusable work units extracted from past conversations:
 - Constraints, caveats, failure modes, tradeoffs
 - Concrete outcomes and unresolved follow-ups
 
-Each session produces 1–8 chunks, each with an embedding vector for semantic search.
+Each session produces 1–8 chunks, each with an embedding vector for semantic search. The model retrieves these on-demand using `search_workspace_chats` when it needs context from prior sessions — for example, when the user references a past decision or asks to continue previous work.
+
+### Active Retrieval Tools
+
+The model has two workspace-scoped tools for searching past conversations:
+
+| Tool                     | Purpose                                             |
+| ------------------------ | --------------------------------------------------- |
+| `search_workspace_chats` | Search past conversations by natural language query |
+| `read_workspace_chat`    | Read full details of a specific search result       |
+
+These tools are workspace-scoped by default — they search only conversations from the current project. The model decides autonomously when to use them based on the user's question.
+
+### Why Active Over Passive for Experience Memory
+
+The previous approach pre-injected experience memory into every prompt. The active approach is better because:
+
+- **Saves context window** — no tokens wasted on irrelevant past conversations
+- **Model decides relevance** — the model is a better judge of what it needs than a one-shot pre-query
+- **Iterative refinement** — model can search multiple times, refining its query
+- **Provenance** — model explicitly knows what came from past conversations vs current context
+- **No false confidence** — model won't accidentally treat injected memory as current-session facts
 
 ### Retrieval Scoring
 
@@ -422,12 +454,10 @@ Experience memory is ranked using a hybrid scoring algorithm:
 | Workspace boost (+0.3)         | Chunks from the same workspace rank higher                    |
 | Recency boost (+0.02 to +0.08) | Newer chunks get a small boost (decays over 45 days)          |
 
-Top 10 chunks and top 5 sessions are retrieved. A Navigator LLM then decides whether to expand any results (get full details or raw session transcripts) based on relevance.
-
 ### Search Scope
 
 - **Core memory** is always global — included regardless of workspace
-- **Experience memory** prioritizes the current workspace (+0.3 boost) but does not filter out other workspaces. Knowledge from other projects still surfaces if semantically relevant — it just ranks lower.
+- **Experience memory** (via tools) is workspace-scoped by default — searches only conversations from the current project directory
 
 ### Progressive Retrieval
 

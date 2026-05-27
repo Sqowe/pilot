@@ -3,6 +3,7 @@ import type {
   BeforeSessionRunResult,
 } from '../extensions/agent-runtime-extension';
 import type { MemoryService } from './memory-service';
+import { createWorkspaceChatSearchTools } from './memory-chat-search-tool';
 
 export class MemoryExtension implements AgentRuntimeExtension {
   readonly name = 'memory';
@@ -21,6 +22,7 @@ export class MemoryExtension implements AgentRuntimeExtension {
 
     return {
       promptPrefix: await this.memoryService.buildPromptPrefix(session, prompt),
+      customTools: createWorkspaceChatSearchTools(this.memoryService, session.cwd),
     };
   }
 
