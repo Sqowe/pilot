@@ -89,7 +89,11 @@ export const CollapsibleUserText = memo(function CollapsibleUserText({
         <button
           type="button"
           onClick={toggle}
-          className="mt-1 flex items-center gap-1 text-xs text-accent hover:text-accent-hover transition-colors"
+          className={`flex items-center gap-1 text-xs transition-colors ${
+            expanded
+              ? 'mt-1 text-accent hover:text-accent-hover'
+              : 'mt-2 px-2.5 py-1 rounded-full bg-accent/10 text-accent font-medium hover:bg-accent/20'
+          }`}
         >
           {expanded ? (
             <>
