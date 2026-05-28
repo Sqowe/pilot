@@ -871,7 +871,9 @@
     "executionTime": "Execution time: {{time}}",
     "process": "Process",
     "processThinking": "{{count}} thinking",
-    "processTools": "{{count}} tools"
+    "processTools": "{{count}} tools",
+    "showMore": "Show more",
+    "showLess": "Show less"
   },
   "linkMenu": {
     "title": "Link options",

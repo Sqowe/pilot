@@ -27,6 +27,7 @@ import { normalizeLatexDelimiters } from '../../utils/latex-delimiters';
 import type { ToolUseContent, ToolResultContent, FileAttachmentContent } from '../../types';
 import { FileText } from 'lucide-react';
 import { CodeBlock } from './CodeBlock';
+import { CollapsibleUserText } from './CollapsibleUserText';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolUseBlock } from './ToolUseBlock';
 import { ToolResultBlock } from './ToolResultBlock';
@@ -301,12 +302,7 @@ export const ContentBlockView = memo(function ContentBlockView({
 
       // Simple text display for user messages, Markdown for assistant
       if (isUser) {
-        return (
-          <p className="text-text-primary whitespace-pre-wrap break-words text-left">
-            {text}
-            {isStreaming && <span className="inline-block w-2 h-4 bg-accent ml-1 animate-pulse" />}
-          </p>
-        );
+        return <CollapsibleUserText text={text} isStreaming={isStreaming} />;
       }
 
       return (

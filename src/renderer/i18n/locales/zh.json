@@ -811,7 +811,9 @@
     "executionTime": "执行时间: {{time}}",
     "process": "过程",
     "processThinking": "{{count}} 次思考",
-    "processTools": "{{count}} 个工具"
+    "processTools": "{{count}} 个工具",
+    "showMore": "展开更多",
+    "showLess": "收起"
   },
   "linkMenu": {
     "title": "链接选项",
