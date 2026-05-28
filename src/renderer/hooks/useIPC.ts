@@ -452,7 +452,8 @@ export function useIPC() {
       title: string,
       promptOrContent: string | ContentBlock[],
       cwd?: string,
-      initialDisabledMcpServers?: string[]
+      initialDisabledMcpServers?: string[],
+      initialPinnedSkills?: string[]
     ) => {
       setLoading(true);
       console.log('[useIPC] Starting session:', title);
@@ -534,6 +535,7 @@ export function useIPC() {
             cwd,
             content, // Send full content blocks including images
             initialDisabledMcpServers,
+            initialPinnedSkills,
           },
         });
         if (session) {
@@ -812,6 +814,24 @@ export function useIPC() {
     [invoke]
   );
 
+  const setWorkingDirDirect = useCallback(
+    async (
+      path: string,
+      sessionId?: string
+    ): Promise<{ success: boolean; path: string; error?: string }> => {
+      if (!isElectron) {
+        // In non-Electron mode, update local state directly since there's no main process
+        useAppStore.getState().setWorkingDir(path);
+        return { success: true, path };
+      }
+      return invoke<{ success: boolean; path: string; error?: string }>({
+        type: 'workdir.set',
+        payload: { path, sessionId },
+      });
+    },
+    [invoke]
+  );
+
   const getMCPServers = useCallback(async () => {
     if (!isElectron) {
       return [];
@@ -836,6 +856,7 @@ export function useIPC() {
     selectFolder,
     getWorkingDir,
     changeWorkingDir,
+    setWorkingDirDirect,
     getMCPServers,
     isElectron,
   };

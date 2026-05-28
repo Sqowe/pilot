@@ -235,7 +235,7 @@ export function ConfigModal({
               className="w-full px-4 py-3 rounded-xl bg-background border border-border text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all"
             />
             {currentPreset?.keyHint && (
-              <p className="text-xs text-text-muted">{currentPreset.keyHint}</p>
+              <p className="text-xs text-text-muted">{t(currentPreset.keyHint)}</p>
             )}
           </div>
 
@@ -360,8 +360,12 @@ export function ConfigModal({
                   >
                     <Edit3 className="w-3 h-3" />
                     {isOllamaMode
-                      ? (useCustomModel ? t('api.useDetectedModels') : t('api.manualModel'))
-                      : (useCustomModel ? t('api.usePreset') : t('api.custom'))}
+                      ? useCustomModel
+                        ? t('api.useDetectedModels')
+                        : t('api.manualModel')
+                      : useCustomModel
+                        ? t('api.usePreset')
+                        : t('api.custom')}
                   </button>
                 )}
               </div>

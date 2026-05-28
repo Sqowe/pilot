@@ -2,18 +2,12 @@ import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
-import type { ContentBlock, MCPServerInfo } from '../types';
+import type { ContentBlock, MCPServerInfo, Skill } from '../types';
 import { getInitialSessionTitle } from '../../shared/session-title';
-import {
-  FolderOpen,
-  ArrowRight,
-  X,
-  Paperclip,
-  Layers,
-  Plug,
-  ChevronDown,
-  ChevronUp,
-} from 'lucide-react';
+import { MAX_PINNED_SKILLS_PER_SESSION } from '../../shared/skill-pinning-constants';
+import { ArrowRight, X, Paperclip, Layers, Plug, ChevronDown, ChevronUp, Star } from 'lucide-react';
+import { WorkspacePicker } from './WorkspacePicker';
+import { deriveDisabledServerIds } from '../utils/mcp-profile-derive';
 
 type AttachedFile = {
   name: string;
@@ -38,7 +32,8 @@ export function WelcomeView() {
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { startSession, changeWorkingDir, getMCPServers, isElectron } = useIPC();
+  const { startSession, changeWorkingDir, setWorkingDirDirect, getMCPServers, isElectron } =
+    useIPC();
   const workingDir = useAppStore((state) => state.workingDir);
   const setGlobalNotice = useAppStore((state) => state.setGlobalNotice);
   const isConfigured = useAppStore((state) => state.isConfigured);
@@ -47,8 +42,16 @@ export function WelcomeView() {
 
   // MCP server selection state
   const [mcpServers, setMcpServers] = useState<MCPServerInfo[]>([]);
+  const [mcpServersLoaded, setMcpServersLoaded] = useState(false);
+  const [mcpServersLoadFailed, setMcpServersLoadFailed] = useState(false);
   const [mcpDisabledIds, setMcpDisabledIds] = useState<Set<string>>(new Set());
   const [mcpExpanded, setMcpExpanded] = useState(false);
+  const [mcpProfilePending, setMcpProfilePending] = useState(false);
+
+  // Skill pinning state
+  const [availableSkills, setAvailableSkills] = useState<Skill[]>([]);
+  const [pinnedSkillIds, setPinnedSkillIds] = useState<Set<string>>(new Set());
+  const [skillsExpanded, setSkillsExpanded] = useState(false);
 
   // Sync local prompt to store on every change (persists across navigation)
   const setPrompt = (value: string) => {
@@ -56,7 +59,9 @@ export function WelcomeView() {
     setWelcomeDraft(value);
   };
 
-  const canSubmit = prompt.trim().length > 0 || pastedImages.length > 0 || attachedFiles.length > 0;
+  const canSubmit =
+    (prompt.trim().length > 0 || pastedImages.length > 0 || attachedFiles.length > 0) &&
+    !mcpProfilePending;
 
   // Config set selection
   const appConfig = useAppStore((state) => state.appConfig);
@@ -109,18 +114,115 @@ export function WelcomeView() {
     }
   };
 
-  // Load MCP servers on mount
+  // Load MCP servers on mount and poll for connection status updates
   useEffect(() => {
     const loadServers = async () => {
       try {
         const servers = await getMCPServers();
         setMcpServers(servers || []);
+        setMcpServersLoadFailed(false);
       } catch (error) {
         console.error('[WelcomeView] Failed to load MCP servers:', error);
+        setMcpServersLoadFailed(true);
+      } finally {
+        setMcpServersLoaded(true);
       }
     };
     loadServers();
+    // Poll every 10s to pick up connection status changes (servers may still be connecting)
+    const interval = setInterval(loadServers, 10000);
+    return () => clearInterval(interval);
   }, [getMCPServers]);
+
+  // Raw workspace profile — fetched only when workingDir changes
+  const [workspaceProfile, setWorkspaceProfile] = useState<{
+    disabled?: string[];
+    enabled?: string[];
+  } | null>(null);
+  // Track whether user has manually toggled servers (overrides profile derivation)
+  const [userToggledMcp, setUserToggledMcp] = useState(false);
+
+  // Load workspace MCP profile when workingDir changes (fetch only, no derivation)
+  useEffect(() => {
+    if (!isElectron || !workingDir) {
+      setWorkspaceProfile(null);
+      setUserToggledMcp(false);
+      setMcpDisabledIds(new Set());
+      return;
+    }
+    let cancelled = false;
+    // Immediately clear stale state from previous workspace before async fetch
+    setWorkspaceProfile(null);
+    setUserToggledMcp(false);
+    setMcpDisabledIds(new Set());
+    const loadProfile = async () => {
+      try {
+        const profile = await window.electronAPI?.mcp?.getWorkspaceProfile(workingDir);
+        if (cancelled) return;
+        setWorkspaceProfile(profile || null);
+      } catch (error) {
+        if (!cancelled) {
+          console.error('[WelcomeView] Failed to load workspace MCP profile:', error);
+          setWorkspaceProfile(null);
+        }
+      }
+    };
+    loadProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [workingDir, isElectron]);
+
+  // Derive disabled IDs from profile + server list (no IPC, no re-fetch).
+  // Only applies when user hasn't manually toggled servers this session.
+  // `mcpProfilePending` tracks whether derivation is incomplete (allowlist waiting for servers).
+
+  useEffect(() => {
+    if (userToggledMcp) {
+      setMcpProfilePending(false);
+      return; // User overrode — don't reset
+    }
+
+    if (!workspaceProfile) {
+      setMcpDisabledIds(new Set());
+      setMcpProfilePending(false);
+      return;
+    }
+
+    const derived = deriveDisabledServerIds(workspaceProfile, mcpServers);
+    if (derived === null) {
+      // Allowlist mode but servers not loaded yet.
+      if (mcpServersLoaded) {
+        if (mcpServersLoadFailed) {
+          // Server load failed — keep pending (fail-safe: don't enable everything)
+          setMcpProfilePending(true);
+        } else {
+          // Loaded successfully with zero servers — nothing to disable, unblock
+          setMcpDisabledIds(new Set());
+          setMcpProfilePending(false);
+        }
+      } else {
+        setMcpProfilePending(true);
+      }
+      return;
+    }
+
+    setMcpDisabledIds(derived);
+    setMcpProfilePending(false);
+  }, [workspaceProfile, mcpServers, mcpServersLoaded, mcpServersLoadFailed, userToggledMcp]);
+
+  // Load available skills on mount
+  useEffect(() => {
+    const loadSkills = async () => {
+      try {
+        const skills = await window.electronAPI?.skills?.getAll();
+        setAvailableSkills((skills || []).filter((s) => s.enabled));
+      } catch (error) {
+        console.error('[WelcomeView] Failed to load skills:', error);
+      }
+    };
+    loadSkills();
+  }, []);
 
   // Handle paste event for images
   const handlePaste = async (e: React.ClipboardEvent) => {
@@ -407,7 +509,8 @@ export function WelcomeView() {
         sessionTitle,
         contentBlocks,
         workingDir || undefined,
-        mcpDisabledIds.size > 0 ? Array.from(mcpDisabledIds) : undefined
+        mcpDisabledIds.size > 0 ? Array.from(mcpDisabledIds) : undefined,
+        pinnedSkillIds.size > 0 ? Array.from(pinnedSkillIds) : undefined
       );
       if (session) {
         setPrompt('');
@@ -444,8 +547,8 @@ export function WelcomeView() {
   }, [prompt]);
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-5 py-10 md:px-8 md:py-14">
-      <div className="max-w-[840px] w-full space-y-7 animate-fade-in">
+    <div className="flex-1 flex flex-col items-center overflow-y-auto px-5 py-10 md:px-8 md:py-14">
+      <div className="max-w-[840px] w-full space-y-7 animate-fade-in my-auto">
         <div className="space-y-4 text-center">
           <div className="flex items-center justify-center gap-4">
             <img
@@ -455,7 +558,7 @@ export function WelcomeView() {
             />
             <div className="text-left">
               <h1 className="text-[2.35rem] md:text-[3.1rem] leading-none font-semibold tracking-[-0.05em] text-text-primary">
-                Open Cowork
+                Sqowe Pilot
               </h1>
             </div>
           </div>
@@ -571,21 +674,31 @@ export function WelcomeView() {
           {/* Bottom Actions */}
           <div className="flex items-center justify-between pt-3 border-t border-border-muted">
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleSelectFolder}
-                className={`flex items-center gap-2 text-sm transition-colors ${
-                  workingDir
-                    ? 'text-text-secondary hover:text-text-primary'
-                    : 'text-accent hover:text-accent-hover'
-                }`}
-                title={workingDir || t('welcome.selectWorkingFolder')}
-              >
-                <FolderOpen className="w-4 h-4" />
-                <span>
-                  {workingDir ? workingDir.split(/[/\\]/).pop() : t('welcome.selectWorkingFolder')}
-                </span>
-              </button>
+              <WorkspacePicker
+                currentPath={workingDir}
+                onSelectPath={async (path) => {
+                  try {
+                    const result = await setWorkingDirDirect(path);
+                    if (!result.success && result.error) {
+                      setGlobalNotice({
+                        id: `notice-workdir-set-${Date.now()}`,
+                        type: 'warning',
+                        message: `${t('welcome.selectWorkingFolderFailed')}: ${result.error}`,
+                      });
+                    }
+                  } catch (error) {
+                    setGlobalNotice({
+                      id: `notice-workdir-set-${Date.now()}`,
+                      type: 'error',
+                      message:
+                        error instanceof Error && error.message
+                          ? `${t('welcome.selectWorkingFolderFailed')}: ${error.message}`
+                          : t('welcome.selectWorkingFolderFailed'),
+                    });
+                  }
+                }}
+                onBrowse={handleSelectFolder}
+              />
 
               {isElectron && (
                 <button
@@ -646,7 +759,8 @@ export function WelcomeView() {
               <div className="flex items-center gap-2 text-sm text-text-secondary">
                 <Plug className="w-4 h-4 text-mcp" />
                 <span>
-                  {mcpServers.length - mcpDisabledIds.size}/{mcpServers.length}{' '}
+                  {mcpServers.length}/{mcpServers.filter((s) => s.connected).length}/
+                  {mcpServers.filter((s) => s.connected && !mcpDisabledIds.has(s.id)).length}{' '}
                   {t('welcome.mcpServersActive')}
                 </span>
                 {mcpDisabledIds.size > 0 && (
@@ -672,7 +786,10 @@ export function WelcomeView() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setMcpDisabledIds(new Set())}
+                      onClick={() => {
+                        setUserToggledMcp(true);
+                        setMcpDisabledIds(new Set());
+                      }}
                       className="text-xs text-text-muted hover:text-text-primary transition-colors"
                     >
                       {t('welcome.mcpAllOn')}
@@ -680,7 +797,10 @@ export function WelcomeView() {
                     <span className="text-text-muted">·</span>
                     <button
                       type="button"
-                      onClick={() => setMcpDisabledIds(new Set(mcpServers.map((s) => s.id)))}
+                      onClick={() => {
+                        setUserToggledMcp(true);
+                        setMcpDisabledIds(new Set(mcpServers.map((s) => s.id)));
+                      }}
                       className="text-xs text-text-muted hover:text-text-primary transition-colors"
                     >
                       {t('welcome.mcpAllOff')}
@@ -695,6 +815,7 @@ export function WelcomeView() {
                         key={server.id}
                         type="button"
                         onClick={() => {
+                          setUserToggledMcp(true);
                           setMcpDisabledIds((prev) => {
                             const next = new Set(prev);
                             if (prev.has(server.id)) {
@@ -730,6 +851,104 @@ export function WelcomeView() {
                           {server.name}
                         </span>
                         <span className="text-xs text-text-muted shrink-0">{server.toolCount}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Skill Pinning Picker */}
+        {availableSkills.length > 0 && (
+          <div className="space-y-2">
+            {/* Collapsed summary line */}
+            <button
+              type="button"
+              onClick={() => setSkillsExpanded(!skillsExpanded)}
+              className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl border border-border-muted bg-background/60 hover:bg-surface-hover transition-colors"
+            >
+              <div className="flex items-center gap-2 text-sm text-text-secondary">
+                <Star className="w-4 h-4 text-amber-500" />
+                <span>
+                  {pinnedSkillIds.size > 0
+                    ? `${pinnedSkillIds.size}/${MAX_PINNED_SKILLS_PER_SESSION} ${t('welcome.skillsPinned', { count: pinnedSkillIds.size })}`
+                    : t('welcome.skillsForChat')}
+                </span>
+              </div>
+              {skillsExpanded ? (
+                <ChevronUp className="w-4 h-4 text-text-muted" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-text-muted" />
+              )}
+            </button>
+
+            {/* Expanded grid */}
+            {skillsExpanded && (
+              <div className="rounded-xl border border-border-muted bg-background/60 px-4 py-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
+                    {t('welcome.skillsForChat')}
+                  </span>
+                  {pinnedSkillIds.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPinnedSkillIds(new Set())}
+                      className="text-xs text-text-muted hover:text-text-primary transition-colors"
+                    >
+                      {t('welcome.skillsClearAll')}
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {availableSkills.map((skill) => {
+                    const isPinned = pinnedSkillIds.has(skill.id);
+                    return (
+                      <button
+                        key={skill.id}
+                        type="button"
+                        onClick={() => {
+                          setPinnedSkillIds((prev) => {
+                            const next = new Set(prev);
+                            if (prev.has(skill.id)) {
+                              next.delete(skill.id);
+                            } else {
+                              // Enforce client-side limit
+                              if (next.size >= MAX_PINNED_SKILLS_PER_SESSION) return prev;
+                              next.add(skill.id);
+                            }
+                            return next;
+                          });
+                        }}
+                        disabled={!isPinned && pinnedSkillIds.size >= MAX_PINNED_SKILLS_PER_SESSION}
+                        className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-colors text-left ${
+                          isPinned
+                            ? 'border-amber-500/30 bg-amber-500/5 hover:bg-amber-500/10'
+                            : pinnedSkillIds.size >= MAX_PINNED_SKILLS_PER_SESSION
+                              ? 'border-border-muted bg-surface-muted opacity-40 cursor-not-allowed'
+                              : 'border-border-muted bg-surface-muted hover:bg-surface-hover'
+                        }`}
+                      >
+                        <Star
+                          className={`w-4 h-4 shrink-0 transition-colors ${
+                            isPinned ? 'text-amber-500 fill-amber-500' : 'text-text-muted'
+                          }`}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <span
+                            className={`text-sm truncate block ${
+                              isPinned ? 'text-text-primary' : 'text-text-muted'
+                            }`}
+                          >
+                            {skill.name}
+                          </span>
+                          {skill.description && (
+                            <span className="text-xs text-text-muted truncate block">
+                              {skill.description}
+                            </span>
+                          )}
+                        </div>
                       </button>
                     );
                   })}

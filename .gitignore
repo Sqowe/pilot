@@ -115,3 +115,6 @@ website/.vitepress/cache/
 
 # SQOWE
 docs/chats/
+
+# Kiro
+.kiro/

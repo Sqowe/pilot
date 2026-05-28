@@ -12,18 +12,42 @@ import { groupMessagesIntoTurns, shouldCollapseTurn, splitTurnMessages } from '.
 interface GroupedMessagesProps {
   messages: Message[];
   hasActiveTurn: boolean;
+  memoryEnabled?: boolean;
+  lastRetrievalTimestamp?: number;
+  selectable?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (messageId: string) => void;
+  isExportable?: (msg: Message) => boolean;
 }
 
 export const GroupedMessages = memo(function GroupedMessages({
   messages,
   hasActiveTurn,
+  memoryEnabled,
+  lastRetrievalTimestamp,
+  selectable,
+  selectedIds,
+  onToggleSelect,
+  isExportable,
 }: GroupedMessagesProps) {
+  // Helper: determine if a message is exportable (uses passed-in helper or default)
+  const isMessageExportable = (msg: Message): boolean =>
+    isExportable ? isExportable(msg) : !msg.id.startsWith('partial-') && msg.role !== 'system';
+
   // Group messages into turns
   const turns = useMemo(() => groupMessagesIntoTurns(messages), [messages]);
 
   const renderMessage = useCallback(
-    (msg: Message, isStreaming: boolean) => <MessageCard message={msg} isStreaming={isStreaming} />,
-    []
+    (msg: Message, isStreaming: boolean) => (
+      <MessageCard
+        message={msg}
+        isStreaming={isStreaming}
+        selectable={selectable && isMessageExportable(msg)}
+        selected={selectedIds?.has(msg.id)}
+        onToggleSelect={onToggleSelect}
+      />
+    ),
+    [selectable, selectedIds, onToggleSelect]
   );
 
   return (
@@ -49,7 +73,12 @@ export const GroupedMessages = memo(function GroupedMessages({
             {/* User message */}
             {turn.userMessage && (
               <div key={turn.userMessage.id}>
-                <MessageCard message={turn.userMessage} />
+                <MessageCard
+                  message={turn.userMessage}
+                  selectable={selectable && isMessageExportable(turn.userMessage)}
+                  selected={selectedIds?.has(turn.userMessage.id)}
+                  onToggleSelect={onToggleSelect}
+                />
               </div>
             )}
 
@@ -59,15 +88,34 @@ export const GroupedMessages = memo(function GroupedMessages({
                 messages={processMessages}
                 isStreaming={turnIsStreaming}
                 renderMessage={renderMessage}
+                forceExpanded={selectable}
               />
             )}
 
             {/* Final answer messages (or all messages if no collapse) */}
-            {answerMessages.map((msg) => {
+            {answerMessages.map((msg, msgIndex) => {
               const isStreaming = typeof msg.id === 'string' && msg.id.startsWith('partial-');
+              // Show memory indicator only on the first assistant answer of the last turn,
+              // and only when retrieval actually happened (timestamp is after the turn's user message)
+              const isFirstAssistantInAnswers =
+                msg.role === 'assistant' &&
+                answerMessages.findIndex((m) => m.role === 'assistant') === msgIndex;
+              const retrievalIsForThisTurn =
+                !!turn.userMessage &&
+                !!lastRetrievalTimestamp &&
+                lastRetrievalTimestamp >= turn.userMessage.timestamp;
+              const showMemoryBadge =
+                memoryEnabled && isLastTurn && isFirstAssistantInAnswers && retrievalIsForThisTurn;
               return (
                 <div key={msg.id}>
-                  <MessageCard message={msg} isStreaming={isStreaming} />
+                  <MessageCard
+                    message={msg}
+                    isStreaming={isStreaming}
+                    memoryContributed={showMemoryBadge}
+                    selectable={selectable && isMessageExportable(msg)}
+                    selected={selectedIds?.has(msg.id)}
+                    onToggleSelect={onToggleSelect}
+                  />
                 </div>
               );
             })}

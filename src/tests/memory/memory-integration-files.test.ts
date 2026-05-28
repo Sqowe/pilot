@@ -24,7 +24,8 @@ describe('memory integration wiring', () => {
     expect(runner).toContain("path.join(plugin.runtimePath, 'skills')");
     expect(runner).toContain('this.extensionManager.beforeSessionRun');
     expect(runner).toContain('skillsSignature');
-    expect(memoryExtension).not.toContain('customTools: this.memoryService.getTools()');
+    expect(memoryExtension).toContain('createWorkspaceChatSearchTools');
+    expect(memoryExtension).toContain('customTools: createWorkspaceChatSearchTools(');
   });
 
   it('adds a dedicated Memory settings tab and preload bridge', () => {

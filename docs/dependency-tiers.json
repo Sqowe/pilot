@@ -1,7 +1,7 @@
 {
   "_description": "Machine-readable dependency tiering for open-cowork. Tier 1 = LLM/model/agent core, Tier 2 = platform & integrations, Tier 3 = supporting utilities. Use this as input for future uplift research.",
-  "generated_at": "2026-05-01 (updated: 2026-05-13 Python 3.10→3.12, bundled runtimes section added)",
-  "generated_from": "package.json v3.3.0",
+  "generated_at": "2026-05-01 (updated: 2026-05-23 pi-* 0.74→0.75.5)",
+  "generated_from": "package.json v3.3.0-sqowe.7",
   "scope": "runtime dependencies only (devDependencies excluded per user request)",
   "tiers": {
     "tier_1_core": {
@@ -27,8 +27,8 @@
     {
       "name": "@earendil-works/pi-coding-agent",
       "tier": "tier_1_core",
-      "installed_version": "0.74.0",
-      "declared_range": "^0.71.0",
+      "installed_version": "0.75.5",
+      "declared_range": "0.75.5",
       "role": "Core agent execution engine. createAgentSession, SessionManager, tool dispatch, streaming \u2014 drives agent-runner.ts (1514 lines). This is the heart of the app.",
       "primary_callsites": [
         "src/main/claude/agent-runner.ts",
@@ -38,14 +38,14 @@
       "repository_url": "https://github.com/badlogic/pi-mono",
       "homepage_url": null,
       "license": "MIT",
-      "risk_notes": "Pre-1.0 (0.71.x) \u2014 breaking changes possible between minors. Shares monorepo with pi-ai; uplift both together. Uplifted 0.60\u21920.71 on 2026-05-01: required 5 code adaptations (TypeBox 1.x, ModelRegistry factory, appendSystemPrompt array, tools\u2192customTools, event renames).",
+      "risk_notes": "Pre-1.0 \u2014 breaking changes possible between minors. Shares monorepo with pi-ai; uplift both together. Uplifted 0.60\u21920.71 on 2026-05-01 (5 code adaptations), 0.71\u21920.74 on 2026-05-12, 0.74\u21920.75.5 on 2026-05-23.",
       "monitor_releases": true
     },
     {
       "name": "@earendil-works/pi-ai",
       "tier": "tier_1_core",
-      "installed_version": "0.74.0",
-      "declared_range": "^0.71.0",
+      "installed_version": "0.75.5",
+      "declared_range": "0.75.5",
       "role": "Unified LLM API layer. Provider routing, model registry resolution, auth storage \u2014 resolves which SDK/endpoint to call for a given (provider, model) pair.",
       "primary_callsites": [
         "src/main/claude/agent-runner.ts",
@@ -57,7 +57,7 @@
       "repository_url": "https://github.com/badlogic/pi-mono",
       "homepage_url": null,
       "license": "MIT",
-      "risk_notes": "Pre-1.0 \u2014 registry additions (new models, providers) are key release value. Must be version-locked with pi-coding-agent. Uplifted 0.60\u21920.71 on 2026-05-01.",
+      "risk_notes": "Pre-1.0 \u2014 registry additions (new models, providers) are key release value. Must be version-locked with pi-coding-agent. Uplifted 0.60\u21920.71 on 2026-05-01, 0.71\u21920.74 on 2026-05-12, 0.74\u21920.75.5 on 2026-05-23.",
       "monitor_releases": true
     },
     {

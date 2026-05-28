@@ -159,6 +159,17 @@ export interface AppConfig {
   // Permission dialog timeout in seconds.
   // 0 means infinite (no timeout — wait forever for user response).
   permissionTimeoutSeconds: number;
+
+  // Default MCP tool execution timeout in seconds.
+  // If an MCP tool does not respond within this time, the agent receives a
+  // timeout error and can decide to retry or try a different approach.
+  // Per-server overrides take precedence over this global default.
+  // 0 means no timeout (wait indefinitely — not recommended).
+  mcpToolTimeoutSeconds: number;
+
+  // Native desktop notifications when the app is not focused.
+  // Fires on permission requests and agent response completion.
+  notificationsEnabled: boolean;
 }
 
 export interface MemoryModelRuntimeConfig {
@@ -322,6 +333,8 @@ const defaultConfig: AppConfig = {
   schedulerConflictPolicy: 'queue',
   schedulerRunHistoryDepth: 10,
   permissionTimeoutSeconds: 300,
+  mcpToolTimeoutSeconds: 240,
+  notificationsEnabled: true,
 };
 
 export const PROVIDER_PRESETS = API_PROVIDER_PRESETS;
@@ -434,6 +447,21 @@ function normalizePermissionTimeout(value: unknown): number {
   if (rounded <= 0) return 0; // infinite
   if (rounded < 10) return 10; // minimum 10 seconds
   if (rounded > 3600) return 3600; // maximum 1 hour
+  return rounded;
+}
+
+/**
+ * Normalize MCP tool timeout. 0 means no timeout (not recommended).
+ * Minimum 10s to avoid instant-timeout, max 600s (10 minutes).
+ */
+function normalizeMcpToolTimeout(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return defaultConfig.mcpToolTimeoutSeconds;
+  }
+  const rounded = Math.floor(value);
+  if (rounded <= 0) return 0; // disabled
+  if (rounded < 10) return 10; // minimum 10 seconds
+  if (rounded > 600) return 600; // maximum 10 minutes
   return rounded;
 }
 
@@ -1055,6 +1083,10 @@ export class ConfigStore {
       apiKey: projected.apiKey,
       baseUrl: projected.baseUrl,
       model: projected.model,
+      ...(typeof projected.contextWindow === 'number'
+        ? { contextWindow: projected.contextWindow }
+        : {}),
+      ...(typeof projected.maxTokens === 'number' ? { maxTokens: projected.maxTokens } : {}),
       activeProfileKey: projected.activeProfileKey,
       profiles: projected.profiles,
       activeConfigSetId,
@@ -1087,6 +1119,8 @@ export class ConfigStore {
         : defaultConfig.schedulerConflictPolicy,
       schedulerRunHistoryDepth: normalizeRunHistoryDepth(raw.schedulerRunHistoryDepth),
       permissionTimeoutSeconds: normalizePermissionTimeout(raw.permissionTimeoutSeconds),
+      mcpToolTimeoutSeconds: normalizeMcpToolTimeout(raw.mcpToolTimeoutSeconds),
+      notificationsEnabled: toBoolean(raw.notificationsEnabled, defaultConfig.notificationsEnabled),
     };
     this.normalizeModelIds(result);
     return result;
@@ -1536,6 +1570,14 @@ export class ConfigStore {
         updates.permissionTimeoutSeconds !== undefined
           ? normalizePermissionTimeout(updates.permissionTimeoutSeconds)
           : current.permissionTimeoutSeconds,
+      mcpToolTimeoutSeconds:
+        updates.mcpToolTimeoutSeconds !== undefined
+          ? normalizeMcpToolTimeout(updates.mcpToolTimeoutSeconds)
+          : current.mcpToolTimeoutSeconds,
+      notificationsEnabled:
+        updates.notificationsEnabled !== undefined
+          ? toBoolean(updates.notificationsEnabled, current.notificationsEnabled)
+          : current.notificationsEnabled,
     });
   }
 
@@ -1695,6 +1737,13 @@ export class ConfigStore {
           : resolveOpenAICredentials(projectedConfig);
       if (resolvedOpenAI?.apiKey) {
         process.env.OPENAI_API_KEY = resolvedOpenAI.apiKey;
+        // Also set ANTHROPIC_API_KEY for custom providers routing Anthropic models
+        // through an OpenAI-compatible gateway. The pi-ai SDK may look up the key
+        // by the model's registry provider ("anthropic") rather than the configured
+        // protocol ("openai"), causing auth failures on follow-up requests.
+        if (projectedConfig.provider === 'custom') {
+          process.env.ANTHROPIC_API_KEY = resolvedOpenAI.apiKey;
+        }
       }
       const openAIBaseUrl = resolvedOpenAI?.baseUrl || projectedConfig.baseUrl;
       if (openAIBaseUrl) {

@@ -5,13 +5,26 @@ import { useTranslation } from 'react-i18next';
 import { Copy, Check, Clock, XCircle } from 'lucide-react';
 import type { Message, ContentBlock, ToolUseContent, ToolResultContent } from '../types';
 import { ContentBlockView } from './message/ContentBlockView';
+import { MemorySourcesBadge } from './message/MemorySourcesBadge';
+import { extractMemorySources } from '../utils/memory-source-extractor';
 
 interface MessageCardProps {
   message: Message;
   isStreaming?: boolean;
+  memoryContributed?: boolean;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (messageId: string) => void;
 }
 
-export const MessageCard = memo(function MessageCard({ message, isStreaming }: MessageCardProps) {
+export const MessageCard = memo(function MessageCard({
+  message,
+  isStreaming,
+  memoryContributed,
+  selectable,
+  selected,
+  onToggleSelect,
+}: MessageCardProps) {
   const { t } = useTranslation();
   const isUser = message.role === 'user';
   const isQueued = message.localStatus === 'queued';
@@ -37,6 +50,12 @@ export const MessageCard = memo(function MessageCard({ message, isStreaming }: M
     return ids;
   }, [contentBlocks]);
 
+  // Extract memory sources from workspace chat search tool calls
+  const memorySources = useMemo(
+    () => (memoryContributed ? extractMemorySources(contentBlocks) : []),
+    [contentBlocks, memoryContributed]
+  );
+
   // Extract text content for copying
   const getTextContent = () =>
     contentBlocks
@@ -44,7 +63,8 @@ export const MessageCard = memo(function MessageCard({ message, isStreaming }: M
       .map((block) => (block as { type: 'text'; text: string }).text)
       .join('\n');
 
-  const handleCopy = async () => {
+  const handleCopy = async (e?: React.MouseEvent) => {
+    e?.stopPropagation(); // Prevent toggling selection in export mode
     const text = getTextContent();
     if (text) {
       try {
@@ -57,8 +77,35 @@ export const MessageCard = memo(function MessageCard({ message, isStreaming }: M
     }
   };
 
+  const handleCardClick = (e: React.MouseEvent) => {
+    if (!selectable || !onToggleSelect) return;
+    // Don't toggle selection when clicking interactive child elements
+    const target = e.target as HTMLElement;
+    if (target.closest('button, a, input, [role="button"]')) return;
+    onToggleSelect(message.id);
+  };
+
   return (
-    <div className="animate-fade-in">
+    <div
+      className={`animate-fade-in ${selectable ? 'relative cursor-pointer' : ''} ${
+        selectable && selected ? 'ring-1 ring-accent/40 rounded-xl bg-accent/5' : ''
+      }`}
+      onClick={handleCardClick}
+    >
+      {/* Selection checkbox */}
+      {selectable && (
+        <div className="absolute -left-7 top-2 z-10">
+          <div
+            className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${
+              selected
+                ? 'bg-accent text-white'
+                : 'border border-border-muted bg-background hover:border-accent/50'
+            }`}
+          >
+            {selected && <Check className="w-3 h-3" />}
+          </div>
+        </div>
+      )}
       {isUser ? (
         // User message - compact styling with smaller padding and radius
         <div className="flex items-start gap-2 justify-end group">
@@ -109,6 +156,9 @@ export const MessageCard = memo(function MessageCard({ message, isStreaming }: M
       ) : (
         // Assistant message — no bubble, direct content (Claude style)
         <div className="space-y-1.5">
+          {memoryContributed && (
+            <MemorySourcesBadge coreMemoryActive={true} sources={memorySources} />
+          )}
           {contentBlocks.map((block, index) => {
             // Skip tool_result blocks that are merged into their tool_use card
             if (

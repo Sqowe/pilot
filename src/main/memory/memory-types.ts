@@ -35,6 +35,18 @@ export interface CoreMemoryEntry {
   category?: CoreMemoryCategory;
   key: string;
   value: string;
+  /** Workspaces where this entry was observed/confirmed. */
+  sourceWorkspaces?: string[];
+}
+
+export interface MemoryRetrievalMetrics {
+  coreMatched: number;
+  chunksRetrieved: number;
+  chunksExpanded: number;
+  tokensInjected: number;
+  sources: Array<{ workspace: string | null; summary: string; expanded: boolean }>;
+  durationMs: number;
+  timestamp: number;
 }
 
 export interface ChunkMemoryItem {

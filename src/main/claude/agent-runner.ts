@@ -30,13 +30,17 @@ import {
   rememberAlwaysAllow,
   isSessionAutonomous,
   getAutonomousBlockCallback,
+  setMcpServerConfigLookup,
+  setSessionCwd,
 } from '../config/permission-rules-store';
+import { canonicalizeMcpServerName } from '../../shared/mcp-tool-classification';
 import {
   type AgentLike,
   type BeforeToolCallHook,
   captureExistingHook,
   installBeforeToolCallHook,
 } from './before-tool-call-hook';
+import { wrapMcpToolsWithTimeout } from './mcp-tool-timeout';
 import { PathResolver } from '../sandbox/path-resolver';
 import { MCPManager } from '../mcp/mcp-manager';
 import { mcpConfigStore } from '../mcp/mcp-config-store';
@@ -54,6 +58,7 @@ import {
 import { ReadLoopGuard, extractReadFilePath } from './read-loop-guard';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import * as os from 'os';
 import { execFileSync, spawn } from 'child_process';
 import { app } from 'electron';
@@ -65,11 +70,13 @@ import { extractArtifactsFromText, buildArtifactTraceSteps } from '../utils/arti
 import { getDefaultShell } from '../utils/shell-resolver';
 import { PluginRuntimeService } from '../skills/plugin-runtime-service';
 import type { SkillsAdapter } from '../skills/skills-adapter';
+import { SAFE_SKILL_ID_REGEX } from '../../shared/skill-pinning-constants';
 import { AgentRuntimeExtensionManager } from '../extensions/agent-runtime-extension-manager';
 import { configStore } from '../config/config-store';
 import { setBasePath, applyLocalDevPath } from '../utils/path-env';
 import { loadWorkspaceSystemPrompt } from '../utils/workspace-system-prompt';
 import { assembleUserPrompt } from '../prompts/prompt-loader';
+import { enrichToolErrorWithThinking, selectThinkingSource } from './tool-error-enrichment';
 import { normalizeOpenAICompatibleBaseUrl } from '../config/auth-utils';
 import { resolveMessageEndPayload, toUserFacingErrorText } from './agent-runner-message-end';
 import {
@@ -517,6 +524,8 @@ interface AgentRunnerOptions {
   }>;
   /** Get session-level disabled MCP server IDs (ephemeral, in-memory) */
   getSessionDisabledMcpServers?: (sessionId: string) => string[];
+  /** Get session-level pinned skill IDs (ephemeral, in-memory) */
+  getSessionPinnedSkills?: (sessionId: string) => string[];
 }
 
 interface CachedPiSession {
@@ -565,10 +574,57 @@ export class ClaudeAgentRunner {
   private piSessions: Map<string, CachedPiSession> = new Map();
   private static readonly MAX_CACHED_SESSIONS = 50;
   private _getSessionDisabledMcpServers?: (sessionId: string) => string[];
+  private _getSessionPinnedSkills?: (sessionId: string) => string[];
 
   // Per-instance caches — invalidated when the underlying config changes.
   private _mcpServersCache: { fingerprint: string; servers: Record<string, unknown> } | null = null;
   private _skillsSetupDone = false;
+
+  /**
+   * Tracks sessions currently waiting for a permission dialog response.
+   * While a session has a non-zero count, the activity timeout is paused to
+   * avoid aborting the agent while the user is deciding whether to allow a
+   * tool call. Uses a reference count (not a boolean) because the SDK may
+   * issue multiple parallel tool calls that each require permission.
+   * This prevents the "No timeout (wait forever)" permission setting from
+   * being contradicted by the 5-minute activity timeout.
+   *
+   * Keyed by sessionId. Each entry stores a generation token (runId) and a
+   * count. Stale completions from cancelled runs are ignored by comparing
+   * the runId at exit time against the current entry's runId.
+   */
+  private permissionWaitState: Map<string, { runId: string; count: number }> = new Map();
+
+  /**
+   * The current run generation token per session. Updated at the start of
+   * each run() call. Permission hooks capture this value on enter and compare
+   * it on exit — if it has changed (due to cancel + restart), the exit is
+   * treated as stale and becomes a no-op.
+   */
+  private currentRunId: Map<string, string> = new Map();
+
+  /**
+   * Per-session activity timeout handle. Stored on the class so that the
+   * permission hook can directly cancel an already-scheduled timer when
+   * entering permission-wait state (not only on the next resetActivityTimeout
+   * call).
+   */
+  private activityTimeoutHandles: Map<string, ReturnType<typeof setTimeout>> = new Map();
+
+  /**
+   * Per-session callback to restart the activity timeout. Set by run() so
+   * that the permission hook's finally block can immediately reschedule the
+   * timer when permission wait count reaches 0, without waiting for the next
+   * SDK event (which may never come if the tool was blocked).
+   */
+  private restartActivityTimeout: Map<string, () => void> = new Map();
+
+  /**
+   * Tracks sessions with active MCP tool executions. While a session has
+   * tools running, the activity timeout is paused — the tool-level timeout
+   * is the sole guard against hung tools.
+   */
+  private toolExecutionCount: Map<string, number> = new Map();
 
   /**
    * Clear SDK session cache for a session
@@ -584,6 +640,17 @@ export class ClaudeAgentRunner {
       }
       this.piSessions.delete(sessionId);
       log('[ClaudeAgentRunner] Disposed pi session for:', sessionId);
+    }
+    // Always clean up permission/timeout state regardless of piSessions membership.
+    // These maps can have entries even if the piSession was already evicted from cache.
+    this.permissionWaitState.delete(sessionId);
+    this.currentRunId.delete(sessionId);
+    this.restartActivityTimeout.delete(sessionId);
+    this.toolExecutionCount.delete(sessionId);
+    const handle = this.activityTimeoutHandles.get(sessionId);
+    if (handle) {
+      clearTimeout(handle);
+      this.activityTimeoutHandles.delete(sessionId);
     }
   }
 
@@ -608,6 +675,31 @@ export class ClaudeAgentRunner {
   /** Get session-level disabled MCP server IDs via the injected callback. */
   private getSessionDisabledMcpServers(sessionId: string): string[] | null {
     return this._getSessionDisabledMcpServers?.(sessionId) ?? null;
+  }
+
+  /** Get session-level pinned skill IDs via the injected callback. */
+  private getSessionPinnedSkills(sessionId: string): string[] {
+    return this._getSessionPinnedSkills?.(sessionId) ?? [];
+  }
+
+  /**
+   * Build the pinned skills directive prompt for injection into the system prompt.
+   * Returns empty string if no skills are pinned.
+   */
+  private buildPinnedSkillsDirective(sessionId: string): string {
+    const pinnedSkillIds = this.getSessionPinnedSkills(sessionId);
+    if (pinnedSkillIds.length === 0) return '';
+
+    // Validate and sanitize skill IDs before prompt interpolation (defense-in-depth).
+    const sanitizedIds = pinnedSkillIds.filter((id) => SAFE_SKILL_ID_REGEX.test(id));
+    if (sanitizedIds.length === 0) return '';
+
+    const directives = sanitizedIds.map((id) => `- Use ${id} for this request`);
+
+    return `<pinned_skills>
+PRIORITIZED SKILLS — The user has explicitly requested that you use these skills/tools for this conversation. Actively use them when relevant:
+${directives.join('\n')}
+</pinned_skills>`;
   }
 
   // TODO: Credentials should be served via a secure MCP tool or IPC channel,
@@ -893,6 +985,7 @@ RULES:
     this.requestSudoPassword = options.requestSudoPassword;
     this.requestPermission = options.requestPermission;
     this._getSessionDisabledMcpServers = options.getSessionDisabledMcpServers;
+    this._getSessionPinnedSkills = options.getSessionPinnedSkills;
     this.pathResolver = pathResolver;
     this.mcpManager = mcpManager;
     this._pluginRuntimeService = pluginRuntimeService;
@@ -903,6 +996,19 @@ RULES:
     log('[ClaudeAgentRunner] Skills enabled: settingSources=[user, project], Skill tool enabled');
     if (mcpManager) {
       log('[ClaudeAgentRunner] MCP support enabled');
+      // Register MCP server config lookup for the permission engine.
+      // This allows decidePermission to consult per-server tool policies.
+      setMcpServerConfigLookup((serverName: string) => {
+        const servers = mcpConfigStore.getServers();
+        const match = servers.find((s) => canonicalizeMcpServerName(s.name) === serverName);
+        if (!match) {
+          logWarn(
+            `[ClaudeAgentRunner] MCP tool permission lookup: no server config found for key "${serverName}". ` +
+              `Tool will fall through to generic permission rules.`
+          );
+        }
+        return match;
+      });
     }
   }
 
@@ -1034,7 +1140,37 @@ RULES:
           result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
           suggestion?: string;
         };
+        // Capture the current runId BEFORE the try block so it's accessible in finally.
+        // This is the generation token used to detect stale completions from cancelled runs.
+        const capturedRunId = this.currentRunId.get(sessionId) ?? '';
         try {
+          // Pause the activity timeout while waiting for user's permission decision.
+          // Without this, the 5-minute inactivity timer would abort the agent even
+          // when the user has configured "No timeout (wait forever)" for permissions.
+          //
+          // We use a reference count (not boolean) because the SDK may issue
+          // multiple parallel tool calls that each require permission.
+          //
+          // We also use capturedRunId (declared above) to detect stale completions:
+          // if the session is cancelled and restarted while this await is pending,
+          // the finally block will see a different runId and become a no-op.
+          const existing = this.permissionWaitState.get(sessionId);
+          if (existing && existing.runId === capturedRunId) {
+            existing.count += 1;
+          } else {
+            // New run or first permission request — initialize state
+            this.permissionWaitState.set(sessionId, { runId: capturedRunId, count: 1 });
+          }
+
+          // CRITICAL: Cancel any already-scheduled activity timeout immediately.
+          // Without this, a timer started by the last SDK event could still fire
+          // during the permission dialog wait and abort the session.
+          const existingHandle = this.activityTimeoutHandles.get(sessionId);
+          if (existingHandle) {
+            clearTimeout(existingHandle);
+            this.activityTimeoutHandles.delete(sessionId);
+          }
+
           const rawResult = await requestPermission(sessionId, toolUseId, toolName, input);
           // Normalize: accept both legacy string responses and new object shape.
           // Fail-closed on malformed/unknown values.
@@ -1087,6 +1223,30 @@ RULES:
             block: true,
             reason: `Permission request failed for '${toolName}'; tool not executed.`,
           };
+        } finally {
+          // Decrement the permission-wait reference count. The activity timeout
+          // resumes only when all concurrent permission dialogs have resolved
+          // (count reaches 0).
+          //
+          // STALE COMPLETION GUARD: If the session was cancelled and restarted
+          // while this await was pending, the runId will have changed. In that
+          // case, this finally block is stale and must be a no-op to avoid
+          // corrupting the new run's permission state.
+          const state = this.permissionWaitState.get(sessionId);
+          if (state && state.runId === capturedRunId) {
+            if (state.count <= 1) {
+              this.permissionWaitState.delete(sessionId);
+              // Immediately restart the activity timeout now that all permission
+              // dialogs have resolved. Without this, if no further SDK event
+              // arrives (e.g., tool was blocked), the session could hang
+              // indefinitely with no inactivity timeout.
+              const restart = this.restartActivityTimeout.get(sessionId);
+              if (restart) restart();
+            } else {
+              state.count -= 1;
+            }
+          }
+          // If runId doesn't match, this is a stale completion — ignore it.
         }
 
         if (result.result === 'deny') {
@@ -1310,6 +1470,10 @@ RULES:
     };
 
     const thinkingStepId = uuidv4();
+
+    // Set the current run generation token. Permission hooks compare against
+    // this to detect stale completions from cancelled runs.
+    this.currentRunId.set(session.id, thinkingStepId);
     let abortedByTimeout = false;
 
     try {
@@ -1731,6 +1895,29 @@ RULES:
       }
       logCtx('[ClaudeAgentRunner] Resolved pi-ai model:', piModel.provider, piModel.id);
 
+      // Apply user-configured contextWindow/maxTokens overrides.
+      // The pi-ai registry may report defaults that differ from what the user
+      // explicitly set in Settings → API (e.g., registry says 128K but the
+      // provider actually supports 1M via the gateway).
+      if (runtimeConfig.contextWindow && runtimeConfig.contextWindow !== piModel.contextWindow) {
+        log(
+          '[ClaudeAgentRunner] User contextWindow override:',
+          piModel.contextWindow,
+          '→',
+          runtimeConfig.contextWindow
+        );
+        piModel = { ...piModel, contextWindow: runtimeConfig.contextWindow };
+      }
+      if (runtimeConfig.maxTokens && runtimeConfig.maxTokens !== piModel.maxTokens) {
+        log(
+          '[ClaudeAgentRunner] User maxTokens override:',
+          piModel.maxTokens,
+          '→',
+          runtimeConfig.maxTokens
+        );
+        piModel = { ...piModel, maxTokens: runtimeConfig.maxTokens };
+      }
+
       // For Ollama: query actual context window from /api/show if user hasn't configured one
       const provider = runtimeConfig.provider || 'anthropic';
       if (provider === 'ollama' && !runtimeConfig.contextWindow) {
@@ -1890,17 +2077,21 @@ RULES:
           fs.mkdirSync(appSkillsDir, { recursive: true });
         }
 
-        // Copy built-in skills to app Claude skills directory if they don't exist
+        // Sync built-in skills to app Claude skills directory.
+        // Uses content-hash versioning: each built-in skill's SKILL.md is hashed
+        // and compared against a `.builtin-hash` stamp in the runtime copy. If the
+        // hash differs (or no stamp exists), the runtime copy is replaced with the
+        // bundled version. User-modified skills (marked with `.user-modified`) are
+        // preserved and never overwritten.
         const builtinSkillsPath = this.getBuiltinSkillsPath();
         if (builtinSkillsPath && fs.existsSync(builtinSkillsPath)) {
-          // Symlinks into .asar archives don't work at the OS level (ENOTDIR),
-          // so always copy when the source is inside an asar archive.
-          // Use regex to match .asar/ but NOT .asar.unpacked/ (which is a real directory).
           const sourceInsideAsar = /\.asar[/\\]/.test(builtinSkillsPath);
           const builtinSkills = fs.readdirSync(builtinSkillsPath);
           for (const skillName of builtinSkills) {
             const builtinSkillPath = path.join(builtinSkillsPath, skillName);
             const userSkillPath = path.join(appSkillsDir, skillName);
+
+            if (!fs.statSync(builtinSkillPath).isDirectory()) continue;
 
             // Clean up broken symlinks pointing into .asar from previous versions
             try {
@@ -1913,27 +2104,96 @@ RULES:
                 }
               }
             } catch {
-              // Path doesn't exist — fine, we'll create it below
+              // Path doesn't exist — fine, we'll handle it below
             }
 
-            // Only set up if it's a directory and doesn't exist in app directory
-            if (fs.statSync(builtinSkillPath).isDirectory() && !fs.existsSync(userSkillPath)) {
-              if (sourceInsideAsar) {
-                // Source is inside .asar — must copy (symlinks to asar paths fail at OS level)
+            // Compute content hash of the bundled skill's .md files (SKILL.md + reference docs).
+            // Must match the algorithm in skills.getBuiltinStatus IPC handler.
+            const builtinHashFile = path.join(userSkillPath, '.builtin-hash');
+            const builtinSkillMd = path.join(builtinSkillPath, 'SKILL.md');
+            let builtinHash = 'no-skill-md';
+            if (fs.existsSync(builtinSkillMd)) {
+              const hash = crypto.createHash('sha256');
+              const mdFiles = fs
+                .readdirSync(builtinSkillPath)
+                .filter((f) => f.endsWith('.md'))
+                .sort();
+              for (const mdFile of mdFiles) {
+                hash.update(mdFile);
+                hash.update(fs.readFileSync(path.join(builtinSkillPath, mdFile)));
+              }
+              builtinHash = hash.digest('hex').slice(0, 16);
+            }
+
+            // Check if runtime copy exists and whether it needs updating
+            const runtimeExists = fs.existsSync(userSkillPath);
+            let runtimeHash = '';
+            if (runtimeExists) {
+              try {
+                runtimeHash = fs.readFileSync(builtinHashFile, 'utf-8').trim();
+              } catch {
+                // No hash file — treat as outdated (pre-versioning install)
+                runtimeHash = '';
+              }
+            }
+
+            const needsUpdate = !runtimeExists || runtimeHash !== builtinHash;
+
+            if (!needsUpdate) continue;
+
+            // Respect user modifications — never overwrite user-customized skills
+            const userModifiedMarker = path.join(userSkillPath, '.user-modified');
+            if (runtimeExists && fs.existsSync(userModifiedMarker)) {
+              logWarn(
+                `[ClaudeAgentRunner] Skipping update for user-modified skill: ${skillName} (bundled hash: ${builtinHash}, runtime hash: ${runtimeHash})`
+              );
+              continue;
+            }
+
+            // Remove stale runtime copy before replacing
+            if (runtimeExists) {
+              try {
+                fs.rmSync(userSkillPath, { recursive: true, force: true });
+                log(
+                  `[ClaudeAgentRunner] Removed outdated skill: ${skillName} (hash: ${runtimeHash} → ${builtinHash})`
+                );
+              } catch (rmErr) {
+                logError(
+                  `[ClaudeAgentRunner] Failed to remove outdated skill ${skillName}:`,
+                  rmErr
+                );
+                continue;
+              }
+            }
+
+            // Install fresh copy from bundled source
+            if (sourceInsideAsar) {
+              this.copyDirectorySync(builtinSkillPath, userSkillPath);
+              log(`[ClaudeAgentRunner] Copied built-in skill from asar: ${skillName}`);
+            } else {
+              // In dev mode, symlink for instant updates during development
+              try {
+                fs.symlinkSync(builtinSkillPath, userSkillPath, 'dir');
+                log(`[ClaudeAgentRunner] Linked built-in skill: ${skillName}`);
+              } catch (err) {
+                logWarn(
+                  `[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`,
+                  err
+                );
                 this.copyDirectorySync(builtinSkillPath, userSkillPath);
-                log(`[ClaudeAgentRunner] Copied built-in skill from asar: ${skillName}`);
-              } else {
-                // Source is a real directory — symlink for space efficiency
-                try {
-                  fs.symlinkSync(builtinSkillPath, userSkillPath, 'dir');
-                  log(`[ClaudeAgentRunner] Linked built-in skill: ${skillName}`);
-                } catch (err) {
-                  logWarn(
-                    `[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`,
-                    err
-                  );
-                  this.copyDirectorySync(builtinSkillPath, userSkillPath);
-                }
+              }
+            }
+
+            // Write the content hash stamp (only for copies, not symlinks)
+            // Symlinks always point to the source so they're inherently up-to-date
+            if (sourceInsideAsar || !fs.lstatSync(userSkillPath).isSymbolicLink()) {
+              try {
+                fs.writeFileSync(builtinHashFile, builtinHash, 'utf-8');
+              } catch (hashErr) {
+                logWarn(
+                  `[ClaudeAgentRunner] Failed to write hash stamp for ${skillName}:`,
+                  hashErr
+                );
               }
             }
           }
@@ -2274,6 +2534,7 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
         workspaceInfoPrompt,
         this.getBundledPathHints(),
         this.mcpManager ? buildMcpServerDirectory(this.mcpManager) : '',
+        this.buildPinnedSkillsDirective(session.id),
       ]
         .filter((section): section is string => Boolean(section && section.trim()))
         .join('\n\n');
@@ -2286,8 +2547,40 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
       // Filter to only include tools from servers that survived workspace/session overrides.
       const allMcpCustomTools = this.mcpManager ? buildMcpCustomTools(this.mcpManager) : [];
       const mcpCustomTools = filterMcpCustomTools(allMcpCustomTools, effectiveServerNames);
+
+      // Wrap MCP tools with per-server timeout. When a tool exceeds its timeout,
+      // the wrapper returns a structured error to the LLM instead of hanging forever.
+      // Callbacks pause/resume the activity timeout during tool execution.
+      const sessionId = session.id;
+      const mcpToolsWithTimeout = wrapMcpToolsWithTimeout(
+        mcpCustomTools as import('./mcp-tool-timeout').ToolDefinition[],
+        (_serverName, _toolName) => {
+          // Tool execution started — pause activity timeout
+          const count = (this.toolExecutionCount.get(sessionId) ?? 0) + 1;
+          this.toolExecutionCount.set(sessionId, count);
+          // Cancel existing activity timer
+          const handle = this.activityTimeoutHandles.get(sessionId);
+          if (handle) {
+            clearTimeout(handle);
+            this.activityTimeoutHandles.delete(sessionId);
+          }
+        },
+        (_serverName, _toolName) => {
+          // Tool execution ended — resume activity timeout if no more tools running
+          const count = Math.max(0, (this.toolExecutionCount.get(sessionId) ?? 1) - 1);
+          if (count === 0) {
+            this.toolExecutionCount.delete(sessionId);
+            // Restart activity timeout
+            const restart = this.restartActivityTimeout.get(sessionId);
+            if (restart) restart();
+          } else {
+            this.toolExecutionCount.set(sessionId, count);
+          }
+        }
+      ) as McpToolDefinition[];
+
       const extensionCustomTools = extensionResult.customTools || [];
-      const customTools = [...mcpCustomTools, ...extensionCustomTools];
+      const customTools = [...mcpToolsWithTimeout, ...extensionCustomTools];
       if (mcpCustomTools.length > 0) {
         log(
           `[ClaudeAgentRunner] Registered ${mcpCustomTools.length} MCP tools as customTools (filtered from ${allMcpCustomTools.length}):`,
@@ -2370,6 +2663,8 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
         if (cachedSession.cwdRef) {
           cachedSession.cwdRef.value = effectiveCwd;
         }
+        // Update session CWD for workspace MCP permission policy lookup
+        setSessionCwd(session.id, effectiveCwd);
         logTiming('pi-coding-agent session reused', runStartTime);
       } else {
         // First query in this session — create new pi-coding-agent session
@@ -2478,7 +2773,7 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
           noTools: 'builtin',
           customTools: [
             ...(wrappedTools as ToolDefinition[]),
-            ...mcpCustomTools,
+            ...mcpToolsWithTimeout,
             ...extensionCustomTools,
           ],
           sessionManager: PiSessionManager.inMemory(),
@@ -2520,6 +2815,8 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
           skillsSignature,
           cwdRef,
         });
+        // Set session CWD for workspace MCP permission policy lookup
+        setSessionCwd(session.id, effectiveCwd);
 
         // ─── Mid-loop overflow guard via _onPayload ─────────────────────────
         // The pre-request guard only runs before the initial piSession.prompt().
@@ -2723,6 +3020,12 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
       let compactionStepId: string | undefined;
       let hasEmittedError = false;
       let terminalErrorText: string | undefined;
+      // Track the last assistant message's thinking content so we can provide
+      // context when a tool call fails with empty arguments (the thinking often
+      // contains the intended file path/content that the model failed to emit).
+      // Reset per assistant message to avoid leaking stale context across turns.
+      let lastAssistantThinking = '';
+      let lastAssistantThinkingDeltas = '';
       const thinkParser = new ThinkTagStreamParser();
       const promptStartedAt = Date.now();
       const streamEventCounts = new Map<string, number>();
@@ -2774,12 +3077,27 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
       let activityTimeoutId: ReturnType<typeof setTimeout> | undefined;
       const resetActivityTimeout = () => {
         if (activityTimeoutId) clearTimeout(activityTimeoutId);
+        this.activityTimeoutHandles.delete(session.id);
+        // Don't start the inactivity timer while waiting for a permission dialog.
+        // The user may have configured "No timeout (wait forever)" for permissions;
+        // firing the activity timeout would contradict that setting and abort the
+        // agent while the user is still deciding.
+        const waitState = this.permissionWaitState.get(session.id);
+        if (waitState && waitState.count > 0) return;
+        // Don't start the inactivity timer while MCP tools are executing.
+        // Tool-level timeouts are the sole guard against hung tools.
+        if ((this.toolExecutionCount.get(session.id) ?? 0) > 0) return;
         activityTimeoutId = setTimeout(() => {
           logWarn('[ClaudeAgentRunner] Prompt timed out (no activity for 5 min), aborting');
           abortedByTimeout = true;
           controller.abort();
         }, PROMPT_TIMEOUT_MS);
+        this.activityTimeoutHandles.set(session.id, activityTimeoutId);
       };
+
+      // Expose resetActivityTimeout to the permission hook so it can immediately
+      // reschedule the timer when permission wait count reaches 0.
+      this.restartActivityTimeout.set(session.id, resetActivityTimeout);
 
       const recordStreamEvent = (eventType: string) => {
         streamEventCounts.set(eventType, (streamEventCounts.get(eventType) ?? 0) + 1);
@@ -2846,6 +3164,9 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
                 }
               } else if (ame.type === 'thinking_delta') {
                 markFirstStreamEvent(ame.type);
+                // Accumulate thinking for tool error context (in case message_end
+                // doesn't include the full thinking due to summarization).
+                lastAssistantThinkingDeltas += ame.delta;
                 // Forward thinking delta to renderer for real-time display
                 this.sendToRenderer({
                   type: 'stream.thinking',
@@ -2907,6 +3228,21 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
                 streamedText,
               });
               streamedText = resolvedPayload.nextStreamedText;
+
+              // Finalize thinking context for this assistant message.
+              // Must happen on EVERY message_end path (error, suppressed, or emitted)
+              // to prevent stale thinking from leaking across turns.
+              {
+                const thinkingFromContent = resolvedPayload.effectiveContent
+                  .filter((b: { type: string }) => b.type === 'thinking')
+                  .map((b: { type: string; thinking?: string }) => b.thinking || '')
+                  .join('\n');
+                lastAssistantThinking = selectThinkingSource(
+                  lastAssistantThinkingDeltas,
+                  thinkingFromContent
+                );
+                lastAssistantThinkingDeltas = '';
+              }
               if (provider === 'ollama') {
                 log(
                   '[ClaudeAgentRunner] Ollama message_end diagnostics',
@@ -3041,7 +3377,14 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
               const toolCallId = event.toolCallId;
               const isError = event.isError;
               const normalizedToolResult = normalizeToolExecutionResultForUi(event.result);
-              const outputText = normalizedToolResult.content;
+              let outputText = normalizedToolResult.content;
+
+              // Enrich error display when a tool call fails with empty arguments.
+              // The model's thinking often contains the intended file path/content,
+              // but the tool call arguments were truncated (output token issue).
+              // Show the user what the model was trying to do so they have context.
+              outputText = enrichToolErrorWithThinking(outputText, isError, lastAssistantThinking);
+
               this.sendTraceUpdate(session.id, toolCallId, {
                 status: isError ? 'error' : 'completed',
                 toolName: event.toolName,
@@ -3360,6 +3703,12 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
           logWarn('[ClaudeAgentRunner] unsubscribe error:', e);
         }
         if (activityTimeoutId) clearTimeout(activityTimeoutId);
+        this.activityTimeoutHandles.delete(session.id);
+        this.restartActivityTimeout.delete(session.id);
+        // Clean up run-scoped state on normal completion (not only cancel/dispose).
+        this.currentRunId.delete(session.id);
+        this.permissionWaitState.delete(session.id);
+        this.toolExecutionCount.delete(session.id);
         if (ollamaColdStartTimerId) clearTimeout(ollamaColdStartTimerId);
       }
 
@@ -3495,6 +3844,18 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
   cancel(sessionId: string): void {
     const controller = this.activeControllers.get(sessionId);
     if (controller) controller.abort();
+    // Clean up permission-waiting state so the flag doesn't leak.
+    // This also invalidates any in-flight permission awaits from this run —
+    // their finally blocks will see a mismatched runId and become no-ops.
+    this.permissionWaitState.delete(sessionId);
+    this.currentRunId.delete(sessionId);
+    this.restartActivityTimeout.delete(sessionId);
+    this.toolExecutionCount.delete(sessionId);
+    const handle = this.activityTimeoutHandles.get(sessionId);
+    if (handle) {
+      clearTimeout(handle);
+      this.activityTimeoutHandles.delete(sessionId);
+    }
   }
 
   private sendTraceStep(sessionId: string, step: TraceStep): void {

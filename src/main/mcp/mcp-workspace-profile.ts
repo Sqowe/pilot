@@ -21,6 +21,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import type { MCPServerConfig } from './mcp-manager';
 import { log, logWarn } from '../utils/logger';
 
@@ -29,6 +30,70 @@ export interface McpWorkspaceProfile {
   disabled?: string[];
   /** Server IDs to explicitly enable in this workspace (overrides "disabled" list) */
   enabled?: string[];
+}
+
+/**
+ * Validate that a renderer-provided cwd is authorized for workspace profile writes.
+ *
+ * Authorization rules:
+ * 1. Must be an absolute path
+ * 2. Must exist on disk and be a directory
+ * 3. Must match the global working directory OR a known session workspace
+ *
+ * Trust model: The `authorizedWorkspaces` list is built from main-process-owned state
+ * (global working directory + session cwds). Session cwds are validated at creation time
+ * via `getWorkspacePathUnsupportedReason` and `setWorkingDir`, so they are already
+ * trusted by the time they appear in `listSessions()`.
+ *
+ * Returns `{ valid: true, canonicalCwd: string }` (canonical path for downstream use)
+ * or `{ valid: false, error: string }`.
+ */
+export function validateWorkspaceCwd(
+  cwd: string | null | undefined,
+  authorizedWorkspaces: string[]
+): { valid: true; canonicalCwd: string } | { valid: false; error: string } {
+  if (!cwd || !path.isAbsolute(cwd)) {
+    return { valid: false, error: 'Invalid working directory: must be an absolute path' };
+  }
+
+  const resolvedCwd = safeRealpath(cwd);
+
+  // Verify the path exists and is a directory (not a file or special path)
+  try {
+    const stat = fs.statSync(resolvedCwd);
+    if (!stat.isDirectory()) {
+      return { valid: false, error: 'Working directory path is not a directory' };
+    }
+  } catch {
+    return { valid: false, error: 'Working directory does not exist' };
+  }
+
+  // Authorization: cwd must match one of the authorized workspaces (canonicalized)
+  const authorizedSet = new Set(authorizedWorkspaces.map((p) => safeRealpath(p)));
+  if (!authorizedSet.has(resolvedCwd)) {
+    return { valid: false, error: 'Working directory is not an authorized workspace' };
+  }
+
+  return { valid: true, canonicalCwd: resolvedCwd };
+}
+
+/**
+ * Canonicalize a path using realpath (resolves symlinks) with fallback to path.resolve.
+ * On Windows, normalizes to lowercase for case-insensitive comparison.
+ */
+function safeRealpath(p: string): string {
+  let resolved: string;
+  try {
+    resolved = fs.realpathSync.native(p);
+  } catch {
+    // If realpath fails (e.g., path doesn't exist yet), fall back to resolve
+    resolved = path.resolve(p);
+  }
+  // Windows paths are case-insensitive
+  if (process.platform === 'win32') {
+    resolved = resolved.toLowerCase();
+  }
+  return resolved;
 }
 
 const PROFILE_FILENAME = 'mcp-servers.json';
@@ -150,6 +215,190 @@ export function applySessionOverrides(
   }
   const disabledSet = new Set(sessionDisabledServerIds);
   return servers.filter((server) => !disabledSet.has(server.id));
+}
+
+// Per-workspace write lock to serialize concurrent read-modify-write operations.
+// Keyed by resolved cwd path. Each entry is a promise chain — new saves queue behind it.
+const writeLocks = new Map<string, Promise<unknown>>();
+
+/**
+ * Validate that a parsed value is a valid string array for profile fields.
+ * Returns a clean array of non-empty strings, or an empty array if invalid.
+ */
+function validateStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
+/**
+ * Save the current MCP session state as a workspace profile.
+ * Merges with existing profile to preserve `enabled` entries when only `disabled` is updated.
+ * Writes {cwd}/.cowork/mcp-servers.json with the disabled/enabled arrays.
+ * Creates the .cowork directory if it doesn't exist.
+ * If the resulting profile is empty (no disabled, no enabled), removes the file.
+ *
+ * Uses per-workspace write serialization to prevent lost updates from concurrent saves.
+ * Uses async fs APIs to avoid blocking the Electron event loop.
+ */
+export async function saveWorkspaceMcpProfile(
+  cwd: string,
+  profile: McpWorkspaceProfile
+): Promise<{ success: boolean; error?: string }> {
+  if (!cwd) {
+    return { success: false, error: 'No working directory specified' };
+  }
+
+  // Serialize writes per workspace to prevent read-modify-write races.
+  const lockKey = path.resolve(cwd);
+  const previousLock = writeLocks.get(lockKey) || Promise.resolve();
+  const currentWrite = previousLock
+    .then(() => doSave(cwd, profile))
+    .catch((err) => {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      logWarn('[McpWorkspaceProfile] Error saving profile:', err);
+      return { success: false as const, error: errorMessage };
+    });
+  writeLocks.set(lockKey, currentWrite);
+
+  // Clean up lock entry when queue drains (avoid unbounded map growth)
+  currentWrite.finally(() => {
+    if (writeLocks.get(lockKey) === currentWrite) {
+      writeLocks.delete(lockKey);
+    }
+  });
+
+  return currentWrite;
+}
+
+/** Maximum entries per field to prevent abuse from non-IPC callers. */
+const MAX_PROFILE_ENTRIES = 100;
+const MAX_PROFILE_ID_LENGTH = 256;
+
+/**
+ * Normalize and validate a profile field (disabled or enabled).
+ * Trims entries, removes empty/oversized strings, deduplicates.
+ * Returns undefined if the input is undefined (meaning "don't change").
+ */
+function normalizeProfileField(field: string[] | undefined): string[] | undefined {
+  if (field === undefined) return undefined;
+  if (!Array.isArray(field)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of field) {
+    if (typeof item !== 'string') continue;
+    const trimmed = item.trim();
+    if (trimmed.length === 0 || trimmed.length > MAX_PROFILE_ID_LENGTH) continue;
+    if (seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    result.push(trimmed);
+    if (result.length >= MAX_PROFILE_ENTRIES) break;
+  }
+  return result;
+}
+
+/** Internal save implementation — called under the per-workspace lock. */
+async function doSave(
+  cwd: string,
+  profile: McpWorkspaceProfile
+): Promise<{ success: boolean; error?: string }> {
+  const coworkDir = path.join(cwd, COWORK_DIR);
+  const profilePath = path.join(coworkDir, PROFILE_FILENAME);
+
+  // Normalize incoming profile fields for defense in depth
+  // (IPC validates disabled, but this function is exported and may be called directly).
+  const normalizedDisabled = normalizeProfileField(profile.disabled);
+  const normalizedEnabled = normalizeProfileField(profile.enabled);
+
+  // Merge with existing profile to avoid destroying `enabled` entries
+  // when only `disabled` is being updated (and vice versa).
+  let existingProfile: McpWorkspaceProfile = {};
+  try {
+    const raw = await fs.promises.readFile(profilePath, 'utf-8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object') {
+      // Validate existing profile shape — drop invalid fields
+      const obj = parsed as Record<string, unknown>;
+      existingProfile = {
+        disabled: validateStringArray(obj.disabled),
+        enabled: validateStringArray(obj.enabled),
+      };
+    } else {
+      logWarn('[McpWorkspaceProfile] Existing profile is not an object, starting fresh');
+    }
+  } catch (readErr: unknown) {
+    const code = (readErr as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') {
+      // File doesn't exist — normal case, start fresh
+    } else if (readErr instanceof SyntaxError) {
+      // Invalid JSON — log and start fresh
+      logWarn(
+        '[McpWorkspaceProfile] Existing profile has invalid JSON, starting fresh:',
+        profilePath
+      );
+    } else {
+      // Transient I/O error, permission issue, etc. — fail safe, do not overwrite
+      const errorMessage = readErr instanceof Error ? readErr.message : String(readErr);
+      logWarn('[McpWorkspaceProfile] Cannot read existing profile, aborting save:', readErr);
+      return { success: false, error: `Failed to read existing profile: ${errorMessage}` };
+    }
+  }
+
+  // Apply incoming fields over existing (undefined means "don't change")
+  const mergedProfile: McpWorkspaceProfile = { ...existingProfile };
+  if (normalizedDisabled !== undefined) {
+    mergedProfile.disabled = normalizedDisabled;
+  }
+  if (normalizedEnabled !== undefined) {
+    mergedProfile.enabled = normalizedEnabled;
+  }
+
+  // Clean up empty arrays
+  const cleanProfile: McpWorkspaceProfile = {};
+  if (mergedProfile.disabled && mergedProfile.disabled.length > 0) {
+    cleanProfile.disabled = mergedProfile.disabled;
+  }
+  if (mergedProfile.enabled && mergedProfile.enabled.length > 0) {
+    cleanProfile.enabled = mergedProfile.enabled;
+  }
+
+  // If profile is empty, remove the file instead of writing an empty object
+  const isEmpty = !cleanProfile.disabled && !cleanProfile.enabled;
+  if (isEmpty) {
+    try {
+      await fs.promises.unlink(profilePath);
+      log('[McpWorkspaceProfile] Removed empty profile:', profilePath);
+    } catch (unlinkErr: unknown) {
+      // File didn't exist — that's fine
+      if ((unlinkErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw unlinkErr;
+      }
+    }
+  } else {
+    // Ensure .cowork directory exists
+    await fs.promises.mkdir(coworkDir, { recursive: true });
+
+    // Atomic write: write to a unique temp file then rename to avoid corruption
+    // if the process crashes mid-write.
+    const tmpPath = profilePath + '.' + crypto.randomUUID() + '.tmp';
+    try {
+      await fs.promises.writeFile(tmpPath, JSON.stringify(cleanProfile, null, 2) + '\n', 'utf-8');
+      await fs.promises.rename(tmpPath, profilePath);
+    } catch (writeErr) {
+      // Clean up temp file on failure
+      try {
+        await fs.promises.unlink(tmpPath);
+      } catch {
+        // Ignore cleanup errors
+      }
+      throw writeErr;
+    }
+    log('[McpWorkspaceProfile] Saved profile:', profilePath);
+  }
+
+  // Invalidate cache so next read picks up the change
+  invalidateWorkspaceProfileCache(cwd);
+
+  return { success: true };
 }
 
 /**

@@ -58,6 +58,11 @@ import {
 } from './session-title-utils';
 import { generateTitleWithClaudeSdk } from '../claude/claude-sdk-one-shot';
 import { buildScheduledTaskTitle } from '../../shared/schedule/task-title';
+import { notifyPermissionRequest, notifyAgentComplete } from '../utils/native-notifications';
+import {
+  MAX_PINNED_SKILLS_PER_SESSION,
+  isValidSkillId,
+} from '../../shared/skill-pinning-constants';
 
 interface AgentRunner {
   run(session: Session, prompt: string, existingMessages: Message[]): Promise<void>;
@@ -99,6 +104,14 @@ export class SessionManager {
    * Cleared when session is deleted.
    */
   private sessionDisabledMcpServers: Map<string, Set<string>> = new Map();
+
+  /**
+   * Per-session pinned skills (ephemeral, in-memory only).
+   * Maps sessionId → Set of pinned skill IDs.
+   * Pinned skills get their directives injected into the system prompt.
+   * Cleared when session is deleted.
+   */
+  private sessionPinnedSkills: Map<string, Set<string>> = new Map();
 
   constructor(
     db: DatabaseInstance,
@@ -155,6 +168,7 @@ export class SessionManager {
         ) => this.requestPermission(sessionId, toolUseId, toolName, input),
         getSessionDisabledMcpServers: (sessionId: string) =>
           this.getSessionDisabledMcpServers(sessionId),
+        getSessionPinnedSkills: (sessionId: string) => this.getSessionPinnedSkills(sessionId),
       },
       this.pathResolver,
       this.mcpManager,
@@ -247,6 +261,58 @@ export class SessionManager {
   }
 
   /**
+   * Toggle a skill's pinned state for a specific session (ephemeral, in-memory only).
+   * Returns the updated list of pinned skill IDs for the session.
+   */
+  toggleSessionPinnedSkill(sessionId: string, skillId: string, pinned: boolean): string[] {
+    if (!sessionId || typeof sessionId !== 'string') {
+      throw new Error('Invalid sessionId');
+    }
+    if (!isValidSkillId(skillId)) {
+      throw new Error('Invalid skillId: must be 1-128 chars of [a-zA-Z0-9._-]');
+    }
+    const session = this.loadSession(sessionId);
+    if (!session) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+
+    if (pinned) {
+      let pinnedSet = this.sessionPinnedSkills.get(sessionId);
+      if (!pinnedSet) {
+        pinnedSet = new Set();
+        this.sessionPinnedSkills.set(sessionId, pinnedSet);
+      }
+      // Enforce hard limit to prevent prompt bloat
+      if (pinnedSet.size >= MAX_PINNED_SKILLS_PER_SESSION && !pinnedSet.has(skillId)) {
+        throw new Error(`Cannot pin more than ${MAX_PINNED_SKILLS_PER_SESSION} skills per session`);
+      }
+      pinnedSet.add(skillId);
+    } else {
+      const pinnedSet = this.sessionPinnedSkills.get(sessionId);
+      if (pinnedSet) {
+        pinnedSet.delete(skillId);
+        if (pinnedSet.size === 0) {
+          this.sessionPinnedSkills.delete(sessionId);
+        }
+      }
+    }
+
+    log(
+      `[SessionManager] Skill ${skillId} ${pinned ? 'pinned' : 'unpinned'} for session ${sessionId}`
+    );
+    const pinnedSet = this.sessionPinnedSkills.get(sessionId);
+    return pinnedSet ? Array.from(pinnedSet) : [];
+  }
+
+  /**
+   * Get the list of pinned skill IDs for a session.
+   */
+  getSessionPinnedSkills(sessionId: string): string[] {
+    const pinnedSet = this.sessionPinnedSkills.get(sessionId);
+    return pinnedSet ? Array.from(pinnedSet) : [];
+  }
+
+  /**
    * Invalidate skills setup so the next query re-links skills.
    * Call after skill install/uninstall/toggle.
    */
@@ -318,7 +384,8 @@ export class SessionManager {
     allowedTools?: string[],
     content?: ContentBlock[],
     memoryEnabled?: boolean,
-    initialDisabledMcpServers?: string[]
+    initialDisabledMcpServers?: string[],
+    initialPinnedSkills?: string[]
   ): Promise<Session> {
     log('[SessionManager] Starting new session:', title);
 
@@ -341,6 +408,24 @@ export class SessionManager {
         this.invalidateMcpServersCache();
         log(
           `[SessionManager] Applied ${disabledSet.size} initial disabled MCP servers for session ${session.id}`
+        );
+      }
+    }
+
+    // Apply initial pinned skills BEFORE enqueueing the prompt.
+    // Pinned skills get their directives injected into the system prompt.
+    if (initialPinnedSkills && initialPinnedSkills.length > 0) {
+      const pinnedSet = new Set<string>();
+      for (const skillId of initialPinnedSkills) {
+        if (pinnedSet.size >= MAX_PINNED_SKILLS_PER_SESSION) break;
+        if (isValidSkillId(skillId)) {
+          pinnedSet.add(skillId);
+        }
+      }
+      if (pinnedSet.size > 0) {
+        this.sessionPinnedSkills.set(session.id, pinnedSet);
+        log(
+          `[SessionManager] Applied ${pinnedSet.size} initial pinned skills for session ${session.id}`
         );
       }
     }
@@ -1083,6 +1168,7 @@ export class SessionManager {
     this.sessionTitleAttempts.delete(sessionId);
     this.titleGenerationTokens.delete(sessionId);
     this.sessionDisabledMcpServers.delete(sessionId);
+    this.sessionPinnedSkills.delete(sessionId);
     forgetSessionPermissions(sessionId);
     if (this.extensionManager) {
       await this.extensionManager.onSessionDeleted({
@@ -1118,6 +1204,7 @@ export class SessionManager {
         this.sessionTitleAttempts.delete(sessionId);
         this.titleGenerationTokens.delete(sessionId);
         this.sessionDisabledMcpServers.delete(sessionId);
+        this.sessionPinnedSkills.delete(sessionId);
         forgetSessionPermissions(sessionId);
       }
     })();
@@ -1136,12 +1223,21 @@ export class SessionManager {
 
   // Update session status
   private updateSessionStatus(sessionId: string, status: Session['status']): void {
+    // Capture previous status before updating to detect transitions
+    const previousSession = this.loadSession(sessionId);
+    const previousStatus = previousSession?.status;
+
     this.db.sessions.update(sessionId, { status, updated_at: Date.now() });
 
     this.sendToRenderer({
       type: 'session.status',
       payload: { sessionId, status },
     });
+
+    // Fire native OS notification only on running → idle transition
+    if (status === 'idle' && previousStatus === 'running') {
+      notifyAgentComplete(previousSession?.title);
+    }
   }
 
   private updateSessionTitle(sessionId: string, title: string): boolean {
@@ -1330,6 +1426,9 @@ export class SessionManager {
         type: 'permission.request',
         payload: { toolUseId, toolName, input, sessionId },
       });
+
+      // Fire native OS notification if the app is not focused
+      notifyPermissionRequest(toolName);
     });
   }
 

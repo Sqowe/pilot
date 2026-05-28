@@ -2,11 +2,20 @@ import { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
+import remarkCjkFriendly from 'remark-cjk-friendly';
+import remarkCjkFriendlyGfmStrikethrough from 'remark-cjk-friendly-gfm-strikethrough';
 import rehypeSanitize from 'rehype-sanitize';
 import rehypeKatex from 'rehype-katex';
 
 // Hoisted to module scope to avoid re-creating arrays on every render
-const REMARK_PLUGINS = [remarkMath, [remarkGfm, { singleTilde: false }]] as const;
+// remarkCjkFriendly fixes CommonMark emphasis parsing for CJK/Cyrillic scripts
+// where **bold** adjacent to non-Latin characters fails to parse correctly.
+const REMARK_PLUGINS = [
+  remarkMath,
+  [remarkGfm, { singleTilde: false }],
+  remarkCjkFriendly,
+  remarkCjkFriendlyGfmStrikethrough,
+] as const;
 // rehypeKatex must run BEFORE rehypeSanitize so that KaTeX output is generated
 // first, then sanitized — the reverse order strips KaTeX markup before it renders.
 const REHYPE_PLUGINS = [
