@@ -1227,11 +1227,12 @@ export class SessionManager {
     const previousSession = this.loadSession(sessionId);
     const previousStatus = previousSession?.status;
 
-    this.db.sessions.update(sessionId, { status, updated_at: Date.now() });
+    const now = Date.now();
+    this.db.sessions.update(sessionId, { status, updated_at: now });
 
     this.sendToRenderer({
       type: 'session.status',
-      payload: { sessionId, status },
+      payload: { sessionId, status, updatedAt: now },
     });
 
     // Fire native OS notification only on running → idle transition
