@@ -69,6 +69,7 @@ function makeConfig(): AppConfig {
     permissionTimeoutSeconds: 300,
     mcpToolTimeoutSeconds: 240,
     isConfigured: true,
+    notificationsEnabled: true,
   };
 }
 

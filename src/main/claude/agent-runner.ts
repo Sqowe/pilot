@@ -30,7 +30,10 @@ import {
   rememberAlwaysAllow,
   isSessionAutonomous,
   getAutonomousBlockCallback,
+  setMcpServerConfigLookup,
+  setSessionCwd,
 } from '../config/permission-rules-store';
+import { canonicalizeMcpServerName } from '../../shared/mcp-tool-classification';
 import {
   type AgentLike,
   type BeforeToolCallHook,
@@ -55,6 +58,7 @@ import {
 import { ReadLoopGuard, extractReadFilePath } from './read-loop-guard';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import * as os from 'os';
 import { execFileSync, spawn } from 'child_process';
 import { app } from 'electron';
@@ -72,6 +76,7 @@ import { configStore } from '../config/config-store';
 import { setBasePath, applyLocalDevPath } from '../utils/path-env';
 import { loadWorkspaceSystemPrompt } from '../utils/workspace-system-prompt';
 import { assembleUserPrompt } from '../prompts/prompt-loader';
+import { enrichToolErrorWithThinking, selectThinkingSource } from './tool-error-enrichment';
 import { normalizeOpenAICompatibleBaseUrl } from '../config/auth-utils';
 import { resolveMessageEndPayload, toUserFacingErrorText } from './agent-runner-message-end';
 import {
@@ -991,6 +996,19 @@ RULES:
     log('[ClaudeAgentRunner] Skills enabled: settingSources=[user, project], Skill tool enabled');
     if (mcpManager) {
       log('[ClaudeAgentRunner] MCP support enabled');
+      // Register MCP server config lookup for the permission engine.
+      // This allows decidePermission to consult per-server tool policies.
+      setMcpServerConfigLookup((serverName: string) => {
+        const servers = mcpConfigStore.getServers();
+        const match = servers.find((s) => canonicalizeMcpServerName(s.name) === serverName);
+        if (!match) {
+          logWarn(
+            `[ClaudeAgentRunner] MCP tool permission lookup: no server config found for key "${serverName}". ` +
+              `Tool will fall through to generic permission rules.`
+          );
+        }
+        return match;
+      });
     }
   }
 
@@ -2059,17 +2077,21 @@ RULES:
           fs.mkdirSync(appSkillsDir, { recursive: true });
         }
 
-        // Copy built-in skills to app Claude skills directory if they don't exist
+        // Sync built-in skills to app Claude skills directory.
+        // Uses content-hash versioning: each built-in skill's SKILL.md is hashed
+        // and compared against a `.builtin-hash` stamp in the runtime copy. If the
+        // hash differs (or no stamp exists), the runtime copy is replaced with the
+        // bundled version. User-modified skills (marked with `.user-modified`) are
+        // preserved and never overwritten.
         const builtinSkillsPath = this.getBuiltinSkillsPath();
         if (builtinSkillsPath && fs.existsSync(builtinSkillsPath)) {
-          // Symlinks into .asar archives don't work at the OS level (ENOTDIR),
-          // so always copy when the source is inside an asar archive.
-          // Use regex to match .asar/ but NOT .asar.unpacked/ (which is a real directory).
           const sourceInsideAsar = /\.asar[/\\]/.test(builtinSkillsPath);
           const builtinSkills = fs.readdirSync(builtinSkillsPath);
           for (const skillName of builtinSkills) {
             const builtinSkillPath = path.join(builtinSkillsPath, skillName);
             const userSkillPath = path.join(appSkillsDir, skillName);
+
+            if (!fs.statSync(builtinSkillPath).isDirectory()) continue;
 
             // Clean up broken symlinks pointing into .asar from previous versions
             try {
@@ -2082,27 +2104,96 @@ RULES:
                 }
               }
             } catch {
-              // Path doesn't exist — fine, we'll create it below
+              // Path doesn't exist — fine, we'll handle it below
             }
 
-            // Only set up if it's a directory and doesn't exist in app directory
-            if (fs.statSync(builtinSkillPath).isDirectory() && !fs.existsSync(userSkillPath)) {
-              if (sourceInsideAsar) {
-                // Source is inside .asar — must copy (symlinks to asar paths fail at OS level)
+            // Compute content hash of the bundled skill's .md files (SKILL.md + reference docs).
+            // Must match the algorithm in skills.getBuiltinStatus IPC handler.
+            const builtinHashFile = path.join(userSkillPath, '.builtin-hash');
+            const builtinSkillMd = path.join(builtinSkillPath, 'SKILL.md');
+            let builtinHash = 'no-skill-md';
+            if (fs.existsSync(builtinSkillMd)) {
+              const hash = crypto.createHash('sha256');
+              const mdFiles = fs
+                .readdirSync(builtinSkillPath)
+                .filter((f) => f.endsWith('.md'))
+                .sort();
+              for (const mdFile of mdFiles) {
+                hash.update(mdFile);
+                hash.update(fs.readFileSync(path.join(builtinSkillPath, mdFile)));
+              }
+              builtinHash = hash.digest('hex').slice(0, 16);
+            }
+
+            // Check if runtime copy exists and whether it needs updating
+            const runtimeExists = fs.existsSync(userSkillPath);
+            let runtimeHash = '';
+            if (runtimeExists) {
+              try {
+                runtimeHash = fs.readFileSync(builtinHashFile, 'utf-8').trim();
+              } catch {
+                // No hash file — treat as outdated (pre-versioning install)
+                runtimeHash = '';
+              }
+            }
+
+            const needsUpdate = !runtimeExists || runtimeHash !== builtinHash;
+
+            if (!needsUpdate) continue;
+
+            // Respect user modifications — never overwrite user-customized skills
+            const userModifiedMarker = path.join(userSkillPath, '.user-modified');
+            if (runtimeExists && fs.existsSync(userModifiedMarker)) {
+              logWarn(
+                `[ClaudeAgentRunner] Skipping update for user-modified skill: ${skillName} (bundled hash: ${builtinHash}, runtime hash: ${runtimeHash})`
+              );
+              continue;
+            }
+
+            // Remove stale runtime copy before replacing
+            if (runtimeExists) {
+              try {
+                fs.rmSync(userSkillPath, { recursive: true, force: true });
+                log(
+                  `[ClaudeAgentRunner] Removed outdated skill: ${skillName} (hash: ${runtimeHash} → ${builtinHash})`
+                );
+              } catch (rmErr) {
+                logError(
+                  `[ClaudeAgentRunner] Failed to remove outdated skill ${skillName}:`,
+                  rmErr
+                );
+                continue;
+              }
+            }
+
+            // Install fresh copy from bundled source
+            if (sourceInsideAsar) {
+              this.copyDirectorySync(builtinSkillPath, userSkillPath);
+              log(`[ClaudeAgentRunner] Copied built-in skill from asar: ${skillName}`);
+            } else {
+              // In dev mode, symlink for instant updates during development
+              try {
+                fs.symlinkSync(builtinSkillPath, userSkillPath, 'dir');
+                log(`[ClaudeAgentRunner] Linked built-in skill: ${skillName}`);
+              } catch (err) {
+                logWarn(
+                  `[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`,
+                  err
+                );
                 this.copyDirectorySync(builtinSkillPath, userSkillPath);
-                log(`[ClaudeAgentRunner] Copied built-in skill from asar: ${skillName}`);
-              } else {
-                // Source is a real directory — symlink for space efficiency
-                try {
-                  fs.symlinkSync(builtinSkillPath, userSkillPath, 'dir');
-                  log(`[ClaudeAgentRunner] Linked built-in skill: ${skillName}`);
-                } catch (err) {
-                  logWarn(
-                    `[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`,
-                    err
-                  );
-                  this.copyDirectorySync(builtinSkillPath, userSkillPath);
-                }
+              }
+            }
+
+            // Write the content hash stamp (only for copies, not symlinks)
+            // Symlinks always point to the source so they're inherently up-to-date
+            if (sourceInsideAsar || !fs.lstatSync(userSkillPath).isSymbolicLink()) {
+              try {
+                fs.writeFileSync(builtinHashFile, builtinHash, 'utf-8');
+              } catch (hashErr) {
+                logWarn(
+                  `[ClaudeAgentRunner] Failed to write hash stamp for ${skillName}:`,
+                  hashErr
+                );
               }
             }
           }
@@ -2572,6 +2663,8 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
         if (cachedSession.cwdRef) {
           cachedSession.cwdRef.value = effectiveCwd;
         }
+        // Update session CWD for workspace MCP permission policy lookup
+        setSessionCwd(session.id, effectiveCwd);
         logTiming('pi-coding-agent session reused', runStartTime);
       } else {
         // First query in this session — create new pi-coding-agent session
@@ -2722,6 +2815,8 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
           skillsSignature,
           cwdRef,
         });
+        // Set session CWD for workspace MCP permission policy lookup
+        setSessionCwd(session.id, effectiveCwd);
 
         // ─── Mid-loop overflow guard via _onPayload ─────────────────────────
         // The pre-request guard only runs before the initial piSession.prompt().
@@ -2925,6 +3020,12 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
       let compactionStepId: string | undefined;
       let hasEmittedError = false;
       let terminalErrorText: string | undefined;
+      // Track the last assistant message's thinking content so we can provide
+      // context when a tool call fails with empty arguments (the thinking often
+      // contains the intended file path/content that the model failed to emit).
+      // Reset per assistant message to avoid leaking stale context across turns.
+      let lastAssistantThinking = '';
+      let lastAssistantThinkingDeltas = '';
       const thinkParser = new ThinkTagStreamParser();
       const promptStartedAt = Date.now();
       const streamEventCounts = new Map<string, number>();
@@ -3063,6 +3164,9 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
                 }
               } else if (ame.type === 'thinking_delta') {
                 markFirstStreamEvent(ame.type);
+                // Accumulate thinking for tool error context (in case message_end
+                // doesn't include the full thinking due to summarization).
+                lastAssistantThinkingDeltas += ame.delta;
                 // Forward thinking delta to renderer for real-time display
                 this.sendToRenderer({
                   type: 'stream.thinking',
@@ -3124,6 +3228,21 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
                 streamedText,
               });
               streamedText = resolvedPayload.nextStreamedText;
+
+              // Finalize thinking context for this assistant message.
+              // Must happen on EVERY message_end path (error, suppressed, or emitted)
+              // to prevent stale thinking from leaking across turns.
+              {
+                const thinkingFromContent = resolvedPayload.effectiveContent
+                  .filter((b: { type: string }) => b.type === 'thinking')
+                  .map((b: { type: string; thinking?: string }) => b.thinking || '')
+                  .join('\n');
+                lastAssistantThinking = selectThinkingSource(
+                  lastAssistantThinkingDeltas,
+                  thinkingFromContent
+                );
+                lastAssistantThinkingDeltas = '';
+              }
               if (provider === 'ollama') {
                 log(
                   '[ClaudeAgentRunner] Ollama message_end diagnostics',
@@ -3258,7 +3377,14 @@ This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the ro
               const toolCallId = event.toolCallId;
               const isError = event.isError;
               const normalizedToolResult = normalizeToolExecutionResultForUi(event.result);
-              const outputText = normalizedToolResult.content;
+              let outputText = normalizedToolResult.content;
+
+              // Enrich error display when a tool call fails with empty arguments.
+              // The model's thinking often contains the intended file path/content,
+              // but the tool call arguments were truncated (output token issue).
+              // Show the user what the model was trying to do so they have context.
+              outputText = enrichToolErrorWithThinking(outputText, isError, lastAssistantThinking);
+
               this.sendTraceUpdate(session.id, toolCallId, {
                 status: isError ? 'error' : 'completed',
                 toolName: event.toolName,

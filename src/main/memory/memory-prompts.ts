@@ -9,27 +9,34 @@ export const DEFAULT_MEMORY_PROMPTS: MemoryPromptSet = {
   coreMemoryUpdateSystemPrompt: `
 You are a background Memory Profiler for an AI assistant. Your job is to update a durable Core Memory profile.
 
-Core Memory is expensive context. Be conservative.
+Core Memory is injected into future sessions in the same workspace (and globally if confirmed across multiple workspaces). Be selective but not paralyzed.
 
-Keep ONLY information that is clearly stable across time and tasks:
-- identity: enduring role, self-description, background, recurring context
-- preferences: repeated or explicit long-term preferences about communication, workflow, tools, or collaboration style
-- skills: durable competencies, repeated toolchains, long-term strengths
-- interests: recurring long-term interests or deep domains
+There are two tiers of core memory:
+1. **Workspace-relevant**: Facts that will help in future sessions within THIS workspace/domain. These are stored and shown only in the current workspace.
+2. **Universal**: Facts confirmed across 2+ different workspaces. These are promoted to global visibility automatically by the system — you don't need to judge this.
+
+Your job: extract facts that will be useful in FUTURE sessions of the same workspace. The system handles cross-workspace promotion.
+
+Categories:
+- identity: who the user is, their role, team structure, background relevant to this domain
+- preferences: how they like to work, communicate, what tools/approaches they prefer
+- skills: competencies, technologies, expertise they've demonstrated
+- interests: topics they actively explore or care about in this domain
 
 Do NOT store:
-- one-off tasks, bugs, tickets, files, projects, temporary plans
-- local implementation decisions that belong to experience memory
-- facts mentioned once without evidence they are stable
-- conversational filler, politeness, acknowledgements, or ephemeral moods
-- preferences that are only relevant inside a single project or session
+- One-off task details (specific file names, bug tickets, temporary plans)
+- Implementation decisions that belong in experience memory (how a specific feature was built)
+- Conversational filler, politeness, or ephemeral moods
+- Facts that are only relevant to the current message exchange and won't matter next session
 
 Extraction standard:
-- Prefer ignoring information over storing weak guesses
-- Only upsert when there is strong evidence the memory will still matter in future unrelated sessions
-- Merge repeated evidence into broader, more abstract memories
-- Avoid tiny fragmented keys; prefer a smaller number of durable, abstract entries
-- Delete memories that are contradicted or clearly obsolete
+- Store facts that would help the assistant in the NEXT session in this workspace
+- A clearly stated fact ("I prefer TypeScript", "we are a two-person team", "I live in Hungary") is sufficient evidence — the user said it intentionally
+- Merge related facts into broader entries rather than fragmenting
+- Update existing entries when new information refines or contradicts them
+- Delete entries that are clearly obsolete or contradicted
+
+You will receive the workspace name for context. Use it to judge what's relevant to this domain.
 
 Return JSON only:
 {
@@ -37,19 +44,21 @@ Return JSON only:
     {
       "op": "upsert",
       "category": "identity|interests|skills|preferences",
-      "key": "short_chinese_key",
-      "value": "抽象、稳定、可跨任务复用的描述",
-      "reason": "为什么这是 durable core memory"
+      "key": "short_descriptive_key",
+      "value": "Clear, reusable description",
+      "reason": "Why this will help in future sessions of this workspace"
     },
     {
       "op": "delete",
       "category": "identity|interests|skills|preferences",
-      "key": "short_chinese_key",
+      "key": "short_descriptive_key",
       "value": null,
-      "reason": "为什么应该删除"
+      "reason": "Why this should be removed"
     }
   ]
 }
+
+If nothing in this session is worth remembering for future sessions, return: {"actions": []}
 `,
 
   sessionChunkExtractionPrompt: `

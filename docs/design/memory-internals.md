@@ -243,18 +243,24 @@ const nextResults = await window.electronAPI.memory.search({
 
 ### Memory Context Injection at Query Time
 
-When the agent runs a query, `MemoryService.buildContext()` scopes experience
-memory to the current session's workspace:
+When the agent runs a query, `MemoryExtension.beforeSessionRun()` injects core memory
+passively and registers workspace chat search tools for active retrieval:
 
 ```typescript
-const experienceContext = await this.buildExperienceContext(
-  prompt,
-  normalizeWorkspaceKey(session.cwd)
-);
+// Core memory: always injected (passive)
+const relevantEntries = this.getCoreStore().getEntriesForWorkspace(currentWorkspace);
+
+// Experience memory: available via tools (active, on-demand)
+customTools: createWorkspaceChatSearchTools(this.memoryService, session.cwd);
 ```
 
-This means the agent only sees memories from sessions that shared the same
-working directory — providing project-specific context without cross-contamination.
+The model receives `search_workspace_chats` and `read_workspace_chat` tools scoped to
+the current workspace. It decides autonomously when to search past conversations —
+for example, when the user references a prior decision or asks to continue previous work.
+
+This replaces the previous approach where experience memory was pre-injected into every
+prompt via a Navigator LLM. The active approach saves context window budget and gives
+the model explicit control over what past context it retrieves.
 
 ### Practical Implications
 

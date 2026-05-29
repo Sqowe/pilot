@@ -91,7 +91,10 @@
     "language": "Language",
     "systemPromptFile": "Workspace instructions file",
     "systemPromptFileDesc": "When this file exists at the session working directory, its contents are appended to the system prompt as project-level instructions. Missing file falls back to the default.",
-    "systemPromptFileNone": "None (use default)"
+    "systemPromptFileNone": "None (use default)",
+    "notifications": "Desktop Notifications",
+    "notificationsEnabled": "Enable notifications",
+    "notificationsHint": "Show native OS notifications when the app is not focused (permission requests, task completion)."
   },
   "bashCommands": {
     "modeAuthoritative": "Authoritative mode: these lists are the complete policy for bash commands. Anything not explicitly trusted will prompt for approval.",
@@ -405,6 +408,26 @@
         "ollama_model_loading": "Model {{model}} may still be loading. Try the deep check again in a moment.",
         "model_cold_start": "The model may still be loading into GPU/CPU memory. Large models (7B+) can take 30–120 seconds on first use. Try again shortly."
       }
+    },
+    "providerHints": {
+      "openrouter": {
+        "keyHint": "Get from openrouter.ai/keys"
+      },
+      "anthropic": {
+        "keyHint": "Get from console.anthropic.com"
+      },
+      "openai": {
+        "keyHint": "Get from platform.openai.com"
+      },
+      "gemini": {
+        "keyHint": "Get from aistudio.google.com"
+      },
+      "ollama": {
+        "keyHint": "Most Ollama deployments don't need a key; fill one in if your proxy requires auth"
+      },
+      "custom": {
+        "keyHint": "Enter your API Key"
+      }
     }
   },
   "window": {
@@ -522,6 +545,9 @@
   "mcp": {
     "noConnectors": "No connectors configured",
     "addConnector": "Add a connector to enable MCP tools",
+    "saveToWorkspace": "Save current setup to workspace",
+    "savedToWorkspace": "MCP setup saved to .cowork/mcp-servers.json",
+    "saveToWorkspaceFailed": "Failed to save MCP workspace profile",
     "toolsAvailable": "{{count}} tool available",
     "toolsAvailable_plural": "{{count}} tools available",
     "connected": "Connected",
@@ -632,7 +658,22 @@
     "failedToLoad": "Failed to load skills",
     "failedToInstall": "Failed to install skill",
     "failedToDelete": "Failed to delete skill",
-    "failedToToggle": "Failed to toggle skill"
+    "failedToToggle": "Failed to toggle skill",
+    "versionStatus": "Version Status",
+    "statusUpToDate": "Current",
+    "statusOutdated": "Update pending",
+    "statusUserModified": "Protected",
+    "statusDevMode": "Dev mode",
+    "statusLegacy": "Legacy install",
+    "protectSkill": "Protect from updates",
+    "unprotectSkill": "Allow updates",
+    "forceRefresh": "Force refresh",
+    "forceRefreshConfirm": "Force refresh \"{{name}}\"? This will replace the runtime copy with the bundled version on next session start.",
+    "forceRefreshSuccess": "Skill \"{{name}}\" will be refreshed on next session start",
+    "forceRefreshFailed": "Failed to force refresh skill",
+    "protectSuccess": "Skill \"{{name}}\" is now protected from auto-updates",
+    "unprotectSuccess": "Skill \"{{name}}\" will receive auto-updates again",
+    "protectFailed": "Failed to update protection status"
   },
   "logs": {
     "actionsTitle": "Log Actions",
@@ -687,7 +728,10 @@
     "nSelected": "{{count}} selected",
     "batchDeleteConfirm": "Delete {{count}} conversations? This cannot be undone.",
     "cancel": "Cancel",
-    "confirmDelete": "Delete"
+    "confirmDelete": "Delete",
+    "groupByWorkspace": "Group by workspace",
+    "groupByDate": "Group by date",
+    "ungrouped": "No workspace"
   },
   "searchOverlay": {
     "placeholder": "Search conversations...",
@@ -711,7 +755,27 @@
     "noModel": "No model",
     "configSetRestored": "Switched to \"{{name}}\" config set",
     "connectorCount_one": "{{count}} connector",
-    "connectorCount_other": "{{count}} connectors"
+    "connectorCount_other": "{{count}} connectors",
+    "exportMarkdown": "Export as Markdown",
+    "exportSuccess": "Chat exported successfully",
+    "exportFailed": "Export failed: {{error}}",
+    "nothingToExport": "Nothing to export"
+  },
+  "export": {
+    "fullExport": "Export full chat",
+    "selectExport": "Export selected…",
+    "dialogTitle": "Export Options",
+    "messageCount": "{{count}} messages to export",
+    "selectedCount": "{{count}} selected",
+    "selectAll": "Select all",
+    "exportButton": "Export",
+    "includeToolCalls": "Include tool calls (collapsed)",
+    "includeThinking": "Include thinking/reasoning",
+    "includeTimestamps": "Include timestamps",
+    "includeTokenUsage": "Include token usage",
+    "imageHandling": "Images",
+    "image_placeholder": "Placeholder",
+    "image_skip": "Skip"
   },
   "context": {
     "progress": "Progress",
@@ -752,10 +816,49 @@
     "contextUsageTools": "{{count}} tools",
     "contextUsageOutput": "{{count}} output"
   },
+  "memoryLens": {
+    "title": "Memory",
+    "active": "Active",
+    "disabled": "Disabled",
+    "loadError": "Unable to load memory status",
+    "disabledHint": "Memory is disabled. Enable in Settings to start learning from your sessions.",
+    "inAppMemory": "In-app memory",
+    "skillFallback": "Skill fallback",
+    "profile": "Profile",
+    "interests": "Interests",
+    "preferences": "Preferences",
+    "skills": "Skills",
+    "identity": "Identity",
+    "other": "Other",
+    "noProfile": "No profile built yet. The system learns about you after a few sessions.",
+    "currentWorkspace": "Current workspace",
+    "sessions": "Sessions",
+    "chunks": "Chunks",
+    "lastLearned": "Last learned",
+    "noWorkspaceData": "No sessions recorded for this workspace yet.",
+    "total": "Total",
+    "workspaces": "Workspaces",
+    "viewAll": "View all →",
+    "lastRetrieval": "Last Retrieval",
+    "coreMatched": "Core entries",
+    "chunksRetrieved": "Chunks retrieved",
+    "expanded": "Expanded (navigator)",
+    "tokensInjected": "Tokens injected",
+    "retrievalTime": "Retrieval time",
+    "sources": "Sources",
+    "noRetrievalYet": "Send a message to see memory activity.",
+    "tokenBudget": "token budget",
+    "deleteEntry": "Delete memory entry",
+    "clickToEdit": "Click to edit",
+    "expandSource": "Click to expand",
+    "collapse": "Click to collapse"
+  },
   "messageCard": {
     "request": "Request",
     "queued": "Queued",
     "cancelled": "Cancelled",
+    "memoryContributed": "Memory contributed to this response",
+    "memorySearched": "Referenced {{count}} past conversation(s) from this workspace",
     "emptyMessage": "Empty message",
     "emptyText": "(empty text)",
     "copyMessage": "Copy message",
@@ -768,7 +871,9 @@
     "executionTime": "Execution time: {{time}}",
     "process": "Process",
     "processThinking": "{{count}} thinking",
-    "processTools": "{{count}} tools"
+    "processTools": "{{count}} tools",
+    "showMore": "Show more",
+    "showLess": "Show less"
   },
   "linkMenu": {
     "title": "Link options",

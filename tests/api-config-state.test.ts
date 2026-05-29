@@ -106,7 +106,7 @@ describe('api config state helpers', () => {
 
   it('exposes ollama presets and guidance', () => {
     expect(FALLBACK_PROVIDER_PRESETS.ollama.baseUrl).toBe('http://localhost:11434/v1');
-    expect(FALLBACK_PROVIDER_PRESETS.ollama.keyHint).toContain('Ollama');
+    expect(FALLBACK_PROVIDER_PRESETS.ollama.keyHint).toBe('api.providerHints.ollama.keyHint');
     expect(getModelInputGuidance('ollama').placeholder).toContain('qwen');
   });
 

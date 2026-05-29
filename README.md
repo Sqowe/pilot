@@ -15,6 +15,8 @@
   <a href="#installation">Downloads</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#skills">Skills Library</a> •
+  <a href="#-mcp-subsystem">MCP</a> •
+  <a href="#-memory-subsystem">Memory</a> •
   <a href="#sqowe-specific-features">Sqowe Features</a>
 </p>
 
@@ -217,6 +219,31 @@ Open Cowork ships with built-in skills under `.claude/skills/`, and supports use
 - `xlsx` for Excel spreadsheet support
 - `skill-creator` for creating custom skills
 
+### Built-in Skill Auto-Update
+
+Built-in skills are automatically kept in sync with app updates using content-hash versioning. When you install a new version of Open Cowork:
+
+1. Each bundled skill's `SKILL.md` is hashed (SHA-256)
+2. The hash is compared against the runtime copy's `.builtin-hash` stamp
+3. If the hash differs (or no stamp exists), the runtime copy is replaced with the fresh bundled version
+4. Skills that haven't changed are left untouched — no unnecessary I/O
+
+This means app updates reliably deliver skill improvements without requiring manual cache clearing or reinstallation.
+
+### Protecting Customized Skills
+
+If you've modified a built-in skill and want to prevent it from being overwritten on app updates, create a `.user-modified` marker file inside the skill's runtime directory:
+
+```bash
+# macOS
+touch ~/Library/Application\ Support/open-cowork/.claude/skills/docx/.user-modified
+
+# Windows
+type nul > "%APPDATA%\open-cowork\.claude\skills\docx\.user-modified"
+```
+
+When the marker is present, the auto-update will skip that skill and log a warning instead. To resume receiving updates, simply delete the `.user-modified` file.
+
 ---
 
 <a id="sqowe-specific-features"></a>
@@ -230,6 +257,279 @@ This is the **Sqowe** variant of Open Cowork. It tracks upstream functionality a
 - **Customizable System Prompt**: The AI's system prompt is fully editable via Settings → System Prompt. Each section (identity, behavioral rules, citations, tool routing) is a separate file that can be independently edited, disabled, or reset. Workspace-level overrides in `.cowork/prompts/` replace global sections per-project. Template variables (`{{cwd}}`, `{{project_name}}`, `{{date}}`, `{{model}}`) are resolved at runtime.
 - **Per-Session MCP Server Toggle**: Disable/enable MCP servers on-the-fly from the Context Panel without restarting the session. Reduces context window token usage by shedding unused tool schemas mid-conversation. Supports workspace-level profiles via `.cowork/mcp-servers.json` (committable to git) for team-wide defaults.
 - **Skill Pinning**: Star/pin specific skills (semantic-index, firecrawl, docx, etc.) to explicitly tell the AI to prioritize them for the current session. All skills remain available — pinning adds emphasis, not restriction. Select skills on the Welcome screen before starting a chat, or pin/unpin mid-conversation from the Context Panel. Enforces a max of 10 pinned skills per session with full validation.
+
+---
+
+## 🔌 MCP Subsystem
+
+Open Cowork integrates [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) to connect the AI agent with external tools and services — browsers, databases, Notion, custom APIs, and more. MCP servers run on the host machine and their tools are bridged into the agent's tool dispatch layer as first-class capabilities.
+
+### Transport Types
+
+| Transport           | Use Case                                    | Example                         |
+| ------------------- | ------------------------------------------- | ------------------------------- |
+| **stdio**           | Local CLI tools, spawned as child processes | Firecrawl, Context7, filesystem |
+| **SSE**             | Remote servers with HTTP streaming          | Self-hosted services            |
+| **Streamable HTTP** | Modern remote servers (MCP 2025+)           | Cloud-hosted MCP endpoints      |
+
+### Server Descriptions (Auto-Generated LLM Routing)
+
+When multiple MCP servers are connected, the LLM sees a flat list of tools named `mcp__<ServerName>__<toolName>`. Without additional context, it can struggle to pick the right server for a task. Open Cowork solves this with **server-level descriptions** — concise summaries of what each server does, injected into the system prompt as a routing map.
+
+**How it works:**
+
+1. **Auto-generation on first connect** — When a server's tools are discovered for the first time, Open Cowork generates a description using the user's configured LLM (one-shot call, ~150–300 input tokens, negligible cost). The prompt asks for a single sentence (max 25 words) describing the server's domain and capabilities.
+
+2. **Heuristic fallback** — If no LLM is available (no API key configured, network error), a template-based summary is generated from tool names and descriptions. Examples:
+   - Firecrawl → `"Web scraping, crawling, search, and structured data extraction from websites."`
+   - Context7 → `"Library and framework documentation lookup with version-specific code examples."`
+   - A generic server → `"My Server (8 tools)"`
+
+3. **MCP Server Directory in system prompt** — All descriptions are assembled into a `<mcp_server_directory>` block injected into the agent's system prompt:
+
+   ```
+   Available MCP servers and their capabilities:
+   - Firecrawl: Web scraping, crawling, search, and structured data extraction from websites.
+   - Context7: Library and framework documentation lookup with version-specific code examples.
+   - Software_Development: File system operations, code search, and project workspace management.
+
+   Use the appropriate server's tools based on the task domain.
+   ```
+
+   Token cost: ~15–25 tokens per server (negligible compared to tool schemas themselves).
+
+4. **Change detection** — A SHA-256 hash of the tool list (names + descriptions) is stored alongside the description. When tools change (server update, new tools added), the system detects the mismatch and notifies the user — it never silently overwrites.
+
+5. **User control** — Descriptions can be manually edited at any time. The system tracks whether a description is `auto` (generated) or `manual` (user-written). Manual descriptions suppress stale-tool notifications, since the user wrote them intentionally.
+
+**UI actions:**
+
+- **Edit** — Make the description field editable, sets source to `manual` on save
+- **Regenerate** — Re-run LLM one-shot, replaces description, source stays `auto`
+- **Dismiss** — Acknowledge tool changes without regenerating (keeps current description)
+
+### Per-Session & Per-Workspace Server Toggle
+
+MCP tool schemas consume significant context window tokens. To optimize usage, servers can be selectively disabled at three levels (highest priority wins):
+
+1. **Session override** (ephemeral) — Toggle in the Context Panel mid-conversation. Stored in-memory, cleared on session delete.
+2. **Workspace profile** — `.cowork/mcp-servers.json` with `disabled`/`enabled` arrays. Committable to git for team-wide defaults.
+3. **Global config** — Per-server `enabled` boolean in Settings UI.
+
+**Save to Workspace button** — The MCP Connectors section header includes a 💾 save icon that appears when you have session-disabled servers and a working directory set. Clicking it writes the current session toggle state to `.cowork/mcp-servers.json`, making your MCP setup persistent and shareable with your team via git.
+
+**Workspace profile example** (`.cowork/mcp-servers.json`):
+
+```json
+{
+  "disabled": ["firecrawl", "gui-operate"],
+  "enabled": ["context7"]
+}
+```
+
+- Servers in `disabled` are excluded from the session (overrides global enabled state)
+- Servers in `enabled` are explicitly included (overrides the `disabled` list)
+- Servers not mentioned in either array pass through unchanged — their global config `enabled` state is preserved as-is (globally enabled → stays enabled, globally disabled → stays disabled)
+- Accepts both server IDs (`mcp-1716547200000`) and display names (`"EU Law"`) — the resolver matches against both
+
+### Configuration
+
+MCP servers are configured in the app's Settings panel. Each server entry includes:
+
+- **Name** — Display name (used in tool prefixes)
+- **Type** — `stdio`, `sse`, or `streamable-http`
+- **Command/URL** — How to connect (command + args for stdio, URL for HTTP-based)
+- **Environment variables** — Passed to stdio processes
+- **Description** — Auto-generated or manually written routing hint
+- **Enabled** — Global on/off toggle
+- **Tool timeout** — Per-server timeout override (0 = use global default)
+- **Tool permissions** — Per-server default policy + per-tool overrides
+
+### Tool Permissions
+
+Each MCP server supports a default tool permission policy to reduce "permission fatigue":
+
+| Policy        | Behavior                                                                      |
+| ------------- | ----------------------------------------------------------------------------- |
+| `ask-all`     | Every tool requires manual approval (default)                                 |
+| `allow-reads` | Read-only tools (get*\*, list*_, search\__) auto-approved; write tools prompt |
+| `allow-all`   | All tools auto-approved without prompting                                     |
+| `deny-all`    | All tools blocked                                                             |
+
+Per-tool overrides let you make exceptions (e.g., allow-reads but always ask for `capture_realtime_ws`).
+
+**Workspace-level policies** can be shared via `.cowork/mcp-permissions.json`:
+
+```json
+{
+  "EODHD": {
+    "defaultPolicy": "allow-reads",
+    "overrides": {
+      "execute_trade": "deny",
+      "capture_realtime_ws": "ask"
+    }
+  }
+}
+```
+
+**Progressive trust:** The system tracks manual approvals per tool. After 5 approvals of the same tool, it suggests promoting it to permanent auto-allow.
+
+Key files: `src/main/mcp/mcp-manager.ts`, `src/main/mcp/mcp-config-store.ts`, `src/main/mcp/mcp-tool-permissions.ts`, `src/main/mcp/mcp-description-generator.ts`.
+
+---
+
+## 🧠 Memory Subsystem
+
+Open Cowork includes a two-layer memory system that persists knowledge across sessions. The agent accumulates learnings from past conversations and uses them to provide better, more contextual responses in future sessions.
+
+### How It Works
+
+Memory uses a **passive + active** architecture:
+
+- **Core memory** (preferences, identity) is passively injected into every prompt
+- **Experience memory** (past conversations) is actively retrieved on-demand via tools the model can call
+
+```
+User sends message
+       │
+       ▼
+Memory Extension (beforeSessionRun)
+       │
+       ├─ 1. Inject core memory into prompt (passive, always present)
+       ├─ 2. Register search_workspace_chats tool (active, on-demand)
+       ├─ 3. Register read_workspace_chat tool (active, on-demand)
+       │
+       ▼
+LLM receives: core_memory context + workspace chat search tools
+       │
+       ▼
+LLM decides: "Do I need context from past conversations?"
+       │ YES                              │ NO
+       ▼                                  ▼
+tool_call: search_workspace_chats    Respond directly
+       │
+       ▼
+Workspace-scoped results from experience memory
+       │
+       ▼
+(optional) tool_call: read_workspace_chat for full details
+       │
+       ▼
+LLM synthesizes answer with retrieved context
+       │
+       ▼
+Memory Extension (afterSessionRun)
+       │
+       ├─ Extract reusable chunks from the conversation
+       ├─ Update core memory if stable preferences were revealed
+       │
+       ▼
+Done — knowledge persisted for future sessions
+```
+
+### Two Levels of Memory
+
+**Core Memory** — stable user profile (passively injected every turn)
+
+Stores durable information that persists across all sessions and workspaces:
+
+- Identity: role, background, recurring context
+- Preferences: communication style, workflow, tools
+- Skills: competencies, toolchains, strengths
+- Interests: recurring domains and deep topics
+
+Core memory is small (typically <20 entries) and updated conservatively. Only information with strong evidence of being stable across time gets stored here. It's always present in the prompt — no tool call needed.
+
+**Experience Memory** — past session knowledge (actively retrieved via tools)
+
+Stores reusable work units extracted from past conversations:
+
+- Goals the user was trying to accomplish
+- Decisions and their rationale
+- Implementation choices and important steps
+- Constraints, caveats, failure modes, tradeoffs
+- Concrete outcomes and unresolved follow-ups
+
+Each session produces 1–8 chunks, each with an embedding vector for semantic search. The model retrieves these on-demand using `search_workspace_chats` when it needs context from prior sessions — for example, when the user references a past decision or asks to continue previous work.
+
+### Active Retrieval Tools
+
+The model has two workspace-scoped tools for searching past conversations:
+
+| Tool                     | Purpose                                             |
+| ------------------------ | --------------------------------------------------- |
+| `search_workspace_chats` | Search past conversations by natural language query |
+| `read_workspace_chat`    | Read full details of a specific search result       |
+
+These tools are workspace-scoped by default — they search only conversations from the current project. The model decides autonomously when to use them based on the user's question.
+
+### Why Active Over Passive for Experience Memory
+
+The previous approach pre-injected experience memory into every prompt. The active approach is better because:
+
+- **Saves context window** — no tokens wasted on irrelevant past conversations
+- **Model decides relevance** — the model is a better judge of what it needs than a one-shot pre-query
+- **Iterative refinement** — model can search multiple times, refining its query
+- **Provenance** — model explicitly knows what came from past conversations vs current context
+- **No false confidence** — model won't accidentally treat injected memory as current-session facts
+
+### Retrieval Scoring
+
+Experience memory is ranked using a hybrid scoring algorithm:
+
+| Signal                         | Description                                                   |
+| ------------------------------ | ------------------------------------------------------------- |
+| Vector similarity              | Cosine similarity between query embedding and chunk embedding |
+| Lexical score                  | Keyword overlap between query and chunk text                  |
+| Workspace boost (+0.3)         | Chunks from the same workspace rank higher                    |
+| Recency boost (+0.02 to +0.08) | Newer chunks get a small boost (decays over 45 days)          |
+
+### Search Scope
+
+- **Core memory** is always global — included regardless of workspace
+- **Experience memory** (via tools) is workspace-scoped by default — searches only conversations from the current project directory
+
+### Progressive Retrieval
+
+The system uses a multi-step retrieval process:
+
+1. **Broad summaries** — initial ranked list of chunk/session summaries
+2. **Navigator decision** — a lightweight LLM call decides if more detail is needed
+3. **Expansion** — specific chunks or sessions are expanded (details, raw text, or full transcript)
+4. **Repeat** — up to `maxNavSteps` iterations until the navigator deems context sufficient
+
+This avoids injecting too much irrelevant context while ensuring important details are available when needed.
+
+### Storage
+
+Memory data lives at `~/Library/Application Support/open-cowork/memory/` (macOS):
+
+| File                     | Contents                                             |
+| ------------------------ | ---------------------------------------------------- |
+| `core_memory.json`       | Stable user profile (interests, preferences, skills) |
+| `experience_memory.json` | Session summaries, chunks, and embeddings            |
+| `session_state.json`     | Tracks which sessions have been ingested             |
+
+### Configuration
+
+Memory is enabled by default. Toggle it in **Settings → Memory** or via the Memory panel in the sidebar. Disabling memory stops future ingestion and auto-recall but keeps existing records intact.
+
+When in-app memory is enabled, the legacy `cowork-memory` skill (manual Python scripts) is automatically disabled to avoid redundancy. If you disable in-app memory, the skill is re-enabled as a fallback.
+
+### Memory Sources Indicator (UI)
+
+When the model uses `search_workspace_chats` to retrieve context from past conversations, a visual indicator appears at the top of the response:
+
+- **Simple case** (core memory only): `🧠 Memory contributed to this response`
+- **Active search** (workspace chats searched): `🧠 Referenced N past conversation(s) from this workspace` — clickable to expand a list of referenced sessions with titles and summaries
+
+This indicator is positioned above the response content (not below) because:
+
+- It frames the response as grounded in prior context before you read it
+- It reflects the actual action order (search happened before generation)
+- It builds trust by signaling provenance upfront
+
+The expanded sources list shows which specific past conversations were referenced, giving full transparency into what the model "remembered."
 
 ---
 

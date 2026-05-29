@@ -78,6 +78,12 @@ const CORE_CATEGORIES = new Set<CoreMemoryCategory>([
   'interests',
 ]);
 
+/**
+ * Sentinel workspace key for sessions without a specific workspace.
+ * Entries tagged with this are treated as globally-scoped.
+ */
+export const GLOBAL_WORKSPACE_SENTINEL = '__global__';
+
 export function normalizeWorkspaceKey(cwd?: string | null): string | null {
   if (!cwd) {
     return null;
@@ -319,13 +325,21 @@ export function parseCoreCombinedKey(combinedKey: string): CoreMemoryEntry {
 }
 
 export function applyCoreMemoryActions(
-  existingMemory: Record<string, string>,
-  actions: CoreMemoryActionInput[]
+  existingMemory: Record<string, { value: string; sourceWorkspaces: string[] }>,
+  actions: CoreMemoryActionInput[],
+  sourceWorkspace: string | null
 ): {
-  nextMemory: Record<string, string>;
+  nextMemory: Record<string, { value: string; sourceWorkspaces: string[] }>;
   applied: AppliedCoreMemoryAction[];
 } {
   const nextMemory = { ...existingMemory };
+  // Deep-copy entries so mutations don't affect the original
+  for (const key of Object.keys(nextMemory)) {
+    nextMemory[key] = {
+      ...nextMemory[key],
+      sourceWorkspaces: [...nextMemory[key].sourceWorkspaces],
+    };
+  }
   const applied: AppliedCoreMemoryAction[] = [];
 
   for (const action of actions) {
@@ -351,7 +365,18 @@ export function applyCoreMemoryActions(
       continue;
     }
 
-    nextMemory[combinedKey] = value;
+    // Merge workspace into sourceWorkspaces
+    const existing = nextMemory[combinedKey];
+    const existingWorkspaces = existing?.sourceWorkspaces || [];
+    const effectiveWorkspace = sourceWorkspace
+      ? normalizeWorkspaceKey(sourceWorkspace)
+      : GLOBAL_WORKSPACE_SENTINEL;
+    const mergedWorkspaces =
+      effectiveWorkspace && !existingWorkspaces.includes(effectiveWorkspace)
+        ? [...existingWorkspaces, effectiveWorkspace]
+        : [...existingWorkspaces];
+
+    nextMemory[combinedKey] = { value, sourceWorkspaces: mergedWorkspaces };
     applied.push({
       op,
       category: action.category,
@@ -364,12 +389,19 @@ export function applyCoreMemoryActions(
   return { nextMemory, applied };
 }
 
-export function coreMemoryToPromptBlock(memory: Record<string, string>): string {
+export function coreMemoryToPromptBlock(
+  memory: Record<string, string | { value: string; sourceWorkspaces?: string[] }>
+): string {
   const entries = Object.entries(memory);
   if (!entries.length) {
     return 'None';
   }
-  return entries.map(([key, value]) => `- ${key}: ${value}`).join('\n');
+  return entries
+    .map(([key, stored]) => {
+      const value = typeof stored === 'string' ? stored : stored.value;
+      return `- ${key}: ${value}`;
+    })
+    .join('\n');
 }
 
 export function clampInt(value: number, minimum: number, maximum: number): number {

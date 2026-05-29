@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import { resolveArtifactPath } from '../utils/artifact-path';
@@ -13,6 +13,7 @@ import {
   getArtifactSteps,
 } from '../utils/artifact-steps';
 import { useIPC } from '../hooks/useIPC';
+import { MemoryLensSection } from './MemoryLensSection';
 import {
   ChevronDown,
   ChevronUp,
@@ -39,9 +40,11 @@ import {
   Layers,
   Star,
   X,
+  Save,
 } from 'lucide-react';
 import type { TraceStep, MCPServerInfo } from '../types';
 import { computeContextUsage } from '../utils/context-usage';
+import { deriveDisabledServerIds } from '../utils/mcp-profile-derive';
 
 const EMPTY_STEPS: TraceStep[] = [];
 
@@ -63,6 +66,14 @@ export function ContextPanel() {
   const [expandedConnector, setExpandedConnector] = useState<string | null>(null);
   const [mcpServers, setMcpServers] = useState<MCPServerInfo[]>([]);
   const [sessionDisabledServers, setSessionDisabledServers] = useState<Set<string>>(new Set());
+  // Workspace profile state — mirrors WelcomeView pattern
+  const [workspaceProfileDisabled, setWorkspaceProfileDisabled] = useState<Set<string>>(new Set());
+  const [userToggledMcp, setUserToggledMcp] = useState(false);
+  // Track which session the user-toggle applies to (session-scoped override)
+  const [userToggledSessionId, setUserToggledSessionId] = useState<string | null>(null);
+  // Ref to track latest activeSessionId for stale-async guards
+  const activeSessionIdRef = useRef(activeSessionId);
+  activeSessionIdRef.current = activeSessionId;
   const [sessionPinnedSkills, setSessionPinnedSkills] = useState<Set<string>>(new Set());
   const [availableSkills, setAvailableSkills] = useState<
     Array<{ id: string; name: string; description?: string }>
@@ -76,6 +87,86 @@ export function ContextPanel() {
       size: number;
     }>
   >([]);
+
+  // Resizable panel width
+  const [panelWidth, setPanelWidth] = useState(() => {
+    try {
+      const stored = localStorage.getItem('context-panel-width');
+      if (stored) {
+        const parsed = Number(stored);
+        return Number.isFinite(parsed) ? Math.max(200, Math.min(400, parsed)) : 288;
+      }
+    } catch {
+      // localStorage unavailable
+    }
+    return 288; // default w-72 = 288px
+  });
+  const isResizingRef = useRef(false);
+  const currentWidthRef = useRef(panelWidth);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+
+  const handlePanelResizeStart = useCallback(
+    (e: React.PointerEvent) => {
+      if (isResizingRef.current) return;
+      e.preventDefault();
+      isResizingRef.current = true;
+      const startX = e.clientX;
+      const startWidth = panelWidth;
+      currentWidthRef.current = startWidth;
+
+      const target = e.currentTarget as HTMLElement;
+      target.setPointerCapture(e.pointerId);
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        // Dragging left = wider (panel is on the right side)
+        const newWidth = Math.max(200, Math.min(400, startWidth + (startX - moveEvent.clientX)));
+        currentWidthRef.current = newWidth;
+        setPanelWidth(newWidth);
+      };
+
+      const cleanup = () => {
+        if (!isResizingRef.current) return;
+        isResizingRef.current = false;
+        try {
+          if (target.hasPointerCapture(e.pointerId)) {
+            target.releasePointerCapture(e.pointerId);
+          }
+        } catch {
+          // Already released
+        }
+        target.removeEventListener('pointermove', handlePointerMove);
+        target.removeEventListener('pointerup', handlePointerUp);
+        target.removeEventListener('lostpointercapture', handlePointerUp);
+        window.removeEventListener('blur', cleanup);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        dragCleanupRef.current = null;
+        try {
+          localStorage.setItem('context-panel-width', String(currentWidthRef.current));
+        } catch {
+          // localStorage unavailable
+        }
+      };
+
+      const handlePointerUp = () => cleanup();
+
+      dragCleanupRef.current = cleanup;
+      target.addEventListener('pointermove', handlePointerMove);
+      target.addEventListener('pointerup', handlePointerUp);
+      target.addEventListener('lostpointercapture', handlePointerUp);
+      window.addEventListener('blur', cleanup);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [panelWidth]
+  );
+
+  // Cleanup drag on unmount
+  useEffect(() => {
+    return () => {
+      dragCleanupRef.current?.();
+    };
+  }, []);
 
   const handleCopyPath = async (path: string) => {
     try {
@@ -280,6 +371,69 @@ export function ContextPanel() {
     loadDisabled();
   }, [activeSessionId, contextPanelCollapsed]);
 
+  // Load workspace MCP profile and derive disabled IDs (mirrors WelcomeView pattern)
+  // Effect 1: Reset user-override state on session or workspace change
+  useEffect(() => {
+    setUserToggledMcp(false);
+    setUserToggledSessionId(null);
+  }, [activeSessionId, currentWorkingDir]);
+
+  // Effect 2: Load and derive workspace profile disabled IDs
+  // Does NOT reset userToggledMcp — that's handled by the effect above.
+  useEffect(() => {
+    if (contextPanelCollapsed || !currentWorkingDir) {
+      setWorkspaceProfileDisabled(new Set());
+      return;
+    }
+    let cancelled = false;
+    const loadProfile = async () => {
+      try {
+        const profile = await window.electronAPI?.mcp?.getWorkspaceProfile(currentWorkingDir);
+        if (cancelled) return;
+        if (!profile) {
+          setWorkspaceProfileDisabled(new Set());
+          return;
+        }
+        const derived = deriveDisabledServerIds(profile, mcpServers);
+        if (derived === null) {
+          // Allowlist mode but servers not loaded yet — keep empty for now
+          setWorkspaceProfileDisabled(new Set());
+        } else {
+          setWorkspaceProfileDisabled(derived);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('[ContextPanel] Failed to load workspace MCP profile:', error);
+          setWorkspaceProfileDisabled(new Set());
+        }
+      }
+    };
+    loadProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentWorkingDir, contextPanelCollapsed, mcpServers]);
+
+  // Effective disabled set: union of session-disabled and workspace-profile-disabled
+  // Once user manually toggles in THIS session, workspace profile is ignored (session state takes over)
+  const effectiveDisabledServers = useMemo(() => {
+    if (userToggledMcp && userToggledSessionId === activeSessionId) {
+      return sessionDisabledServers;
+    }
+    // Merge both sets — a server is disabled if either source says so
+    const merged = new Set(sessionDisabledServers);
+    for (const id of workspaceProfileDisabled) {
+      merged.add(id);
+    }
+    return merged;
+  }, [
+    sessionDisabledServers,
+    workspaceProfileDisabled,
+    userToggledMcp,
+    userToggledSessionId,
+    activeSessionId,
+  ]);
+
   // Load session-pinned skills and available skills when active session changes
   useEffect(() => {
     if (!activeSessionId || contextPanelCollapsed) {
@@ -312,17 +466,89 @@ export function ContextPanel() {
 
   const handleToggleSessionServer = async (serverId: string, disabled: boolean) => {
     if (!activeSessionId) return;
+    // Capture session ID to guard against stale updates from session switches
+    const sessionId = activeSessionId;
     try {
+      // If user hasn't toggled yet this session, seed session state from effective state.
+      // This ensures workspace-profile-disabled servers are reflected in session state
+      // so a single click correctly enables/disables them.
+      if (!userToggledMcp || userToggledSessionId !== sessionId) {
+        // Seed workspace-profile-disabled servers into session state in parallel
+        const serversToSeed = Array.from(workspaceProfileDisabled).filter(
+          (wpId) => !sessionDisabledServers.has(wpId)
+        );
+        if (serversToSeed.length > 0) {
+          await Promise.all(
+            serversToSeed.map((wpId) =>
+              window.electronAPI?.mcp?.toggleSessionServer(sessionId, wpId, true)
+            )
+          );
+        }
+        // Stale guard: abort if session changed during seeding (uses ref for latest value)
+        if (activeSessionIdRef.current !== sessionId) return;
+        // Refresh session disabled state after seeding
+        const refreshed = await window.electronAPI?.mcp?.getSessionDisabledServers(sessionId);
+        if (activeSessionIdRef.current !== sessionId) return;
+        setSessionDisabledServers(new Set(refreshed || []));
+      }
+
+      // Now apply the actual user toggle
       const result = await window.electronAPI?.mcp?.toggleSessionServer(
-        activeSessionId,
+        sessionId,
         serverId,
         disabled
       );
+      // Stale guard: abort if session changed during toggle (uses ref for latest value)
+      if (activeSessionIdRef.current !== sessionId) return;
       if (result?.success && result.disabledServers) {
         setSessionDisabledServers(new Set(result.disabledServers));
+        // Only mark user-override after successful toggle
+        setUserToggledMcp(true);
+        setUserToggledSessionId(sessionId);
       }
     } catch (error) {
       console.error('Failed to toggle session MCP server:', error);
+      // On failure, refresh session state to ensure consistency
+      if (activeSessionIdRef.current === sessionId) {
+        try {
+          const refreshed = await window.electronAPI?.mcp?.getSessionDisabledServers(sessionId);
+          if (activeSessionIdRef.current === sessionId) {
+            setSessionDisabledServers(new Set(refreshed || []));
+          }
+        } catch {
+          // Ignore refresh errors
+        }
+      }
+    }
+  };
+
+  const handleSaveWorkspaceProfile = async () => {
+    if (!currentWorkingDir) return;
+    try {
+      const result = await window.electronAPI?.mcp?.saveWorkspaceProfile(
+        currentWorkingDir,
+        Array.from(effectiveDisabledServers)
+      );
+      if (result?.success) {
+        setGlobalNotice({
+          id: `mcp-profile-saved-${Date.now()}`,
+          type: 'success',
+          message: t('mcp.savedToWorkspace'),
+        });
+      } else {
+        setGlobalNotice({
+          id: `mcp-profile-save-failed-${Date.now()}`,
+          type: 'error',
+          message: `${t('mcp.saveToWorkspaceFailed')}: ${result?.error || 'Unknown error'}`,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to save MCP workspace profile:', error);
+      setGlobalNotice({
+        id: `mcp-profile-save-failed-${Date.now()}`,
+        type: 'error',
+        message: t('mcp.saveToWorkspaceFailed'),
+      });
     }
   };
 
@@ -357,7 +583,15 @@ export function ContextPanel() {
   }
 
   return (
-    <div className="w-72 bg-background border-l border-border-muted flex flex-col overflow-hidden text-sm">
+    <div
+      className="bg-background border-l border-border-muted flex flex-col overflow-hidden text-sm relative"
+      style={{ width: `${panelWidth}px` }}
+    >
+      {/* Resize handle (left edge) */}
+      <div
+        onPointerDown={handlePanelResizeStart}
+        className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:bg-accent/30 transition-colors z-10 touch-none"
+      />
       {/* Header */}
       <div className="px-3 h-10 flex items-center gap-2 border-b border-border-muted shrink-0">
         <button
@@ -479,6 +713,13 @@ export function ContextPanel() {
             </p>
           </div>
         )}
+
+        {/* Memory Lens */}
+        <MemoryLensSection
+          cwd={currentWorkingDir || undefined}
+          collapsed={contextPanelCollapsed}
+          sessionId={activeSessionId || undefined}
+        />
 
         {/* Artifacts Section */}
         <div className="border-b border-border-muted">
@@ -719,22 +960,47 @@ export function ContextPanel() {
 
         {/* MCP Connectors */}
         <div className="border-b border-border-muted">
-          <button
-            onClick={() => setMcpConnectorsOpen(!mcpConnectorsOpen)}
-            className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-surface-hover transition-colors"
-          >
-            <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
-              {t('context.mcpConnectors')}
-              {mcpServers.length > 0 && (
-                <span className="ml-1.5 text-mcp">({mcpServers.length})</span>
+          <div className="w-full px-4 py-2.5 flex items-center justify-between">
+            <button
+              onClick={() => setMcpConnectorsOpen(!mcpConnectorsOpen)}
+              className="flex items-center gap-1 flex-1 hover:bg-surface-hover transition-colors rounded -ml-1 px-1"
+            >
+              <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
+                {t('context.mcpConnectors')}
+                {mcpServers.length > 0 && (
+                  <span className="ml-1.5 text-mcp">
+                    ({mcpServers.length}/{mcpServers.filter((s) => s.connected).length}/
+                    {
+                      mcpServers.filter((s) => s.connected && !effectiveDisabledServers.has(s.id))
+                        .length
+                    }
+                    )
+                  </span>
+                )}
+              </span>
+            </button>
+            <div className="flex items-center gap-1">
+              {currentWorkingDir && mcpServers.length > 0 && (
+                <button
+                  onClick={handleSaveWorkspaceProfile}
+                  className="text-text-muted hover:text-accent-primary transition-colors"
+                  title={t('mcp.saveToWorkspace')}
+                >
+                  <Save className="w-3.5 h-3.5" />
+                </button>
               )}
-            </span>
-            {mcpConnectorsOpen ? (
-              <ChevronUp className="w-3.5 h-3.5 text-text-muted" />
-            ) : (
-              <ChevronDown className="w-3.5 h-3.5 text-text-muted" />
-            )}
-          </button>
+              <button
+                onClick={() => setMcpConnectorsOpen(!mcpConnectorsOpen)}
+                className="text-text-muted hover:text-text-primary transition-colors"
+              >
+                {mcpConnectorsOpen ? (
+                  <ChevronUp className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </div>
+          </div>
 
           {mcpConnectorsOpen && (
             <div className="px-4 pb-2.5">
@@ -754,7 +1020,7 @@ export function ContextPanel() {
                       onToggle={() =>
                         setExpandedConnector(expandedConnector === server.id ? null : server.id)
                       }
-                      sessionDisabled={sessionDisabledServers.has(server.id)}
+                      sessionDisabled={effectiveDisabledServers.has(server.id)}
                       onToggleSession={handleToggleSessionServer}
                     />
                   ))}

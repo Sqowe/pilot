@@ -3,14 +3,14 @@
 ## 1. Purpose of This Document
 
 This is the architectural source of truth for Open Cowork, an Electron desktop AI agent
-application. It describes the system as it exists today (v3.3.0), not as imagined.
+application. It describes the system as it exists today (v3.3.0-sqowe.7), not as imagined.
 
 Any AI coder working on this repository MUST read this document first to understand
 structure, boundaries, and where to find authoritative coding rules. This document
 does NOT define coding rules — it points to them (see Section 8).
 
 Target audience: AI coding assistants and new human contributors.
-Last updated: 2026-05-17.
+Last updated: 2026-05-27.
 
 ---
 
@@ -138,6 +138,30 @@ is a built-in MCP server providing GUI automation via vision models.
 
 MCP servers run on the HOST, never inside the sandbox VM.
 
+**Per-server tool permission policies:**
+
+Each MCP server can have a default tool permission policy that controls whether its
+tools are auto-approved, require prompting, or are blocked. This eliminates "permission
+fatigue" for trusted read-only servers while maintaining security for write-capable ones.
+
+Policy levels (first match wins):
+
+1. **Workspace override** — `.cowork/mcp-permissions.json` (committable to git, team-shared)
+2. **Per-tool override** — `MCPServerConfig.toolPermissions` (sparse, exception-based)
+3. **Server default policy** — `MCPServerConfig.defaultToolPolicy`:
+   - `allow-all`: auto-approve every tool without prompting
+   - `allow-reads`: auto-approve tools classified as read-only (heuristic: `get_*`, `list_*`, etc.)
+   - `ask-all`: always prompt (default, backward-compatible)
+   - `deny-all`: block all tools from this server
+4. **Generic permission rules** — existing `PermissionRule[]` engine (fallback)
+
+**Progressive trust:** The system tracks how many times each MCP tool is manually
+approved across sessions. After 5 approvals, it can suggest promoting the tool to
+permanent auto-allow in the server's `toolPermissions`.
+
+Key files: `mcp-manager.ts`, `mcp-config-store.ts`, `mcp-tool-permissions.ts`,
+`mcp-description-generator.ts`, `mcp-workspace-profile.ts`.
+
 **Per-session & per-workspace MCP toggle:**
 
 MCP tool definitions consume significant context window tokens. To optimize usage,
@@ -222,6 +246,52 @@ process on the host, never inside the sandbox.
 
 Key file: `prompt-loader.ts`. Settings UI: `SettingsPrompt.tsx`.
 
+### 4.6 Memory System (`src/main/memory/`)
+
+Two-layer memory architecture: **passive core injection** + **active experience retrieval**.
+
+**Core Memory (passive)** — stable user profile entries (preferences, identity, skills)
+are always injected into the prompt via `<memory_context>` XML block. Small, stable,
+workspace-filtered. Updated conservatively after each session.
+
+**Experience Memory (active)** — past conversation chunks are NOT pre-injected. Instead,
+the model receives `search_workspace_chats` and `read_workspace_chat` tools that it can
+invoke on-demand when it needs context from prior sessions. This saves context window
+budget and ensures retrieved experience is relevant to the model's actual needs.
+
+```
+User sends message
+       │
+       ▼
+MemoryExtension.beforeSessionRun()
+       │
+       ├─ 1. Inject core memory (passive, always present)
+       ├─ 2. Register search_workspace_chats tool (active, on-demand)
+       ├─ 3. Register read_workspace_chat tool (active, on-demand)
+       │
+       ▼
+LLM receives: core_memory + tools available
+       │
+       ▼
+LLM decides: "Do I need past conversation context?"
+       │ YES                              │ NO
+       ▼                                  ▼
+tool_call: search_workspace_chats    Respond directly
+       │
+       ▼
+Results from workspace experience memory
+       │
+       ▼
+(optional) tool_call: read_workspace_chat for full details
+       │
+       ▼
+LLM synthesizes answer with retrieved context
+```
+
+Key files: `memory-extension.ts` (extension hook), `memory-chat-search-tool.ts`
+(active retrieval tools), `memory-service.ts` (core logic), `memory-tools.ts`
+(legacy search/read tools for Settings UI).
+
 ---
 
 ## 5. Data Flow & Runtime Model
@@ -295,7 +365,7 @@ Environment variables (`.env.example`): `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_
 | 🔄 **Semi-Stable**  | Remote channels (Feishu/Slack), GUI-operate server                                                                        | Working but APIs evolve; Feishu SDK updates frequently       |
 | 🔄 **Semi-Stable**  | SQLite persistence layer                                                                                                  | Schema may evolve with memory system                         |
 | ⚠️ **Experimental** | Sandbox (WSL2/Lima)                                                                                                       | Code-complete, UI-gated, not user-facing yet                 |
-| ⚠️ **Experimental** | Memory system (`src/main/memory/`)                                                                                        | Under active development (PR #138)                           |
+| ⚠️ **Experimental** | Memory system (`src/main/memory/`)                                                                                        | Active retrieval via tools + passive core injection          |
 | 🔄 **Semi-Stable**  | Schedule system (`src/main/schedule/`)                                                                                    | v2 complete: time windows, catch-up, budgets, run history    |
 | 🔮 **Planned**      | Plugin system, Multi-agent orchestration                                                                                  | See `ROADMAP.md`                                             |
 | 🔮 **Planned**      | Linux first-class support                                                                                                 | Build-from-source only today                                 |

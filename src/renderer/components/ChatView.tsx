@@ -13,8 +13,11 @@ import {
 import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
 import { GroupedMessages } from './message/GroupedMessages';
+import { ExportSelectionBar } from './ExportSelectionBar';
+import { ExportOptionsDialog } from './ExportOptionsDialog';
+import type { ExportOptions } from './ExportOptionsDialog';
 import type { Message, ContentBlock } from '../types';
-import { Send, Square, Plus, Loader2, Plug, X, Clock, Layers } from 'lucide-react';
+import { Send, Square, Plus, Loader2, X, Clock, Layers, Download } from 'lucide-react';
 
 type AttachedFile = {
   name: string;
@@ -43,18 +46,34 @@ export function ChatView() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSwitchingSet, setIsSwitchingSet] = useState(false);
   const switchRequestRef = useRef(0);
-  const [activeConnectors, setActiveConnectors] = useState<
-    { id: string; name: string; connected: boolean; toolCount: number }[]
-  >([]);
-  const [showConnectorLabel, setShowConnectorLabel] = useState(true);
   const headerRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
-  const connectorMeasureRef = useRef<HTMLDivElement>(null);
   const [pastedImages, setPastedImages] = useState<
     Array<{ url: string; base64: string; mediaType: string }>
   >([]);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  // Export selection mode
+  const [isExportSelectMode, setIsExportSelectMode] = useState(false);
+  const [exportSelectedIds, setExportSelectedIds] = useState<Set<string>>(new Set());
+  const [showExportOptions, setShowExportOptions] = useState(false);
+  const [showExportDropdown, setShowExportDropdown] = useState(false);
+
+  // Reset export selection state when switching sessions
+  useEffect(() => {
+    setIsExportSelectMode(false);
+    setExportSelectedIds(new Set());
+    setShowExportOptions(false);
+    setShowExportDropdown(false);
+  }, [activeSessionId]);
+
+  // Shared helper: determine if a message is exportable
+  // A message is exportable if it's not partial/system.
+  // The serializer handles skipping messages with no visible content.
+  const isExportableMessage = useCallback(
+    (m: Message) => !m.id.startsWith('partial-') && m.role !== 'system',
+    []
+  );
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -71,6 +90,60 @@ export function ChatView() {
   const pendingCount = pendingTurns.length;
   const isSessionRunning = activeSession?.status === 'running';
   const canStop = isSessionRunning || hasActiveTurn || pendingCount > 0;
+
+  // Track last memory retrieval timestamp for the "memory contributed" badge
+  const [lastRetrievalTimestamp, setLastRetrievalTimestamp] = useState<number | undefined>();
+  const fetchRetrievalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevSessionIdRef = useRef<string | null>(null);
+
+  // Derive a stable signal for "last turn completed" — the latest assistant message timestamp
+  const lastAssistantTimestamp = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant' && !messages[i].id.startsWith('partial-')) {
+        return messages[i].timestamp;
+      }
+    }
+    return 0;
+  }, [messages]);
+
+  useEffect(() => {
+    // Reset only on session switch or memory disabled
+    if (prevSessionIdRef.current !== activeSessionId) {
+      prevSessionIdRef.current = activeSessionId ?? null;
+      setLastRetrievalTimestamp(undefined);
+    }
+
+    if (!activeSessionId || !activeSession?.memoryEnabled) {
+      setLastRetrievalTimestamp(undefined);
+      return;
+    }
+
+    let cancelled = false;
+
+    // Debounce: wait 500ms after last assistant message changes before fetching
+    if (fetchRetrievalRef.current) clearTimeout(fetchRetrievalRef.current);
+    fetchRetrievalRef.current = setTimeout(async () => {
+      try {
+        const state = await window.electronAPI.memory.getPanelState(
+          activeSession.cwd || undefined,
+          activeSessionId
+        );
+        if (cancelled) return;
+        if (state?.lastRetrieval?.tokensInjected && state.lastRetrieval.tokensInjected > 0) {
+          setLastRetrievalTimestamp(state.lastRetrieval.timestamp);
+        } else {
+          setLastRetrievalTimestamp(undefined);
+        }
+      } catch {
+        // Ignore — badge just won't show
+      }
+    }, 500);
+
+    return () => {
+      cancelled = true;
+      if (fetchRetrievalRef.current) clearTimeout(fetchRetrievalRef.current);
+    };
+  }, [activeSessionId, activeSession?.memoryEnabled, activeSession?.cwd, lastAssistantTimestamp]);
 
   // Config set selection
   const configSets = appConfig?.configSets ?? [];
@@ -654,56 +727,6 @@ export function ChatView() {
     }
   };
 
-  // Load active MCP connectors
-  useEffect(() => {
-    if (isElectron && typeof window !== 'undefined' && window.electronAPI) {
-      const loadConnectors = async () => {
-        try {
-          const statuses = await window.electronAPI.mcp.getServerStatus();
-          const active =
-            (
-              statuses as Array<{ id: string; name: string; connected: boolean; toolCount: number }>
-            )?.filter((s) => s.connected && s.toolCount > 0) || [];
-          setActiveConnectors(active);
-        } catch (err) {
-          console.error('Failed to load MCP connectors:', err);
-        }
-      };
-      loadConnectors();
-      // Refresh every 5 seconds
-      const interval = setInterval(loadConnectors, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [isElectron]);
-
-  useEffect(() => {
-    const titleEl = titleRef.current;
-    const headerEl = headerRef.current;
-    const measureEl = connectorMeasureRef.current;
-    if (!titleEl || !headerEl || !measureEl) {
-      setShowConnectorLabel(true);
-      return;
-    }
-    const updateLabelVisibility = () => {
-      const isTruncated = titleEl.scrollWidth > titleEl.clientWidth;
-      const headerStyle = window.getComputedStyle(headerEl);
-      const paddingLeft = Number.parseFloat(headerStyle.paddingLeft) || 0;
-      const paddingRight = Number.parseFloat(headerStyle.paddingRight) || 0;
-      const contentWidth = headerEl.clientWidth - paddingLeft - paddingRight;
-      const titleWidth = titleEl.getBoundingClientRect().width;
-      const rightColumnWidth = Math.max(0, (contentWidth - titleWidth) / 2);
-      const connectorFullWidth = measureEl.getBoundingClientRect().width;
-      setShowConnectorLabel(!isTruncated && rightColumnWidth >= connectorFullWidth);
-    };
-    updateLabelVisibility();
-    const observer = new ResizeObserver(() => {
-      updateLabelVisibility();
-    });
-    observer.observe(titleEl);
-    observer.observe(headerEl);
-    return () => observer.disconnect();
-  }, [activeSession?.title, activeConnectors.length]);
-
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
 
@@ -777,6 +800,154 @@ export function ChatView() {
     }
   };
 
+  const handleExportFull = async () => {
+    if (!activeSessionId) return;
+    try {
+      const result = await window.electronAPI.chat.exportMarkdown({
+        sessionId: activeSessionId,
+      });
+      if (result.success && result.path) {
+        setGlobalNotice({
+          id: `chat-export-${Date.now()}`,
+          type: 'info',
+          message: t('chat.exportSuccess'),
+        });
+      } else if (result.error && result.error !== 'Export cancelled') {
+        setGlobalNotice({
+          id: `chat-export-error-${Date.now()}`,
+          type: 'warning',
+          message: t('chat.exportFailed', { error: result.error }),
+        });
+      }
+    } catch (error) {
+      console.error('[ChatView] Export failed:', error);
+      setGlobalNotice({
+        id: `chat-export-error-${Date.now()}`,
+        type: 'warning',
+        message: t('chat.exportFailed', { error: 'Unexpected error' }),
+      });
+    }
+  };
+
+  const handleExportSelectedWithOptions = async (options: ExportOptions) => {
+    if (!activeSessionId) return;
+    try {
+      // Build messageIds in chat chronological order, filtered by selection and exportability.
+      // Note: splitTurnMessages creates synthetic IDs with -answer/-process suffixes.
+      // We need to map those back to the original message IDs for the backend.
+      const resolveOriginalId = (id: string): string => id.replace(/-(?:answer|process)$/, '');
+
+      const allExportable = displayedMessages.filter(isExportableMessage);
+      // Resolve selected IDs to original DB IDs and deduplicate
+      const resolvedSelectedIds = new Set(Array.from(exportSelectedIds).map(resolveOriginalId));
+      const messageIds = allExportable
+        .filter((m) => resolvedSelectedIds.has(resolveOriginalId(m.id)))
+        .map((m) => resolveOriginalId(m.id));
+      // Deduplicate (a message split into -answer and -process maps to same original)
+      const uniqueMessageIds = [...new Set(messageIds)];
+
+      if (uniqueMessageIds.length === 0) {
+        setGlobalNotice({
+          id: `chat-export-empty-${Date.now()}`,
+          type: 'warning',
+          message: t('chat.nothingToExport'),
+        });
+        return;
+      }
+      const result = await window.electronAPI.chat.exportMarkdown({
+        sessionId: activeSessionId,
+        messageIds: uniqueMessageIds,
+        options,
+      });
+      if (result.success && result.path) {
+        setGlobalNotice({
+          id: `chat-export-${Date.now()}`,
+          type: 'info',
+          message: t('chat.exportSuccess'),
+        });
+        setIsExportSelectMode(false);
+        setExportSelectedIds(new Set());
+      } else if (result.error && result.error !== 'Export cancelled') {
+        setGlobalNotice({
+          id: `chat-export-error-${Date.now()}`,
+          type: 'warning',
+          message: t('chat.exportFailed', { error: result.error }),
+        });
+      }
+    } catch (error) {
+      console.error('[ChatView] Export failed:', error);
+      setGlobalNotice({
+        id: `chat-export-error-${Date.now()}`,
+        type: 'warning',
+        message: t('chat.exportFailed', { error: 'Unexpected error' }),
+      });
+    }
+  };
+
+  const handleEnterSelectMode = () => {
+    setIsExportSelectMode(true);
+    setExportSelectedIds(new Set());
+    setShowExportDropdown(false);
+  };
+
+  const handleExitSelectMode = () => {
+    setIsExportSelectMode(false);
+    setExportSelectedIds(new Set());
+    setShowExportOptions(false);
+  };
+
+  const handleToggleSelectMessage = useCallback((messageId: string) => {
+    setExportSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback(() => {
+    const allIds = new Set(displayedMessages.filter(isExportableMessage).map((m) => m.id));
+    setExportSelectedIds(allIds);
+  }, [displayedMessages, isExportableMessage]);
+
+  const handleExportSelected = () => {
+    setShowExportOptions(true);
+  };
+
+  const handleExportWithOptions = (options: ExportOptions) => {
+    setShowExportOptions(false);
+    handleExportSelectedWithOptions(options);
+  };
+
+  // Keyboard shortcuts for export selection mode
+  useEffect(() => {
+    if (!isExportSelectMode) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleExitSelectMode();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+        // Don't intercept when focus is in an editable element
+        const target = e.target as HTMLElement;
+        const tagName = target.tagName.toLowerCase();
+        if (
+          tagName === 'input' ||
+          tagName === 'textarea' ||
+          tagName === 'select' ||
+          target.isContentEditable
+        ) {
+          return;
+        }
+        e.preventDefault();
+        handleSelectAll();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isExportSelectMode, handleSelectAll]);
+
   if (!activeSession) {
     return (
       <div className="flex-1 flex items-center justify-center text-text-muted">
@@ -801,30 +972,45 @@ export function ChatView() {
         >
           {activeSession.title}
         </h2>
-        {activeConnectors.length > 0 && (
-          <>
-            <div
-              ref={connectorMeasureRef}
-              aria-hidden="true"
-              className="absolute left-0 top-0 -z-10 opacity-0 pointer-events-none"
-            >
-              <div className="flex items-center gap-2 px-2 py-1 rounded-lg border border-mcp/20">
-                <Plug className="w-3.5 h-3.5" />
-                <span className="text-xs font-medium whitespace-nowrap">
-                  {t('chat.connectorCount', { count: activeConnectors.length })}
-                </span>
-              </div>
+        {/* Right toolbar — action icons in a badge */}
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-muted/60 border border-border-subtle justify-self-end">
+          {displayedMessages.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => setShowExportDropdown((prev) => !prev)}
+                className="w-6 h-6 rounded-md flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+                title={t('chat.exportMarkdown')}
+              >
+                <Download className="w-3.5 h-3.5" />
+              </button>
+              {showExportDropdown && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setShowExportDropdown(false)}
+                  />
+                  <div className="absolute top-full right-0 mt-1 z-50 bg-background border border-border-muted rounded-xl shadow-lg py-1 min-w-[180px] animate-fade-in">
+                    <button
+                      onClick={() => {
+                        setShowExportDropdown(false);
+                        handleExportFull();
+                      }}
+                      className="w-full px-4 py-2 text-left text-[13px] text-text-primary hover:bg-surface-hover transition-colors"
+                    >
+                      {t('export.fullExport')}
+                    </button>
+                    <button
+                      onClick={handleEnterSelectMode}
+                      className="w-full px-4 py-2 text-left text-[13px] text-text-primary hover:bg-surface-hover transition-colors"
+                    >
+                      {t('export.selectExport')}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-mcp/8 border border-mcp/15 justify-self-end">
-              <Plug className="w-3.5 h-3.5 text-mcp" />
-              <span className="text-xs text-mcp font-medium">
-                {showConnectorLabel
-                  ? t('chat.connectorCount', { count: activeConnectors.length })
-                  : activeConnectors.length}
-              </span>
-            </div>
-          </>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Messages */}
@@ -841,7 +1027,16 @@ export function ChatView() {
               <p className="text-base text-text-secondary">{t('chat.startConversation')}</p>
             </div>
           ) : (
-            <GroupedMessages messages={displayedMessages} hasActiveTurn={hasActiveTurn} />
+            <GroupedMessages
+              messages={displayedMessages}
+              hasActiveTurn={hasActiveTurn}
+              memoryEnabled={activeSession?.memoryEnabled}
+              lastRetrievalTimestamp={lastRetrievalTimestamp}
+              selectable={isExportSelectMode}
+              selectedIds={exportSelectedIds}
+              onToggleSelect={handleToggleSelectMessage}
+              isExportable={isExportableMessage}
+            />
           )}
 
           {/* Processing indicator - show when we have an active turn but no streaming content yet */}
@@ -869,6 +1064,26 @@ export function ChatView() {
           <div ref={messagesEndRef} />
         </div>
       </div>
+
+      {/* Export Selection Bar */}
+      {isExportSelectMode && (
+        <ExportSelectionBar
+          selectedCount={exportSelectedIds.size}
+          totalCount={displayedMessages.filter(isExportableMessage).length}
+          onSelectAll={handleSelectAll}
+          onExport={handleExportSelected}
+          onCancel={handleExitSelectMode}
+        />
+      )}
+
+      {/* Export Options Dialog */}
+      {showExportOptions && (
+        <ExportOptionsDialog
+          messageCount={exportSelectedIds.size || displayedMessages.length}
+          onExport={handleExportWithOptions}
+          onCancel={() => setShowExportOptions(false)}
+        />
+      )}
 
       {/* Input */}
       <div className="border-t border-border-muted bg-background/92 backdrop-blur-md">

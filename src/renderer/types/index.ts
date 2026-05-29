@@ -256,6 +256,18 @@ export interface Skill {
 
 export type SkillType = 'builtin' | 'mcp' | 'custom';
 
+export interface BuiltinSkillStatus {
+  skillName: string;
+  bundledHash: string;
+  runtimeHash: string;
+  isSymlink: boolean;
+  isUserModified: boolean;
+  isUpToDate: boolean;
+  isLegacy: boolean;
+  isInstalled: boolean;
+  lastUpdated: number | null;
+}
+
 export type PluginComponentKind = 'skills' | 'commands' | 'agents' | 'hooks' | 'mcp';
 
 export interface PluginComponentCounts {
@@ -421,6 +433,33 @@ export interface MemoryInspectSessionResult {
   chunks: ChunkMemoryItem[];
 }
 
+export interface MemoryPanelState {
+  enabled: boolean;
+  skillFallbackEnabled: boolean;
+  coreEntries: Array<{ category: string; key: string; value: string; combinedKey: string }>;
+  workspaceStats: {
+    name: string;
+    sessionCount: number;
+    chunkCount: number;
+    lastIngestedAt: number | null;
+  } | null;
+  totalStats: {
+    coreCount: number;
+    sessionCount: number;
+    chunkCount: number;
+    workspaceCount: number;
+  };
+  lastRetrieval: {
+    coreMatched: number;
+    chunksRetrieved: number;
+    chunksExpanded: number;
+    tokensInjected: number;
+    sources: Array<{ workspace: string | null; summary: string; expanded: boolean }>;
+    durationMs: number;
+    timestamp: number;
+  } | null;
+}
+
 export interface MemoryOverview {
   enabled: boolean;
   storageRoot: string;
@@ -475,6 +514,16 @@ export interface MemoryReadResult extends MemorySearchResult {
   sourceTurns?: number[];
   chunkIds?: string[];
   sourceExcerpt?: string;
+}
+
+/** A referenced past conversation surfaced by workspace chat search tools. */
+export interface MemorySource {
+  /** Session or chunk title */
+  title: string;
+  /** Brief summary of what was found */
+  summary?: string;
+  /** The search query that found this */
+  query?: string;
 }
 
 // Permission types
@@ -713,6 +762,8 @@ export interface Settings {
   permissionTimeoutSeconds?: number;
   // MCP tool execution timeout in seconds. 0 = no timeout (not recommended).
   mcpToolTimeoutSeconds?: number;
+  // Native desktop notifications when the app is not focused.
+  notificationsEnabled?: boolean;
 }
 
 // Tool types
@@ -841,6 +892,8 @@ export interface AppConfig {
   permissionTimeoutSeconds?: number;
   // MCP tool execution timeout in seconds. 0 = no timeout (not recommended).
   mcpToolTimeoutSeconds?: number;
+  // Native desktop notifications when the app is not focused.
+  notificationsEnabled?: boolean;
 }
 
 export interface ProviderPreset {

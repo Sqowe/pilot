@@ -19,6 +19,19 @@ export interface MCPServerConfig {
   headers?: Record<string, string>;
   enabled: boolean;
   toolTimeoutSeconds?: number;
+  /**
+   * Default permission policy for all tools from this server.
+   * - 'allow-all': auto-approve every tool without prompting
+   * - 'allow-reads': auto-approve tools classified as read-only
+   * - 'ask-all': always prompt for every tool (default behavior)
+   * - 'deny-all': block all tools from this server
+   */
+  defaultToolPolicy?: 'allow-all' | 'allow-reads' | 'ask-all' | 'deny-all';
+  /**
+   * Per-tool permission overrides (sparse — only exceptions).
+   * Keys are the tool's short name (without mcp__ServerName__ prefix).
+   */
+  toolPermissions?: Record<string, 'allow' | 'ask' | 'deny'>;
 }
 
 export interface MCPServerStatus {

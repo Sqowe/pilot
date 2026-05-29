@@ -23,9 +23,10 @@ import {
   Tray,
   clipboard,
 } from 'electron';
-import { join, resolve, dirname, isAbsolute, basename } from 'path';
+import { join, resolve, relative, dirname, isAbsolute, basename } from 'path';
 import * as fs from 'fs';
 import { execFileSync, execFile } from 'child_process';
+import * as crypto from 'crypto';
 import { promisify } from 'util';
 import { config } from 'dotenv';
 import { initDatabase, closeDatabase, getDatabase } from './db/database';
@@ -55,6 +56,11 @@ import {
   forgetSessionPermissions,
 } from './config/permission-rules-store';
 import { mcpConfigStore } from './mcp/mcp-config-store';
+import {
+  saveWorkspaceMcpProfile,
+  loadWorkspaceMcpProfile,
+  validateWorkspaceCwd,
+} from './mcp/mcp-workspace-profile';
 import { getSandboxAdapter, shutdownSandbox } from './sandbox/sandbox-adapter';
 import { SandboxSync } from './sandbox/sandbox-sync';
 import { WSLBridge } from './sandbox/wsl-bridge';
@@ -151,6 +157,51 @@ let scheduledTaskManager: ScheduledTaskManager | null = null;
 
 /** Maps sessionId → taskId for autonomous scheduled task sessions. */
 const scheduledSessionToTaskId = new Map<string, string>();
+
+/**
+ * Skill ID for the cowork-memory skill (Python scripts for manual memory).
+ * When the in-app memory system is active, this skill is redundant and should be disabled.
+ */
+const COWORK_MEMORY_SKILL_ID = 'builtin-cowork-memory';
+
+/** Monotonic token to prevent stale async sync completions from overwriting newer state. */
+let syncCoworkMemoryGeneration = 0;
+
+/**
+ * Sync the cowork-memory skill enabled state with the in-app memory toggle.
+ * The skill should be disabled when in-app memory is ON (automated system handles it),
+ * and enabled when in-app memory is OFF (fall back to manual skill scripts).
+ *
+ * Only mutates skill state if it's currently out of sync.
+ * Uses a generation token to discard stale completions from concurrent calls.
+ * Returns silently if skillsManager is unavailable or the skill is not installed.
+ *
+ * Note: skillsManager.setSkillEnabled() is synchronous (mutates in-memory Map + stops
+ * MCP server if applicable). No disk persistence to await.
+ */
+async function syncCoworkMemorySkillState(memoryEnabled: boolean): Promise<void> {
+  if (!skillsManager) return;
+
+  const generation = ++syncCoworkMemoryGeneration;
+
+  // Ensure skills are loaded from disk before checking state.
+  const allSkills = await skillsManager.listSkills();
+
+  // If a newer sync was requested while we awaited, discard this one.
+  if (generation !== syncCoworkMemoryGeneration) return;
+
+  const skill = allSkills.find((s) => s.id === COWORK_MEMORY_SKILL_ID);
+  if (!skill) return;
+
+  // Re-check effective memory state to avoid applying stale input.
+  const effectiveMemoryEnabled = memoryService?.isEnabled() ?? memoryEnabled;
+  const skillShouldBeEnabled = !effectiveMemoryEnabled;
+
+  if (skill.enabled !== skillShouldBeEnabled) {
+    skillsManager.setSkillEnabled(COWORK_MEMORY_SKILL_ID, skillShouldBeEnabled);
+    sessionManager?.invalidateSkillsSetup();
+  }
+}
 
 function sanitizeDiagnosticBaseUrl(value: string | undefined): string | null {
   if (!value) {
@@ -894,6 +945,17 @@ app
         type: 'skills.storageChanged',
         payload: event,
       });
+      // Re-sync cowork-memory skill state when skills are reloaded/installed/changed.
+      syncCoworkMemorySkillState(memoryService!.isEnabled()).catch((err) => {
+        logWarn('[Memory] Failed to sync cowork-memory skill state after storage change:', err);
+      });
+    });
+
+    // Sync cowork-memory skill state with in-app memory toggle on startup.
+    // When in-app memory is enabled, the skill is redundant (the MemoryExtension
+    // handles ingestion/retrieval automatically). Disable it to avoid confusion.
+    syncCoworkMemorySkillState(memoryService.isEnabled()).catch((err) => {
+      logWarn('[Memory] Failed to sync cowork-memory skill state on startup:', err);
     });
     // pi-ai handles model routing natively — no proxy warmup needed
 
@@ -2129,6 +2191,88 @@ ipcMain.handle('mcp.getSessionDisabledServers', async (_event, sessionId: string
   }
 });
 
+ipcMain.handle(
+  'mcp.saveWorkspaceProfile',
+  async (_event, cwd: string, disabledServerIds: string[]) => {
+    try {
+      // Validate cwd: must be an absolute path that matches an authorized workspace.
+      // Authorized workspaces are: the global working directory OR any session's cwd.
+      // Trust chain: session cwds are validated at creation time via setWorkingDir() and
+      // getWorkspacePathUnsupportedReason(), so they are main-process-trusted by the time
+      // they appear in listSessions(). This prevents a compromised renderer from writing
+      // to arbitrary filesystem paths.
+      const authorizedWorkspaces: string[] = [];
+      const globalCwd = getWorkingDir();
+      if (globalCwd) authorizedWorkspaces.push(globalCwd);
+      if (sessionManager) {
+        for (const session of sessionManager.listSessions()) {
+          if (session.cwd) authorizedWorkspaces.push(session.cwd);
+        }
+      }
+
+      const validation = validateWorkspaceCwd(cwd, authorizedWorkspaces);
+      if (!validation.valid) {
+        return { success: false, error: validation.error };
+      }
+      // Use the canonical path for all downstream writes to prevent TOCTOU symlink attacks
+      const trustedCwd = validation.canonicalCwd;
+
+      // Validate disabledServerIds: must be an array of non-empty strings, bounded size.
+      if (!Array.isArray(disabledServerIds)) {
+        return { success: false, error: 'disabledServerIds must be an array' };
+      }
+      const MAX_ENTRIES = 100;
+      const MAX_ID_LENGTH = 256;
+      if (disabledServerIds.length > MAX_ENTRIES) {
+        return { success: false, error: `Too many entries (max ${MAX_ENTRIES})` };
+      }
+      const sanitizedIds: string[] = [];
+      for (const id of disabledServerIds) {
+        if (typeof id !== 'string') {
+          return {
+            success: false,
+            error: 'Each server ID must be a non-empty string (max 256 chars)',
+          };
+        }
+        const normalized = id.trim();
+        if (normalized.length === 0 || normalized.length > MAX_ID_LENGTH) {
+          return {
+            success: false,
+            error: 'Each server ID must be a non-empty string (max 256 chars)',
+          };
+        }
+        sanitizedIds.push(normalized);
+      }
+      // Deduplicate
+      const uniqueIds = [...new Set(sanitizedIds)];
+
+      const result = await saveWorkspaceMcpProfile(trustedCwd, { disabled: uniqueIds });
+      if (result.success) {
+        log(`[MCP] Workspace profile saved to ${trustedCwd}/.cowork/mcp-servers.json`);
+      }
+      return result;
+    } catch (error) {
+      logError('[MCP] Error saving workspace profile:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { success: false, error: errorMessage };
+    }
+  }
+);
+
+ipcMain.handle('mcp.getWorkspaceProfile', async (_event, cwd: string) => {
+  try {
+    if (!cwd || !isAbsolute(cwd)) {
+      return null;
+    }
+    // Return the raw profile as-is. The renderer handles both `disabled` and `enabled`
+    // modes using its own server list, avoiding lossy normalization here.
+    return loadWorkspaceMcpProfile(cwd);
+  } catch (error) {
+    logError('[MCP] Error loading workspace profile:', error);
+    return null;
+  }
+});
+
 // Skills API handlers
 ipcMain.handle('skills.getAll', async () => {
   try {
@@ -2274,6 +2418,200 @@ ipcMain.handle('skills.getSessionPinnedSkills', async (_event, sessionId: string
   } catch (error) {
     logError('[Skills] Error getting session pinned skills:', error);
     return [];
+  }
+});
+
+ipcMain.handle('skills.getBuiltinStatus', async () => {
+  try {
+    const appPath = app.getAppPath();
+    const unpackedPath = appPath.replace(/\.asar$/, '.asar.unpacked');
+    const possiblePaths = [
+      join(__dirname, '..', '..', '..', '.claude', 'skills'),
+      join(process.resourcesPath || '', 'skills'),
+      ...(fs.existsSync(join(unpackedPath, '.claude', 'skills'))
+        ? [join(unpackedPath, '.claude', 'skills')]
+        : []),
+      join(appPath, '.claude', 'skills'),
+    ];
+    let builtinSkillsPath = '';
+    for (const p of possiblePaths) {
+      if (fs.existsSync(p)) {
+        builtinSkillsPath = p;
+        break;
+      }
+    }
+    if (!builtinSkillsPath) return [];
+
+    const runtimeSkillsDir = join(app.getPath('userData'), 'claude', 'skills');
+    const builtinSkills = fs.readdirSync(builtinSkillsPath).filter((name) => {
+      try {
+        return fs.statSync(join(builtinSkillsPath, name)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+
+    const results: Array<{
+      skillName: string;
+      bundledHash: string;
+      runtimeHash: string;
+      isSymlink: boolean;
+      isUserModified: boolean;
+      isUpToDate: boolean;
+      isLegacy: boolean;
+      isInstalled: boolean;
+      lastUpdated: number | null;
+    }> = [];
+
+    for (const skillName of builtinSkills) {
+      const builtinSkillMd = join(builtinSkillsPath, skillName, 'SKILL.md');
+      const builtinSkillDir = join(builtinSkillsPath, skillName);
+      const runtimePath = join(runtimeSkillsDir, skillName);
+      const runtimeHashFile = join(runtimePath, '.builtin-hash');
+      const userModifiedFile = join(runtimePath, '.user-modified');
+
+      // Compute bundled hash from SKILL.md + all root-level .md files (sorted).
+      // This covers the primary skill definition and any supplementary reference
+      // docs (e.g., forms.md, editing.md) that the LLM reads.
+      let bundledHash = 'no-skill-md';
+      if (fs.existsSync(builtinSkillMd)) {
+        const hash = crypto.createHash('sha256');
+        const mdFiles = fs
+          .readdirSync(builtinSkillDir)
+          .filter((f) => f.endsWith('.md'))
+          .sort();
+        for (const mdFile of mdFiles) {
+          hash.update(mdFile); // include filename as separator
+          hash.update(fs.readFileSync(join(builtinSkillDir, mdFile)));
+        }
+        bundledHash = hash.digest('hex').slice(0, 16);
+      }
+
+      // Check runtime state
+      let runtimeHash = '';
+      let isSymlink = false;
+      let isUserModified = false;
+      let lastUpdated: number | null = null;
+      let isLegacy = false;
+      const isInstalled = fs.existsSync(runtimePath);
+
+      if (isInstalled) {
+        try {
+          const lstat = fs.lstatSync(runtimePath);
+          isSymlink = lstat.isSymbolicLink();
+          lastUpdated = Math.floor(lstat.mtimeMs);
+        } catch {
+          // ignore
+        }
+
+        try {
+          runtimeHash = fs.readFileSync(runtimeHashFile, 'utf-8').trim();
+        } catch {
+          // No hash file — pre-versioning install or symlink
+          if (!isSymlink) {
+            isLegacy = true;
+          }
+        }
+
+        isUserModified = fs.existsSync(userModifiedFile);
+      }
+
+      // Symlinks are always up-to-date (they point to the source)
+      const isUpToDate = isSymlink || runtimeHash === bundledHash;
+
+      results.push({
+        skillName,
+        bundledHash,
+        runtimeHash,
+        isSymlink,
+        isUserModified,
+        isUpToDate,
+        isLegacy,
+        isInstalled,
+        lastUpdated,
+      });
+    }
+
+    return results;
+  } catch (error) {
+    logError('[Skills] Error getting builtin status:', error);
+    return [];
+  }
+});
+
+ipcMain.handle('skills.setUserModified', async (_event, skillName: string, protect: boolean) => {
+  try {
+    // Validate skillName: reject path separators, traversal, and empty values
+    if (!skillName || /[/\\]|\.\./.test(skillName)) {
+      return { success: false, error: 'Invalid skill name' };
+    }
+
+    const runtimeSkillsDir = resolve(join(app.getPath('userData'), 'claude', 'skills'));
+    const targetDir = resolve(runtimeSkillsDir, skillName);
+
+    // Platform-safe path containment: relative path must not escape parent
+    const rel = relative(runtimeSkillsDir, targetDir);
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
+      return { success: false, error: 'Invalid skill name' };
+    }
+
+    // Ensure the runtime skill directory exists before writing marker
+    if (!fs.existsSync(targetDir)) {
+      return { success: false, error: 'Skill runtime directory does not exist' };
+    }
+
+    // Reject symlinked skill directories — writes would escape the runtime root
+    const lstat = fs.lstatSync(targetDir);
+    if (lstat.isSymbolicLink() || !lstat.isDirectory()) {
+      return { success: false, error: 'Cannot modify a symlinked or non-directory skill' };
+    }
+
+    const markerPath = join(targetDir, '.user-modified');
+
+    if (protect) {
+      fs.writeFileSync(markerPath, `Protected at ${new Date().toISOString()}\n`, 'utf-8');
+    } else {
+      if (fs.existsSync(markerPath)) {
+        fs.unlinkSync(markerPath);
+      }
+    }
+    return { success: true };
+  } catch (error) {
+    logError('[Skills] Error setting user-modified:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('skills.forceRefreshBuiltin', async (_event, skillName: string) => {
+  try {
+    // Validate skillName: reject path separators, traversal, and empty values
+    if (!skillName || /[/\\]|\.\./.test(skillName)) {
+      return { success: false, error: 'Invalid skill name' };
+    }
+
+    const runtimeSkillsDir = resolve(join(app.getPath('userData'), 'claude', 'skills'));
+    const runtimePath = resolve(runtimeSkillsDir, skillName);
+
+    // Platform-safe path containment: relative path must not escape parent
+    const rel = relative(runtimeSkillsDir, runtimePath);
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
+      return { success: false, error: 'Invalid skill name' };
+    }
+
+    // Remove the runtime copy
+    if (fs.existsSync(runtimePath)) {
+      fs.rmSync(runtimePath, { recursive: true, force: true });
+    }
+
+    // Invalidate skills setup so next query re-copies from bundled source
+    if (sessionManager) {
+      sessionManager.invalidateSkillsSetup();
+    }
+
+    return { success: true };
+  } catch (error) {
+    logError('[Skills] Error force-refreshing builtin skill:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 });
 
@@ -2764,6 +3102,37 @@ ipcMain.handle('logs.isEnabled', () => {
 });
 
 // ============================================================================
+// Chat Export IPC
+// ============================================================================
+
+ipcMain.handle(
+  'chat.exportMarkdown',
+  async (
+    _event,
+    request: {
+      sessionId: string;
+      messageIds?: string[];
+      options?: Partial<import('./chat/export-markdown').ExportOptions>;
+    }
+  ) => {
+    const { exportChatToMarkdown } = await import('./chat/export-markdown');
+
+    const getSession = (sessionId: string) => {
+      if (!sessionManager) return undefined;
+      const sessions = sessionManager.listSessions();
+      return sessions.find((s) => s.id === sessionId);
+    };
+
+    const getMessages = (sessionId: string) => {
+      if (!sessionManager) return [];
+      return sessionManager.getMessages(sessionId);
+    };
+
+    return exportChatToMarkdown(request, getSession, getMessages);
+  }
+);
+
+// ============================================================================
 // 远程控制 IPC 处理
 // ============================================================================
 
@@ -3013,6 +3382,51 @@ ipcMain.handle('memory.getOverview', (_event, cwd?: string) => {
   return memoryService.getOverview(cwd);
 });
 
+ipcMain.handle('memory.getPanelState', (_event, cwd?: string, sessionId?: string) => {
+  if (!memoryService) {
+    throw new Error('Memory service not initialized');
+  }
+  const overview = memoryService.getOverview(cwd);
+  // When cwd is available, show workspace-filtered entries (what gets injected).
+  // When cwd is missing, show all entries so user can still manage them.
+  const coreEntries = cwd
+    ? memoryService.getCoreEntriesForWorkspace(cwd)
+    : memoryService.getCoreEntries();
+
+  // Determine cowork-memory skill state
+  let skillFallbackEnabled = false;
+  if (skillsManager) {
+    const skill = skillsManager.getAllSkills().find((s) => s.id === COWORK_MEMORY_SKILL_ID);
+    skillFallbackEnabled = skill?.enabled ?? false;
+  }
+
+  return {
+    enabled: overview.enabled,
+    skillFallbackEnabled,
+    coreEntries: coreEntries.map((e) => ({
+      category: e.category || 'other',
+      key: e.key,
+      value: e.value,
+      combinedKey: e.combinedKey || `${e.category || 'other'}.${e.key}`,
+    })),
+    workspaceStats: overview.currentWorkspace
+      ? {
+          name: cwd ? cwd.split('/').pop() || cwd : '',
+          sessionCount: overview.currentWorkspace.experienceSessionCount,
+          chunkCount: overview.currentWorkspace.experienceChunkCount,
+          lastIngestedAt: overview.latestIngestionAt,
+        }
+      : null,
+    totalStats: {
+      coreCount: overview.coreCount,
+      sessionCount: overview.experienceSessionCount,
+      chunkCount: overview.experienceChunkCount,
+      workspaceCount: overview.sourceWorkspaceCount,
+    },
+    lastRetrieval: memoryService.getLastRetrievalMetrics(sessionId || undefined),
+  };
+});
+
 ipcMain.handle(
   'memory.search',
   (
@@ -3060,6 +3474,47 @@ ipcMain.handle('memory.clearCoreMemory', () => {
   return memoryService.clearCoreMemory();
 });
 
+ipcMain.handle('memory.deleteCoreEntry', (_event, combinedKey: string) => {
+  if (!memoryService) {
+    throw new Error('Memory service not initialized');
+  }
+  if (typeof combinedKey !== 'string' || !combinedKey.trim()) {
+    return { success: false };
+  }
+  if (combinedKey.length > 200 || /[/\\<>]/.test(combinedKey)) {
+    return { success: false };
+  }
+  try {
+    return memoryService.deleteCoreEntry(combinedKey.trim());
+  } catch {
+    return { success: false };
+  }
+});
+ipcMain.handle('memory.updateCoreEntry', (_event, combinedKey: string, newValue: string) => {
+  if (!memoryService) {
+    throw new Error('Memory service not initialized');
+  }
+  if (typeof combinedKey !== 'string' || !combinedKey.trim()) {
+    return { success: false };
+  }
+  if (typeof newValue !== 'string' || !newValue.trim()) {
+    return { success: false };
+  }
+  // Limit value length to prevent abuse
+  if (newValue.length > 1000) {
+    return { success: false };
+  }
+  // Validate combinedKey format (category.key or plain key)
+  if (combinedKey.length > 200 || /[/\\<>]/.test(combinedKey)) {
+    return { success: false };
+  }
+  try {
+    return memoryService.updateCoreEntry(combinedKey.trim(), newValue.trim());
+  } catch {
+    return { success: false };
+  }
+});
+
 ipcMain.handle('memory.rebuildAll', async () => {
   if (!memoryService) {
     throw new Error('Memory service not initialized');
@@ -3094,6 +3549,13 @@ ipcMain.handle('memory.setEnabled', (_event, enabled: boolean) => {
   }
   const result = memoryService.setEnabled(enabled);
   sessionManager?.clearAllCachedAgentSessions();
+
+  // Toggle cowork-memory skill based on the effective memory state (not the input),
+  // so we stay in sync even if setEnabled applies a different final state.
+  syncCoworkMemorySkillState(result.enabled).catch((err) => {
+    logWarn('[Memory] Failed to sync cowork-memory skill state:', err);
+  });
+
   sendToRenderer({
     type: 'config.status',
     payload: {
@@ -3405,6 +3867,21 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
           if (typeof val === 'number' && Number.isFinite(val) && val >= 0) {
             const normalized = val <= 0 ? 0 : Math.max(10, Math.min(600, Math.floor(val)));
             configStore.update({ mcpToolTimeoutSeconds: normalized });
+            sendToRenderer({
+              type: 'config.status',
+              payload: {
+                isConfigured: configStore.isConfigured(),
+                config: configStore.getAll(),
+              },
+            });
+          }
+        }
+
+        // Notifications toggle
+        if (hasOwnPerm('notificationsEnabled')) {
+          const val = (event.payload as Record<string, unknown>).notificationsEnabled;
+          if (typeof val === 'boolean') {
+            configStore.update({ notificationsEnabled: val });
             sendToRenderer({
               type: 'config.status',
               payload: {

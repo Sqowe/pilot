@@ -14,6 +14,8 @@ interface ProcessAccordionProps {
   isStreaming?: boolean;
   /** Render function for each message (reuses MessageCard) */
   renderMessage: (message: Message, isStreaming: boolean) => ReactNode;
+  /** Force the accordion to stay expanded (e.g., during selection mode) */
+  forceExpanded?: boolean;
 }
 
 const ANIMATION_DURATION_MS = 250;
@@ -22,12 +24,13 @@ export const ProcessAccordion = memo(function ProcessAccordion({
   messages,
   isStreaming,
   renderMessage,
+  forceExpanded,
 }: ProcessAccordionProps) {
   const { t } = useTranslation();
   const contentRef = useRef<HTMLDivElement>(null);
-  const [expanded, setExpanded] = useState(Boolean(isStreaming));
+  const [expanded, setExpanded] = useState(Boolean(isStreaming) || Boolean(forceExpanded));
   // Controls whether content is mounted in the DOM
-  const [mounted, setMounted] = useState(Boolean(isStreaming));
+  const [mounted, setMounted] = useState(Boolean(isStreaming) || Boolean(forceExpanded));
   // Tracks the animated max-height value (null = no inline style)
   const [contentHeight, setContentHeight] = useState<number | null>(null);
   // Track the previous isStreaming value to detect the streaming→complete transition
@@ -35,11 +38,21 @@ export const ProcessAccordion = memo(function ProcessAccordion({
 
   // Auto-collapse when streaming finishes
   useEffect(() => {
-    if (prevIsStreaming.current && !isStreaming) {
+    if (prevIsStreaming.current && !isStreaming && !forceExpanded) {
       setExpanded(false);
     }
     prevIsStreaming.current = isStreaming;
-  }, [isStreaming]);
+  }, [isStreaming, forceExpanded]);
+
+  // Force expand/collapse when forceExpanded prop changes (e.g., selection mode)
+  useEffect(() => {
+    if (forceExpanded) {
+      setExpanded(true);
+      setMounted(true);
+    } else if (!isStreaming) {
+      setExpanded(false);
+    }
+  }, [forceExpanded, isStreaming]);
 
   // Mount/unmount lifecycle tied to expanded state
   useEffect(() => {

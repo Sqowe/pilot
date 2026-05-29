@@ -6,6 +6,7 @@ import type {
   CreateSetPayload,
   ProviderPresets,
   Skill,
+  BuiltinSkillStatus,
   ApiTestInput,
   ApiTestResult,
   PluginCatalogItemV2,
@@ -20,6 +21,7 @@ import type {
   ProviderModelInfo,
   LocalOllamaDiscoveryResult,
   MemoryOverview,
+  MemoryPanelState,
   MemorySearchResult,
   MemoryReadResult,
   MemorySearchScope,
@@ -217,6 +219,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     writeText: (text: string): Promise<void> => ipcRenderer.invoke('clipboard.writeText', text),
   },
 
+  // Chat export
+  chat: {
+    exportMarkdown: (request: {
+      sessionId: string;
+      messageIds?: string[];
+      options?: Partial<{
+        includeToolCalls: boolean;
+        includeThinking: boolean;
+        includeTimestamps: boolean;
+        includeTokenUsage: boolean;
+        imageHandling: 'skip' | 'placeholder' | 'inline';
+      }>;
+    }): Promise<{ success: boolean; path?: string; error?: string }> =>
+      ipcRenderer.invoke('chat.exportMarkdown', request),
+  },
+
   // MCP methods
   mcp: {
     getServers: (): Promise<McpServerConfig[]> => ipcRenderer.invoke('mcp.getServers'),
@@ -246,6 +264,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('mcp.toggleSessionServer', sessionId, serverId, disabled),
     getSessionDisabledServers: (sessionId: string): Promise<string[]> =>
       ipcRenderer.invoke('mcp.getSessionDisabledServers', sessionId),
+    saveWorkspaceProfile: (
+      cwd: string,
+      disabledServerIds: string[]
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('mcp.saveWorkspaceProfile', cwd, disabledServerIds),
+    getWorkspaceProfile: (
+      cwd: string
+    ): Promise<{ disabled?: string[]; enabled?: string[] } | null> =>
+      ipcRenderer.invoke('mcp.getWorkspaceProfile', cwd),
   },
 
   // Skills methods
@@ -280,6 +307,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('skills.toggleSessionPin', sessionId, skillId, pinned),
     getSessionPinnedSkills: (sessionId: string): Promise<string[]> =>
       ipcRenderer.invoke('skills.getSessionPinnedSkills', sessionId),
+    getBuiltinStatus: (): Promise<BuiltinSkillStatus[]> =>
+      ipcRenderer.invoke('skills.getBuiltinStatus'),
+    setUserModified: (
+      skillName: string,
+      protect: boolean
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.setUserModified', skillName, protect),
+    forceRefreshBuiltin: (skillName: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.forceRefreshBuiltin', skillName),
   },
 
   // Environment methods
@@ -467,6 +503,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   memory: {
     getOverview: (cwd?: string): Promise<MemoryOverview> =>
       ipcRenderer.invoke('memory.getOverview', cwd),
+    getPanelState: (cwd?: string, sessionId?: string): Promise<MemoryPanelState> =>
+      ipcRenderer.invoke('memory.getPanelState', cwd, sessionId),
     search: (payload: {
       query: string;
       cwd?: string;
@@ -481,6 +519,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('memory.clearWorkspace', cwd),
     clearCoreMemory: (): Promise<{ success: boolean }> =>
       ipcRenderer.invoke('memory.clearCoreMemory'),
+    deleteCoreEntry: (combinedKey: string): Promise<{ success: boolean }> =>
+      ipcRenderer.invoke('memory.deleteCoreEntry', combinedKey),
+    updateCoreEntry: (combinedKey: string, newValue: string): Promise<{ success: boolean }> =>
+      ipcRenderer.invoke('memory.updateCoreEntry', combinedKey, newValue),
     rebuildAll: (): Promise<{ success: boolean; workspaceCount: number; sessionCount: number }> =>
       ipcRenderer.invoke('memory.rebuildAll'),
     listFiles: (): Promise<MemoryDebugFileInfo[]> => ipcRenderer.invoke('memory.listFiles'),
@@ -547,6 +589,19 @@ declare global {
       clipboard: {
         writeText: (text: string) => Promise<void>;
       };
+      chat: {
+        exportMarkdown: (request: {
+          sessionId: string;
+          messageIds?: string[];
+          options?: Partial<{
+            includeToolCalls: boolean;
+            includeThinking: boolean;
+            includeTimestamps: boolean;
+            includeTokenUsage: boolean;
+            imageHandling: 'skip' | 'placeholder' | 'inline';
+          }>;
+        }) => Promise<{ success: boolean; path?: string; error?: string }>;
+      };
       mcp: {
         getServers: () => Promise<McpServerConfig[]>;
         getServer: (serverId: string) => Promise<McpServerConfig | undefined>;
@@ -568,6 +623,13 @@ declare global {
           disabled: boolean
         ) => Promise<{ success: boolean; disabledServers?: string[]; error?: string }>;
         getSessionDisabledServers: (sessionId: string) => Promise<string[]>;
+        saveWorkspaceProfile: (
+          cwd: string,
+          disabledServerIds: string[]
+        ) => Promise<{ success: boolean; error?: string }>;
+        getWorkspaceProfile: (
+          cwd: string
+        ) => Promise<{ disabled?: string[]; enabled?: string[] } | null>;
       };
       skills: {
         getAll: () => Promise<Skill[]>;
@@ -593,6 +655,12 @@ declare global {
           pinned: boolean
         ) => Promise<{ success: boolean; pinnedSkills?: string[]; error?: string }>;
         getSessionPinnedSkills: (sessionId: string) => Promise<string[]>;
+        getBuiltinStatus: () => Promise<BuiltinSkillStatus[]>;
+        setUserModified: (
+          skillName: string,
+          protect: boolean
+        ) => Promise<{ success: boolean; error?: string }>;
+        forceRefreshBuiltin: (skillName: string) => Promise<{ success: boolean; error?: string }>;
       };
       env: {
         getEffectivePath: () => Promise<string>;
@@ -738,6 +806,7 @@ declare global {
       };
       memory: {
         getOverview: (cwd?: string) => Promise<MemoryOverview>;
+        getPanelState: (cwd?: string, sessionId?: string) => Promise<MemoryPanelState>;
         search: (payload: {
           query: string;
           cwd?: string;
@@ -749,6 +818,8 @@ declare global {
         rebuildWorkspace: (cwd: string) => Promise<{ success: boolean; workspaceKey: string }>;
         clearWorkspace: (cwd: string) => Promise<{ success: boolean; workspaceKey: string }>;
         clearCoreMemory: () => Promise<{ success: boolean }>;
+        deleteCoreEntry: (combinedKey: string) => Promise<{ success: boolean }>;
+        updateCoreEntry: (combinedKey: string, newValue: string) => Promise<{ success: boolean }>;
         rebuildAll: () => Promise<{
           success: boolean;
           workspaceCount: number;

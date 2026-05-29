@@ -58,6 +58,7 @@ import {
 } from './session-title-utils';
 import { generateTitleWithClaudeSdk } from '../claude/claude-sdk-one-shot';
 import { buildScheduledTaskTitle } from '../../shared/schedule/task-title';
+import { notifyPermissionRequest, notifyAgentComplete } from '../utils/native-notifications';
 import {
   MAX_PINNED_SKILLS_PER_SESSION,
   isValidSkillId,
@@ -1222,12 +1223,21 @@ export class SessionManager {
 
   // Update session status
   private updateSessionStatus(sessionId: string, status: Session['status']): void {
+    // Capture previous status before updating to detect transitions
+    const previousSession = this.loadSession(sessionId);
+    const previousStatus = previousSession?.status;
+
     this.db.sessions.update(sessionId, { status, updated_at: Date.now() });
 
     this.sendToRenderer({
       type: 'session.status',
       payload: { sessionId, status },
     });
+
+    // Fire native OS notification only on running → idle transition
+    if (status === 'idle' && previousStatus === 'running') {
+      notifyAgentComplete(previousSession?.title);
+    }
   }
 
   private updateSessionTitle(sessionId: string, title: string): boolean {
@@ -1416,6 +1426,9 @@ export class SessionManager {
         type: 'permission.request',
         payload: { toolUseId, toolName, input, sessionId },
       });
+
+      // Fire native OS notification if the app is not focused
+      notifyPermissionRequest(toolName);
     });
   }
 

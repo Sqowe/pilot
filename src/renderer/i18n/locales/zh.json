@@ -91,7 +91,10 @@
     "language": "语言",
     "systemPromptFile": "工作区指令文件",
     "systemPromptFileDesc": "当会话工作目录中存在该文件时，其内容会作为项目级指令追加到系统提示末尾。文件不存在时回退到默认提示。",
-    "systemPromptFileNone": "无（使用默认）"
+    "systemPromptFileNone": "无（使用默认）",
+    "notifications": "桌面通知",
+    "notificationsEnabled": "启用通知",
+    "notificationsHint": "当应用不在前台时显示系统原生通知（权限请求、任务完成）。"
   },
   "bashCommands": {
     "modeAuthoritative": "专属策略模式：以下列表就是 Bash 命令的完整策略，未被明确信任的命令都会弹出审批提示。",
@@ -405,6 +408,26 @@
         "ollama_model_loading": "模型 {{model}} 可能仍在加载中，稍后再试深度验证。",
         "model_cold_start": "模型可能仍在加载到 GPU/CPU 内存中。大型模型（7B+）首次使用可能需要 30–120 秒，请稍后重试。"
       }
+    },
+    "providerHints": {
+      "openrouter": {
+        "keyHint": "从 openrouter.ai/keys 获取"
+      },
+      "anthropic": {
+        "keyHint": "从 console.anthropic.com 获取"
+      },
+      "openai": {
+        "keyHint": "从 platform.openai.com 获取"
+      },
+      "gemini": {
+        "keyHint": "从 aistudio.google.com 获取"
+      },
+      "ollama": {
+        "keyHint": "多数 Ollama 部署可留空；如果你的代理层要求鉴权，也可以填写 Key"
+      },
+      "custom": {
+        "keyHint": "输入你的 API Key"
+      }
     }
   },
   "window": {
@@ -682,7 +705,10 @@
     "nSelected": "已选 {{count}} 个",
     "batchDeleteConfirm": "删除 {{count}} 个对话？此操作无法撤销。",
     "cancel": "取消",
-    "confirmDelete": "删除"
+    "confirmDelete": "删除",
+    "groupByWorkspace": "按工作区分组",
+    "groupByDate": "按时间分组",
+    "ungrouped": "无工作区"
   },
   "searchOverlay": {
     "placeholder": "搜索对话...",
@@ -706,7 +732,27 @@
     "noModel": "无模型",
     "configSetRestored": "已切换到「{{name}}」配置方案",
     "connectorCount_one": "{{count}} 个连接器",
-    "connectorCount_other": "{{count}} 个连接器"
+    "connectorCount_other": "{{count}} 个连接器",
+    "exportMarkdown": "导出为 Markdown",
+    "exportSuccess": "对话导出成功",
+    "exportFailed": "导出失败：{{error}}",
+    "nothingToExport": "没有可导出的内容"
+  },
+  "export": {
+    "fullExport": "导出完整对话",
+    "selectExport": "导出选中内容…",
+    "dialogTitle": "导出选项",
+    "messageCount": "{{count}} 条消息待导出",
+    "selectedCount": "已选 {{count}} 条",
+    "selectAll": "全选",
+    "exportButton": "导出",
+    "includeToolCalls": "包含工具调用（折叠）",
+    "includeThinking": "包含思考/推理过程",
+    "includeTimestamps": "包含时间戳",
+    "includeTokenUsage": "包含 Token 用量",
+    "imageHandling": "图片处理",
+    "image_placeholder": "占位符",
+    "image_skip": "跳过"
   },
   "context": {
     "progress": "进度",
@@ -751,6 +797,8 @@
     "request": "请求",
     "queued": "排队中",
     "cancelled": "已取消",
+    "memoryContributed": "记忆参与了此回复",
+    "memorySearched": "引用了此工作区的 {{count}} 个历史对话",
     "emptyMessage": "空消息",
     "emptyText": "（空文本）",
     "copyMessage": "复制消息",
@@ -763,7 +811,9 @@
     "executionTime": "执行时间: {{time}}",
     "process": "过程",
     "processThinking": "{{count}} 次思考",
-    "processTools": "{{count}} 个工具"
+    "processTools": "{{count}} 个工具",
+    "showMore": "展开更多",
+    "showLess": "收起"
   },
   "linkMenu": {
     "title": "链接选项",
