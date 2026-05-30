@@ -25,3 +25,8 @@ fi
 
 # Run lint-staged on staged files
 npx lint-staged
+
+# Secret scan
+if command -v gitleaks >/dev/null 2>&1; then
+    gitleaks git --pre-commit --staged --no-banner || exit 1
+fi
