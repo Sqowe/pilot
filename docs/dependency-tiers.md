@@ -1,7 +1,7 @@
 # NPM Dependency Tiers
 
 > Scope: runtime `dependencies` from `package.json` (v3.3.0). DevDependencies excluded — they affect the build pipeline, not end-user features.
-> Last updated: 2026-05-23 (pi-coding-agent + pi-ai uplift 0.74→0.75.5).
+> Last updated: 2026-05-30 (pi-coding-agent + pi-ai uplift 0.76→0.78.0).
 >
 > Purpose: identify which upstream libraries most directly drive end-user features so uplifts can be prioritized and new capabilities adopted quickly. The machine-readable companion lives at [`docs/dependency-tiers.json`](./dependency-tiers.json).
 
@@ -23,8 +23,8 @@ These six libraries are **the AI pipeline**. A new Claude / GPT / Gemini model, 
 
 | Package                           | Installed | Role                                                                                                                                                           |
 | --------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@earendil-works/pi-coding-agent` | 0.75.5    | Agent execution engine. Drives `src/main/claude/agent-runner.ts` (~1500 lines) — session lifecycle, tool dispatch, streaming. Heart of the app.                |
-| `@earendil-works/pi-ai`           | 0.75.5    | Unified LLM abstraction — provider routing, model registry, auth. Resolves which concrete SDK/endpoint to call. Must be version-locked with `pi-coding-agent`. |
+| `@earendil-works/pi-coding-agent` | 0.78.0    | Agent execution engine. Drives `src/main/claude/agent-runner.ts` (~1500 lines) — session lifecycle, tool dispatch, streaming. Heart of the app.                |
+| `@earendil-works/pi-ai`           | 0.78.0    | Unified LLM abstraction — provider routing, model registry, auth. Resolves which concrete SDK/endpoint to call. Must be version-locked with `pi-coding-agent`. |
 | `@modelcontextprotocol/sdk`       | 1.27.1    | MCP client + server (stdio, SSE, Streamable HTTP). Powers the entire MCP connector ecosystem in `src/main/mcp/mcp-manager.ts`.                                 |
 | `@anthropic-ai/sdk`               | 0.92.0    | Official Anthropic SDK. Used for Claude diagnostics and probes. Tracks new Claude model families.                                                              |
 | `openai`                          | 6.32.0    | Official OpenAI SDK. Used across all OpenAI-compatible endpoints (OpenAI, OpenRouter, Ollama, DashScope, custom proxies).                                      |
@@ -32,7 +32,7 @@ These six libraries are **the AI pipeline**. A new Claude / GPT / Gemini model, 
 
 **Why these are Tier 1:** if OpenAI ships a new Responses API feature, Anthropic ships a new `claude-opus-5`, or MCP publishes a new transport — the only way to expose that in the app is to bump the relevant package here. A missed release = a missed feature.
 
-**Special note on `@earendil-works/pi-*`:** both packages live in a single monorepo (formerly `github.com/badlogic/pi-mono`, now under the `earendil-works` org). They are pre-1.0, ship frequently, and must be uplifted together. The old `@mariozechner/pi-*` scope is deprecated as of 0.73.1. Current: 0.75.5 (uplifted 2026-05-23).
+**Special note on `@earendil-works/pi-*`:** both packages live in a single monorepo (formerly `github.com/badlogic/pi-mono`, now under the `earendil-works` org). They are pre-1.0, ship frequently, and must be uplifted together. The old `@mariozechner/pi-*` scope is deprecated as of 0.73.1. Current: 0.78.0 (uplifted 2026-05-30).
 
 ---
 
@@ -84,6 +84,7 @@ Commodity libraries with stable APIs. Uplift when convenient, or for security pa
 | `i18next-browser-languagedetector` | 8.2.1     | Auto-detects user language.                                    |
 | `lucide-react`                     | 0.468.0   | Icon set.                                                      |
 | `glob`                             | 10.5.0    | Filesystem globbing.                                           |
+| `typebox`                          | 1.1.36    | TypeBox schema lib for MCP tool JSON Schema wrapping.          |
 | `uuid`                             | 11.1.0    | ID generation.                                                 |
 
 **Exception:** `rehype-sanitize` is marked `monitor_releases: true` in the JSON despite being Tier 3 because it's an XSS boundary on untrusted LLM output. CVEs here matter.
