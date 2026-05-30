@@ -727,6 +727,7 @@
     "deselectAll": "Deselect All",
     "nSelected": "{{count}} selected",
     "batchDeleteConfirm": "Delete {{count}} conversations? This cannot be undone.",
+    "singleDeleteConfirm": "Delete \"{{title}}\"? This action is permanent and cannot be undone.",
     "cancel": "Cancel",
     "confirmDelete": "Delete",
     "groupByWorkspace": "Group by workspace",
