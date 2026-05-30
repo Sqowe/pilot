@@ -9,7 +9,7 @@ describe('WelcomeView submit guards', () => {
     const source = fs.readFileSync(welcomeViewPath, 'utf8');
 
     expect(source).toContain(
-      'const canSubmit = prompt.trim().length > 0 || pastedImages.length > 0 || attachedFiles.length > 0;'
+      '(prompt.trim().length > 0 || pastedImages.length > 0 || attachedFiles.length > 0)'
     );
     expect(source).toContain('disabled={!canSubmit || isSubmitting}');
   });

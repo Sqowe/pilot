@@ -5,13 +5,26 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Mock electron
 vi.mock('electron', () => ({
+  default: {
+    app: {
+      isPackaged: false,
+      getPath: () => '/tmp/open-cowork-test',
+      getVersion: () => '0.0.0',
+    },
+    ipcMain: { on: vi.fn(), handle: vi.fn() },
+    shell: { openExternal: vi.fn() },
+    BrowserWindow: { getAllWindows: () => [] },
+  },
   app: {
     isPackaged: false,
     getPath: () => '/tmp/open-cowork-test',
+    getVersion: () => '0.0.0',
   },
   BrowserWindow: {
     getAllWindows: () => [],
   },
+  ipcMain: { on: vi.fn(), handle: vi.fn() },
+  shell: { openExternal: vi.fn() },
 }));
 
 // Mock logger to suppress output during tests

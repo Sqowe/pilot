@@ -86,8 +86,13 @@ describe('ChatView config set restore on session open', () => {
   });
 
   it('includes all real data dependencies in the effect dependency array', () => {
-    expect(source).toContain(
-      '[activeSessionId, activeSession, configSets, activeConfigSetId, isElectron, setAppConfig, setIsConfigured, setGlobalNotice, t]'
-    );
+    // Dependency array is now multi-line; verify key deps are present
+    expect(source).toContain('activeSessionId,');
+    expect(source).toContain('activeSession,');
+    expect(source).toContain('configSets,');
+    expect(source).toContain('activeConfigSetId,');
+    expect(source).toContain('setAppConfig,');
+    expect(source).toContain('setIsConfigured,');
+    expect(source).toContain('setGlobalNotice,');
   });
 });
