@@ -1,9 +1,49 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const runPiAiOneShotMock = vi.hoisted(() => vi.fn());
+const completeSimpleMock = vi.hoisted(() => vi.fn());
 
-vi.mock('../../main/claude/claude-sdk-one-shot', () => ({
-  runPiAiOneShot: runPiAiOneShotMock,
+vi.mock('@earendil-works/pi-ai', () => ({
+  completeSimple: completeSimpleMock,
+}));
+
+// Mock the config store to avoid electron-store import
+vi.mock('../../main/config/config-store', () => ({
+  configStore: {
+    getAll: () => ({}),
+    get: () => undefined,
+  },
+}));
+
+// Mock pi-model-resolution
+vi.mock('../../main/claude/pi-model-resolution', () => ({
+  resolvePiRegistryModel: () => ({
+    id: 'test-model',
+    provider: 'openai',
+    api: 'openai-completions',
+    baseUrl: 'https://example.test/v1',
+  }),
+  resolvePiRouteProtocol: () => 'openai',
+  resolvePiModelString: () => 'openai/test-model',
+  buildSyntheticPiModel: () => ({
+    id: 'test-model',
+    provider: 'openai',
+    api: 'openai-completions',
+    baseUrl: 'https://example.test/v1',
+  }),
+  applyPiModelRuntimeOverrides: (model: unknown) => model,
+  resolveSyntheticPiModelFallback: () => ({
+    provider: 'openai',
+    modelId: 'test-model',
+    baseUrl: 'https://example.test/v1',
+  }),
+  inferPiApi: () => 'openai-completions',
+}));
+
+// Mock logger
+vi.mock('../../main/utils/logger', () => ({
+  log: vi.fn(),
+  logWarn: vi.fn(),
+  logError: vi.fn(),
 }));
 
 import type { AppConfig } from '../../main/config/config-store';
@@ -68,7 +108,7 @@ function makeConfig(timeoutMs: number): AppConfig {
 describe('MemoryLLMClient', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    runPiAiOneShotMock.mockReset();
+    completeSimpleMock.mockReset();
   });
 
   afterEach(() => {
@@ -77,7 +117,7 @@ describe('MemoryLLMClient', () => {
 
   it('aborts one-shot completions with the configured memory LLM timeout', async () => {
     let signal: AbortSignal | undefined;
-    runPiAiOneShotMock.mockImplementation((_prompt, _systemPrompt, _config, options) => {
+    completeSimpleMock.mockImplementation((_model: unknown, _msgs: unknown, options: { signal?: AbortSignal }) => {
       signal = options?.signal;
       return new Promise(() => undefined);
     });

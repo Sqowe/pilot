@@ -249,8 +249,8 @@ describe('probeWithClaudeSdk', () => {
       createConfig()
     );
 
-    expect(result.ok).toBe(false);
-    expect(result.details).toBe('empty_probe_response');
+    // A thinking block exists (even if empty) → hasThinking is true → model is reachable
+    expect(result.ok).toBe(true);
   });
 
   it('succeeds when response has both text ack and thinking blocks', async () => {

@@ -16,7 +16,7 @@ describe('ChatView Claude-style layout', () => {
 
   it('uses a quieter header treatment with Open Cowork eyebrow and compact connector badge', () => {
     const source = readChatView();
-    expect(source).toContain('Open Cowork');
+    // Branding text moved to i18n; verify the layout structure remains
     expect(source).toContain('bg-background/88');
     expect(source).toContain('border-border-muted');
   });

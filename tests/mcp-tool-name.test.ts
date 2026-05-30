@@ -1,11 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('electron', () => ({
+  default: {
+    app: {
+      isPackaged: false,
+      getPath: () => '/tmp',
+      getVersion: () => '0.0.0',
+    },
+    ipcMain: { on: vi.fn(), handle: vi.fn() },
+    shell: { openExternal: vi.fn() },
+  },
   app: {
     isPackaged: false,
     getPath: () => '/tmp',
     getVersion: () => '0.0.0',
   },
+  ipcMain: { on: vi.fn(), handle: vi.fn() },
+  shell: { openExternal: vi.fn() },
 }));
 
 import { MCPManager } from '../src/main/mcp/mcp-manager';

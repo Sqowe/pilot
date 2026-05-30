@@ -345,10 +345,9 @@ describe('memory smoke harness', () => {
       '继续 gateway token rotation'
     );
 
-    expect(sameWorkspacePrompt).toContain('gateway token rotation');
-    expect(sameWorkspacePrompt).toContain('<experience_memory');
-    expect(otherWorkspacePrompt).toContain('workspace A');
-    expect(otherWorkspacePrompt).toContain('source=/repo/workspace-a');
+    expect(sameWorkspacePrompt).toContain('<core_memory>');
+    // Experience memory is now retrieved on-demand via tools, not pre-injected
+    expect(sameWorkspacePrompt).toContain('preferences.response_language');
     expect(otherWorkspacePrompt).toContain('<core_memory>');
   });
 
