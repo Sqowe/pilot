@@ -1,6 +1,6 @@
 {
   "_description": "Machine-readable dependency tiering for open-cowork. Tier 1 = LLM/model/agent core, Tier 2 = platform & integrations, Tier 3 = supporting utilities. Use this as input for future uplift research.",
-  "generated_at": "2026-05-01 (updated: 2026-05-30 pi-* 0.76→0.78.0)",
+  "generated_at": "2026-05-30 (npm audit fix — @google/genai 1.44→1.52, @larksuiteoapi/node-sdk 1.62→1.66, ws 8.19→8.21, uuid 11.1.0→11.1.1, typebox 1.1.36→1.1.38)",
   "generated_from": "package.json v3.3.0-sqowe.7",
   "scope": "runtime dependencies only (devDependencies excluded per user request)",
   "tiers": {
@@ -112,8 +112,8 @@
     {
       "name": "@google/genai",
       "tier": "tier_1_core",
-      "installed_version": "1.44.0",
-      "declared_range": "^1.44.0",
+      "installed_version": "1.52.0",
+      "declared_range": "^1.52.0",
       "role": "Official Google Gemini SDK. Used in auth diagnostics (models.get probe) for Gemini and custom Gemini-protocol endpoints.",
       "primary_callsites": ["src/main/config/api-diagnostics.ts"],
       "npm_url": "https://www.npmjs.com/package/@google/genai",
@@ -176,8 +176,8 @@
     {
       "name": "@larksuiteoapi/node-sdk",
       "tier": "tier_2_platform",
-      "installed_version": "1.62.0",
-      "declared_range": "^1.59.0",
+      "installed_version": "1.66.0",
+      "declared_range": "^1.66.0",
       "role": "Official Feishu/Lark SDK. Powers the Feishu remote channel (WebSocket long-connection + REST fallback, interactive cards, image upload).",
       "primary_callsites": [
         "src/main/remote/channels/feishu/feishu-channel.ts",
@@ -235,8 +235,8 @@
     {
       "name": "ws",
       "tier": "tier_2_platform",
-      "installed_version": "8.19.0",
-      "declared_range": "^8.19.0",
+      "installed_version": "8.21.0",
+      "declared_range": "^8.21.0",
       "role": "WebSocket server for the Remote Gateway \u2014 how external web clients connect to the agent runtime.",
       "primary_callsites": ["src/main/remote/gateway.ts"],
       "npm_url": "https://www.npmjs.com/package/ws",
@@ -501,8 +501,8 @@
     {
       "name": "typebox",
       "tier": "tier_3_supporting",
-      "installed_version": "1.1.36",
-      "declared_range": "^1.1.24",
+      "installed_version": "1.1.38",
+      "declared_range": "^1.1.38",
       "role": "TypeBox schema library (successor to @sinclair/typebox). Used in agent-runner.ts to wrap MCP tool JSON Schemas as TypeBox TSchema for pi-coding-agent ToolDefinition.",
       "primary_callsites": ["src/main/claude/agent-runner.ts"],
       "npm_url": "https://www.npmjs.com/package/typebox",
@@ -515,8 +515,8 @@
     {
       "name": "uuid",
       "tier": "tier_3_supporting",
-      "installed_version": "11.1.0",
-      "declared_range": "^11.0.3",
+      "installed_version": "11.1.1",
+      "declared_range": "^11.1.1",
       "role": "UUID v4 generation for session/message/artifact IDs.",
       "primary_callsites": ["src/main/**", "src/renderer/**"],
       "npm_url": "https://www.npmjs.com/package/uuid",

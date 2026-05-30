@@ -1,7 +1,7 @@
 # NPM Dependency Tiers
 
 > Scope: runtime `dependencies` from `package.json` (v3.3.0). DevDependencies excluded — they affect the build pipeline, not end-user features.
-> Last updated: 2026-05-30 (pi-coding-agent + pi-ai uplift 0.76→0.78.0).
+> Last updated: 2026-05-30 (npm audit fix — @google/genai 1.44→1.52, @larksuiteoapi/node-sdk 1.62→1.66, ws 8.19→8.21, uuid 11.1.0→11.1.1, typebox 1.1.36→1.1.38).
 >
 > Purpose: identify which upstream libraries most directly drive end-user features so uplifts can be prioritized and new capabilities adopted quickly. The machine-readable companion lives at [`docs/dependency-tiers.json`](./dependency-tiers.json).
 
@@ -28,7 +28,7 @@ These six libraries are **the AI pipeline**. A new Claude / GPT / Gemini model, 
 | `@modelcontextprotocol/sdk`       | 1.27.1    | MCP client + server (stdio, SSE, Streamable HTTP). Powers the entire MCP connector ecosystem in `src/main/mcp/mcp-manager.ts`.                                 |
 | `@anthropic-ai/sdk`               | 0.92.0    | Official Anthropic SDK. Used for Claude diagnostics and probes. Tracks new Claude model families.                                                              |
 | `openai`                          | 6.32.0    | Official OpenAI SDK. Used across all OpenAI-compatible endpoints (OpenAI, OpenRouter, Ollama, DashScope, custom proxies).                                      |
-| `@google/genai`                   | 1.44.0    | Official Gemini SDK. Used in auth diagnostics; tracks new Gemini model previews.                                                                               |
+| `@google/genai`                   | 1.52.0    | Official Gemini SDK. Used in auth diagnostics; tracks new Gemini model previews.                                                                               |
 
 **Why these are Tier 1:** if OpenAI ships a new Responses API feature, Anthropic ships a new `claude-opus-5`, or MCP publishes a new transport — the only way to expose that in the app is to bump the relevant package here. A missed release = a missed feature.
 
@@ -45,11 +45,11 @@ These power significant end-user features — remote channels, persistence, auto
 | `electron-updater`        | 6.8.3        | Auto-update mechanism. Without this, shipped users do not receive new versions.         |
 | `electron-store`          | 11.0.2       | All user settings and profiles — API keys, model presets, UI state.                     |
 | `better-sqlite3`          | 12.8.0       | Native SQLite binding. Entire persistence layer (sessions, messages, memory, schedule). |
-| `@larksuiteoapi/node-sdk` | 1.62.0       | Feishu/Lark remote channel — WebSocket long-connection + REST.                          |
+| `@larksuiteoapi/node-sdk` | 1.66.0       | Feishu/Lark remote channel — WebSocket long-connection + REST.                          |
 | `@slack/bolt`             | 4.7.0        | Slack app framework — Socket Mode and webhook handling.                                 |
 | `@slack/web-api`          | 7.15.1       | Slack Web API client (paired with Bolt).                                                |
 | `ngrok`                   | 5.0.0-beta.2 | Tunnel manager — exposes the gateway so Slack/Feishu webhooks can reach it.             |
-| `ws`                      | 8.19.0       | WebSocket server for the Remote Gateway. Security-sensitive.                            |
+| `ws`                      | 8.21.0       | WebSocket server for the Remote Gateway. Security-sensitive.                            |
 | `chokidar`                | 4.0.3        | File watcher powering Skills hot-reload.                                                |
 | `react`                   | 18.3.1       | Entire renderer UI framework. React 19 is out — major uplift candidate.                 |
 | `react-dom`               | 18.3.1       | Locked in step with `react`.                                                            |
@@ -84,8 +84,8 @@ Commodity libraries with stable APIs. Uplift when convenient, or for security pa
 | `i18next-browser-languagedetector` | 8.2.1     | Auto-detects user language.                                    |
 | `lucide-react`                     | 0.468.0   | Icon set.                                                      |
 | `glob`                             | 10.5.0    | Filesystem globbing.                                           |
-| `typebox`                          | 1.1.36    | TypeBox schema lib for MCP tool JSON Schema wrapping.          |
-| `uuid`                             | 11.1.0    | ID generation.                                                 |
+| `typebox`                          | 1.1.38    | TypeBox schema lib for MCP tool JSON Schema wrapping.          |
+| `uuid`                             | 11.1.1    | ID generation.                                                 |
 
 **Exception:** `rehype-sanitize` is marked `monitor_releases: true` in the JSON despite being Tier 3 because it's an XSS boundary on untrusted LLM output. CVEs here matter.
 
