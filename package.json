@@ -56,6 +56,8 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "test": "vitest",
     "test:coverage": "vitest run --coverage",
+    "pretest": "npm rebuild better-sqlite3",
+    "posttest": "npm run rebuild",
     "bench": "vitest bench",
     "bench:api": "node scripts/bench-api.mjs",
     "rebuild": "node -e \"const {execSync}=require('node:child_process'); const v=require('electron/package.json').version; execSync('npm rebuild better-sqlite3 --runtime=electron --target='+v+' --disturl=https://electronjs.org/headers',{stdio:'inherit'})\"",
