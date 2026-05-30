@@ -658,7 +658,7 @@ export type ServerEvent =
     }
   | {
       type: 'session.status';
-      payload: { sessionId: string; status: SessionStatus; error?: string };
+      payload: { sessionId: string; status: SessionStatus; updatedAt?: number; error?: string };
     }
   | { type: 'session.update'; payload: { sessionId: string; updates: Partial<Session> } }
   | { type: 'session.list'; payload: { sessions: Session[] } }

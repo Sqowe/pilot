@@ -15,7 +15,6 @@ import {
   Plus,
   ListChecks,
   Check,
-  Download,
   FolderOpen,
   Clock,
 } from 'lucide-react';
@@ -46,7 +45,6 @@ export function Sidebar() {
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const setShowSettings = useAppStore((s) => s.setShowSettings);
-  const setGlobalNotice = useAppStore((s) => s.setGlobalNotice);
   const {
     deleteSession,
     batchDeleteSessions,
@@ -58,6 +56,7 @@ export function Sidebar() {
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmSessionId, setDeleteConfirmSessionId] = useState<string | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [groupMode, setGroupMode] = useState<GroupMode>(() => {
     try {
@@ -140,21 +139,29 @@ export function Sidebar() {
       setSelectedIds(new Set());
       setShowDeleteConfirm(false);
     }
+    if (sidebarCollapsed) {
+      setDeleteConfirmSessionId(null);
+    }
   }, [sidebarCollapsed, isSelectMode]);
 
   // Escape key exits select mode
   useEffect(() => {
-    if (!isSelectMode) return;
+    if (!isSelectMode && !deleteConfirmSessionId) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setIsSelectMode(false);
-        setSelectedIds(new Set());
-        setShowDeleteConfirm(false);
+        if (deleteConfirmSessionId) {
+          setDeleteConfirmSessionId(null);
+        }
+        if (isSelectMode) {
+          setIsSelectMode(false);
+          setSelectedIds(new Set());
+          setShowDeleteConfirm(false);
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isSelectMode]);
+  }, [isSelectMode, deleteConfirmSessionId]);
 
   // Cmd+K shortcut to open search overlay
   useEffect(() => {
@@ -286,29 +293,18 @@ export function Sidebar() {
 
   const handleDeleteSession = (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
-    deleteSession(sessionId);
+    setDeleteConfirmSessionId(sessionId);
   };
 
-  const handleExportSession = async (e: React.MouseEvent, sessionId: string) => {
-    e.stopPropagation();
-    try {
-      const result = await window.electronAPI.chat.exportMarkdown({ sessionId });
-      if (result.success && result.path) {
-        setGlobalNotice({
-          id: `chat-export-${Date.now()}`,
-          type: 'info',
-          message: t('chat.exportSuccess'),
-        });
-      } else if (result.error && result.error !== 'Export cancelled') {
-        setGlobalNotice({
-          id: `chat-export-error-${Date.now()}`,
-          type: 'warning',
-          message: t('chat.exportFailed', { error: result.error }),
-        });
-      }
-    } catch (error) {
-      console.error('[Sidebar] Export failed:', error);
+  const confirmDeleteSession = () => {
+    if (deleteConfirmSessionId) {
+      deleteSession(deleteConfirmSessionId);
+      setDeleteConfirmSessionId(null);
     }
+  };
+
+  const cancelDeleteSession = () => {
+    setDeleteConfirmSessionId(null);
   };
 
   const toggleTheme = () => {
@@ -591,10 +587,12 @@ export function Sidebar() {
                       {group.sessions.map((session) => {
                         const isActive = activeSessionId === session.id;
                         const isSelected = selectedIds.has(session.id);
+                        const isConfirmingDelete = deleteConfirmSessionId === session.id;
                         return (
                           <div
                             key={session.id}
                             onClick={() => {
+                              if (isConfirmingDelete) return;
                               if (isSelectMode) {
                                 toggleSelectSession(session.id);
                               } else {
@@ -604,54 +602,79 @@ export function Sidebar() {
                             onMouseEnter={() => setHoveredSession(session.id)}
                             onMouseLeave={() => setHoveredSession(null)}
                             className={`group relative cursor-pointer rounded-lg px-2.5 py-1.5 transition-colors ${
-                              isSelectMode && isSelected
-                                ? 'bg-accent-muted/20'
-                                : isActive && !isSelectMode
-                                  ? 'bg-surface-hover/80'
-                                  : 'hover:bg-surface-hover/60'
+                              isConfirmingDelete
+                                ? 'bg-error/5 border border-error/30'
+                                : isSelectMode && isSelected
+                                  ? 'bg-accent-muted/20'
+                                  : isActive && !isSelectMode
+                                    ? 'bg-surface-hover/80'
+                                    : 'hover:bg-surface-hover/60'
                             }`}
                           >
-                            <div
-                              className={`flex items-center gap-2 ${!isSelectMode ? 'pr-6' : ''}`}
-                            >
-                              {isSelectMode && (
-                                <div
-                                  className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
-                                    isSelected
-                                      ? 'bg-accent text-white'
-                                      : 'border border-border-muted bg-background'
-                                  }`}
-                                >
-                                  {isSelected && <Check className="w-2.5 h-2.5" />}
-                                </div>
-                              )}
-                              <div className="min-w-0 flex-1">
-                                <div
-                                  className="text-[13px] font-medium leading-5 text-text-primary truncate"
-                                  title={session.title}
-                                >
-                                  {session.title}
+                            {isConfirmingDelete ? (
+                              <div className="py-1">
+                                <p className="text-[12px] text-text-primary mb-2 leading-4">
+                                  {t('sidebar.singleDeleteConfirm', { title: session.title })}
+                                </p>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      cancelDeleteSession();
+                                    }}
+                                    className="flex-1 px-2 py-1 rounded-lg text-[12px] font-medium text-text-secondary hover:bg-surface-hover transition-colors"
+                                  >
+                                    {t('sidebar.cancel')}
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      confirmDeleteSession();
+                                    }}
+                                    className="flex-1 px-2 py-1 rounded-lg text-[12px] font-medium bg-error text-white hover:bg-error/90 transition-colors"
+                                  >
+                                    {t('sidebar.confirmDelete')}
+                                  </button>
                                 </div>
                               </div>
-                            </div>
+                            ) : (
+                              <>
+                                <div
+                                  className={`flex items-center gap-2 ${!isSelectMode ? 'pr-6' : ''}`}
+                                >
+                                  {isSelectMode && (
+                                    <div
+                                      className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                                        isSelected
+                                          ? 'bg-accent text-white'
+                                          : 'border border-border-muted bg-background'
+                                      }`}
+                                    >
+                                      {isSelected && <Check className="w-2.5 h-2.5" />}
+                                    </div>
+                                  )}
+                                  <div className="min-w-0 flex-1">
+                                    <div
+                                      className="text-[13px] font-medium leading-5 text-text-primary truncate"
+                                      title={session.title}
+                                    >
+                                      {session.title}
+                                    </div>
+                                  </div>
+                                </div>
 
-                            {!isSelectMode && hoveredSession === session.id && (
-                              <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
-                                <button
-                                  onClick={(e) => handleExportSession(e, session.id)}
-                                  className="w-6 h-6 rounded-lg flex items-center justify-center text-text-muted hover:text-accent hover:bg-surface-active transition-colors"
-                                  title={t('chat.exportMarkdown')}
-                                >
-                                  <Download className="w-3 h-3" />
-                                </button>
-                                <button
-                                  onClick={(e) => handleDeleteSession(e, session.id)}
-                                  className="w-6 h-6 rounded-lg flex items-center justify-center text-text-muted hover:text-error hover:bg-surface-active transition-colors"
-                                  title={t('common.delete')}
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
-                              </div>
+                                {!isSelectMode && hoveredSession === session.id && (
+                                  <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                                    <button
+                                      onClick={(e) => handleDeleteSession(e, session.id)}
+                                      className="w-6 h-6 rounded-lg flex items-center justify-center text-text-muted hover:text-error hover:bg-surface-active transition-colors"
+                                      title={t('common.delete')}
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                )}
+                              </>
                             )}
                           </div>
                         );
