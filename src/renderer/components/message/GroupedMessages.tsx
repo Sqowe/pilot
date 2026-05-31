@@ -7,7 +7,9 @@ import { useMemo, memo, useCallback } from 'react';
 import type { Message } from '../../types';
 import { MessageCard } from '../MessageCard';
 import { ProcessAccordion } from './ProcessAccordion';
+import { DateSeparator } from './DateSeparator';
 import { groupMessagesIntoTurns, shouldCollapseTurn, splitTurnMessages } from './grouping-logic';
+import { isSameDay } from '../../utils/i18n-format';
 
 interface GroupedMessagesProps {
   messages: Message[];
@@ -37,6 +39,16 @@ export const GroupedMessages = memo(function GroupedMessages({
   // Group messages into turns
   const turns = useMemo(() => groupMessagesIntoTurns(messages), [messages]);
 
+  /** Get the representative timestamp for a turn (user message or first assistant). */
+  const getTurnTimestamp = useCallback(
+    (turn: ReturnType<typeof groupMessagesIntoTurns>[number]): number => {
+      const userTs = turn.userMessage?.timestamp;
+      if (userTs && userTs > 0) return userTs;
+      return turn.assistantMessages[0]?.timestamp ?? 0;
+    },
+    []
+  );
+
   const renderMessage = useCallback(
     (msg: Message, isStreaming: boolean) => (
       <MessageCard
@@ -57,6 +69,12 @@ export const GroupedMessages = memo(function GroupedMessages({
         const turnIsStreaming = isLastTurn && hasActiveTurn;
         const assistantMsgs = turn.assistantMessages;
 
+        // Day separator: show before the first turn, and when the day changes
+        const currentTs = getTurnTimestamp(turn);
+        const prevTs = turnIndex > 0 ? getTurnTimestamp(turns[turnIndex - 1]) : null;
+        const showDaySeparator =
+          currentTs > 0 && (turnIndex === 0 || (prevTs !== null && !isSameDay(currentTs, prevTs)));
+
         // Always check collapse conditions (even during streaming) so the
         // accordion structure is stable. During streaming it renders expanded;
         // on completion it collapses — no abrupt remount.
@@ -70,11 +88,15 @@ export const GroupedMessages = memo(function GroupedMessages({
             key={turn.userMessage?.id ?? turn.assistantMessages[0]?.id ?? `turn-${turnIndex}`}
             className="space-y-5"
           >
+            {/* Day separator when date changes between turns */}
+            {showDaySeparator && <DateSeparator timestamp={currentTs} />}
+
             {/* User message */}
             {turn.userMessage && (
               <div key={turn.userMessage.id}>
                 <MessageCard
                   message={turn.userMessage}
+                  showTimestamp
                   selectable={selectable && isMessageExportable(turn.userMessage)}
                   selected={selectedIds?.has(turn.userMessage.id)}
                   onToggleSelect={onToggleSelect}
