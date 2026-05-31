@@ -176,6 +176,21 @@ function formatAppDateTime(value): string; // dateStyle: 'medium', timeStyle: 's
 function formatAppDate(value, options?): string; // customizable Intl options
 ```
 
+**Known limitation:** `getAppLocale()` currently maps only to `'zh-CN'` or
+`'en-US'`. This means all non-Chinese users get US-style formatting (12-hour
+clock with AM/PM, month-before-day). For European languages that prefer
+24-hour time and day-before-month (e.g., `de-DE`, `fr-FR`, `nl-NL`, `en-GB`),
+`getAppLocale()` should be extended to either:
+
+- Use `navigator.language` (browser/system locale) for date/time formatting
+  instead of the UI language, or
+- Pass `undefined` to `Intl.DateTimeFormat` (uses the system default locale), or
+- Add a user-facing "date/time format" setting separate from UI language.
+
+This is a broader change affecting all date formatting in the app, not specific
+to chat timestamps. When additional locales are added to the app, updating
+`getAppLocale()` will automatically fix timestamp formatting for those users.
+
 Translation keys already available:
 
 - `sidebar.today` → "Today" / "今天"
