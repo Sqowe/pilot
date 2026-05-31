@@ -159,7 +159,7 @@ export const MessageCard = memo(function MessageCard({
           </div>
           {/* Per-message timestamp for user messages */}
           {showTimestamp && message.timestamp > 0 && (
-            <div className="flex justify-end mt-1 mr-8">
+            <div className="flex justify-end mt-1 mr-8 opacity-0 group-hover:opacity-100 transition-opacity">
               <time
                 className="text-[11px] text-text-muted/70"
                 dateTime={new Date(message.timestamp).toISOString()}
