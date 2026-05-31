@@ -365,7 +365,9 @@ They should not trigger day separators.
 ### Phase 2: Session Metadata ✅ Done (2026-05-31)
 
 6. ✅ Add date range display to session header/metadata
-7. ✅ Show conversation date in sidebar session items (for old chats)
+7. ~~Show conversation date in sidebar session items~~ — Removed: sidebar already
+   groups by date (Today/Yesterday/Previous 7 Days/Older), adding per-item dates
+   was redundant and cluttered the compact list.
 
 ### Phase 3: Polish
 
