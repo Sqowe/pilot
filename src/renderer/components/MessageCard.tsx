@@ -7,11 +7,13 @@ import type { Message, ContentBlock, ToolUseContent, ToolResultContent } from '.
 import { ContentBlockView } from './message/ContentBlockView';
 import { MemorySourcesBadge } from './message/MemorySourcesBadge';
 import { extractMemorySources } from '../utils/memory-source-extractor';
+import { formatChatTime, formatChatTooltip } from '../utils/i18n-format';
 
 interface MessageCardProps {
   message: Message;
   isStreaming?: boolean;
   memoryContributed?: boolean;
+  showTimestamp?: boolean;
   selectable?: boolean;
   selected?: boolean;
   onToggleSelect?: (messageId: string) => void;
@@ -21,6 +23,7 @@ export const MessageCard = memo(function MessageCard({
   message,
   isStreaming,
   memoryContributed,
+  showTimestamp,
   selectable,
   selected,
   onToggleSelect,
@@ -108,51 +111,65 @@ export const MessageCard = memo(function MessageCard({
       )}
       {isUser ? (
         // User message - compact styling with smaller padding and radius
-        <div className="flex items-start gap-2 justify-end group">
-          <div
-            className={`message-user px-4 py-3 rounded-[1.65rem] max-w-[80%] min-w-0 break-words ${
-              isQueued ? 'opacity-70 border-dashed' : ''
-            } ${isCancelled ? 'opacity-60' : ''}`}
-          >
-            {isQueued && (
-              <div className="mb-1 flex items-center gap-1 text-[11px] text-text-muted">
-                <Clock className="w-3 h-3" />
-                <span>{t('messageCard.queued')}</span>
-              </div>
-            )}
-            {isCancelled && (
-              <div className="mb-1 flex items-center gap-1 text-[11px] text-text-muted">
-                <XCircle className="w-3 h-3" />
-                <span>{t('messageCard.cancelled')}</span>
-              </div>
-            )}
-            {contentBlocks.length === 0 ? (
-              <span className="text-text-muted italic">{t('messageCard.emptyMessage')}</span>
-            ) : (
-              contentBlocks.map((block, index) => (
-                <ContentBlockView
-                  key={
-                    'id' in block ? (block as { id: string }).id : `block-${block.type}-${index}`
-                  }
-                  block={block}
-                  isUser={isUser}
-                  isStreaming={isStreaming}
-                />
-              ))
-            )}
+        <>
+          <div className="flex items-start gap-2 justify-end group">
+            <div
+              className={`message-user px-4 py-3 rounded-[1.65rem] max-w-[80%] min-w-0 break-words ${
+                isQueued ? 'opacity-70 border-dashed' : ''
+              } ${isCancelled ? 'opacity-60' : ''}`}
+            >
+              {isQueued && (
+                <div className="mb-1 flex items-center gap-1 text-[11px] text-text-muted">
+                  <Clock className="w-3 h-3" />
+                  <span>{t('messageCard.queued')}</span>
+                </div>
+              )}
+              {isCancelled && (
+                <div className="mb-1 flex items-center gap-1 text-[11px] text-text-muted">
+                  <XCircle className="w-3 h-3" />
+                  <span>{t('messageCard.cancelled')}</span>
+                </div>
+              )}
+              {contentBlocks.length === 0 ? (
+                <span className="text-text-muted italic">{t('messageCard.emptyMessage')}</span>
+              ) : (
+                contentBlocks.map((block, index) => (
+                  <ContentBlockView
+                    key={
+                      'id' in block ? (block as { id: string }).id : `block-${block.type}-${index}`
+                    }
+                    block={block}
+                    isUser={isUser}
+                    isStreaming={isStreaming}
+                  />
+                ))
+              )}
+            </div>
+            <button
+              onClick={handleCopy}
+              className="mt-1 w-6 h-6 flex items-center justify-center rounded-md bg-surface-muted hover:bg-surface-active transition-all opacity-0 group-hover:opacity-100 flex-shrink-0"
+              title={t('messageCard.copyMessage')}
+            >
+              {copied ? (
+                <Check className="w-3 h-3 text-success" />
+              ) : (
+                <Copy className="w-3 h-3 text-text-muted" />
+              )}
+            </button>
           </div>
-          <button
-            onClick={handleCopy}
-            className="mt-1 w-6 h-6 flex items-center justify-center rounded-md bg-surface-muted hover:bg-surface-active transition-all opacity-0 group-hover:opacity-100 flex-shrink-0"
-            title={t('messageCard.copyMessage')}
-          >
-            {copied ? (
-              <Check className="w-3 h-3 text-success" />
-            ) : (
-              <Copy className="w-3 h-3 text-text-muted" />
-            )}
-          </button>
-        </div>
+          {/* Per-message timestamp for user messages */}
+          {showTimestamp && message.timestamp > 0 && (
+            <div className="flex justify-end mt-1 mr-8 opacity-0 group-hover:opacity-100 transition-opacity">
+              <time
+                className="text-[11px] text-text-muted/70"
+                dateTime={new Date(message.timestamp).toISOString()}
+                title={formatChatTooltip(message.timestamp)}
+              >
+                {formatChatTime(message.timestamp)}
+              </time>
+            </div>
+          )}
+        </>
       ) : (
         // Assistant message — no bubble, direct content (Claude style)
         <div className="space-y-1.5">

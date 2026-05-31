@@ -6,6 +6,7 @@ import {
   findIntraMessageAnswerBoundary,
   splitTurnMessages,
   groupMessagesIntoTurns,
+  groupTurnsByDay,
 } from '../src/renderer/components/message/grouping-logic';
 
 function makeMsg(
@@ -440,5 +441,131 @@ describe('grouping-logic', () => {
       expect(turns[0].assistantMessages).toHaveLength(1);
       expect(turns[1].userMessage?.id).toBe('u1');
     });
+  });
+});
+
+describe('groupTurnsByDay', () => {
+  function makeMsgWithTs(id: string, role: 'user' | 'assistant', timestamp: number): Message {
+    return {
+      id,
+      sessionId: 'test-session',
+      role,
+      content: [{ type: 'text', text: `msg ${id}` }],
+      timestamp,
+    };
+  }
+
+  const getTurnTimestamp = (turn: { userMessage?: Message; assistantMessages: Message[] }) => {
+    const userTs = turn.userMessage?.timestamp;
+    if (userTs && userTs > 0) return userTs;
+    return turn.assistantMessages[0]?.timestamp ?? 0;
+  };
+
+  it('groups turns on the same day together', () => {
+    const day1Morning = new Date(2026, 4, 12, 9, 0).getTime();
+    const day1Afternoon = new Date(2026, 4, 12, 15, 0).getTime();
+
+    const turns = groupMessagesIntoTurns([
+      makeMsgWithTs('u1', 'user', day1Morning),
+      makeMsgWithTs('a1', 'assistant', day1Morning + 1000),
+      makeMsgWithTs('u2', 'user', day1Afternoon),
+      makeMsgWithTs('a2', 'assistant', day1Afternoon + 1000),
+    ]);
+
+    const groups = groupTurnsByDay(turns, getTurnTimestamp);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].items).toHaveLength(2);
+    expect(groups[0].dayTimestamp).toBe(day1Morning);
+  });
+
+  it('creates separate groups for different days', () => {
+    const day1 = new Date(2026, 4, 12, 10, 0).getTime();
+    const day2 = new Date(2026, 4, 13, 10, 0).getTime();
+
+    const turns = groupMessagesIntoTurns([
+      makeMsgWithTs('u1', 'user', day1),
+      makeMsgWithTs('a1', 'assistant', day1 + 1000),
+      makeMsgWithTs('u2', 'user', day2),
+      makeMsgWithTs('a2', 'assistant', day2 + 1000),
+    ]);
+
+    const groups = groupTurnsByDay(turns, getTurnTimestamp);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].items).toHaveLength(1);
+    expect(groups[1].items).toHaveLength(1);
+  });
+
+  it('puts timestamp-less turns in their own group without separator', () => {
+    const day1 = new Date(2026, 4, 12, 10, 0).getTime();
+
+    const turns = groupMessagesIntoTurns([
+      makeMsgWithTs('u1', 'user', day1),
+      makeMsgWithTs('a1', 'assistant', day1 + 1000),
+      makeMsgWithTs('u2', 'user', 0), // no timestamp
+      makeMsgWithTs('a2', 'assistant', 0),
+    ]);
+
+    const groups = groupTurnsByDay(turns, getTurnTimestamp);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].dayTimestamp).toBe(day1);
+    expect(groups[1].dayTimestamp).toBe(0); // no separator for this group
+  });
+
+  it('does not merge timestamp-less turn into previous day group', () => {
+    const day1 = new Date(2026, 4, 12, 10, 0).getTime();
+    const day1Later = new Date(2026, 4, 12, 14, 0).getTime();
+
+    const turns = groupMessagesIntoTurns([
+      makeMsgWithTs('u1', 'user', day1),
+      makeMsgWithTs('a1', 'assistant', day1 + 1000),
+      makeMsgWithTs('u2', 'user', 0), // no timestamp — should NOT be under day1
+      makeMsgWithTs('a2', 'assistant', 0),
+      makeMsgWithTs('u3', 'user', day1Later), // back to day1
+      makeMsgWithTs('a3', 'assistant', day1Later + 1000),
+    ]);
+
+    const groups = groupTurnsByDay(turns, getTurnTimestamp);
+    expect(groups).toHaveLength(3);
+    expect(groups[0].dayTimestamp).toBe(day1);
+    expect(groups[0].items).toHaveLength(1);
+    expect(groups[1].dayTimestamp).toBe(0);
+    expect(groups[2].dayTimestamp).toBe(day1Later);
+  });
+
+  it('preserves original turn indexes', () => {
+    const day1 = new Date(2026, 4, 12, 10, 0).getTime();
+    const day2 = new Date(2026, 4, 13, 10, 0).getTime();
+
+    const turns = groupMessagesIntoTurns([
+      makeMsgWithTs('u1', 'user', day1),
+      makeMsgWithTs('a1', 'assistant', day1 + 1000),
+      makeMsgWithTs('u2', 'user', day1 + 60000),
+      makeMsgWithTs('a2', 'assistant', day1 + 61000),
+      makeMsgWithTs('u3', 'user', day2),
+      makeMsgWithTs('a3', 'assistant', day2 + 1000),
+    ]);
+
+    const groups = groupTurnsByDay(turns, getTurnTimestamp);
+    expect(groups[0].items[0].index).toBe(0);
+    expect(groups[0].items[1].index).toBe(1);
+    expect(groups[1].items[0].index).toBe(2);
+  });
+
+  it('handles empty turns array', () => {
+    const groups = groupTurnsByDay([], getTurnTimestamp);
+    expect(groups).toHaveLength(0);
+  });
+
+  it('handles single turn', () => {
+    const day1 = new Date(2026, 4, 12, 10, 0).getTime();
+    const turns = groupMessagesIntoTurns([
+      makeMsgWithTs('u1', 'user', day1),
+      makeMsgWithTs('a1', 'assistant', day1 + 1000),
+    ]);
+
+    const groups = groupTurnsByDay(turns, getTurnTimestamp);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].items).toHaveLength(1);
+    expect(groups[0].dayTimestamp).toBe(day1);
   });
 });
