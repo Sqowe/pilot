@@ -371,9 +371,9 @@ They should not trigger day separators.
 
 ### Phase 3: Polish
 
-8. Smooth scroll-to-date (click separator to jump)
+8. ~~Smooth scroll-to-date (click separator to jump)~~ → Moved to `chat-smart-scrolling.md`
 9. Sticky day separator while scrolling (like iOS Messages)
-10. Consider "jump to date" picker for very long conversations
+10. ~~Consider "jump to date" picker for very long conversations~~ → Moved to `chat-smart-scrolling.md`
 
 ---
 
