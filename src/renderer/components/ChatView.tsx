@@ -18,6 +18,7 @@ import { ExportOptionsDialog } from './ExportOptionsDialog';
 import type { ExportOptions } from './ExportOptionsDialog';
 import type { Message, ContentBlock } from '../types';
 import { Send, Square, Plus, Loader2, X, Clock, Layers, Download } from 'lucide-react';
+import { formatSessionDateRange } from '../utils/i18n-format';
 
 type AttachedFile = {
   name: string;
@@ -966,12 +967,22 @@ export function ChatView() {
         <div className="text-[11px] font-medium tracking-[0.08em] uppercase text-text-muted">
           Sqowe Pilot
         </div>
-        <h2
-          ref={titleRef}
-          className="text-[15px] font-medium text-text-primary text-center truncate max-w-[40vw] lg:max-w-[32rem]"
-        >
-          {activeSession.title}
-        </h2>
+        <div className="flex flex-col items-center justify-center min-w-0">
+          <h2
+            ref={titleRef}
+            className="text-[15px] font-medium text-text-primary text-center truncate max-w-[40vw] lg:max-w-[32rem]"
+          >
+            {activeSession.title}
+          </h2>
+          {activeSession.createdAt > 0 && (
+            <span className="text-[10px] text-text-muted/70 leading-tight">
+              {formatSessionDateRange(
+                activeSession.createdAt,
+                activeSession.updatedAt || activeSession.createdAt
+              )}
+            </span>
+          )}
+        </div>
         {/* Right toolbar — action icons in a badge */}
         <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-muted/60 border border-border-subtle justify-self-end">
           {displayedMessages.length > 0 && (

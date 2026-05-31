@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import type { Session } from '../types';
 import { SearchOverlay } from './SearchOverlay';
+import { formatAppDate } from '../utils/i18n-format';
 
 import sidebarLogoSrc from '../assets/logo.png';
 
@@ -659,6 +660,17 @@ export function Sidebar() {
                                       title={session.title}
                                     >
                                       {session.title}
+                                    </div>
+                                    <div className="text-[10px] text-text-muted/70 leading-tight truncate">
+                                      {formatAppDate(session.updatedAt || session.createdAt, {
+                                        month: 'short',
+                                        day: 'numeric',
+                                        ...(new Date(
+                                          session.updatedAt || session.createdAt
+                                        ).getFullYear() !== new Date().getFullYear()
+                                          ? { year: 'numeric' }
+                                          : {}),
+                                      })}
                                     </div>
                                   </div>
                                 </div>

@@ -362,10 +362,10 @@ They should not trigger day separators.
 4. ✅ Add per-message time on user messages
 5. ✅ Add hover tooltip with full timestamp
 
-### Phase 2: Session Metadata
+### Phase 2: Session Metadata ✅ Done (2026-05-31)
 
-6. Add date range display to session header/metadata
-7. Show conversation date range in sidebar session items (for old chats)
+6. ✅ Add date range display to session header/metadata
+7. ✅ Show conversation date in sidebar session items (for old chats)
 
 ### Phase 3: Polish
 
