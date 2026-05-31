@@ -264,23 +264,58 @@ function supersessionPenalty(chunk, allChunks, currentWorkspace) {
 
 **Risk:** May suppress legitimately relevant older context. Needs tuning.
 
-### 6.4 Higher Effort: Fact Layer with Temporal Validity (Effort: High)
+### 6.4 Higher Effort: Fact Layer with Contradiction Tracking (Effort: High)
 
-**What:** Extract structured facts from sessions into a separate store where each fact has temporal validity markers.
+**What:** Extract structured facts from sessions into a separate store. Track when a fact is explicitly contradicted by a newer one — but **never auto-expire facts**.
+
+**Key design principle: Facts don't expire. They get contradicted.**
+
+Not all facts are temporal. "I have 2 daughters" is permanent — it stays true for years. "App version = 2.17" is replaceable — it changes with each release. The system **cannot know in advance** which category a fact belongs to. Therefore:
+
+- **Never auto-expire facts** — no TTL, no time-based decay on facts themselves
+- **Only mark as superseded on explicit contradiction** — when a new fact with the same subject arrives with an incompatible value
+- **Require high confidence for supersession** — same subject, clearly incompatible values, not just similar topics
+- **Reinforcement strengthens facts** — "2 daughters" mentioned 100 times becomes very hard to override by a single ambiguous mention
 
 **New data model:**
 
 ```typescript
 interface MemoryFact {
   id: string;
-  subject: string; // "app_version", "team_size", "preferred_language"
-  value: string; // "2.25", "2", "TypeScript"
-  validFrom: string; // ISO date when this became true
-  validUntil: string | null; // null = still current
+  subject: string; // "app_version", "team_size", "daughters_count"
+  value: string; // "2.25", "2", "2"
+  firstMentioned: string; // ISO date of first occurrence
+  lastMentioned: string; // ISO date of most recent mention
   sourceSessionId: string;
   sourceWorkspace: string | null;
-  confidence: number; // 0-1, increases with repeated mentions
-  mentionCount: number;
+  mentionCount: number; // How many sessions mentioned this — higher = harder to override
+  supersededBy: string | null; // ID of the contradicting fact (if any)
+  supersededAt: string | null; // When it was superseded (if ever)
+}
+```
+
+Note: `supersededBy` is only set when a **new contradicting fact on the same subject** arrives. "2 daughters" mentioned 100 times will never get superseded unless the user explicitly states a different number. "Version 2.17" gets superseded when "version 2.25" arrives because they share the subject "app_version" with incompatible values.
+
+**What counts as a contradiction (high confidence required):**
+
+| Scenario                               | Contradiction? | Reason                                                          |
+| -------------------------------------- | -------------- | --------------------------------------------------------------- |
+| "version 2.17" → "version 2.25"        | ✅ YES         | Same subject, different numeric value                           |
+| "2 daughters" → "3 kids"               | ❌ NO          | Not clearly incompatible (could be 2 daughters + 1 son)         |
+| "2 daughters" → "2 daughters"          | ❌ NO          | Reinforcement, not contradiction                                |
+| "prefer tabs" → "use spaces now"       | ✅ YES         | Same subject (indentation), explicit replacement ("now")        |
+| "we use React" → "migrating to Svelte" | ⚠️ MAYBE       | "Migrating" implies transition, not completion — low confidence |
+
+**Supersession should be proportional to mention count:** A fact mentioned 50 times should require stronger evidence to override than a fact mentioned once. Possible formula:
+
+```typescript
+function shouldSupersede(oldFact: MemoryFact, newMention: string): boolean {
+  // High-mention facts need explicit, unambiguous contradiction
+  if (oldFact.mentionCount > 10) {
+    return isExplicitContradiction(oldFact.value, newMention); // strict check
+  }
+  // Low-mention facts can be overridden more easily
+  return isLikelyContradiction(oldFact.value, newMention); // relaxed check
 }
 ```
 
@@ -293,16 +328,19 @@ Session ingested
     ├─ (existing) Update core memory
     └─ (NEW) Extract structured facts
               │
-              ├─ Check existing facts for contradictions
-              ├─ If contradiction found: stamp valid_until on old fact
-              └─ Store new fact with valid_from = session date
+              ├─ If fact already exists with same subject+value: increment mentionCount
+              ├─ If fact exists with same subject but DIFFERENT value:
+              │     assess contradiction confidence
+              │     if HIGH confidence: mark old fact supersededBy = new fact
+              │     if LOW confidence: store both, let retrieval sort it out
+              └─ If no existing fact on this subject: store new fact
 ```
 
-**At retrieval time:** When experience chunks are returned, also query the fact store. If a chunk references a fact that has been superseded (valid_until is set), annotate or filter it.
+**At retrieval time:** When experience chunks are returned, cross-reference the fact store. If a chunk references a superseded fact, annotate it: "⚠️ This chunk mentions version 2.17, which was updated to 2.25 on [date]." Never filter/hide — just annotate.
 
-**Impact:** Comprehensive solution. Facts are individually trackable and invalidatable. Full temporal history preserved.
+**Impact:** Facts that genuinely change get tracked. Permanent facts stay strong forever (reinforced by mention count). The system doesn't guess about expiry — it only acts on clear contradictions.
 
-**Risk:** Significant implementation effort. Requires another LLM call per session for fact extraction. Storage complexity increases.
+**Risk:** Significant implementation effort. Contradiction detection is hard to get right — false positives could suppress valid facts. Requires careful subject-matching logic (or an LLM call per comparison). The `mentionCount` threshold needs tuning.
 
 ### 6.5 Higher Effort: Write-Time Contradiction Detection for Experience Memory (Effort: High)
 
@@ -351,7 +389,7 @@ if (chunk.supersededAt) {
 | 1        | 6.1 — Aggressive core memory updates          | Low        | Fixes core memory staleness                 |
 | 2        | 6.3 — Stronger recency + supersession penalty | Low-Medium | Reduces experience staleness                |
 | 3        | 6.2 — Contradiction annotation at retrieval   | Medium     | Model gets explicit warnings                |
-| 4        | 6.4 — Fact layer with temporal validity       | High       | Comprehensive long-term solution            |
+| 4        | 6.4 — Fact layer with contradiction tracking  | High       | Comprehensive long-term solution            |
 | 5        | 6.5 — Write-time contradiction detection      | High       | Prevents ghost context accumulation         |
 | —        | 6.6 — Temporal knowledge graph                | Very High  | Deferred unless memory becomes core product |
 
@@ -370,12 +408,12 @@ Add **6.2** (contradiction annotation). This gives the model explicit guidance w
 
 ### Long-term:
 
-If staleness remains a problem after iterations 1–2, implement **6.4** (fact layer). This is the proper engineering solution but requires more design work around:
+If staleness remains a problem after iterations 1–2, implement **6.4** (fact layer with contradiction tracking). This is the proper engineering solution but requires careful design around:
 
 - What constitutes a "fact" vs narrative context
 - How to extract facts reliably (another LLM call)
-- How to match incoming facts against existing ones
-- Storage and query performance
+- How to match incoming facts against existing ones (subject identification)
+- **Crucially: how to distinguish replaceable facts from permanent ones** — the answer is you don't. You never auto-expire. You only react to explicit contradictions, and you weight contradiction confidence against mention count (a fact mentioned 100 times needs very strong evidence to override).
 
 ---
 
@@ -392,7 +430,7 @@ If staleness remains a problem after iterations 1–2, implement **6.4** (fact l
 
 ## 9. Open Questions
 
-1. **Should experience chunks be mutable?** Currently they're append-only. Adding a `supersededAt` field would require schema migration and changes to the retrieval pipeline.
+1. **Should experience chunks be mutable?** Currently they're append-only. Adding a `supersededAt` field would require schema migration and changes to the retrieval pipeline. Alternative: never mutate chunks, only annotate at retrieval time.
 
 2. **How to detect contradictions without LLM calls?** Keyword overlap + value extraction (regex for numbers, URLs, versions) could catch the most common cases cheaply.
 
@@ -401,3 +439,5 @@ If staleness remains a problem after iterations 1–2, implement **6.4** (fact l
 4. **What about facts that are context-dependent?** "Version 2.17" might be correct for one branch/environment and "2.25" for another. The system currently has no way to represent conditional facts.
 
 5. **How does this interact with workspace scoping?** If a fact changes in workspace A, should it invalidate the same fact in workspace B's experience memory? Or are they independent?
+
+6. **How to handle the "permanent fact" problem?** Not all facts are temporal. "I have 2 daughters" is true indefinitely. The system must never auto-expire facts based on age alone. Supersession should only happen on explicit contradiction — and even then, a fact reinforced by many mentions (high `mentionCount`) should require proportionally stronger evidence to override. A single ambiguous mention should never override 100 consistent prior mentions.
