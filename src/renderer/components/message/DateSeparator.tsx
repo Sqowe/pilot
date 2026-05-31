@@ -7,13 +7,18 @@ interface DateSeparatorProps {
 /**
  * A horizontal divider with a centered date label.
  * Inserted between message turns when the calendar day changes.
+ * Uses position:sticky to remain visible at the top while scrolling.
  */
 export function DateSeparator({ timestamp }: DateSeparatorProps) {
   const label = formatChatDaySeparator(timestamp);
   const tooltip = formatChatTooltip(timestamp);
 
   return (
-    <div className="flex items-center gap-3 py-3" role="separator" aria-label={label}>
+    <div
+      className="sticky top-0 z-10 flex items-center gap-3 py-3 bg-background/95 backdrop-blur-sm"
+      role="separator"
+      aria-label={label}
+    >
       <div className="flex-1 h-px bg-border-subtle" />
       <time
         className="text-[11px] text-text-muted whitespace-nowrap select-none"

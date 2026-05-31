@@ -369,10 +369,10 @@ They should not trigger day separators.
    groups by date (Today/Yesterday/Previous 7 Days/Older), adding per-item dates
    was redundant and cluttered the compact list.
 
-### Phase 3: Polish
+### Phase 3: Polish ✅ Done (2026-05-31)
 
 8. ~~Smooth scroll-to-date (click separator to jump)~~ → Moved to `chat-smart-scrolling.md`
-9. Sticky day separator while scrolling (like iOS Messages)
+9. ✅ Sticky day separator while scrolling (CSS `position: sticky` with backdrop blur)
 10. ~~Consider "jump to date" picker for very long conversations~~ → Moved to `chat-smart-scrolling.md`
 
 ---

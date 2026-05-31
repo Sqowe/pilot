@@ -1,6 +1,7 @@
 // Pure utility functions for turn grouping and process/answer splitting.
 // Extracted so both the component and tests share one source of truth.
 import type { Message, ContentBlock } from '../../types';
+import { isSameDay } from '../../utils/i18n-format';
 
 /** Minimum thinking blocks to trigger collapse when no tool calls are present */
 export const THINKING_THRESHOLD = 3;
@@ -209,4 +210,57 @@ export function splitTurnMessages(assistantMessages: Message[]): TurnSplitResult
   }
 
   return { processMessages, answerMessages };
+}
+
+/** An item in a day group: a turn with its original index in the turns array. */
+export interface DayGroupItem {
+  turn: Turn;
+  index: number;
+}
+
+/** A group of turns that belong to the same calendar day. */
+export interface DayGroup {
+  /** Representative timestamp for this day (0 if turns have no valid timestamp). */
+  dayTimestamp: number;
+  /** Turns in this group with their original indexes. */
+  items: DayGroupItem[];
+}
+
+/**
+ * Groups turns by calendar day for sticky separator support.
+ * - Turns with valid timestamps (> 0) on the same day are grouped together.
+ * - Turns with invalid timestamps (≤ 0) get their own separator-less group.
+ * - A new group starts when the day changes or a turn has no valid timestamp.
+ *
+ * @param turns - Array of turns from groupMessagesIntoTurns
+ * @param getTurnTimestamp - Function to extract the representative timestamp from a turn
+ */
+export function groupTurnsByDay(
+  turns: Turn[],
+  getTurnTimestamp: (turn: Turn) => number
+): DayGroup[] {
+  const groups: DayGroup[] = [];
+
+  for (let i = 0; i < turns.length; i++) {
+    const turn = turns[i];
+    const ts = getTurnTimestamp(turn);
+    const lastGroup = groups[groups.length - 1];
+
+    if (ts <= 0) {
+      // Invalid timestamp — own group without separator
+      groups.push({ dayTimestamp: 0, items: [{ turn, index: i }] });
+    } else if (
+      !lastGroup ||
+      lastGroup.dayTimestamp <= 0 ||
+      !isSameDay(ts, lastGroup.dayTimestamp)
+    ) {
+      // New day or first group
+      groups.push({ dayTimestamp: ts, items: [{ turn, index: i }] });
+    } else {
+      // Same day — append to current group
+      lastGroup.items.push({ turn, index: i });
+    }
+  }
+
+  return groups;
 }

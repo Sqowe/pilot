@@ -8,8 +8,12 @@ import type { Message } from '../../types';
 import { MessageCard } from '../MessageCard';
 import { ProcessAccordion } from './ProcessAccordion';
 import { DateSeparator } from './DateSeparator';
-import { groupMessagesIntoTurns, shouldCollapseTurn, splitTurnMessages } from './grouping-logic';
-import { isSameDay } from '../../utils/i18n-format';
+import {
+  groupMessagesIntoTurns,
+  shouldCollapseTurn,
+  splitTurnMessages,
+  groupTurnsByDay,
+} from './grouping-logic';
 
 interface GroupedMessagesProps {
   messages: Message[];
@@ -49,6 +53,12 @@ export const GroupedMessages = memo(function GroupedMessages({
     []
   );
 
+  /** Group turns by calendar day for sticky separator support. */
+  const dayGroups = useMemo(
+    () => groupTurnsByDay(turns, getTurnTimestamp),
+    [turns, getTurnTimestamp]
+  );
+
   const renderMessage = useCallback(
     (msg: Message, isStreaming: boolean) => (
       <MessageCard
@@ -64,86 +74,87 @@ export const GroupedMessages = memo(function GroupedMessages({
 
   return (
     <>
-      {turns.map((turn, turnIndex) => {
-        const isLastTurn = turnIndex === turns.length - 1;
-        const turnIsStreaming = isLastTurn && hasActiveTurn;
-        const assistantMsgs = turn.assistantMessages;
+      {dayGroups.map((dayGroup, dayIndex) => (
+        <div key={`day-${dayGroup.dayTimestamp || dayIndex}`}>
+          {/* Sticky day separator — persists while any turn in this day is visible */}
+          {dayGroup.dayTimestamp > 0 && <DateSeparator timestamp={dayGroup.dayTimestamp} />}
 
-        // Day separator: show before the first turn, and when the day changes
-        const currentTs = getTurnTimestamp(turn);
-        const prevTs = turnIndex > 0 ? getTurnTimestamp(turns[turnIndex - 1]) : null;
-        const showDaySeparator =
-          currentTs > 0 && (turnIndex === 0 || (prevTs !== null && !isSameDay(currentTs, prevTs)));
+          {/* All turns for this day */}
+          <div className="space-y-5">
+            {dayGroup.items.map(({ turn, index: globalTurnIndex }, turnInDayIndex) => {
+              const isLastTurn = globalTurnIndex === turns.length - 1;
+              const turnIsStreaming = isLastTurn && hasActiveTurn;
+              const assistantMsgs = turn.assistantMessages;
 
-        // Always check collapse conditions (even during streaming) so the
-        // accordion structure is stable. During streaming it renders expanded;
-        // on completion it collapses — no abrupt remount.
-        const shouldCollapse = shouldCollapseTurn(assistantMsgs);
-        const { processMessages, answerMessages } = shouldCollapse
-          ? splitTurnMessages(assistantMsgs)
-          : { processMessages: [] as Message[], answerMessages: assistantMsgs };
+              const shouldCollapse = shouldCollapseTurn(assistantMsgs);
+              const { processMessages, answerMessages } = shouldCollapse
+                ? splitTurnMessages(assistantMsgs)
+                : { processMessages: [] as Message[], answerMessages: assistantMsgs };
 
-        return (
-          <div
-            key={turn.userMessage?.id ?? turn.assistantMessages[0]?.id ?? `turn-${turnIndex}`}
-            className="space-y-5"
-          >
-            {/* Day separator when date changes between turns */}
-            {showDaySeparator && <DateSeparator timestamp={currentTs} />}
+              const turnKey =
+                turn.userMessage?.id ??
+                turn.assistantMessages[0]?.id ??
+                `turn-${dayIndex}-${turnInDayIndex}`;
 
-            {/* User message */}
-            {turn.userMessage && (
-              <div key={turn.userMessage.id}>
-                <MessageCard
-                  message={turn.userMessage}
-                  showTimestamp
-                  selectable={selectable && isMessageExportable(turn.userMessage)}
-                  selected={selectedIds?.has(turn.userMessage.id)}
-                  onToggleSelect={onToggleSelect}
-                />
-              </div>
-            )}
-
-            {/* Process accordion (collapsed intermediate messages) */}
-            {processMessages.length > 0 && (
-              <ProcessAccordion
-                messages={processMessages}
-                isStreaming={turnIsStreaming}
-                renderMessage={renderMessage}
-                forceExpanded={selectable}
-              />
-            )}
-
-            {/* Final answer messages (or all messages if no collapse) */}
-            {answerMessages.map((msg, msgIndex) => {
-              const isStreaming = typeof msg.id === 'string' && msg.id.startsWith('partial-');
-              // Show memory indicator only on the first assistant answer of the last turn,
-              // and only when retrieval actually happened (timestamp is after the turn's user message)
-              const isFirstAssistantInAnswers =
-                msg.role === 'assistant' &&
-                answerMessages.findIndex((m) => m.role === 'assistant') === msgIndex;
-              const retrievalIsForThisTurn =
-                !!turn.userMessage &&
-                !!lastRetrievalTimestamp &&
-                lastRetrievalTimestamp >= turn.userMessage.timestamp;
-              const showMemoryBadge =
-                memoryEnabled && isLastTurn && isFirstAssistantInAnswers && retrievalIsForThisTurn;
               return (
-                <div key={msg.id}>
-                  <MessageCard
-                    message={msg}
-                    isStreaming={isStreaming}
-                    memoryContributed={showMemoryBadge}
-                    selectable={selectable && isMessageExportable(msg)}
-                    selected={selectedIds?.has(msg.id)}
-                    onToggleSelect={onToggleSelect}
-                  />
+                <div key={turnKey} className="space-y-5">
+                  {/* User message */}
+                  {turn.userMessage && (
+                    <div key={turn.userMessage.id}>
+                      <MessageCard
+                        message={turn.userMessage}
+                        showTimestamp
+                        selectable={selectable && isMessageExportable(turn.userMessage)}
+                        selected={selectedIds?.has(turn.userMessage.id)}
+                        onToggleSelect={onToggleSelect}
+                      />
+                    </div>
+                  )}
+
+                  {/* Process accordion (collapsed intermediate messages) */}
+                  {processMessages.length > 0 && (
+                    <ProcessAccordion
+                      messages={processMessages}
+                      isStreaming={turnIsStreaming}
+                      renderMessage={renderMessage}
+                      forceExpanded={selectable}
+                    />
+                  )}
+
+                  {/* Final answer messages (or all messages if no collapse) */}
+                  {answerMessages.map((msg, msgIndex) => {
+                    const isStreaming = typeof msg.id === 'string' && msg.id.startsWith('partial-');
+                    const isFirstAssistantInAnswers =
+                      msg.role === 'assistant' &&
+                      answerMessages.findIndex((m) => m.role === 'assistant') === msgIndex;
+                    const retrievalIsForThisTurn =
+                      !!turn.userMessage &&
+                      !!lastRetrievalTimestamp &&
+                      lastRetrievalTimestamp >= turn.userMessage.timestamp;
+                    const showMemoryBadge =
+                      memoryEnabled &&
+                      isLastTurn &&
+                      isFirstAssistantInAnswers &&
+                      retrievalIsForThisTurn;
+                    return (
+                      <div key={msg.id}>
+                        <MessageCard
+                          message={msg}
+                          isStreaming={isStreaming}
+                          memoryContributed={showMemoryBadge}
+                          selectable={selectable && isMessageExportable(msg)}
+                          selected={selectedIds?.has(msg.id)}
+                          onToggleSelect={onToggleSelect}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
           </div>
-        );
-      })}
+        </div>
+      ))}
     </>
   );
 });
