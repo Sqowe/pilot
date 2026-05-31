@@ -339,13 +339,13 @@ They should not trigger day separators.
 
 ## 8. Implementation Plan
 
-### Phase 1: Core (MVP)
+### Phase 1: Core (MVP) ✅ Done (2026-05-31)
 
-1. Add formatting utilities to `i18n-format.ts`
-2. Create `DateSeparator` component
-3. Integrate into `GroupedMessages` — show day separators between turns
-4. Add per-message time on user messages
-5. Add hover tooltip with full timestamp
+1. ✅ Add formatting utilities to `i18n-format.ts`
+2. ✅ Create `DateSeparator` component
+3. ✅ Integrate into `GroupedMessages` — show day separators between turns
+4. ✅ Add per-message time on user messages
+5. ✅ Add hover tooltip with full timestamp
 
 ### Phase 2: Session Metadata
 
