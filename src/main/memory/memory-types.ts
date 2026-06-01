@@ -197,6 +197,8 @@ export interface MemorySessionStateRecord {
   lastProcessedMessageCount: number;
   lastIngestedAt?: number | null;
   lastError?: string | null;
+  lastErrorAt?: number | null;
+  lastErrorDismissedAt?: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -241,6 +243,7 @@ export interface MemoryOverview {
   failedSessionCount: number;
   latestIngestionAt: number | null;
   latestError: string | null;
+  latestErrorAt: number | null;
   currentWorkspace?: {
     workspaceKey: string;
     experienceSessionCount: number;

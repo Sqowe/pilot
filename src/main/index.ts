@@ -3475,6 +3475,13 @@ ipcMain.handle('memory.clearCoreMemory', () => {
   return memoryService.clearCoreMemory();
 });
 
+ipcMain.handle('memory.dismissIngestionErrors', () => {
+  if (!memoryService) {
+    throw new Error('Memory service not initialized');
+  }
+  return memoryService.dismissIngestionErrors();
+});
+
 ipcMain.handle('memory.deleteCoreEntry', (_event, combinedKey: string) => {
   if (!memoryService) {
     throw new Error('Memory service not initialized');

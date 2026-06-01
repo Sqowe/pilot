@@ -473,6 +473,7 @@ export interface MemoryOverview {
   failedSessionCount: number;
   latestIngestionAt: number | null;
   latestError: string | null;
+  latestErrorAt: number | null;
   currentWorkspace?: {
     workspaceKey: string;
     experienceSessionCount: number;

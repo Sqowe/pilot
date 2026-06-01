@@ -458,20 +458,51 @@ export function SettingsMemory() {
                   : undefined
               }
             />
-            <InfoCard
-              label={t('memory.ingestionStatus')}
-              status={overview?.failedSessionCount ? 'error' : 'healthy'}
-              value={
-                overview?.failedSessionCount
-                  ? t('memory.failedSessions', { count: overview.failedSessionCount })
-                  : t('memory.healthy')
-              }
-              secondary={
-                overview?.latestError
-                  ? t(`memory.error.${classifyIngestionError(overview.latestError)}`)
-                  : undefined
-              }
-            />
+            {overview?.failedSessionCount ? (
+              <div className="rounded-lg border border-rose-200 bg-rose-50/50 p-3 text-xs dark:border-rose-900/40 dark:bg-rose-950/20">
+                <p className="font-medium text-text-secondary">{t('memory.ingestionStatus')}</p>
+                <p className="mt-1 text-text-primary">
+                  {t('memory.failedSessions', { count: overview.failedSessionCount })}
+                </p>
+                {overview.latestErrorAt ? (
+                  <p className="mt-1 text-text-muted">
+                    {t('memory.lastFailure', {
+                      time: new Date(overview.latestErrorAt).toLocaleString(i18n.language),
+                    })}
+                  </p>
+                ) : null}
+                {overview.latestError ? (
+                  <p className="mt-1.5 text-text-muted">
+                    {t(`memory.error.${classifyIngestionError(overview.latestError)}`)}
+                  </p>
+                ) : null}
+                <div className="mt-2 flex gap-3">
+                  <button
+                    onClick={async () => {
+                      setIsBusy(true);
+                      try {
+                        await window.electronAPI.memory.dismissIngestionErrors();
+                        await refreshOverview();
+                      } catch (error) {
+                        setStatus(error instanceof Error ? error.message : String(error));
+                      } finally {
+                        setIsBusy(false);
+                      }
+                    }}
+                    disabled={isBusy}
+                    className="text-xs font-medium text-accent hover:underline disabled:opacity-60"
+                  >
+                    {t('memory.dismissErrors')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <InfoCard
+                label={t('memory.ingestionStatus')}
+                status="healthy"
+                value={t('memory.healthy')}
+              />
+            )}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <InfoCard

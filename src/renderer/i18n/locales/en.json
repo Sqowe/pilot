@@ -125,6 +125,8 @@
     "ingestionStatus": "Ingestion status",
     "healthy": "All sessions ingested successfully",
     "failedSessions": "{{count}} session(s) failed their latest ingestion",
+    "lastFailure": "Last failure: {{time}}",
+    "dismissErrors": "Acknowledge",
     "sourceStats": "{{sessions}} sessions, {{chunks}} chunks",
     "error": {
       "contextWindow": "Session was too long for the LLM context window. Consider using a model with a larger context limit.",

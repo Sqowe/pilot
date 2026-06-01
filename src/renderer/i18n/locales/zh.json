@@ -125,6 +125,8 @@
     "ingestionStatus": "摄取状态",
     "healthy": "所有会话均已成功摄取",
     "failedSessions": "有 {{count}} 个 session 最近摄取失败",
+    "lastFailure": "最近失败: {{time}}",
+    "dismissErrors": "确认",
     "sourceStats": "{{sessions}} 个会话，{{chunks}} 个分块",
     "error": {
       "contextWindow": "会话内容超出 LLM 上下文窗口限制。建议使用支持更大上下文的模型。",
