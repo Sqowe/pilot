@@ -15,6 +15,50 @@ import { SettingsContentSection } from './shared';
 
 type SearchMode = 'workspace' | 'all' | 'global';
 
+function formatRelativeTime(timestamp: number, locale?: string): string {
+  const now = Date.now();
+  const diffMs = now - timestamp;
+  const diffSeconds = Math.floor(diffMs / 1000);
+  const diffMinutes = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  try {
+    const rtf = new Intl.RelativeTimeFormat(locale || 'en', { numeric: 'auto' });
+    if (diffSeconds < 60) return rtf.format(-diffSeconds, 'second');
+    if (diffMinutes < 60) return rtf.format(-diffMinutes, 'minute');
+    if (diffHours < 24) return rtf.format(-diffHours, 'hour');
+    if (diffDays < 7) return rtf.format(-diffDays, 'day');
+  } catch {
+    // Fallback if Intl is unavailable
+    if (diffMinutes < 1) return 'Just now';
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+  }
+  return new Date(timestamp).toLocaleDateString(locale);
+}
+
+function classifyIngestionError(error: string): string {
+  const normalized = error.toLowerCase();
+  if (/maximum context length|max.*token|requested about/.test(normalized)) {
+    return 'contextWindow';
+  }
+  if (/timeout|etimedout/.test(normalized)) {
+    return 'timeout';
+  }
+  if (/401|unauthorized/.test(normalized)) {
+    return 'authFailed';
+  }
+  if (/429|rate.?limit/.test(normalized)) {
+    return 'rateLimited';
+  }
+  if (/50[023]|server error|internal error/.test(normalized)) {
+    return 'serverError';
+  }
+  return 'unknown';
+}
+
 const DEFAULT_MEMORY_RUNTIME: MemoryRuntimeConfig = {
   llm: {
     inheritFromActive: true,
@@ -74,7 +118,7 @@ function cloneRuntimeConfig(runtime?: MemoryRuntimeConfig): MemoryRuntimeConfig 
 }
 
 export function SettingsMemory() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const sessions = useAppStore((state) => state.sessions);
   const workingDir = useAppStore((state) => state.workingDir);
@@ -405,36 +449,43 @@ export function SettingsMemory() {
               label={t('memory.latestIngestion')}
               value={
                 overview?.latestIngestionAt
-                  ? new Date(overview.latestIngestionAt).toLocaleString()
+                  ? formatRelativeTime(overview.latestIngestionAt, i18n.language)
                   : t('memory.noIngestionYet')
+              }
+              secondary={
+                overview?.latestIngestionAt
+                  ? new Date(overview.latestIngestionAt).toLocaleString()
+                  : undefined
               }
             />
             <InfoCard
-              label={t('memory.health')}
+              label={t('memory.ingestionStatus')}
+              status={overview?.failedSessionCount ? 'error' : 'healthy'}
               value={
                 overview?.failedSessionCount
                   ? t('memory.failedSessions', { count: overview.failedSessionCount })
                   : t('memory.healthy')
               }
-              secondary={overview?.latestError || undefined}
+              secondary={
+                overview?.latestError
+                  ? t(`memory.error.${classifyIngestionError(overview.latestError)}`)
+                  : undefined
+              }
             />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <InfoCard
-              label={t('memory.storageRoot')}
-              value={overview?.storageRoot || runtimeDraft.storageRoot || 'Default userData/memory'}
-            />
             <InfoCard
               label={t('memory.currentWorkspace')}
               value={currentWorkspace || t('memory.noWorkspace')}
               secondary={
                 overview?.topSourceWorkspaces?.length
-                  ? `Top sources: ${overview.topSourceWorkspaces
+                  ? overview.topSourceWorkspaces
                       .slice(0, 3)
                       .map(
-                        (item) => `${item.workspaceKey} (${item.sessionCount}/${item.chunkCount})`
+                        (item) =>
+                          `${item.workspaceKey.split('/').pop() || item.workspaceKey} — ${t('memory.sourceStats', { sessions: item.sessionCount, chunks: item.chunkCount })}`
                       )
-                      .join(' · ')}`
+                      .join('\n')
                   : undefined
               }
             />
@@ -1012,16 +1063,37 @@ function InfoCard({
   label,
   value,
   secondary,
+  status,
+  action,
 }: {
   label: string;
   value: string;
   secondary?: string;
+  status?: 'healthy' | 'warning' | 'error';
+  action?: { label: string; onClick: () => void };
 }) {
+  const statusColors = {
+    healthy: 'border-green-200 bg-green-50/50 dark:border-green-900/40 dark:bg-green-950/20',
+    warning: 'border-amber-200 bg-amber-50/50 dark:border-amber-900/40 dark:bg-amber-950/20',
+    error: 'border-rose-200 bg-rose-50/50 dark:border-rose-900/40 dark:bg-rose-950/20',
+  };
+  const borderClass = status ? statusColors[status] : 'border-border-muted bg-background/80';
+
   return (
-    <div className="rounded-lg border border-border-muted bg-background/80 p-3 text-xs text-text-muted">
+    <div className={`rounded-lg border p-3 text-xs text-text-muted ${borderClass}`}>
       <p className="font-medium text-text-secondary">{label}</p>
       <p className="mt-1 break-all">{value}</p>
-      {secondary ? <p className="mt-2 break-all text-rose-500">{secondary}</p> : null}
+      {secondary ? (
+        <p className="mt-1.5 whitespace-pre-line break-all text-text-muted">{secondary}</p>
+      ) : null}
+      {action ? (
+        <button
+          onClick={action.onClick}
+          className="mt-2 text-xs font-medium text-accent hover:underline"
+        >
+          {action.label}
+        </button>
+      ) : null}
     </div>
   );
 }
