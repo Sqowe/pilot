@@ -200,15 +200,37 @@ The model decides autonomously when to invoke these tools.
 ### Retrieval Scoring
 
 ```typescript
-score = lexicalScore + embeddingScore + workspaceBoost + recencyBoost;
+score = lexicalScore + embeddingScore + workspaceBoost + recencyBoost - supersessionPenalty;
 ```
 
-| Signal          | Value          | Description                                   |
-| --------------- | -------------- | --------------------------------------------- |
-| Lexical score   | 0–1            | Keyword overlap (BM25-like)                   |
-| Embedding score | 0–1            | Cosine similarity of query vs chunk embedding |
-| Workspace boost | +0.3           | If chunk is from the same workspace           |
-| Recency boost   | +0.02 to +0.08 | Newer chunks boosted, decays over 45 days     |
+| Signal               | Value               | Description                                               |
+| -------------------- | ------------------- | --------------------------------------------------------- |
+| Lexical score        | 0–1                 | Keyword overlap (BM25-like)                               |
+| Embedding score      | 0–1                 | Cosine similarity of query vs chunk embedding             |
+| Workspace boost      | +0.3                | If chunk is from the same workspace                       |
+| Recency boost        | configurable        | Linear decay from ceiling to floor over decay period      |
+| Supersession penalty | configurable (−0.2) | Older chunks penalized when newer same-topic chunks exist |
+
+#### Recency Boost
+
+Linear decay formula: `max(floor, ceiling * (1 - ageDays / decayDays))`
+
+| Parameter          | Default | Range    | Description                               |
+| ------------------ | ------- | -------- | ----------------------------------------- |
+| `recencyFloor`     | 0.05    | 0.01–0.2 | Minimum boost for old conversations       |
+| `recencyCeiling`   | 0.25    | 0.1–0.5  | Maximum boost for brand-new conversations |
+| `recencyDecayDays` | 90      | 30–180   | Days until boost drops to floor           |
+
+#### Supersession Penalty
+
+When a newer chunk from the same workspace covers the same keywords (overlap ≥ threshold), older chunks get penalized. Prevents outdated info from winning by volume.
+
+| Parameter                      | Default | Range   | Description                               |
+| ------------------------------ | ------- | ------- | ----------------------------------------- |
+| `supersessionPenalty`          | 0.2     | 0–0.5   | Score penalty for older same-topic chunks |
+| `supersessionKeywordThreshold` | 0.5     | 0.3–0.8 | Keyword overlap to trigger penalty        |
+
+All scoring parameters are user-configurable via Settings → Memory → Advanced Configuration.
 
 ### Progressive Retrieval (Navigator)
 
@@ -299,6 +321,8 @@ storageRoot/
 ├── core_memory.json          # Core memory entries (v2 format)
 ├── experience_memory.json    # Sessions + chunks with embeddings
 ├── session_state.json        # Tracks which sessions have been ingested
+├── prompts/                  # Custom prompt overrides (optional)
+│   └── core-extraction.md    # Custom extraction prompt (if created by user)
 └── eval/                     # Eval harness artifacts (optional)
 ```
 
@@ -329,8 +353,26 @@ interface MemoryRuntimeConfig {
   ingestionConcurrency: number; // Parallel ingestion limit (default: 2)
   storageRoot: string;
   evalArtifactsRoot?: string;
+  // Advanced scoring parameters
+  recencyFloor?: number; // default: 0.05
+  recencyCeiling?: number; // default: 0.25
+  recencyDecayDays?: number; // default: 90
+  supersessionPenalty?: number; // default: 0.2
+  supersessionKeywordThreshold?: number; // default: 0.5
+  // Custom extraction prompt override
+  customExtractionPromptPath?: string;
 }
 ```
+
+### Custom Extraction Prompt
+
+The core memory extraction prompt can be overridden via a file:
+
+- Default location: `{storageRoot}/prompts/core-extraction.md`
+- If the file exists and is non-empty, it's used instead of the built-in `CORE_MEMORY_UPDATE_SYSTEM_PROMPT`
+- Managed via Settings → Memory → Advanced Configuration → Extraction Prompt section
+- "Create custom" copies the built-in default to the file and opens it in the system editor
+- "Reset to default" deletes the custom file, reverting to built-in
 
 ---
 
@@ -353,20 +395,36 @@ Actions:
 - Clear current workspace
 - Clear all core memory
 
+### Advanced Configuration (Settings → Memory → Advanced)
+
+Collapsible section at the bottom of Memory settings with:
+
+- **Warning banner** with [Help] button that opens a modal explaining all parameters in plain language (i18n-ready)
+- **Retrieval Scoring** — 5 numeric fields for recency/supersession tuning
+- **Extraction Prompt** — dynamic buttons based on state:
+  - Built-in active: "Show built-in" (read-only modal) + "Create custom" (copies to file, opens editor)
+  - Custom active: "Open in editor" + "Reset to default" (deletes custom file)
+- **Save** and **Reset all to defaults** buttons
+
 ### IPC Endpoints
 
-| Endpoint                  | Purpose                                    |
-| ------------------------- | ------------------------------------------ |
-| `memory.getPanelState`    | Get full panel state for UI                |
-| `memory.deleteCoreEntry`  | Delete a core memory entry                 |
-| `memory.updateCoreEntry`  | Edit a core memory value                   |
-| `memory.rebuildAll`       | Re-process all sessions                    |
-| `memory.rebuildWorkspace` | Re-process sessions for one workspace      |
-| `memory.clearWorkspace`   | Remove experience data for one workspace   |
-| `memory.clearCoreMemory`  | Wipe all core memory                       |
-| `memory.listFiles`        | Debug: list memory files                   |
-| `memory.readFile`         | Debug: read a memory file                  |
-| `memory.inspectSession`   | Debug: inspect a specific session's memory |
+| Endpoint                              | Purpose                                    |
+| ------------------------------------- | ------------------------------------------ |
+| `memory.getPanelState`                | Get full panel state for UI                |
+| `memory.deleteCoreEntry`              | Delete a core memory entry                 |
+| `memory.updateCoreEntry`              | Edit a core memory value                   |
+| `memory.rebuildAll`                   | Re-process all sessions                    |
+| `memory.rebuildWorkspace`             | Re-process sessions for one workspace      |
+| `memory.clearWorkspace`               | Remove experience data for one workspace   |
+| `memory.clearCoreMemory`              | Wipe all core memory                       |
+| `memory.listFiles`                    | Debug: list memory files                   |
+| `memory.readFile`                     | Debug: read a memory file                  |
+| `memory.getBuiltinExtractionPrompt`   | Get the built-in extraction prompt text    |
+| `memory.getCustomExtractionPrompt`    | Check if custom prompt file exists         |
+| `memory.createCustomExtractionPrompt` | Copy built-in to file path                 |
+| `memory.deleteCustomExtractionPrompt` | Delete custom prompt file                  |
+| `memory.openFileInEditor`             | Open a file in system editor               |
+| `memory.inspectSession`               | Debug: inspect a specific session's memory |
 
 ---
 
@@ -389,8 +447,8 @@ Actions:
 
 1. **No temporal versioning** — facts don't carry `valid_from`/`valid_until` timestamps
 2. **Experience memory is append-only** — old session chunks are never updated or invalidated
-3. **No contradiction detection** — if old chunks contain stale facts, they're retrieved alongside current ones
-4. **Recency boost is weak** — +0.02 to +0.08 is insufficient to overcome 50 older sessions all containing the same outdated fact
+3. **No contradiction detection** — if old chunks contain stale facts, they're retrieved alongside current ones (mitigated by supersession penalty)
+4. ~~**Recency boost is weak**~~ — **FIXED**: configurable linear decay (default 0.25→0.05 over 90 days) + supersession penalty for same-topic older chunks
 5. **Core memory update is per-session** — the profiler only sees one session at a time, cannot assess cross-session frequency
 6. **No confidence/strength scoring** — all entries are equally weighted regardless of how many times they've been confirmed
 7. **No fact extraction from experience** — experience stores narrative chunks, not structured facts that can be individually invalidated

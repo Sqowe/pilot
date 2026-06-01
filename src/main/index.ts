@@ -36,6 +36,7 @@ import { PluginCatalogService } from './skills/plugin-catalog-service';
 import { PluginRuntimeService } from './skills/plugin-runtime-service';
 import { MemoryService } from './memory/memory-service';
 import { MemoryExtension } from './memory/memory-extension';
+import { CORE_MEMORY_UPDATE_SYSTEM_PROMPT } from './memory/memory-prompts';
 import { AgentRuntimeExtensionManager } from './extensions/agent-runtime-extension-manager';
 import {
   configStore,
@@ -3542,6 +3543,67 @@ ipcMain.handle('memory.inspectSession', (_event, sessionId: string, workspaceKey
   }
   return memoryService.inspectSession(sessionId, workspaceKey);
 });
+
+ipcMain.handle('memory.getBuiltinExtractionPrompt', () => {
+  return CORE_MEMORY_UPDATE_SYSTEM_PROMPT;
+});
+
+ipcMain.handle('memory.getCustomExtractionPrompt', () => {
+  const promptPath = resolveMemoryPromptPath();
+  if (!promptPath) return { exists: false, content: '' };
+  try {
+    const content = fs.readFileSync(promptPath, 'utf-8');
+    return { exists: true, content };
+  } catch {
+    return { exists: false, content: '' };
+  }
+});
+
+ipcMain.handle('memory.createCustomExtractionPrompt', () => {
+  const promptPath = resolveMemoryPromptPath();
+  if (!promptPath) return { success: false, reason: 'no-storage-root' };
+  // Don't overwrite existing custom prompt
+  if (fs.existsSync(promptPath)) {
+    return { success: false, reason: 'exists' };
+  }
+  try {
+    const dir = dirname(promptPath);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(promptPath, CORE_MEMORY_UPDATE_SYSTEM_PROMPT, { flag: 'wx' });
+    return { success: true };
+  } catch {
+    return { success: false, reason: 'write-error' };
+  }
+});
+
+ipcMain.handle('memory.deleteCustomExtractionPrompt', () => {
+  const promptPath = resolveMemoryPromptPath();
+  if (!promptPath) return { success: false };
+  try {
+    fs.unlinkSync(promptPath);
+    return { success: true };
+  } catch {
+    return { success: false };
+  }
+});
+
+ipcMain.handle('memory.openFileInEditor', () => {
+  const promptPath = resolveMemoryPromptPath();
+  if (!promptPath) return;
+  shell.openPath(promptPath);
+});
+
+/**
+ * Resolve the fixed prompt file path inside the memory storage root.
+ * Uses the same fallback logic as MemoryService.getPaths() — if storageRoot
+ * is empty, falls back to app.getPath('userData')/memory.
+ */
+function resolveMemoryPromptPath(): string {
+  const appConfig = configStore.getAll();
+  const configuredRoot = appConfig.memoryRuntime?.storageRoot?.trim();
+  const storageRoot = configuredRoot || join(app.getPath('userData'), 'memory');
+  return join(storageRoot, 'prompts', 'core-extraction.md');
+}
 
 ipcMain.handle('memory.setEnabled', (_event, enabled: boolean) => {
   if (!memoryService) {

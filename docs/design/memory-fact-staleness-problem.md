@@ -197,19 +197,28 @@ The term comes from [this analysis](https://tianpan.co/blog/2026-05-05-ghost-con
 
 ## 6. Recommendations
 
-### 6.1 Quick Win: Aggressive Core Memory Updates (Effort: Low)
+### 6.1 Quick Win: Aggressive Core Memory Updates (Effort: Low) ✅ IMPLEMENTED
+
+**Status:** Implemented 2026-06-01
 
 **What:** Strengthen the extraction prompt to be aggressive about versioned/numeric facts.
 
-**Change:** Add to `coreMemoryUpdateSystemPrompt`:
+**Change:** Added to `coreMemoryUpdateSystemPrompt` in `memory-prompts.ts`:
 
 ```
-CRITICAL: For SPECIFIC VALUES (version numbers, dates, counts, URLs, names,
+CRITICAL — Handling value changes:
+For SPECIFIC VALUES (version numbers, dates, counts, URLs, names,
 configurations), the NEWEST mention is ALWAYS the source of truth. If the
 session mentions a specific value that differs from an existing entry with
 the same key, ALWAYS upsert with the new value. Do not preserve old values
 "just in case." The user stated the new value intentionally — that IS the update.
+Examples:
+- Existing: "app version is 2.17" + Session says "version 2.25" → upsert with 2.25
+- Existing: "team size is 3" + Session says "we hired, now 4 people" → upsert with 4
+- Existing: "uses React" + Session says "migrated to Svelte" → upsert with Svelte
 ```
+
+Additionally, the extraction prompt now supports **custom override files** — users can create a custom prompt at `{storageRoot}/prompts/core-extraction.md` via the Advanced Configuration UI. If the file exists, it's used instead of the built-in default.
 
 **Impact:** Ensures core memory (the profile) stays current. Doesn't fix experience memory staleness.
 
@@ -237,28 +246,54 @@ for (const result of results) {
 
 **Risk:** Medium. Contradiction detection is imperfect — may produce false positives. Requires a lightweight comparison (could be keyword-based, not LLM-based).
 
-### 6.3 Medium Effort: Stronger Recency Weighting (Effort: Low-Medium)
+### 6.3 Medium Effort: Stronger Recency Weighting (Effort: Low-Medium) ✅ IMPLEMENTED
 
-**What:** Increase the recency boost significantly, especially for chunks that share keywords with newer chunks on the same topic.
+**Status:** Implemented 2026-06-01
 
-**Current:** `max(0.02, 0.08 * (1 - days/45))`
-**Proposed:** `max(0.05, 0.25 * (1 - days/90))`
+**What:** Replaced the old step-function recency boost with a configurable linear decay, and added a supersession penalty for older chunks on the same topic.
 
-Additionally, add a **supersession penalty**: if a newer chunk from the same workspace covers the same keywords, older chunks on that topic get penalized.
+**Old formula (hardcoded steps):** ≤3 days → 0.08, ≤14 days → 0.04, ≤45 days → 0.02, else → 0
 
-**Implementation:**
+**New formula (configurable linear decay):**
+
+```
+recencyBoost = max(floor, ceiling * (1 - ageDays / decayDays))
+```
+
+**Defaults:** `max(0.05, 0.25 * (1 - days/90))`
+
+**Supersession penalty:** When a newer chunk from the same workspace covers the same keywords (overlap ≥ threshold), older chunks get penalized.
+
+**Implementation in `experience-memory-store.ts`:**
 
 ```typescript
-function supersessionPenalty(chunk, allChunks, currentWorkspace) {
-  const newerSameTopicChunks = allChunks.filter(
-    (other) =>
-      other.sessionDate > chunk.sessionDate &&
-      other.sourceWorkspace === currentWorkspace &&
-      keywordOverlap(chunk.keywords, other.keywords) > 0.5
-  );
-  return newerSameTopicChunks.length > 0 ? -0.2 : 0;
+// Linear decay recency boost
+function recencyBoost(ingestedAt, now, floor = 0.05, ceiling = 0.25, decayDays = 90) {
+  const ageDays = (now - timestamp) / 86_400_000;
+  return Math.max(floor, ceiling * (1 - ageDays / decayDays));
 }
+
+// Supersession: penalize older chunks when newer same-topic chunks exist
+function keywordOverlap(a: string[], b: string[]): number {
+  const setB = new Set(b.map((k) => k.toLowerCase()));
+  let matches = 0;
+  for (const keyword of a) {
+    if (setB.has(keyword.toLowerCase())) matches++;
+  }
+  return matches / Math.max(a.length, b.length);
+}
+// Applied in rankItems() after initial scoring
 ```
+
+All parameters are configurable via Settings → Memory → Advanced Configuration:
+
+| Parameter                      | Default | Range    | Description                                  |
+| ------------------------------ | ------- | -------- | -------------------------------------------- |
+| `recencyFloor`                 | 0.05    | 0.01–0.2 | Minimum boost for old conversations          |
+| `recencyCeiling`               | 0.25    | 0.1–0.5  | Maximum boost for brand-new conversations    |
+| `recencyDecayDays`             | 90      | 30–180   | Days until boost drops from ceiling to floor |
+| `supersessionPenalty`          | 0.2     | 0–0.5    | Score penalty for older same-topic chunks    |
+| `supersessionKeywordThreshold` | 0.5     | 0.3–0.8  | Keyword overlap to trigger supersession      |
 
 **Impact:** Newer information on the same topic naturally outranks older information.
 
@@ -384,23 +419,25 @@ if (chunk.supersededAt) {
 
 ## 7. Recommended Implementation Order
 
-| Priority | Recommendation                                | Effort     | Impact                                      |
-| -------- | --------------------------------------------- | ---------- | ------------------------------------------- |
-| 1        | 6.1 — Aggressive core memory updates          | Low        | Fixes core memory staleness                 |
-| 2        | 6.3 — Stronger recency + supersession penalty | Low-Medium | Reduces experience staleness                |
-| 3        | 6.2 — Contradiction annotation at retrieval   | Medium     | Model gets explicit warnings                |
-| 4        | 6.4 — Fact layer with contradiction tracking  | High       | Comprehensive long-term solution            |
-| 5        | 6.5 — Write-time contradiction detection      | High       | Prevents ghost context accumulation         |
-| —        | 6.6 — Temporal knowledge graph                | Very High  | Deferred unless memory becomes core product |
+| Priority | Recommendation                                | Effort     | Impact                                      | Status  |
+| -------- | --------------------------------------------- | ---------- | ------------------------------------------- | ------- |
+| 1        | 6.1 — Aggressive core memory updates          | Low        | Fixes core memory staleness                 | ✅ Done |
+| 2        | 6.3 — Stronger recency + supersession penalty | Low-Medium | Reduces experience staleness                | ✅ Done |
+| 3        | 6.2 — Contradiction annotation at retrieval   | Medium     | Model gets explicit warnings                |         |
+| 4        | 6.4 — Fact layer with contradiction tracking  | High       | Comprehensive long-term solution            |         |
+| 5        | 6.5 — Write-time contradiction detection      | High       | Prevents ghost context accumulation         |         |
+| —        | 6.6 — Temporal knowledge graph                | Very High  | Deferred unless memory becomes core product |         |
 
-### Suggested first iteration:
+### Suggested first iteration: ✅ COMPLETED
 
-Implement **6.1 + 6.3** together. This gives:
+Implemented **6.1 + 6.3** together (2026-06-01). This gives:
 
 - Core memory always reflects the latest stated value (prompt fix)
 - Experience retrieval naturally favors newer information on the same topic (scoring fix)
+- All scoring parameters are user-configurable via Advanced Configuration UI
+- Custom extraction prompt support via file override
 - No structural changes to storage format
-- Minimal code changes, testable immediately
+- Full i18n support (EN + ZH)
 
 ### Suggested second iteration:
 

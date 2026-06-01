@@ -173,7 +173,8 @@ export class MemoryService {
     };
     this.coreExtractor = new CoreMemoryExtractor(
       this.llmClient,
-      promptSet.coreMemoryUpdateSystemPrompt
+      promptSet.coreMemoryUpdateSystemPrompt,
+      () => this.getCustomPromptPath()
     );
     this.experienceExtractor = new ExperienceMemoryExtractor(
       this.llmClient,
@@ -850,11 +851,17 @@ export class MemoryService {
       return { context: '', metrics: emptyMetrics };
     }
     const queryEmbedding = await this.embedText(prompt);
+    const runtimeConfig = this.getAppConfig().memoryRuntime;
     const retrieval = store.retrieveProgressive(prompt, {
       chunkTopK: 10,
       sessionTopK: 5,
       queryEmbedding,
       currentWorkspace,
+      recencyFloor: runtimeConfig.recencyFloor,
+      recencyCeiling: runtimeConfig.recencyCeiling,
+      recencyDecayDays: runtimeConfig.recencyDecayDays,
+      supersessionPenalty: runtimeConfig.supersessionPenalty,
+      supersessionKeywordThreshold: runtimeConfig.supersessionKeywordThreshold,
     });
     if (!retrieval.broadSummaries.length) {
       return { context: '', metrics: emptyMetrics };
@@ -1109,6 +1116,11 @@ export class MemoryService {
 
   private getAppConfig(): AppConfig {
     return configStore.getAll();
+  }
+
+  private getCustomPromptPath(): string | undefined {
+    const paths = this.getPaths();
+    return path.join(paths.storageRoot, 'prompts', 'core-extraction.md');
   }
 
   private getPaths(): MemoryPaths {

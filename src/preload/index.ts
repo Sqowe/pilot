@@ -535,6 +535,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('memory.inspectSession', sessionId, workspaceKey),
     setEnabled: (enabled: boolean): Promise<{ success: boolean; enabled: boolean }> =>
       ipcRenderer.invoke('memory.setEnabled', enabled),
+    getBuiltinExtractionPrompt: (): Promise<string> =>
+      ipcRenderer.invoke('memory.getBuiltinExtractionPrompt'),
+    getCustomExtractionPrompt: (): Promise<{ exists: boolean; content: string }> =>
+      ipcRenderer.invoke('memory.getCustomExtractionPrompt'),
+    createCustomExtractionPrompt: (): Promise<{ success: boolean }> =>
+      ipcRenderer.invoke('memory.createCustomExtractionPrompt'),
+    deleteCustomExtractionPrompt: (): Promise<{ success: boolean }> =>
+      ipcRenderer.invoke('memory.deleteCustomExtractionPrompt'),
+    openFileInEditor: (): Promise<void> => ipcRenderer.invoke('memory.openFileInEditor'),
   },
 });
 
@@ -832,6 +841,11 @@ declare global {
           workspaceKey?: string
         ) => Promise<MemoryInspectSessionResult | null>;
         setEnabled: (enabled: boolean) => Promise<{ success: boolean; enabled: boolean }>;
+        getBuiltinExtractionPrompt: () => Promise<string>;
+        getCustomExtractionPrompt: () => Promise<{ exists: boolean; content: string }>;
+        createCustomExtractionPrompt: () => Promise<{ success: boolean }>;
+        deleteCustomExtractionPrompt: () => Promise<{ success: boolean }>;
+        openFileInEditor: () => Promise<void>;
       };
     };
   }
