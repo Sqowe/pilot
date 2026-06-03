@@ -1938,6 +1938,41 @@ ipcMain.handle('config.isConfigured', () => {
   }
 });
 
+ipcMain.handle('workspace-instructions.getStatus', async () => {
+  try {
+    const { loadWorkspaceSystemPrompt, MAX_BYTES } =
+      await import('./utils/workspace-system-prompt');
+    const choice = configStore.get('systemPromptFile') || '';
+    if (!choice) {
+      return { configuredFile: '', loaded: false };
+    }
+    const cwd = currentWorkingDir || undefined;
+    const result = await loadWorkspaceSystemPrompt(cwd, choice);
+    if (result) {
+      const sizeBytes = Buffer.byteLength(result.text, 'utf8');
+      return {
+        configuredFile: choice,
+        loaded: true,
+        sizeBytes,
+        truncated: sizeBytes >= MAX_BYTES,
+        fingerprintShort: result.fingerprint.slice(0, 8),
+      };
+    }
+    return {
+      configuredFile: choice,
+      loaded: false,
+      error: 'File not found or unreadable at workspace root',
+    };
+  } catch (error) {
+    logError('[WorkspaceInstructions] getStatus failed:', error);
+    return {
+      configuredFile: configStore.get('systemPromptFile') || '',
+      loaded: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
 ipcMain.handle('config.test', async (_event, payload: ApiTestInput): Promise<ApiTestResult> => {
   try {
     return await runConfigApiTest(payload, configStore.getAll());

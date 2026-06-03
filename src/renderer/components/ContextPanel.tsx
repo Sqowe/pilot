@@ -14,6 +14,7 @@ import {
 } from '../utils/artifact-steps';
 import { useIPC } from '../hooks/useIPC';
 import { MemoryLensSection } from './MemoryLensSection';
+import { WorkspaceInstructionsBadge } from './WorkspaceInstructionsBadge';
 import {
   ChevronDown,
   ChevronUp,
@@ -720,6 +721,9 @@ export function ContextPanel() {
           collapsed={contextPanelCollapsed}
           sessionId={activeSessionId || undefined}
         />
+
+        {/* Workspace Instructions Status */}
+        <WorkspaceInstructionsBadge cwd={currentWorkingDir || undefined} />
 
         {/* Artifacts Section */}
         <div className="border-b border-border-muted">

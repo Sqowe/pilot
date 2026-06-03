@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { WorkspaceInstructionsStatus } from '../shared/workspace-instructions-status';
 import type {
   ClientEvent,
   ServerEvent,
@@ -321,6 +322,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Environment methods
   env: {
     getEffectivePath: (): Promise<string> => ipcRenderer.invoke('env.getEffectivePath'),
+  },
+
+  // Workspace instructions status
+  workspaceInstructions: {
+    getStatus: (): Promise<WorkspaceInstructionsStatus> =>
+      ipcRenderer.invoke('workspace-instructions.getStatus'),
   },
 
   plugins: {
@@ -675,6 +682,9 @@ declare global {
       };
       env: {
         getEffectivePath: () => Promise<string>;
+      };
+      workspaceInstructions: {
+        getStatus: () => Promise<WorkspaceInstructionsStatus>;
       };
       plugins: {
         listCatalog: (options?: { installableOnly?: boolean }) => Promise<PluginCatalogItemV2[]>;
