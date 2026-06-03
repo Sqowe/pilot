@@ -1938,7 +1938,7 @@ ipcMain.handle('config.isConfigured', () => {
   }
 });
 
-ipcMain.handle('workspace-instructions.getStatus', async () => {
+ipcMain.handle('workspace-instructions.getStatus', async (_event, requestedCwd?: string) => {
   try {
     const { loadWorkspaceSystemPrompt, MAX_BYTES } =
       await import('./utils/workspace-system-prompt');
@@ -1946,7 +1946,9 @@ ipcMain.handle('workspace-instructions.getStatus', async () => {
     if (!choice) {
       return { configuredFile: '', loaded: false };
     }
-    const cwd = currentWorkingDir || undefined;
+    // Use the renderer-provided cwd (session workspace) if given,
+    // falling back to the global default only as a last resort.
+    const cwd = requestedCwd || currentWorkingDir || undefined;
     const result = await loadWorkspaceSystemPrompt(cwd, choice);
     if (result) {
       const sizeBytes = Buffer.byteLength(result.text, 'utf8');

@@ -7,9 +7,16 @@
  * into the system prompt — solving the common pain point of "is the LLM
  * actually reading my rules?"
  */
-import { useState, useEffect, memo } from 'react';
+import { useState, useEffect, memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FileText, CheckCircle2, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
+import {
+  FileText,
+  CheckCircle2,
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+} from 'lucide-react';
 import type { WorkspaceInstructionsStatus } from '../../shared/workspace-instructions-status';
 
 interface WorkspaceInstructionsBadgeProps {
@@ -40,7 +47,7 @@ export const WorkspaceInstructionsBadge = memo(function WorkspaceInstructionsBad
 
     const fetchStatus = async () => {
       try {
-        const result = await window.electronAPI.workspaceInstructions.getStatus();
+        const result = await window.electronAPI.workspaceInstructions.getStatus(cwd);
         if (!cancelled) {
           setStatus(result);
         }
@@ -62,12 +69,22 @@ export const WorkspaceInstructionsBadge = memo(function WorkspaceInstructionsBad
     };
   }, [cwd]);
 
+  const handleOpenFile = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (!status?.loaded || !status.configuredFile || !cwd) return;
+      window.electronAPI?.showItemInFolder(status.configuredFile, cwd);
+    },
+    [status, cwd]
+  );
+
   // Nothing to show if no file is configured
   if (loading || !status || !status.configuredFile) {
     return null;
   }
 
   const isLoaded = status.loaded;
+  const canOpen = isLoaded && !!cwd && !!window.electronAPI?.showItemInFolder;
 
   return (
     <div className="px-4 py-2.5 border-b border-border-muted space-y-0.5">
@@ -94,7 +111,7 @@ export const WorkspaceInstructionsBadge = memo(function WorkspaceInstructionsBad
       </button>
 
       {expanded && (
-        <div className="ml-5 space-y-0.5 text-[11px] text-text-muted animate-fade-in">
+        <div className="ml-5 space-y-1 text-[11px] text-text-muted animate-fade-in">
           {isLoaded ? (
             <>
               <div className="flex items-center gap-1">
@@ -116,6 +133,16 @@ export const WorkspaceInstructionsBadge = memo(function WorkspaceInstructionsBad
                 <div className="font-mono text-[10px] text-text-muted/60">
                   SHA: {status.fingerprintShort}…
                 </div>
+              )}
+              {canOpen && (
+                <button
+                  onClick={handleOpenFile}
+                  className="flex items-center gap-1 text-[11px] text-accent hover:text-accent/80 transition-colors mt-0.5"
+                  title={t('workspaceInstructions.openFile', 'Open instructions file')}
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  <span>{t('workspaceInstructions.openFile', 'Open instructions file')}</span>
+                </button>
               )}
             </>
           ) : (

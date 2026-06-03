@@ -326,8 +326,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Workspace instructions status
   workspaceInstructions: {
-    getStatus: (): Promise<WorkspaceInstructionsStatus> =>
-      ipcRenderer.invoke('workspace-instructions.getStatus'),
+    getStatus: (cwd?: string): Promise<WorkspaceInstructionsStatus> =>
+      ipcRenderer.invoke('workspace-instructions.getStatus', cwd),
   },
 
   plugins: {
@@ -684,7 +684,7 @@ declare global {
         getEffectivePath: () => Promise<string>;
       };
       workspaceInstructions: {
-        getStatus: () => Promise<WorkspaceInstructionsStatus>;
+        getStatus: (cwd?: string) => Promise<WorkspaceInstructionsStatus>;
       };
       plugins: {
         listCatalog: (options?: { installableOnly?: boolean }) => Promise<PluginCatalogItemV2[]>;
