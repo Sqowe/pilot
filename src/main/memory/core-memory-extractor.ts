@@ -1,13 +1,36 @@
 import * as path from 'node:path';
+import * as fs from 'node:fs';
 import { CORE_MEMORY_UPDATE_SYSTEM_PROMPT } from './memory-prompts';
 import type { MemoryLLMClientLike } from './memory-llm-client';
 import type { CoreMemoryActionInput, MemoryTranscriptTurn } from './memory-types';
 import { compactTranscript, extractJson } from './memory-utils';
 
+/**
+ * Load a custom extraction prompt from a file path, falling back to the built-in default.
+ * Enforces a maximum file size of 32KB to prevent oversized LLM requests.
+ */
+function loadExtractionPrompt(customPath?: string): string {
+  if (customPath && customPath.trim()) {
+    try {
+      const stats = fs.statSync(customPath.trim());
+      // Reject files larger than 32KB
+      if (stats.size > 32 * 1024) {
+        return CORE_MEMORY_UPDATE_SYSTEM_PROMPT;
+      }
+      const content = fs.readFileSync(customPath.trim(), 'utf-8');
+      if (content.trim()) return content.trim();
+    } catch {
+      // File doesn't exist or can't be read — fall back to default
+    }
+  }
+  return CORE_MEMORY_UPDATE_SYSTEM_PROMPT;
+}
+
 export class CoreMemoryExtractor {
   constructor(
     private readonly llm: MemoryLLMClientLike,
-    private readonly systemPrompt = CORE_MEMORY_UPDATE_SYSTEM_PROMPT
+    private readonly systemPrompt = CORE_MEMORY_UPDATE_SYSTEM_PROMPT,
+    private readonly customPromptPathResolver?: () => string | undefined
   ) {}
 
   async extract(params: {
@@ -22,12 +45,15 @@ export class CoreMemoryExtractor {
       return [];
     }
 
+    const customPath = this.customPromptPathResolver?.();
+    const effectivePrompt = customPath ? loadExtractionPrompt(customPath) : this.systemPrompt;
+
     const workspaceContext = params.sourceWorkspace
       ? `Source workspace: ${path.basename(params.sourceWorkspace) || 'project'}`
       : 'Source workspace: (no specific project)';
 
     const response = await this.llm.complete({
-      systemPrompt: this.systemPrompt,
+      systemPrompt: effectivePrompt,
       userPrompt: [
         'Existing core memory:',
         params.existingCorePromptBlock,

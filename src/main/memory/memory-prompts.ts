@@ -36,6 +36,12 @@ Extraction standard:
 - Update existing entries when new information refines or contradicts them
 - Delete entries that are clearly obsolete or contradicted
 
+CRITICAL — Handling value changes:
+For SPECIFIC VALUES (version numbers, dates, counts, URLs, names, configurations), the NEWEST mention is ALWAYS the source of truth. If the session mentions a specific value that differs from an existing entry with the same key, ALWAYS upsert with the new value. Do not preserve old values "just in case." The user stated the new value intentionally — that IS the update. Examples:
+- Existing: "app version is 2.17" + Session says "version 2.25" → upsert with 2.25
+- Existing: "team size is 3" + Session says "we hired, now 4 people" → upsert with 4
+- Existing: "uses React" + Session says "migrated to Svelte" → upsert with Svelte
+
 You will receive the workspace name for context. Use it to judge what's relevant to this domain.
 
 Return JSON only:

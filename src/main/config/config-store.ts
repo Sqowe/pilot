@@ -194,6 +194,12 @@ export interface MemoryRuntimeConfig {
   evalMaxRounds?: number;
   evalArtifactsRoot?: string;
   promptIterationRounds?: number;
+  // Advanced retrieval scoring parameters
+  recencyFloor?: number;
+  recencyCeiling?: number;
+  recencyDecayDays?: number;
+  supersessionPenalty?: number;
+  supersessionKeywordThreshold?: number;
 }
 
 const DEFAULT_CONFIG_SET_ID = 'default';
@@ -326,6 +332,11 @@ const defaultConfig: AppConfig = {
     evalMaxRounds: 12,
     evalArtifactsRoot: '',
     promptIterationRounds: 2,
+    recencyFloor: 0.05,
+    recencyCeiling: 0.25,
+    recencyDecayDays: 90,
+    supersessionPenalty: 0.2,
+    supersessionKeywordThreshold: 0.5,
   },
   enableThinking: false,
   isConfigured: false,
@@ -510,7 +521,7 @@ function normalizeMemoryModelRuntimeConfig(
 function normalizeMemoryRuntimeConfig(raw: unknown): MemoryRuntimeConfig {
   const value =
     typeof raw === 'object' && raw !== null ? (raw as Partial<MemoryRuntimeConfig>) : {};
-  return {
+  const result: MemoryRuntimeConfig = {
     llm: normalizeMemoryModelRuntimeConfig(value.llm, defaultConfig.memoryRuntime.llm),
     embedding: normalizeMemoryModelRuntimeConfig(
       value.embedding,
@@ -546,7 +557,37 @@ function normalizeMemoryRuntimeConfig(raw: unknown): MemoryRuntimeConfig {
       Number.isFinite(value.promptIterationRounds)
         ? Math.max(0, Math.min(10, Math.round(value.promptIterationRounds)))
         : defaultConfig.memoryRuntime.promptIterationRounds,
+    recencyFloor:
+      typeof value.recencyFloor === 'number' && Number.isFinite(value.recencyFloor)
+        ? Math.max(0.01, Math.min(0.2, value.recencyFloor))
+        : defaultConfig.memoryRuntime.recencyFloor,
+    recencyCeiling:
+      typeof value.recencyCeiling === 'number' && Number.isFinite(value.recencyCeiling)
+        ? Math.max(0.1, Math.min(0.5, value.recencyCeiling))
+        : defaultConfig.memoryRuntime.recencyCeiling,
+    recencyDecayDays:
+      typeof value.recencyDecayDays === 'number' && Number.isFinite(value.recencyDecayDays)
+        ? Math.max(30, Math.min(180, Math.round(value.recencyDecayDays)))
+        : defaultConfig.memoryRuntime.recencyDecayDays,
+    supersessionPenalty:
+      typeof value.supersessionPenalty === 'number' && Number.isFinite(value.supersessionPenalty)
+        ? Math.max(0, Math.min(0.5, value.supersessionPenalty))
+        : defaultConfig.memoryRuntime.supersessionPenalty,
+    supersessionKeywordThreshold:
+      typeof value.supersessionKeywordThreshold === 'number' &&
+      Number.isFinite(value.supersessionKeywordThreshold)
+        ? Math.max(0.3, Math.min(0.8, value.supersessionKeywordThreshold))
+        : defaultConfig.memoryRuntime.supersessionKeywordThreshold,
   };
+  // Enforce floor <= ceiling: if floor exceeds ceiling, clamp floor down
+  if (
+    result.recencyFloor !== undefined &&
+    result.recencyCeiling !== undefined &&
+    result.recencyFloor > result.recencyCeiling
+  ) {
+    result.recencyFloor = result.recencyCeiling;
+  }
+  return result;
 }
 
 function profileKeyFromProvider(

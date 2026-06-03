@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
   MemoryDebugFileContent,
@@ -14,6 +14,50 @@ import { useAppStore } from '../../store';
 import { SettingsContentSection } from './shared';
 
 type SearchMode = 'workspace' | 'all' | 'global';
+
+function formatRelativeTime(timestamp: number, locale?: string): string {
+  const now = Date.now();
+  const diffMs = now - timestamp;
+  const diffSeconds = Math.floor(diffMs / 1000);
+  const diffMinutes = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  try {
+    const rtf = new Intl.RelativeTimeFormat(locale || 'en', { numeric: 'auto' });
+    if (diffSeconds < 60) return rtf.format(-diffSeconds, 'second');
+    if (diffMinutes < 60) return rtf.format(-diffMinutes, 'minute');
+    if (diffHours < 24) return rtf.format(-diffHours, 'hour');
+    if (diffDays < 7) return rtf.format(-diffDays, 'day');
+  } catch {
+    // Fallback if Intl is unavailable
+    if (diffMinutes < 1) return 'Just now';
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+  }
+  return new Date(timestamp).toLocaleDateString(locale);
+}
+
+function classifyIngestionError(error: string): string {
+  const normalized = error.toLowerCase();
+  if (/maximum context length|max.*token|requested about/.test(normalized)) {
+    return 'contextWindow';
+  }
+  if (/timeout|etimedout/.test(normalized)) {
+    return 'timeout';
+  }
+  if (/401|unauthorized/.test(normalized)) {
+    return 'authFailed';
+  }
+  if (/429|rate.?limit/.test(normalized)) {
+    return 'rateLimited';
+  }
+  if (/50[023]|server error|internal error/.test(normalized)) {
+    return 'serverError';
+  }
+  return 'unknown';
+}
 
 const DEFAULT_MEMORY_RUNTIME: MemoryRuntimeConfig = {
   llm: {
@@ -39,6 +83,11 @@ const DEFAULT_MEMORY_RUNTIME: MemoryRuntimeConfig = {
   evalMaxRounds: 12,
   evalArtifactsRoot: '',
   promptIterationRounds: 2,
+  recencyFloor: 0.05,
+  recencyCeiling: 0.25,
+  recencyDecayDays: 90,
+  supersessionPenalty: 0.2,
+  supersessionKeywordThreshold: 0.5,
 };
 
 function cloneRuntimeConfig(runtime?: MemoryRuntimeConfig): MemoryRuntimeConfig {
@@ -59,11 +108,17 @@ function cloneRuntimeConfig(runtime?: MemoryRuntimeConfig): MemoryRuntimeConfig 
     evalArtifactsRoot: source.evalArtifactsRoot ?? DEFAULT_MEMORY_RUNTIME.evalArtifactsRoot,
     promptIterationRounds:
       source.promptIterationRounds ?? DEFAULT_MEMORY_RUNTIME.promptIterationRounds,
+    recencyFloor: source.recencyFloor ?? DEFAULT_MEMORY_RUNTIME.recencyFloor,
+    recencyCeiling: source.recencyCeiling ?? DEFAULT_MEMORY_RUNTIME.recencyCeiling,
+    recencyDecayDays: source.recencyDecayDays ?? DEFAULT_MEMORY_RUNTIME.recencyDecayDays,
+    supersessionPenalty: source.supersessionPenalty ?? DEFAULT_MEMORY_RUNTIME.supersessionPenalty,
+    supersessionKeywordThreshold:
+      source.supersessionKeywordThreshold ?? DEFAULT_MEMORY_RUNTIME.supersessionKeywordThreshold,
   };
 }
 
 export function SettingsMemory() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const sessions = useAppStore((state) => state.sessions);
   const workingDir = useAppStore((state) => state.workingDir);
@@ -394,36 +449,74 @@ export function SettingsMemory() {
               label={t('memory.latestIngestion')}
               value={
                 overview?.latestIngestionAt
-                  ? new Date(overview.latestIngestionAt).toLocaleString()
+                  ? formatRelativeTime(overview.latestIngestionAt, i18n.language)
                   : t('memory.noIngestionYet')
               }
-            />
-            <InfoCard
-              label={t('memory.health')}
-              value={
-                overview?.failedSessionCount
-                  ? t('memory.failedSessions', { count: overview.failedSessionCount })
-                  : t('memory.healthy')
+              secondary={
+                overview?.latestIngestionAt
+                  ? new Date(overview.latestIngestionAt).toLocaleString()
+                  : undefined
               }
-              secondary={overview?.latestError || undefined}
             />
+            {overview?.failedSessionCount ? (
+              <div className="rounded-lg border border-rose-200 bg-rose-50/50 p-3 text-xs dark:border-rose-900/40 dark:bg-rose-950/20">
+                <p className="font-medium text-text-secondary">{t('memory.ingestionStatus')}</p>
+                <p className="mt-1 text-text-primary">
+                  {t('memory.failedSessions', { count: overview.failedSessionCount })}
+                </p>
+                {overview.latestErrorAt ? (
+                  <p className="mt-1 text-text-muted">
+                    {t('memory.lastFailure', {
+                      time: new Date(overview.latestErrorAt).toLocaleString(i18n.language),
+                    })}
+                  </p>
+                ) : null}
+                {overview.latestError ? (
+                  <p className="mt-1.5 text-text-muted">
+                    {t(`memory.error.${classifyIngestionError(overview.latestError)}`)}
+                  </p>
+                ) : null}
+                <div className="mt-2 flex gap-3">
+                  <button
+                    onClick={async () => {
+                      setIsBusy(true);
+                      try {
+                        await window.electronAPI.memory.dismissIngestionErrors();
+                        await refreshOverview();
+                      } catch (error) {
+                        setStatus(error instanceof Error ? error.message : String(error));
+                      } finally {
+                        setIsBusy(false);
+                      }
+                    }}
+                    disabled={isBusy}
+                    className="text-xs font-medium text-accent hover:underline disabled:opacity-60"
+                  >
+                    {t('memory.dismissErrors')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <InfoCard
+                label={t('memory.ingestionStatus')}
+                status="healthy"
+                value={t('memory.healthy')}
+              />
+            )}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <InfoCard
-              label={t('memory.storageRoot')}
-              value={overview?.storageRoot || runtimeDraft.storageRoot || 'Default userData/memory'}
-            />
             <InfoCard
               label={t('memory.currentWorkspace')}
               value={currentWorkspace || t('memory.noWorkspace')}
               secondary={
                 overview?.topSourceWorkspaces?.length
-                  ? `Top sources: ${overview.topSourceWorkspaces
+                  ? overview.topSourceWorkspaces
                       .slice(0, 3)
                       .map(
-                        (item) => `${item.workspaceKey} (${item.sessionCount}/${item.chunkCount})`
+                        (item) =>
+                          `${item.workspaceKey.split('/').pop() || item.workspaceKey} — ${t('memory.sourceStats', { sessions: item.sessionCount, chunks: item.chunkCount })}`
                       )
-                      .join(' · ')}`
+                      .join('\n')
                   : undefined
               }
             />
@@ -970,6 +1063,15 @@ export function SettingsMemory() {
         </div>
       </SettingsContentSection>
 
+      {/* Advanced Configuration */}
+      <AdvancedMemoryConfig
+        runtimeDraft={runtimeDraft}
+        setRuntimeDraft={setRuntimeDraft}
+        isBusy={isBusy}
+        setIsBusy={setIsBusy}
+        setStatus={setStatus}
+      />
+
       {status && (
         <div className="rounded-lg border border-border-muted bg-background-secondary/70 px-4 py-3 text-sm text-text-secondary">
           {status}
@@ -992,16 +1094,37 @@ function InfoCard({
   label,
   value,
   secondary,
+  status,
+  action,
 }: {
   label: string;
   value: string;
   secondary?: string;
+  status?: 'healthy' | 'warning' | 'error';
+  action?: { label: string; onClick: () => void };
 }) {
+  const statusColors = {
+    healthy: 'border-green-200 bg-green-50/50 dark:border-green-900/40 dark:bg-green-950/20',
+    warning: 'border-amber-200 bg-amber-50/50 dark:border-amber-900/40 dark:bg-amber-950/20',
+    error: 'border-rose-200 bg-rose-50/50 dark:border-rose-900/40 dark:bg-rose-950/20',
+  };
+  const borderClass = status ? statusColors[status] : 'border-border-muted bg-background/80';
+
   return (
-    <div className="rounded-lg border border-border-muted bg-background/80 p-3 text-xs text-text-muted">
+    <div className={`rounded-lg border p-3 text-xs text-text-muted ${borderClass}`}>
       <p className="font-medium text-text-secondary">{label}</p>
       <p className="mt-1 break-all">{value}</p>
-      {secondary ? <p className="mt-2 break-all text-rose-500">{secondary}</p> : null}
+      {secondary ? (
+        <p className="mt-1.5 whitespace-pre-line break-all text-text-muted">{secondary}</p>
+      ) : null}
+      {action ? (
+        <button
+          onClick={action.onClick}
+          className="mt-2 text-xs font-medium text-accent hover:underline"
+        >
+          {action.label}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -1084,6 +1207,374 @@ function ResultGroup({
           {emptyLabel}
         </div>
       )}
+    </div>
+  );
+}
+
+function AdvancedMemoryConfig({
+  runtimeDraft,
+  setRuntimeDraft,
+  isBusy,
+  setIsBusy,
+  setStatus,
+}: {
+  runtimeDraft: MemoryRuntimeConfig;
+  setRuntimeDraft: (fn: (prev: MemoryRuntimeConfig) => MemoryRuntimeConfig) => void;
+  isBusy: boolean;
+  setIsBusy: (busy: boolean) => void;
+  setStatus: (status: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showBuiltinPrompt, setShowBuiltinPrompt] = useState(false);
+  const [builtinPrompt, setBuiltinPrompt] = useState('');
+  const [customPromptExists, setCustomPromptExists] = useState(false);
+
+  // Check if custom prompt file exists
+  useEffect(() => {
+    window.electronAPI.memory
+      .getCustomExtractionPrompt()
+      .then((result) => {
+        setCustomPromptExists(result.exists);
+      })
+      .catch(() => setCustomPromptExists(false));
+  }, []);
+
+  const handleShowBuiltin = useCallback(async () => {
+    const prompt = await window.electronAPI.memory.getBuiltinExtractionPrompt();
+    setBuiltinPrompt(prompt);
+    setShowBuiltinPrompt(true);
+  }, []);
+
+  const handleCreateCustom = useCallback(async () => {
+    const result = await window.electronAPI.memory.createCustomExtractionPrompt();
+    if (result?.success) {
+      setCustomPromptExists(true);
+      await window.electronAPI.memory.openFileInEditor();
+    }
+  }, []);
+
+  const handleOpenInEditor = useCallback(async () => {
+    await window.electronAPI.memory.openFileInEditor();
+  }, []);
+
+  const handleResetPrompt = useCallback(async () => {
+    if (!window.confirm(t('memory.promptResetConfirm'))) return;
+    await window.electronAPI.memory.deleteCustomExtractionPrompt();
+    setCustomPromptExists(false);
+  }, [t]);
+
+  const handleSaveAdvanced = useCallback(async () => {
+    setIsBusy(true);
+    setStatus(null);
+    try {
+      await window.electronAPI.config.save({ memoryRuntime: runtimeDraft });
+      setStatus(t('memory.advancedSaved'));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBusy(false);
+    }
+  }, [runtimeDraft, setIsBusy, setStatus, t]);
+
+  const handleResetAll = useCallback(() => {
+    if (!window.confirm(t('memory.advancedResetConfirm'))) return;
+    setRuntimeDraft((prev) => ({
+      ...prev,
+      recencyFloor: 0.05,
+      recencyCeiling: 0.25,
+      recencyDecayDays: 90,
+      supersessionPenalty: 0.2,
+      supersessionKeywordThreshold: 0.5,
+    }));
+  }, [setRuntimeDraft, t]);
+
+  const updateField = useCallback(
+    (field: keyof MemoryRuntimeConfig, value: number | string) => {
+      setRuntimeDraft((prev) => ({ ...prev, [field]: value }));
+    },
+    [setRuntimeDraft]
+  );
+
+  if (!expanded) {
+    return (
+      <button
+        onClick={() => setExpanded(true)}
+        className="flex w-full items-center gap-2 rounded-lg border border-border-muted bg-background/70 px-4 py-3 text-left text-sm font-medium text-text-secondary hover:bg-surface-hover"
+      >
+        <span className="text-xs">▶</span>
+        {t('memory.advancedTitle')}
+      </button>
+    );
+  }
+
+  return (
+    <div className="space-y-4 rounded-lg border border-border-muted bg-background/70 p-4">
+      {/* Header */}
+      <button
+        onClick={() => setExpanded(false)}
+        className="flex w-full items-center gap-2 text-left text-sm font-medium text-text-primary"
+      >
+        <span className="text-xs">▼</span>
+        {t('memory.advancedTitle')}
+      </button>
+
+      {/* Warning + Help */}
+      <div className="flex items-start gap-2 rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
+        <span className="text-amber-600 dark:text-amber-400">⚠️</span>
+        <p className="flex-1 text-xs text-amber-900 dark:text-amber-200">
+          {t('memory.advancedWarning')}
+        </p>
+        <button
+          onClick={() => setShowHelp(true)}
+          className="rounded border border-amber-400/60 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-200 dark:border-amber-500/40 dark:bg-amber-500/20 dark:text-amber-200 dark:hover:bg-amber-500/30"
+        >
+          {t('memory.advancedHelpButton')}
+        </button>
+      </div>
+
+      {/* Retrieval Scoring */}
+      <div className="space-y-3">
+        <p className="text-xs font-medium uppercase tracking-wide text-text-muted">
+          {t('memory.advancedScoringTitle')}
+        </p>
+        <NumberField
+          label={t('memory.recencyFloor')}
+          hint={t('memory.recencyFloorHint')}
+          value={runtimeDraft.recencyFloor ?? 0.05}
+          onChange={(v) => updateField('recencyFloor', v)}
+          min={0.01}
+          max={0.2}
+          step={0.01}
+        />
+        <NumberField
+          label={t('memory.recencyCeiling')}
+          hint={t('memory.recencyCeilingHint')}
+          value={runtimeDraft.recencyCeiling ?? 0.25}
+          onChange={(v) => updateField('recencyCeiling', v)}
+          min={0.1}
+          max={0.5}
+          step={0.01}
+        />
+        <NumberField
+          label={t('memory.recencyDecayDays')}
+          hint={t('memory.recencyDecayDaysHint')}
+          value={runtimeDraft.recencyDecayDays ?? 90}
+          onChange={(v) => updateField('recencyDecayDays', v)}
+          min={30}
+          max={180}
+          step={1}
+        />
+        <NumberField
+          label={t('memory.supersessionPenalty')}
+          hint={t('memory.supersessionPenaltyHint')}
+          value={runtimeDraft.supersessionPenalty ?? 0.2}
+          onChange={(v) => updateField('supersessionPenalty', v)}
+          min={0}
+          max={0.5}
+          step={0.01}
+        />
+        <NumberField
+          label={t('memory.supersessionKeywordThreshold')}
+          hint={t('memory.supersessionKeywordThresholdHint')}
+          value={runtimeDraft.supersessionKeywordThreshold ?? 0.5}
+          onChange={(v) => updateField('supersessionKeywordThreshold', v)}
+          min={0.3}
+          max={0.8}
+          step={0.05}
+        />
+      </div>
+
+      {/* Extraction Prompt */}
+      <div className="space-y-3">
+        <p className="text-xs font-medium uppercase tracking-wide text-text-muted">
+          {t('memory.advancedPromptTitle')}
+        </p>
+        <p className="text-xs text-text-secondary">
+          {customPromptExists ? t('memory.promptUsingCustom') : t('memory.promptUsingBuiltin')}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {!customPromptExists ? (
+            <>
+              <button
+                onClick={() => void handleShowBuiltin()}
+                className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-surface-hover"
+              >
+                {t('memory.promptShowBuiltin')}
+              </button>
+              <button
+                onClick={() => void handleCreateCustom()}
+                className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-surface-hover"
+              >
+                {t('memory.promptCreateCustom')}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => void handleOpenInEditor()}
+                className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-surface-hover"
+              >
+                {t('memory.promptOpenInEditor')}
+              </button>
+              <button
+                onClick={() => void handleResetPrompt()}
+                className="rounded-lg border border-rose-300/60 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-900 hover:bg-rose-100 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200"
+              >
+                {t('memory.promptResetToDefault')}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex gap-3 border-t border-border-muted pt-3">
+        <button
+          onClick={() => void handleSaveAdvanced()}
+          disabled={isBusy}
+          className="rounded-lg border border-accent bg-accent/10 px-4 py-2 text-sm font-medium text-accent hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {t('memory.advancedSave')}
+        </button>
+        <button
+          onClick={handleResetAll}
+          className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-text-secondary hover:bg-surface-hover"
+        >
+          {t('memory.advancedResetAll')}
+        </button>
+      </div>
+
+      {/* Help Modal */}
+      {showHelp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="mx-4 max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-xl border border-border bg-background p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-text-primary">
+                {t('memory.advancedHelpTitle')}
+              </h3>
+              <button
+                onClick={() => setShowHelp(false)}
+                className="text-text-muted hover:text-text-primary"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-4 text-sm text-text-secondary">
+              <p>{t('memory.advancedHelpIntro')}</p>
+              <p className="font-medium text-text-primary">{t('memory.advancedHelpFormula')}</p>
+
+              <div className="space-y-2">
+                <h4 className="font-semibold text-text-primary">
+                  {t('memory.advancedHelpRecencyTitle')}
+                </h4>
+                <p>{t('memory.advancedHelpRecencyDesc')}</p>
+                <ul className="ml-4 list-disc space-y-1 text-xs">
+                  <li>{t('memory.advancedHelpRecencyCeiling')}</li>
+                  <li>{t('memory.advancedHelpRecencyFloor')}</li>
+                  <li>{t('memory.advancedHelpRecencyDecay')}</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="font-semibold text-text-primary">
+                  {t('memory.advancedHelpSupersessionTitle')}
+                </h4>
+                <p>{t('memory.advancedHelpSupersessionDesc')}</p>
+                <ul className="ml-4 list-disc space-y-1 text-xs">
+                  <li>{t('memory.advancedHelpSupersessionPenalty')}</li>
+                  <li>{t('memory.advancedHelpSupersessionThreshold')}</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="font-semibold text-text-primary">
+                  {t('memory.advancedHelpPromptTitle')}
+                </h4>
+                <p>{t('memory.advancedHelpPromptDesc')}</p>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => setShowHelp(false)}
+                className="rounded-lg border border-accent bg-accent/10 px-4 py-2 text-sm font-medium text-accent hover:bg-accent/20"
+              >
+                {t('memory.advancedHelpGotIt')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Built-in Prompt Modal (read-only) */}
+      {showBuiltinPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="mx-4 max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-border bg-background p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-base font-semibold text-text-primary">
+                {t('memory.promptBuiltinTitle')}
+              </h3>
+              <button
+                onClick={() => setShowBuiltinPrompt(false)}
+                className="text-text-muted hover:text-text-primary"
+              >
+                ✕
+              </button>
+            </div>
+            <pre className="max-h-[60vh] overflow-auto rounded-lg border border-border-muted bg-background-secondary p-4 text-xs text-text-secondary">
+              {builtinPrompt}
+            </pre>
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => setShowBuiltinPrompt(false)}
+                className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface-hover"
+              >
+                {t('memory.promptClose')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NumberField({
+  label,
+  hint,
+  value,
+  onChange,
+  min,
+  max,
+  step,
+}: {
+  label: string;
+  hint: string;
+  value: number;
+  onChange: (value: number) => void;
+  min: number;
+  max: number;
+  step: number;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-border-muted bg-background/70 px-3 py-2.5">
+      <div className="flex-1">
+        <p className="text-sm text-text-primary">{label}</p>
+        <p className="text-[11px] text-text-muted">{hint}</p>
+      </div>
+      <input
+        type="number"
+        value={value}
+        onChange={(e) => {
+          const v = parseFloat(e.target.value);
+          if (Number.isFinite(v)) onChange(Math.max(min, Math.min(max, v)));
+        }}
+        min={min}
+        max={max}
+        step={step}
+        className="w-20 rounded border border-border bg-background px-2 py-1 text-right text-sm text-text-primary"
+      />
     </div>
   );
 }

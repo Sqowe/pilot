@@ -473,6 +473,7 @@ export interface MemoryOverview {
   failedSessionCount: number;
   latestIngestionAt: number | null;
   latestError: string | null;
+  latestErrorAt: number | null;
   currentWorkspace?: {
     workspaceKey: string;
     experienceSessionCount: number;
@@ -854,6 +855,12 @@ export interface MemoryRuntimeConfig {
   evalMaxRounds?: number;
   evalArtifactsRoot?: string;
   promptIterationRounds?: number;
+  // Advanced retrieval scoring parameters
+  recencyFloor?: number;
+  recencyCeiling?: number;
+  recencyDecayDays?: number;
+  supersessionPenalty?: number;
+  supersessionKeywordThreshold?: number;
 }
 
 export interface AppConfig {

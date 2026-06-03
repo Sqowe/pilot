@@ -182,22 +182,21 @@ function workspaceBoost(currentWorkspace: string | null, sourceWorkspace?: strin
   return 0;
 }
 
-function recencyBoost(ingestedAt: string, now = Date.now()): number {
+function recencyBoost(
+  ingestedAt: string,
+  now = Date.now(),
+  floor = 0.05,
+  ceiling = 0.25,
+  decayDays = 90
+): number {
   const timestamp = Date.parse(ingestedAt);
   if (!Number.isFinite(timestamp)) {
     return 0;
   }
   const ageDays = Math.max(0, (now - timestamp) / 86_400_000);
-  if (ageDays <= 3) {
-    return 0.08;
-  }
-  if (ageDays <= 14) {
-    return 0.04;
-  }
-  if (ageDays <= 45) {
-    return 0.02;
-  }
-  return 0;
+  // Linear decay from ceiling to floor over exactly decayDays
+  const boost = floor + (ceiling - floor) * Math.max(0, 1 - ageDays / decayDays);
+  return boost;
 }
 
 export class ExperienceMemoryStore {
@@ -352,12 +351,24 @@ export class ExperienceMemoryStore {
       sessionTopK?: number;
       queryEmbedding?: number[];
       currentWorkspace?: string | null;
+      recencyFloor?: number;
+      recencyCeiling?: number;
+      recencyDecayDays?: number;
+      supersessionPenalty?: number;
+      supersessionKeywordThreshold?: number;
     }
   ): ProgressiveRetrievalResult {
     const chunkTopK = options?.chunkTopK ?? 10;
     const sessionTopK = options?.sessionTopK ?? 5;
     const currentWorkspace = normalizeWorkspaceKey(options?.currentWorkspace || null);
     const queryEmbedding = options?.queryEmbedding;
+    const scoringConfig = {
+      recencyFloor: options?.recencyFloor ?? 0.05,
+      recencyCeiling: options?.recencyCeiling ?? 0.25,
+      recencyDecayDays: options?.recencyDecayDays ?? 90,
+      supersessionPenalty: options?.supersessionPenalty ?? 0.2,
+      supersessionKeywordThreshold: options?.supersessionKeywordThreshold ?? 0.5,
+    };
 
     const rankedChunks = this.rankItems(
       query,
@@ -373,7 +384,8 @@ export class ExperienceMemoryStore {
           ...item.keywords,
           item.sourceWorkspace || '',
           item.sourceSessionTitle || '',
-        ].join(' ')
+        ].join(' '),
+      scoringConfig
     );
     const rankedSessions = this.rankItems(
       query,
@@ -387,7 +399,8 @@ export class ExperienceMemoryStore {
           ...item.keywords,
           item.sourceWorkspace || '',
           item.sourceSessionTitle || '',
-        ].join(' ')
+        ].join(' '),
+      scoringConfig
     );
 
     const broadSummaries = [
@@ -465,16 +478,29 @@ export class ExperienceMemoryStore {
   }
 
   private rankItems<
-    T extends { embedding: number[]; ingestedAt: string; sourceWorkspace?: string | null },
+    T extends {
+      embedding: number[];
+      ingestedAt: string;
+      sourceWorkspace?: string | null;
+      keywords?: string[];
+      sessionDate?: string;
+    },
   >(
     query: string,
     items: T[],
     topK: number,
     queryEmbedding: number[] | undefined,
     currentWorkspace: string | null,
-    textSelector: (item: T) => string
+    textSelector: (item: T) => string,
+    scoringConfig: {
+      recencyFloor: number;
+      recencyCeiling: number;
+      recencyDecayDays: number;
+      supersessionPenalty: number;
+      supersessionKeywordThreshold: number;
+    }
   ): Array<{ record: T; score: number }> {
-    return items
+    const scored = items
       .map((record) => {
         const lexical = lexicalScore(query, textSelector(record));
         const embedding =
@@ -485,11 +511,73 @@ export class ExperienceMemoryStore {
         const score =
           evidenceScore +
           workspaceBoost(currentWorkspace, record.sourceWorkspace) +
-          recencyBoost(record.ingestedAt);
+          recencyBoost(
+            record.ingestedAt,
+            Date.now(),
+            scoringConfig.recencyFloor,
+            scoringConfig.recencyCeiling,
+            scoringConfig.recencyDecayDays
+          );
         return { record, score, evidenceScore };
       })
       .filter((item) => item.evidenceScore > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, topK);
+      .sort((a, b) => b.score - a.score);
+
+    // Apply supersession penalty: if a newer item from the same workspace covers
+    // the same keywords, penalize older items on that topic.
+    if (scoringConfig.supersessionPenalty > 0) {
+      for (let i = 0; i < scored.length; i++) {
+        const item = scored[i];
+        const itemKeywords = (item.record as { keywords?: string[] }).keywords || [];
+        if (!itemKeywords.length) continue;
+        const itemTimestamp = Date.parse(
+          (item.record as { sessionDate?: string }).sessionDate || item.record.ingestedAt
+        );
+        if (!Number.isFinite(itemTimestamp)) continue;
+
+        // Check if any genuinely newer item on the same topic exists
+        let superseded = false;
+        for (let j = 0; j < scored.length; j++) {
+          if (i === j) continue;
+          const other = scored[j];
+          const otherTimestamp = Date.parse(
+            (other.record as { sessionDate?: string }).sessionDate || other.record.ingestedAt
+          );
+          if (!Number.isFinite(otherTimestamp)) continue;
+          // Only penalize if the other item is genuinely newer
+          if (otherTimestamp <= itemTimestamp) continue;
+
+          const otherKeywords = (other.record as { keywords?: string[] }).keywords || [];
+          if (!otherKeywords.length) continue;
+
+          // Only supersede within same workspace (using normalized keys)
+          const itemWs = normalizeWorkspaceKey(item.record.sourceWorkspace || null);
+          const otherWs = normalizeWorkspaceKey(other.record.sourceWorkspace || null);
+          if (itemWs && otherWs && itemWs === otherWs) {
+            const overlap = keywordOverlap(itemKeywords, otherKeywords);
+            if (overlap >= scoringConfig.supersessionKeywordThreshold) {
+              superseded = true;
+              break;
+            }
+          }
+        }
+        if (superseded) {
+          item.score -= scoringConfig.supersessionPenalty;
+        }
+      }
+    }
+
+    // Re-sort after penalty and take top K
+    return scored.sort((a, b) => b.score - a.score).slice(0, topK);
   }
+}
+
+function keywordOverlap(a: string[], b: string[]): number {
+  if (!a.length || !b.length) return 0;
+  const setB = new Set(b.map((k) => k.toLowerCase()));
+  let matches = 0;
+  for (const keyword of a) {
+    if (setB.has(keyword.toLowerCase())) matches++;
+  }
+  return matches / Math.max(a.length, b.length);
 }

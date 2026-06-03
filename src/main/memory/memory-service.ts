@@ -173,7 +173,8 @@ export class MemoryService {
     };
     this.coreExtractor = new CoreMemoryExtractor(
       this.llmClient,
-      promptSet.coreMemoryUpdateSystemPrompt
+      promptSet.coreMemoryUpdateSystemPrompt,
+      () => this.getCustomPromptPath()
     );
     this.experienceExtractor = new ExperienceMemoryExtractor(
       this.llmClient,
@@ -260,6 +261,10 @@ export class MemoryService {
     const currentWorkspace = normalizeWorkspaceKey(cwd);
     const topSourceWorkspaces = experienceStore.getStatsBySourceWorkspace();
 
+    const activeFailures = stateRecords
+      .filter((record) => Boolean(record.lastError) && !record.lastErrorDismissedAt)
+      .sort((a, b) => (b.lastErrorAt || b.updatedAt) - (a.lastErrorAt || a.updatedAt));
+
     return {
       enabled: this.isEnabled(),
       storageRoot: paths.storageRoot,
@@ -271,17 +276,15 @@ export class MemoryService {
       experienceChunkCount: experienceStore.chunks.length,
       sourceWorkspaceCount: topSourceWorkspaces.filter((item) => item.workspaceKey !== '(none)')
         .length,
-      failedSessionCount: stateRecords.filter((record) => Boolean(record.lastError)).length,
+      failedSessionCount: activeFailures.length,
       latestIngestionAt: stateRecords.reduce<number | null>((latest, record) => {
         if (!record.lastIngestedAt) {
           return latest;
         }
         return latest === null ? record.lastIngestedAt : Math.max(latest, record.lastIngestedAt);
       }, null),
-      latestError:
-        stateRecords
-          .filter((record) => record.lastError)
-          .sort((a, b) => b.updatedAt - a.updatedAt)[0]?.lastError || null,
+      latestError: activeFailures[0]?.lastError || null,
+      latestErrorAt: activeFailures[0]?.lastErrorAt || activeFailures[0]?.updatedAt || null,
       currentWorkspace: currentWorkspace
         ? {
             workspaceKey: currentWorkspace,
@@ -530,6 +533,22 @@ export class MemoryService {
     return { success: true };
   }
 
+  dismissIngestionErrors(): { success: boolean; clearedCount: number } {
+    const stateStore = this.getStateStore();
+    const failedRecords = stateStore
+      .getAll()
+      .filter((record) => Boolean(record.lastError) && !record.lastErrorDismissedAt);
+    const now = Date.now();
+    for (const record of failedRecords) {
+      stateStore.set({
+        ...record,
+        lastErrorDismissedAt: now,
+        updatedAt: now,
+      });
+    }
+    return { success: true, clearedCount: failedRecords.length };
+  }
+
   deleteCoreEntry(combinedKey: string): { success: boolean } {
     const parsed = parseCoreCombinedKey(combinedKey);
     this.getCoreStore().applyActions([
@@ -651,14 +670,17 @@ export class MemoryService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logError('[MemoryService] Failed to ingest memory:', error);
+      const now = Date.now();
       stateStore.set({
         sessionId: session.id,
         sourceWorkspace,
         lastProcessedMessageCount,
         lastIngestedAt: previousState?.lastIngestedAt || null,
         lastError: message,
-        createdAt: previousState?.createdAt || Date.now(),
-        updatedAt: Date.now(),
+        lastErrorAt: now,
+        lastErrorDismissedAt: null,
+        createdAt: previousState?.createdAt || now,
+        updatedAt: now,
       });
     }
   }
@@ -850,11 +872,17 @@ export class MemoryService {
       return { context: '', metrics: emptyMetrics };
     }
     const queryEmbedding = await this.embedText(prompt);
+    const runtimeConfig = this.getAppConfig().memoryRuntime;
     const retrieval = store.retrieveProgressive(prompt, {
       chunkTopK: 10,
       sessionTopK: 5,
       queryEmbedding,
       currentWorkspace,
+      recencyFloor: runtimeConfig.recencyFloor,
+      recencyCeiling: runtimeConfig.recencyCeiling,
+      recencyDecayDays: runtimeConfig.recencyDecayDays,
+      supersessionPenalty: runtimeConfig.supersessionPenalty,
+      supersessionKeywordThreshold: runtimeConfig.supersessionKeywordThreshold,
     });
     if (!retrieval.broadSummaries.length) {
       return { context: '', metrics: emptyMetrics };
@@ -1109,6 +1137,11 @@ export class MemoryService {
 
   private getAppConfig(): AppConfig {
     return configStore.getAll();
+  }
+
+  private getCustomPromptPath(): string | undefined {
+    const paths = this.getPaths();
+    return path.join(paths.storageRoot, 'prompts', 'core-extraction.md');
   }
 
   private getPaths(): MemoryPaths {

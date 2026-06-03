@@ -90,7 +90,7 @@ export const MessageCard = memo(function MessageCard({
 
   return (
     <div
-      className={`animate-fade-in ${selectable ? 'relative cursor-pointer' : ''} ${
+      className={`animate-fade-in group ${selectable ? 'relative cursor-pointer' : ''} ${
         selectable && selected ? 'ring-1 ring-accent/40 rounded-xl bg-accent/5' : ''
       }`}
       onClick={handleCardClick}
@@ -112,7 +112,7 @@ export const MessageCard = memo(function MessageCard({
       {isUser ? (
         // User message - compact styling with smaller padding and radius
         <>
-          <div className="flex items-start gap-2 justify-end group">
+          <div className="flex items-start gap-2 justify-end">
             <div
               className={`message-user px-4 py-3 rounded-[1.65rem] max-w-[80%] min-w-0 break-words ${
                 isQueued ? 'opacity-70 border-dashed' : ''
