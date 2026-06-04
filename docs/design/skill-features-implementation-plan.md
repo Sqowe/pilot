@@ -404,9 +404,9 @@ Phases 3, 4, and 5 can also run in parallel once their respective backends are c
 
 ### Tasks
 
-- [ ] 6.1 — Add global disabled skills to config store:
-  - `globalDisabledSkills: string[]` in settings
-  - Settings → Skills page toggle to globally disable skills
+- [x] 6.1 — Add global disabled skills to config store:
+  - `globalDisabledSkills: string[]` in settings (implemented as `skillConflictConfig.disabledSkills`)
+  - Settings → Skills page toggle to globally disable skills (via `toggleDisabled` in conflict UI)
   - Resolution: session > workspace > global > all available
 - [ ] 6.2 — Skill detail view (expandable card in Settings):
   - Full description from SKILL.md
@@ -414,16 +414,16 @@ Phases 3, 4, and 5 can also run in parallel once their respective backends are c
   - Last modified date
   - Content hash comparison for conflicts ("Files differ" / "Identical content")
   - "Open in editor" button
-- [ ] 6.3 — Conflict count badge in Settings sidebar navigation
+- [x] 6.3 — Conflict count badge in Settings sidebar navigation
 - [ ] 6.4 — Integration tests:
   - Install custom skill → app update adds built-in with same name → policy applied
   - Change policy → skill version switches → UI reflects
   - Workspace profile flow: remove in session → save → new session picks up profile
-- [ ] 6.5 — Update ARCHITECTURE.md:
+- [x] 6.5 — Update ARCHITECTURE.md:
   - Add stability zone entries for new components
   - Update key files lists
   - Document new `.cowork/skills-profile.json` pattern
-- [ ] 6.6 — Update ROADMAP.md with completed features
+- [x] 6.6 — Update ROADMAP.md with completed features
 
 ### Key Files
 

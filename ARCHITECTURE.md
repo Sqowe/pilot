@@ -202,6 +202,34 @@ prompt bloat. Shared constants live in `src/shared/skill-pinning-constants.ts`.
 Key files: `session-manager.ts` (state), `agent-runner.ts` (directive injection),
 `skill-pinning-constants.ts` (shared validation).
 
+**Per-session skill disable & workspace profiles:**
+
+Skills can be disabled per-session to reduce context window usage. The pattern mirrors
+MCP server toggles with a three-layer resolution (highest priority wins):
+
+1. **Session override** (ephemeral) — user removes skills in ContextPanel, stored in-memory
+   in `SessionManager.sessionDisabledSkills` Map. Cleared on session delete.
+2. **Workspace profile** — `{cwd}/.cowork/skills-profile.json` with `pinned`/`disabled` arrays.
+   Committable to git, team-shared. Seeded into session state on `session.start`.
+3. **Global config** — `skillConflictConfig.disabledSkills` in electron-store (Settings UI).
+
+Agent-runner filters disabled skills from `additionalSkillPaths` before passing to the SDK.
+Welcome page and ContextPanel both load/save workspace profiles via IPC.
+
+Key files: `skills-workspace-profile.ts` (loader), `session-manager.ts` (state),
+`agent-runner.ts` (filtering), `skill-conflict-types.ts` (shared types),
+`skills-profile-derive.ts` (renderer dirty-state utility).
+
+**Skill conflict resolution:**
+
+When a custom skill and built-in skill share the same name, the conflict policy
+(`custom-wins` / `builtin-wins` / `ask`) determines which version is loaded at runtime.
+The detector scans builtin, user, and configured directories. Per-skill source overrides
+allow explicit choices. Conflicts are surfaced via toast notifications and Settings UI.
+
+Key files: `skill-conflict-detector.ts` (engine), `agent-runner.ts` (sync decisions),
+`useSkillConflicts.ts` (renderer hook), `SettingsSkills.tsx` (conflict UI).
+
 ### 4.4 Sandbox & Security (`src/main/sandbox/`)
 
 Platform-aware execution facade: `SandboxAdapter` routes to WSL2 (Windows), Lima (macOS),
@@ -356,20 +384,21 @@ Environment variables (`.env.example`): `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_
 
 ## 7. Stability Zones
 
-| Zone                | Components                                                                                                                | Notes                                                        |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| ✅ **Stable**       | Renderer UI, Config Store, IPC bridge, Session management, i18n, electron-updater, Skills loader, MCP Manager (stdio/SSE) | Production-ready, low risk                                   |
-| ✅ **Stable**       | Bash permission engine (trust/denylist), Path containment                                                                 | Security-critical, well-tested                               |
-| ✅ **Stable**       | System prompt loader (editable sections, workspace overrides, template variables)                                         | 46 tests, file-based, no external deps                       |
-| 🔄 **Semi-Stable**  | `ClaudeAgentRunner` + pi-coding-agent integration                                                                         | Functional but coupled to pre-1.0 SDK; breaks on Pi upgrades |
-| 🔄 **Semi-Stable**  | Remote channels (Feishu/Slack), GUI-operate server                                                                        | Working but APIs evolve; Feishu SDK updates frequently       |
-| 🔄 **Semi-Stable**  | SQLite persistence layer                                                                                                  | Schema may evolve with memory system                         |
-| ⚠️ **Experimental** | Sandbox (WSL2/Lima)                                                                                                       | Code-complete, UI-gated, not user-facing yet                 |
-| ⚠️ **Experimental** | Memory system (`src/main/memory/`)                                                                                        | Active retrieval via tools + passive core injection          |
-| 🔄 **Semi-Stable**  | Schedule system (`src/main/schedule/`)                                                                                    | v2 complete: time windows, catch-up, budgets, run history    |
-| 🔮 **Planned**      | Plugin system, Multi-agent orchestration                                                                                  | See `ROADMAP.md`                                             |
-| 🔮 **Planned**      | Linux first-class support                                                                                                 | Build-from-source only today                                 |
-| 🔮 **Planned**      | Web version (server mode)                                                                                                 | Architecture supports it (clean IPC boundary)                |
+| Zone                | Components                                                                                                                | Notes                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| ✅ **Stable**       | Renderer UI, Config Store, IPC bridge, Session management, i18n, electron-updater, Skills loader, MCP Manager (stdio/SSE) | Production-ready, low risk                                            |
+| ✅ **Stable**       | Skill conflict resolution, Skill workspace profiles, Skill pinning                                                        | Phase 0–5 complete; policy engine, session disable, profile save/load |
+| ✅ **Stable**       | Bash permission engine (trust/denylist), Path containment                                                                 | Security-critical, well-tested                                        |
+| ✅ **Stable**       | System prompt loader (editable sections, workspace overrides, template variables)                                         | 46 tests, file-based, no external deps                                |
+| 🔄 **Semi-Stable**  | `ClaudeAgentRunner` + pi-coding-agent integration                                                                         | Functional but coupled to pre-1.0 SDK; breaks on Pi upgrades          |
+| 🔄 **Semi-Stable**  | Remote channels (Feishu/Slack), GUI-operate server                                                                        | Working but APIs evolve; Feishu SDK updates frequently                |
+| 🔄 **Semi-Stable**  | SQLite persistence layer                                                                                                  | Schema may evolve with memory system                                  |
+| ⚠️ **Experimental** | Sandbox (WSL2/Lima)                                                                                                       | Code-complete, UI-gated, not user-facing yet                          |
+| ⚠️ **Experimental** | Memory system (`src/main/memory/`)                                                                                        | Active retrieval via tools + passive core injection                   |
+| 🔄 **Semi-Stable**  | Schedule system (`src/main/schedule/`)                                                                                    | v2 complete: time windows, catch-up, budgets, run history             |
+| 🔮 **Planned**      | Plugin system, Multi-agent orchestration                                                                                  | See `ROADMAP.md`                                                      |
+| 🔮 **Planned**      | Linux first-class support                                                                                                 | Build-from-source only today                                          |
+| 🔮 **Planned**      | Web version (server mode)                                                                                                 | Architecture supports it (clean IPC boundary)                         |
 
 ---
 

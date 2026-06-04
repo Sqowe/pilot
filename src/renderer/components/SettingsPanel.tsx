@@ -28,6 +28,7 @@ import { SettingsLogs } from './settings/SettingsLogs';
 import { SettingsBashCommands } from './settings/SettingsBashCommands';
 import { SettingsMemory } from './settings/SettingsMemory';
 import { SettingsPrompt } from './settings/SettingsPrompt';
+import { useSkillConflicts } from '../hooks/useSkillConflicts';
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -87,6 +88,8 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
   // Track which tabs have been viewed at least once (for lazy loading)
   const [viewedTabs, setViewedTabs] = useState<Set<TabId>>(new Set([resolvedInitial]));
   const [appVersion, setAppVersion] = useState('');
+  const { conflicts: skillConflicts } = useSkillConflicts();
+  const skillConflictCount = skillConflicts.length;
   useEffect(() => {
     try {
       const v = window.electronAPI?.getVersion?.();
@@ -136,6 +139,7 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
       label: t('settings.skills'),
       icon: Package,
       description: t('settings.skillsDesc'),
+      badge: skillConflictCount > 0 ? skillConflictCount : undefined,
     },
     {
       id: 'memory' as TabId,
@@ -213,10 +217,27 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
                   : 'hover:bg-surface-hover text-text-secondary hover:text-text-primary'
               }`}
             >
-              <tab.icon className="w-4.5 h-4.5 flex-shrink-0" />
+              <div className="relative flex-shrink-0">
+                <tab.icon className="w-4.5 h-4.5" />
+                {compactSidebar &&
+                  'badge' in tab &&
+                  typeof tab.badge === 'number' &&
+                  tab.badge > 0 && (
+                    <span className="absolute -top-1 -right-1.5 min-w-[14px] h-3.5 px-0.5 rounded-full bg-warning text-[9px] font-bold text-white flex items-center justify-center">
+                      {tab.badge > 99 ? '99+' : tab.badge}
+                    </span>
+                  )}
+              </div>
               {!compactSidebar && (
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{tab.label}</p>
+                  <p className="text-sm font-medium truncate flex items-center gap-1.5">
+                    {tab.label}
+                    {'badge' in tab && typeof tab.badge === 'number' && tab.badge > 0 && (
+                      <span className="inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-warning text-white leading-none">
+                        {tab.badge > 99 ? '99+' : tab.badge}
+                      </span>
+                    )}
+                  </p>
                   <p className="text-[11px] leading-4 text-text-muted line-clamp-2 mt-0.5">
                     {tab.description}
                   </p>
