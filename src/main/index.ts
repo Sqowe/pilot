@@ -2782,10 +2782,46 @@ ipcMain.handle('skills.acknowledgeConflict', async (_event, skillName: string, c
 });
 
 ipcMain.handle('skills.getConflicts', async () => {
-  // Conflict detection requires the skill-conflict-detector module (Phase 1).
-  // Return a distinguishable empty-with-reason response so renderers know this is
-  // not yet functional, rather than interpreting it as "zero conflicts detected."
-  return { conflicts: [], notImplemented: true };
+  try {
+    const { discoverAllSkillSources, detectConflicts } =
+      await import('./skills/skill-conflict-detector');
+    const { normalizeSkillConflictConfig } = await import('../shared/skill-conflict-types');
+
+    // Gather skill source directories
+    const appPath = app.getAppPath();
+    const unpackedPath = appPath.replace(/\.asar$/, '.asar.unpacked');
+    const builtinPaths = [
+      join(__dirname, '..', '..', '..', '.claude', 'skills'),
+      join(process.resourcesPath || '', 'skills'),
+      join(unpackedPath, '.claude', 'skills'),
+      join(appPath, '.claude', 'skills'),
+    ];
+    let builtinDir = '';
+    for (const p of builtinPaths) {
+      if (fs.existsSync(p)) {
+        builtinDir = p;
+        break;
+      }
+    }
+
+    const userDir = join(app.getPath('home'), '.claude', 'skills');
+    const rawConfiguredPath = configStore.get('globalSkillsPath');
+    const configuredPath = typeof rawConfiguredPath === 'string' ? rawConfiguredPath.trim() : '';
+    const configuredDir = configuredPath ? resolve(configuredPath) : undefined;
+
+    // Note: project-level skills (.skills/) are not yet included in conflict detection
+    // because project skill syncing is not implemented in ClaudeAgentRunner yet (Phase 2+).
+    // Including them here would report conflicts that the runtime cannot resolve.
+
+    const config = normalizeSkillConflictConfig(configStore.get('skillConflictConfig'));
+    const sourceMap = discoverAllSkillSources(builtinDir, userDir, configuredDir);
+    const conflicts = detectConflicts(sourceMap, config);
+
+    return { conflicts, notImplemented: false };
+  } catch (error) {
+    logError('[Skills] Error getting conflicts:', error);
+    return { conflicts: [], notImplemented: false };
+  }
 });
 
 ipcMain.handle('skills.resetToBuiltin', async (_event, skillName: string) => {

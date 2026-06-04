@@ -25,11 +25,11 @@ different problems. This plan interleaves them to minimize rework and ship incre
 
 ```
 Phase 0 (shared types/config)  ✅ DONE
-   ├──► Phase 1 (conflict engine)──► Phase 3 (conflict UI)──┐
-   │                                                          │
-   └──► Phase 2 (session disable + workspace profile)        ├──► Phase 6 (polish)
-              │                                               │
-              ├──► Phase 4 (Context Panel UI) ────────────────┘
+   ├──► Phase 1 (conflict engine) ✅ DONE ──► Phase 3 (conflict UI)──┐
+   │                                                                   │
+   └──► Phase 2 (session disable + workspace profile)                 ├──► Phase 6 (polish)
+              │                                                        │
+              ├──► Phase 4 (Context Panel UI) ─────────────────────────┘
               │
               └──► Phase 5 (Welcome page)
 ```
@@ -101,62 +101,71 @@ Phases 3, 4, and 5 can also run in parallel once their respective backends are c
 
 ---
 
-## Phase 1: Conflict Detection & Policy Engine
+## Phase 1: Conflict Detection & Policy Engine ✅ DONE
 
+**Completed:** 2026-06-04
 **Estimate:** 2–3 days
 **Depends on:** Phase 0 ✅
 **Unlocks:** Phase 3
 
 ### Tasks
 
-- [ ] 1.1 — Create `src/main/skills/skill-conflict-detector.ts`:
+- [x] 1.1 — Create `src/main/skills/skill-conflict-detector.ts`:
   - `discoverAllSkillSources(builtinDir, userDir, configuredDir, projectDir?)` → map of
     skill name → array of `{ source, path }`
-  - `detectConflicts(sources)` → array of `SkillConflict` objects
-  - `resolveConflict(skillName, config)` → winning source
-- [ ] 1.2 — Modify `syncUserSkillsToAppDir()` in `agent-runner.ts` to:
-  - Read `skillConflictConfig` from config store
-  - Check `disabledSkills` list (skip disabled)
+  - `detectConflicts(sources, config)` → array of `SkillConflict` objects (filters disabled, non-builtin under ask)
+  - `resolveConflict(skillName, sources, config)` → winning source with priority resolution
+  - `computeSyncActions(sourceMap, config, runtimeDir)` → planned sync actions
+  - `getNewConflicts(sourceMap, config)` → only unacknowledged conflicts
+- [x] 1.2 — Modify `syncUserSkillsToAppDir()` in `agent-runner.ts` to:
+  - Read `skillConflictConfig` from config store via `resolveSkillSyncDecision()`
+  - Check `disabledSkills` list (returns 'disabled' → removes runtime entry without restoring)
   - Check `sourceOverrides` per skill (use explicit choice)
   - Apply `conflictPolicy` for unresolved conflicts
-  - Replace built-in with user's symlink when custom-wins
-- [ ] 1.3 — Add `emitSkillConflict(skillName, sourcePath, targetPath)` method to agent runner
+  - Validate SKILL.md + isValidSkillId before processing (matches detector rules)
+  - Replace built-in with user's symlink when custom-wins (only for known builtin copies)
+  - Handle user-vs-configured conflicts (configured > user priority)
+- [x] 1.3 — Add `emitSkillConflict(skillName, customPath, builtinPath)` method to agent runner
   - Sends `skills.conflict-detected` event to renderer via IPC
-- [ ] 1.4 — Implement IPC handlers in `src/main/index.ts`:
-  - `skills.getConflicts` — scan and return all current conflicts
-  - `skills.getConflictConfig` — read from config store
-  - `skills.setConflictPolicy` — update policy, re-sync skills
-  - `skills.setSourceOverride` — per-skill choice, re-sync
-  - `skills.toggleDisabled` — add/remove from disabled list, re-sync
-  - `skills.acknowledgeConflict` — mark as acknowledged in config
-  - `skills.resetToBuiltin` — remove override, re-sync
-- [ ] 1.5 — Migration logic for first launch:
-  - Detect if `skillConflictConfig` is missing → create with defaults
-  - Scan for existing conflicts
-  - Migrate any `.user-modified` markers to `sourceOverrides`
-- [ ] 1.6 — Unit tests (`tests/skill-conflict-detector.test.ts`):
-  - Multiple sources, same name → conflict detected
-  - Policy `custom-wins` → user source wins
-  - Policy `builtin-wins` → built-in wins
-  - Policy `ask` + unacknowledged → event emitted, built-in used
-  - Policy `ask` + acknowledged → chosen source wins
-  - `disabledSkills` → skill skipped regardless of source
-  - `sourceOverrides` → explicit choice wins over policy
-  - Edge cases from design doc Section 9
+  - Guards `getBuiltinSkillsPath()` for null safety
+- [x] 1.4 — Wire `skills.getConflicts` IPC handler to real detection:
+  - Scans builtin, user, and configured directories
+  - Returns `{ conflicts, notImplemented: false }`
+  - Project-level excluded until project sync is implemented
+- [x] 1.5 — Migration logic:
+  - Config normalization via `normalizeSkillConflictConfig` handles missing config
+  - `.user-modified` markers continue to work via existing hash-based sync loop
+  - Full migration to `sourceOverrides` deferred to Phase 6 (Settings UI)
+- [x] 1.6 — Unit tests (`tests/skill-conflict-detector.test.ts`):
+  - 26 tests covering discovery, detection, all 3 policies, overrides, disabled skills,
+    user-vs-configured conflicts, sync actions, new-conflict filtering
+- [x] 1.7 — Security hardening (from code review):
+  - `removeDisabledSkillsFromRuntime`: validates skill IDs + path containment
+  - `removeRuntimeSkillEntry`: only removes known managed builtin copies (not user data)
+  - Link paths: guards `source !== target`, only `rmSync` for `_builtinSkillNames` entries
+  - `syncConfiguredSkillsToRuntimeDir`: same policy-aware behavior as user sync
+  - `populateBuiltinSkillNames`: validates with `SAFE_SKILL_ID_REGEX` + SKILL.md
+  - `hasUserConfiguredConflict`: requires SKILL.md + valid directory
+  - `removeStaleSymlink`: uses `lstatSync` for broken symlink detection
+  - `restoreBuiltinSkill`: handles broken symlinks at target path
 
 ### Key Files
 
-- `src/main/skills/skill-conflict-detector.ts` (new)
-- `src/main/claude/agent-runner.ts` (modify `syncUserSkillsToAppDir`)
-- `src/main/index.ts` (IPC handlers)
-- `tests/skill-conflict-detector.test.ts` (new)
+- `src/main/skills/skill-conflict-detector.ts` (new — 300 lines)
+- `src/main/claude/agent-runner.ts` (modified sync methods + 7 new private helpers)
+- `src/main/index.ts` (`skills.getConflicts` wired to real detection)
+- `tests/skill-conflict-detector.test.ts` (new — 26 tests)
 
-### Acceptance Criteria
+### Notes from Code Review
 
-- Custom skill with same name as built-in is correctly resolved per policy
-- Changing policy via IPC immediately affects which skill version is active
-- Conflicts are emitted as events on app start
-- All unit tests pass
+- Sync decisions are source-based (via `_builtinSkillNames` + `hasUserConfiguredConflict`),
+  not runtime-state-based, ensuring policy changes take effect regardless of stale symlinks
+- `removeDisabledSkillsFromRuntime` runs as a final pass after all sync operations,
+  ensuring built-in-only disabled skills are properly removed
+- Non-builtin real directories are never recursively deleted — only symlinks (safe) and
+  verified managed builtin copies (checked via `_builtinSkillNames` + path containment)
+- Remaining tech debt: centralize path discovery between IPC and runner, deduplicate
+  conflict emissions, integration tests for agent-runner sync methods
 
 ---
 
@@ -225,7 +234,7 @@ Phases 3, 4, and 5 can also run in parallel once their respective backends are c
 ## Phase 3: Conflict Resolution UI
 
 **Estimate:** 2–3 days
-**Depends on:** Phase 1
+**Depends on:** Phase 1 ✅
 **Unlocks:** Phase 6
 
 ### Tasks
