@@ -60,10 +60,12 @@ It provides a sandboxed workspace where AI can manage files, generate profession
 - **Remote Control**: Connect to collaboration platforms like **Feishu (Lark)** and other remote services to automate workflows and cross-platform operations.
 - **GUI Operation**: Control and interact with various desktop GUI applications on your computer. **Recommended model: Gemini-3-Pro** for optimal GUI understanding and control.
 - **Smart File Management**: Read, write, and organize files within your workspace.
-- **Skills System**: Built-in workflows for PPTX, DOCX, PDF, XLSX generation and processing. **Supports custom skill creation and deletion.**
+- **Skills System**: Built-in workflows for PPTX, DOCX, PDF, XLSX generation and processing. **Supports custom skill creation and deletion.** Workspace profiles let you disable unused skills per-project, and conflict resolution handles name collisions between custom and built-in skills automatically.
 - **Task Scheduling**: Anacron-style in-app task scheduling with fuzzy time windows (morning/afternoon/evening/night), autonomous execution mode, missed-task catch-up policies, per-run token/time budgets, and full run history tracking.
 - **MCP External Service Support**: Integrate browser, Notion, custom apps and more through **MCP Connectors** to extend AI capabilities. **Per-session toggle** lets you disable unused servers on-the-fly to reclaim context window tokens.
 - **Skill Pinning**: Star specific skills to tell the AI "use these for this session" — no more manually typing tool instructions every time.
+- **Skill Workspace Profiles**: Remove unused skills from sessions to save context window tokens. Skills have three states — Pinned (prioritized), Available (normal), and Removed (disabled). State persists via `.cowork/skills-profile.json` for per-project defaults. Configure on the Welcome page or toggle mid-conversation from the Context Panel.
+- **Skill Conflict Resolution**: When custom and built-in skills share the same name, a policy engine determines which version loads. Choose "Custom wins", "Built-in wins", or "Ask me each time". Per-skill overrides and a conflict badge in Settings give full control.
 - **Multimodal Input**: Drag & drop files and images directly into the chat input for seamless multimodal interaction.
 - **Real-time Trace**: Watch AI reasoning and tool execution in the Trace Panel.
 - **Secure Workspace**: All operations confined to your chosen workspace folder.
@@ -257,6 +259,8 @@ This is the **Sqowe** variant of Open Cowork. It tracks upstream functionality a
 - **Customizable System Prompt**: The AI's system prompt is fully editable via Settings → System Prompt. Each section (identity, behavioral rules, citations, tool routing) is a separate file that can be independently edited, disabled, or reset. Workspace-level overrides in `.cowork/prompts/` replace global sections per-project. Template variables (`{{cwd}}`, `{{project_name}}`, `{{date}}`, `{{model}}`) are resolved at runtime.
 - **Per-Session MCP Server Toggle**: Disable/enable MCP servers on-the-fly from the Context Panel without restarting the session. Reduces context window token usage by shedding unused tool schemas mid-conversation. Supports workspace-level profiles via `.cowork/mcp-servers.json` (committable to git) for team-wide defaults.
 - **Skill Pinning**: Star/pin specific skills (semantic-index, firecrawl, docx, etc.) to explicitly tell the AI to prioritize them for the current session. All skills remain available — pinning adds emphasis, not restriction. Select skills on the Welcome screen before starting a chat, or pin/unpin mid-conversation from the Context Panel. Enforces a max of 10 pinned skills per session with full validation.
+- **Skill Workspace Profiles**: Disable unused skills per-session to reduce context window usage. Three-layer resolution: Session > Workspace profile (`.cowork/skills-profile.json`) > Global config. Welcome page loads the workspace profile automatically and shows three skill states (★ Pinned, ☆ Available, ✕ Removed). Context Panel supports mid-conversation remove/restore with a 💾 save button to persist changes. New sessions immediately respect the workspace profile.
+- **Skill Conflict Resolution**: Policy engine for resolving name collisions between custom and built-in skills. Three policies: `custom-wins` (recommended), `builtin-wins`, or `ask` (notification + manual choice). Per-skill source overrides, global disable toggles, conflict count badge in Settings sidebar, and toast notifications on new conflicts. Managed via Settings → Skills.
 
 ---
 
@@ -349,12 +353,12 @@ MCP servers are configured in the app's Settings panel. Each server entry includ
 
 Each MCP server supports a default tool permission policy to reduce "permission fatigue":
 
-| Policy        | Behavior                                                                      |
-| ------------- | ----------------------------------------------------------------------------- |
-| `ask-all`     | Every tool requires manual approval (default)                                 |
-| `allow-reads` | Read-only tools (get*\*, list*_, search\__) auto-approved; write tools prompt |
-| `allow-all`   | All tools auto-approved without prompting                                     |
-| `deny-all`    | All tools blocked                                                             |
+| Policy        | Behavior                                                                        |
+| ------------- | ------------------------------------------------------------------------------- |
+| `ask-all`     | Every tool requires manual approval (default)                                   |
+| `allow-reads` | Read-only tools (get*\*, list*\_, search\_\_) auto-approved; write tools prompt |
+| `allow-all`   | All tools auto-approved without prompting                                       |
+| `deny-all`    | All tools blocked                                                               |
 
 Per-tool overrides let you make exceptions (e.g., allow-reads but always ask for `capture_realtime_ws`).
 
@@ -602,7 +606,7 @@ open-cowork/
 
 See our full **[ROADMAP.md](ROADMAP.md)** for detailed plans.
 
-**Completed:** Core installers · Filesystem sandboxing · VM isolation (WSL2/Lima) · Skills (PPTX/DOCX/PDF/XLSX) · MCP connectors · Multi-model support · Rich input · i18n · Task scheduling (v2)
+**Completed:** Core installers · Filesystem sandboxing · VM isolation (WSL2/Lima) · Skills (PPTX/DOCX/PDF/XLSX) · Skill conflict resolution · Skill workspace profiles · MCP connectors · Multi-model support · Rich input · i18n · Task scheduling (v2)
 
 **Coming next:** Memory optimization · Linux support · Plugin system · Computer use · Stable release
 
