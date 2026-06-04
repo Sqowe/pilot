@@ -2865,17 +2865,26 @@ ipcMain.handle(
       if (!sessionManager) {
         return { success: false, error: 'Session manager not initialized' };
       }
-      // Validate skillId format using shared validation
       const { isValidSkillId } = await import('../shared/skill-pinning-constants');
       if (!isValidSkillId(skillId)) {
         return { success: false, error: `Invalid skill ID: ${skillId}` };
       }
-      // Session-level skill disable will be fully implemented in Phase 2
-      // when sessionDisabledSkills Map is added to SessionManager.
-      log(
-        `[Skills] Session ${sessionId}: skill ${skillId} ${disabled ? 'disabled' : 'enabled'} (not yet implemented)`
+      if (typeof disabled !== 'boolean') {
+        return { success: false, error: 'Invalid disabled flag: must be a boolean' };
+      }
+      const disabledSkills = sessionManager.toggleSessionDisabledSkill(
+        sessionId,
+        skillId,
+        disabled
       );
-      return { success: false, error: 'Session-level skill disable not yet implemented (Phase 2)' };
+      const pinnedSkills = sessionManager.getSessionPinnedSkills(sessionId);
+      log(`[Skills] Session ${sessionId}: skill ${skillId} ${disabled ? 'disabled' : 'enabled'}`);
+      // Emit event to renderer (includes pinned state for reconciliation)
+      sendToRenderer({
+        type: 'skills.session-disabled-changed',
+        payload: { sessionId, disabledSkills, pinnedSkills },
+      });
+      return { success: true, disabledSkills, pinnedSkills };
     } catch (error) {
       logError('[Skills] Error toggling session disabled skill:', error);
       return { success: false, error: error instanceof Error ? error.message : String(error) };
@@ -2888,10 +2897,7 @@ ipcMain.handle('skills.getSessionDisabledSkills', async (_event, sessionId: stri
     if (!sessionManager) {
       return [];
     }
-    // Full implementation in Phase 2 (SessionManager.getSessionDisabledSkills).
-    // Return empty — no session-level skill disabling until Phase 2 implementation.
-    void sessionId;
-    return [];
+    return sessionManager.getSessionDisabledSkills(sessionId);
   } catch (error) {
     logError('[Skills] Error getting session disabled skills:', error);
     return [];
@@ -2916,66 +2922,10 @@ ipcMain.handle('skills.getWorkspaceProfile', async (_event, cwd: string) => {
     if (!validation.valid) {
       return null; // Unauthorized workspace — silent null (read-only, no error leak)
     }
-    const trustedCwd = validation.canonicalCwd;
 
-    const profilePath = join(trustedCwd, '.cowork', 'skills-profile.json');
-
-    // Check file exists, reject symlinks, and verify size before reading
-    let stat: fs.Stats;
-    try {
-      stat = fs.lstatSync(profilePath);
-    } catch {
-      return null; // File doesn't exist
-    }
-    if (!stat.isFile()) return null; // Reject symlinks, directories, etc.
-
-    // Verify the real path stays within the workspace boundary
-    let realProfilePath: string;
-    try {
-      realProfilePath = fs.realpathSync(profilePath);
-    } catch {
-      return null;
-    }
-    const relToWorkspace = relative(trustedCwd, realProfilePath);
-    if (!relToWorkspace || relToWorkspace.startsWith('..') || isAbsolute(relToWorkspace)) {
-      logWarn(`[Skills] Workspace profile escapes workspace boundary: ${profilePath}`);
-      return null;
-    }
-
-    const MAX_PROFILE_SIZE = 64 * 1024; // 64KB — generous for a JSON list of skill IDs
-    if (stat.size > MAX_PROFILE_SIZE) {
-      logWarn(`[Skills] Workspace profile too large (${stat.size} bytes): ${profilePath}`);
-      return null;
-    }
-
-    const raw = fs.readFileSync(profilePath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
-
-    // Sanitize: validate skill IDs, dedup, and cap at same limits as save
-    const { isValidSkillId } = await import('../shared/skill-pinning-constants');
-    const MAX_ENTRIES = 200;
-
-    return {
-      pinned: Array.isArray(parsed.pinned)
-        ? [
-            ...new Set(
-              parsed.pinned.filter(
-                (v: unknown): v is string => typeof v === 'string' && isValidSkillId(v)
-              )
-            ),
-          ].slice(0, MAX_ENTRIES)
-        : undefined,
-      disabled: Array.isArray(parsed.disabled)
-        ? [
-            ...new Set(
-              parsed.disabled.filter(
-                (v: unknown): v is string => typeof v === 'string' && isValidSkillId(v)
-              )
-            ),
-          ].slice(0, MAX_ENTRIES)
-        : undefined,
-    };
+    // Use the workspace profile module (mtime-cached, validated)
+    const { loadSkillsWorkspaceProfile } = await import('./skills/skills-workspace-profile');
+    return loadSkillsWorkspaceProfile(validation.canonicalCwd);
   } catch (error) {
     logError('[Skills] Error loading workspace profile:', error);
     return null;
@@ -4229,6 +4179,21 @@ ipcMain.handle('sandbox.retrySetup', async () => {
   }
 });
 
+/**
+ * Strip known skill source prefixes (builtin-, global-, configured-, project-)
+ * to get the bare directory name for filesystem comparison.
+ * If no known prefix is found, returns the ID unchanged.
+ */
+function stripKnownPrefix(skillId: string): string {
+  const KNOWN_PREFIXES = ['builtin-', 'global-', 'configured-', 'project-'];
+  for (const prefix of KNOWN_PREFIXES) {
+    if (skillId.startsWith(prefix)) {
+      return skillId.substring(prefix.length);
+    }
+  }
+  return skillId;
+}
+
 async function handleClientEvent(event: ClientEvent): Promise<unknown> {
   // Check if configured before starting sessions
   if (event.type === 'session.start' && !configStore.hasUsableCredentialsForActiveSet()) {
@@ -4271,6 +4236,66 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
           validatedPinnedSkills = validatedPinnedSkills.filter((id) => enabledSkillIds.has(id));
         }
 
+        // Load workspace skills profile to seed session state if no explicit values provided.
+        // The cwd was already validated above via getWorkspacePathUnsupportedReason().
+        // We can safely load the profile from it without re-validating against session list.
+        let effectivePinnedSkills = validatedPinnedSkills;
+        // Validate initialDisabledSkills immediately (runtime IPC boundary protection)
+        let effectiveDisabledSkills: string[] | undefined;
+        if (Array.isArray(event.payload.initialDisabledSkills)) {
+          effectiveDisabledSkills = event.payload.initialDisabledSkills;
+        }
+        if (event.payload.cwd && (!effectivePinnedSkills || !effectiveDisabledSkills)) {
+          try {
+            const { loadSkillsWorkspaceProfile } =
+              await import('./skills/skills-workspace-profile');
+            // loadSkillsWorkspaceProfile has its own security checks (lstat, symlink
+            // rejection, size limit, realpath boundary verification)
+            const profile = loadSkillsWorkspaceProfile(event.payload.cwd);
+            if (profile) {
+              if (!effectivePinnedSkills && profile.pinned?.length) {
+                // Validate workspace profile pinned skills against installed skills
+                if (skillsManager) {
+                  const allSkills = skillsManager.getAllSkills();
+                  const enabledSkillIds = new Set(
+                    allSkills.filter((s) => s.enabled).map((s) => s.id)
+                  );
+                  effectivePinnedSkills = profile.pinned.filter((id) => enabledSkillIds.has(id));
+                } else {
+                  effectivePinnedSkills = profile.pinned;
+                }
+              }
+              if (!effectiveDisabledSkills && profile.disabled?.length) {
+                effectiveDisabledSkills = profile.disabled;
+              }
+            }
+          } catch (err) {
+            logWarn('[Session] Failed to load workspace skills profile:', err);
+          }
+        }
+
+        // Runtime validation for initialDisabledSkills
+        if (effectiveDisabledSkills) {
+          const { isValidSkillId: isValidId } = await import('../shared/skill-pinning-constants');
+          const MAX_INITIAL_DISABLED = 200;
+          effectiveDisabledSkills = effectiveDisabledSkills
+            .filter((id): id is string => typeof id === 'string' && isValidId(id))
+            .slice(0, MAX_INITIAL_DISABLED);
+        }
+
+        // Enforce pinned-wins-over-disabled: remove pinned skills from disabled set.
+        // Uses canonicalized comparison to handle both prefixed IDs and bare names.
+        if (effectivePinnedSkills?.length && effectiveDisabledSkills?.length) {
+          const pinnedBareNames = new Set<string>();
+          for (const id of effectivePinnedSkills) {
+            pinnedBareNames.add(id);
+            pinnedBareNames.add(stripKnownPrefix(id));
+          }
+          effectiveDisabledSkills = effectiveDisabledSkills.filter((id) => {
+            return !pinnedBareNames.has(id) && !pinnedBareNames.has(stripKnownPrefix(id));
+          });
+        }
+
         const session = await sm.startSession(
           event.payload.title,
           event.payload.prompt,
@@ -4279,7 +4304,8 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
           event.payload.content,
           event.payload.memoryEnabled,
           event.payload.initialDisabledMcpServers,
-          validatedPinnedSkills
+          effectivePinnedSkills,
+          effectiveDisabledSkills
         );
         return session;
       }

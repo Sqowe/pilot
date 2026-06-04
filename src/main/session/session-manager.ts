@@ -75,6 +75,20 @@ const WORKSPACE_MOUNT_VIRTUAL_PATH = '/mnt/workspace';
 const TITLE_GENERATION_TIMEOUT_MS = 20000;
 
 export class SessionManager {
+  /**
+   * Strip known skill source prefixes (builtin-, global-, configured-, project-)
+   * to get the bare directory name for cross-format ID comparison.
+   */
+  static stripKnownPrefix(skillId: string): string {
+    const KNOWN_PREFIXES = ['builtin-', 'global-', 'configured-', 'project-'];
+    for (const prefix of KNOWN_PREFIXES) {
+      if (skillId.startsWith(prefix)) {
+        return skillId.substring(prefix.length);
+      }
+    }
+    return skillId;
+  }
+
   private db: DatabaseInstance;
   private sendToRenderer: (event: ServerEvent) => void;
   private pathResolver: PathResolver;
@@ -112,6 +126,13 @@ export class SessionManager {
    * Cleared when session is deleted.
    */
   private sessionPinnedSkills: Map<string, Set<string>> = new Map();
+
+  /**
+   * Per-session disabled skills (in-memory, ephemeral).
+   * Skills in this set are excluded from the agent's available skill paths.
+   * Cleared when session is deleted.
+   */
+  private sessionDisabledSkills: Map<string, Set<string>> = new Map();
 
   constructor(
     db: DatabaseInstance,
@@ -169,6 +190,7 @@ export class SessionManager {
         getSessionDisabledMcpServers: (sessionId: string) =>
           this.getSessionDisabledMcpServers(sessionId),
         getSessionPinnedSkills: (sessionId: string) => this.getSessionPinnedSkills(sessionId),
+        getSessionDisabledSkills: (sessionId: string) => this.getSessionDisabledSkills(sessionId),
       },
       this.pathResolver,
       this.mcpManager,
@@ -287,6 +309,22 @@ export class SessionManager {
         throw new Error(`Cannot pin more than ${MAX_PINNED_SKILLS_PER_SESSION} skills per session`);
       }
       pinnedSet.add(skillId);
+      // Pinned wins over disabled: remove from disabled set if present
+      // Check both exact ID and bare name for cross-format compatibility
+      const disabledSet = this.sessionDisabledSkills.get(sessionId);
+      if (disabledSet) {
+        const bareName = SessionManager.stripKnownPrefix(skillId);
+        for (const disabledId of [...disabledSet]) {
+          if (
+            disabledId === skillId ||
+            disabledId === bareName ||
+            SessionManager.stripKnownPrefix(disabledId) === bareName
+          ) {
+            disabledSet.delete(disabledId);
+          }
+        }
+        if (disabledSet.size === 0) this.sessionDisabledSkills.delete(sessionId);
+      }
     } else {
       const pinnedSet = this.sessionPinnedSkills.get(sessionId);
       if (pinnedSet) {
@@ -310,6 +348,78 @@ export class SessionManager {
   getSessionPinnedSkills(sessionId: string): string[] {
     const pinnedSet = this.sessionPinnedSkills.get(sessionId);
     return pinnedSet ? Array.from(pinnedSet) : [];
+  }
+
+  /**
+   * Toggle a skill as disabled/enabled for a specific session.
+   * Disabled skills are excluded from the agent's available skill paths.
+   */
+  toggleSessionDisabledSkill(sessionId: string, skillId: string, disabled: boolean): string[] {
+    if (!sessionId || typeof sessionId !== 'string') {
+      throw new Error('Invalid sessionId');
+    }
+    if (!isValidSkillId(skillId)) {
+      throw new Error('Invalid skillId: must be 1-128 chars of [a-zA-Z0-9._-]');
+    }
+    const session = this.loadSession(sessionId);
+    if (!session) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+
+    if (disabled) {
+      let disabledSet = this.sessionDisabledSkills.get(sessionId);
+      if (!disabledSet) {
+        disabledSet = new Set();
+        this.sessionDisabledSkills.set(sessionId, disabledSet);
+      }
+      // Cap disabled skills to prevent unbounded growth
+      const MAX_DISABLED_SKILLS_PER_SESSION = 200;
+      if (disabledSet.size >= MAX_DISABLED_SKILLS_PER_SESSION && !disabledSet.has(skillId)) {
+        throw new Error(
+          `Cannot disable more than ${MAX_DISABLED_SKILLS_PER_SESSION} skills per session`
+        );
+      }
+      disabledSet.add(skillId);
+      // If disabling, also unpin to maintain consistency (pin + disable = invalid)
+      // Check both exact ID and bare name for cross-format compatibility
+      const pinnedSet = this.sessionPinnedSkills.get(sessionId);
+      if (pinnedSet) {
+        const bareName = SessionManager.stripKnownPrefix(skillId);
+        for (const pinnedId of [...pinnedSet]) {
+          if (
+            pinnedId === skillId ||
+            pinnedId === bareName ||
+            SessionManager.stripKnownPrefix(pinnedId) === bareName
+          ) {
+            pinnedSet.delete(pinnedId);
+          }
+        }
+        if (pinnedSet.size === 0) this.sessionPinnedSkills.delete(sessionId);
+      }
+    } else {
+      const disabledSet = this.sessionDisabledSkills.get(sessionId);
+      if (disabledSet) {
+        disabledSet.delete(skillId);
+        if (disabledSet.size === 0) {
+          this.sessionDisabledSkills.delete(sessionId);
+        }
+      }
+    }
+
+    log(
+      `[SessionManager] Skill ${skillId} ${disabled ? 'disabled' : 'enabled'} for session ${sessionId}`
+    );
+    this.invalidateSkillsSetup();
+    const disabledSet = this.sessionDisabledSkills.get(sessionId);
+    return disabledSet ? Array.from(disabledSet) : [];
+  }
+
+  /**
+   * Get the list of disabled skill IDs for a session.
+   */
+  getSessionDisabledSkills(sessionId: string): string[] {
+    const disabledSet = this.sessionDisabledSkills.get(sessionId);
+    return disabledSet ? Array.from(disabledSet) : [];
   }
 
   /**
@@ -385,7 +495,8 @@ export class SessionManager {
     content?: ContentBlock[],
     memoryEnabled?: boolean,
     initialDisabledMcpServers?: string[],
-    initialPinnedSkills?: string[]
+    initialPinnedSkills?: string[],
+    initialDisabledSkills?: string[]
   ): Promise<Session> {
     log('[SessionManager] Starting new session:', title);
 
@@ -426,6 +537,37 @@ export class SessionManager {
         this.sessionPinnedSkills.set(session.id, pinnedSet);
         log(
           `[SessionManager] Applied ${pinnedSet.size} initial pinned skills for session ${session.id}`
+        );
+      }
+    }
+
+    // Apply initial disabled skills BEFORE enqueueing the prompt.
+    // Disabled skills are excluded from the agent's available skill paths.
+    // Pinned wins: exclude any IDs that are equivalent to pinned skills.
+    if (initialDisabledSkills && initialDisabledSkills.length > 0) {
+      const pinnedSet = this.sessionPinnedSkills.get(session.id);
+      const pinnedBareNames = new Set<string>();
+      if (pinnedSet) {
+        for (const id of pinnedSet) {
+          pinnedBareNames.add(id);
+          pinnedBareNames.add(SessionManager.stripKnownPrefix(id));
+        }
+      }
+
+      const disabledSet = new Set<string>();
+      for (const skillId of initialDisabledSkills) {
+        if (isValidSkillId(skillId)) {
+          // Pinned wins over disabled — check both exact and bare name
+          const bareName = SessionManager.stripKnownPrefix(skillId);
+          if (pinnedBareNames.has(skillId) || pinnedBareNames.has(bareName)) continue;
+          disabledSet.add(skillId);
+        }
+      }
+      if (disabledSet.size > 0) {
+        this.sessionDisabledSkills.set(session.id, disabledSet);
+        this.invalidateSkillsSetup();
+        log(
+          `[SessionManager] Applied ${disabledSet.size} initial disabled skills for session ${session.id}`
         );
       }
     }
@@ -1169,6 +1311,7 @@ export class SessionManager {
     this.titleGenerationTokens.delete(sessionId);
     this.sessionDisabledMcpServers.delete(sessionId);
     this.sessionPinnedSkills.delete(sessionId);
+    this.sessionDisabledSkills.delete(sessionId);
     forgetSessionPermissions(sessionId);
     if (this.extensionManager) {
       await this.extensionManager.onSessionDeleted({
@@ -1205,6 +1348,7 @@ export class SessionManager {
         this.titleGenerationTokens.delete(sessionId);
         this.sessionDisabledMcpServers.delete(sessionId);
         this.sessionPinnedSkills.delete(sessionId);
+        this.sessionDisabledSkills.delete(sessionId);
         forgetSessionPermissions(sessionId);
       }
     })();

@@ -595,6 +595,7 @@ export type ClientEvent =
         memoryEnabled?: boolean;
         initialDisabledMcpServers?: string[];
         initialPinnedSkills?: string[];
+        initialDisabledSkills?: string[];
       };
     }
   | {
@@ -698,7 +699,7 @@ export type ServerEvent =
   | { type: 'skills.conflict-resolved'; payload: { skillName: string; winner: string } }
   | {
       type: 'skills.session-disabled-changed';
-      payload: { sessionId: string; disabledSkills: string[] };
+      payload: { sessionId: string; disabledSkills: string[]; pinnedSkills?: string[] };
     }
   | {
       type: 'plugins.runtimeApplied';

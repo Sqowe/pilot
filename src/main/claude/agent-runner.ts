@@ -527,6 +527,8 @@ interface AgentRunnerOptions {
   getSessionDisabledMcpServers?: (sessionId: string) => string[];
   /** Get session-level pinned skill IDs (ephemeral, in-memory) */
   getSessionPinnedSkills?: (sessionId: string) => string[];
+  /** Get session-level disabled skill IDs (ephemeral, in-memory) */
+  getSessionDisabledSkills?: (sessionId: string) => string[];
 }
 
 interface CachedPiSession {
@@ -576,6 +578,7 @@ export class ClaudeAgentRunner {
   private static readonly MAX_CACHED_SESSIONS = 50;
   private _getSessionDisabledMcpServers?: (sessionId: string) => string[];
   private _getSessionPinnedSkills?: (sessionId: string) => string[];
+  private _getSessionDisabledSkills?: (sessionId: string) => string[];
 
   // Per-instance caches — invalidated when the underlying config changes.
   private _mcpServersCache: { fingerprint: string; servers: Record<string, unknown> } | null = null;
@@ -685,6 +688,11 @@ export class ClaudeAgentRunner {
     return this._getSessionPinnedSkills?.(sessionId) ?? [];
   }
 
+  /** Get session-level disabled skill IDs via the injected callback. */
+  private getSessionDisabledSkills(sessionId: string): string[] {
+    return this._getSessionDisabledSkills?.(sessionId) ?? [];
+  }
+
   /**
    * Build the pinned skills directive prompt for injection into the system prompt.
    * Returns empty string if no skills are pinned.
@@ -791,6 +799,53 @@ RULES:
         type: 'plugins.runtimeApplied',
         payload: { sessionId, plugins: appliedPlugins },
       });
+    }
+
+    // If session has disabled skills, filter them out from the available paths.
+    // Disabled skill IDs may be bare directory names (from workspace profiles)
+    // or prefixed IDs like "builtin-pdf" (from UI). Build a set of bare names
+    // for filesystem-level filtering using known prefix stripping.
+    const sessionDisabled = sessionId ? this.getSessionDisabledSkills(sessionId) : [];
+    if (sessionDisabled.length > 0) {
+      const KNOWN_PREFIXES = ['builtin-', 'global-', 'configured-', 'project-'];
+      const disabledNames = new Set<string>();
+      for (const id of sessionDisabled) {
+        disabledNames.add(id);
+        // Strip known source prefixes to get the bare directory name
+        for (const prefix of KNOWN_PREFIXES) {
+          if (id.startsWith(prefix)) {
+            disabledNames.add(id.substring(prefix.length));
+            break;
+          }
+        }
+      }
+
+      const expandedPaths: string[] = [];
+      for (const skillPath of mergedPaths) {
+        // Check if this path is an individual skill directory (has SKILL.md directly)
+        const isIndividualSkill = fs.existsSync(path.join(skillPath, 'SKILL.md'));
+        if (isIndividualSkill) {
+          // Individual skill — filter by its directory name
+          const skillName = path.basename(skillPath);
+          if (!disabledNames.has(skillName)) {
+            expandedPaths.push(skillPath);
+          }
+        } else {
+          // Parent directory — expand into child skill directories, filtering disabled
+          try {
+            const entries = fs.readdirSync(skillPath, { withFileTypes: true });
+            for (const entry of entries) {
+              if (!entry.isDirectory()) continue;
+              if (disabledNames.has(entry.name)) continue; // Skip disabled skill
+              expandedPaths.push(path.join(skillPath, entry.name));
+            }
+          } catch {
+            // If we can't read the dir, keep the parent path as-is
+            expandedPaths.push(skillPath);
+          }
+        }
+      }
+      return expandedPaths;
     }
 
     return Array.from(mergedPaths);
@@ -1388,6 +1443,7 @@ RULES:
     this.requestPermission = options.requestPermission;
     this._getSessionDisabledMcpServers = options.getSessionDisabledMcpServers;
     this._getSessionPinnedSkills = options.getSessionPinnedSkills;
+    this._getSessionDisabledSkills = options.getSessionDisabledSkills;
     this.pathResolver = pathResolver;
     this.mcpManager = mcpManager;
     this._pluginRuntimeService = pluginRuntimeService;

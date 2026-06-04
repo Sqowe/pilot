@@ -27,7 +27,7 @@ different problems. This plan interleaves them to minimize rework and ship incre
 Phase 0 (shared types/config)  ✅ DONE
    ├──► Phase 1 (conflict engine) ✅ DONE ──► Phase 3 (conflict UI)──┐
    │                                                                   │
-   └──► Phase 2 (session disable + workspace profile)                 ├──► Phase 6 (polish)
+   └──► Phase 2 (session disable + workspace profile) ✅ DONE        ├──► Phase 6 (polish)
               │                                                        │
               ├──► Phase 4 (Context Panel UI) ─────────────────────────┘
               │
@@ -169,65 +169,62 @@ Phases 3, 4, and 5 can also run in parallel once their respective backends are c
 
 ---
 
-## Phase 2: Session-Level Skill Disable & Workspace Profile
+## Phase 2: Session-Level Skill Disable & Workspace Profile ✅ DONE
 
+**Completed:** 2026-06-04
 **Estimate:** 2–3 days
 **Depends on:** Phase 0 ✅
 **Unlocks:** Phase 4, Phase 5
 
 ### Tasks
 
-- [ ] 2.1 — Add `sessionDisabledSkills: Map<string, Set<string>>` to `SessionManager`
-  - `toggleSessionDisabledSkill(sessionId, skillId, disabled)` method
+- [x] 2.1 — Add `sessionDisabledSkills: Map<string, Set<string>>` to `SessionManager`
+  - `toggleSessionDisabledSkill(sessionId, skillId, disabled)` method with cap (200)
   - `getSessionDisabledSkills(sessionId)` method
   - Cleanup on session delete (like `sessionPinnedSkills`)
-- [ ] 2.2 — Modify agent-runner skill loading to filter disabled skills:
-  - Before passing `additionalSkillPaths` to SDK, filter out entries where
-    `basename` is in effective disabled set
-  - Resolution order: session > workspace profile > global disabled > all available
-- [ ] 2.3 — Create `src/main/skills/skills-workspace-profile.ts`:
-  - `loadSkillsWorkspaceProfile(cwd)` — reads `.cowork/skills-profile.json`, mtime cached
-  - `saveSkillsWorkspaceProfile(cwd, profile)` — validates + writes
+  - Cross-format ID reconciliation via `SessionManager.stripKnownPrefix()`
+- [x] 2.2 — Modify agent-runner `resolveSkillPaths` to filter disabled skills:
+  - Detects individual skill dirs (has SKILL.md) vs parent dirs
+  - Expands parent dirs into children, filtering disabled by bare name
+  - Strips known prefixes (`builtin-`, `global-`, `configured-`, `project-`) for matching
+- [x] 2.3 — Create `src/main/skills/skills-workspace-profile.ts`:
+  - `loadSkillsWorkspaceProfile(cwd)` — mtime cached, deduped, capped at 200
   - `invalidateSkillsWorkspaceProfileCache()` — for testing
-  - Validation: skill IDs match `SAFE_SKILL_ID_REGEX`, arrays are string[]
-  - Empty profile → delete file (same as MCP pattern)
-- [ ] 2.4 — Seed session state from workspace profile on `session.start`:
-  - Load profile for CWD
+  - Security: `lstatSync` (rejects symlinks), 64KB size limit, `realpathSync` boundary check
+  - Caches parse failures to avoid repeated re-reads
+- [x] 2.4 — Seed session state from workspace profile on `session.start`:
+  - Load profile from validated cwd (uses `getWorkspacePathUnsupportedReason` + loader's own checks)
   - Seed `sessionDisabledSkills` from `profile.disabled`
-  - Seed `sessionPinnedSkills` from `profile.pinned`
-  - Handle `initialDisabledSkills` from session.start payload (Welcome page)
-- [ ] 2.5 — Implement IPC handlers:
-  - `skills.toggleSessionDisabled` → calls SessionManager, emits event
+  - Seed `sessionPinnedSkills` from `profile.pinned` (validated against installed skills)
+  - Handle `initialDisabledSkills` from session.start payload
+  - Pinned-wins-over-disabled enforced with cross-format comparison
+- [x] 2.5 — Wire IPC handlers to real implementations:
+  - `skills.toggleSessionDisabled` → calls SessionManager, emits event with pinnedSkills
   - `skills.getSessionDisabledSkills` → returns current set
-  - `skills.getWorkspaceProfile` → calls `loadSkillsWorkspaceProfile`
-  - `skills.saveWorkspaceProfile` → calls `saveSkillsWorkspaceProfile`
-- [ ] 2.6 — Add `initialDisabledSkills` to session.start payload type
-- [ ] 2.7 — Unit tests (`tests/skills-workspace-profile.test.ts`):
-  - Load valid profile
-  - Load missing file → null
-  - Load invalid JSON → null (graceful)
-  - Save profile → correct file written
-  - Save empty profile → file deleted
-  - Mtime caching works (no re-read on same mtime)
-  - Session seeding from profile
-  - Session toggle + cleanup on delete
-  - Filtering in agent-runner (disabled skill paths excluded)
+  - `skills.getWorkspaceProfile` → delegates to `loadSkillsWorkspaceProfile` (with cwd auth)
+  - `skills.saveWorkspaceProfile` → unchanged (Phase 0 implementation)
+- [x] 2.6 — Add `initialDisabledSkills` to ClientEvent session.start payload type
+  - Runtime validation: `Array.isArray` check, `isValidSkillId` filter, 200 cap
+- [x] 2.7 — Unit tests (`tests/skills-workspace-profile.test.ts`):
+  - 11 tests covering: load valid/missing/invalid, pinned-only/disabled-only,
+    invalid ID filtering, mtime caching, cache invalidation, empty object
 
 ### Key Files
 
-- `src/main/session/session-manager.ts` (extend)
-- `src/main/skills/skills-workspace-profile.ts` (new)
-- `src/main/claude/agent-runner.ts` (filter disabled)
-- `src/main/index.ts` (IPC handlers + session.start seeding)
-- `src/preload/index.ts` (bridge)
-- `tests/skills-workspace-profile.test.ts` (new)
+- `src/main/session/session-manager.ts` (extended: disabled skills + cross-format reconciliation)
+- `src/main/skills/skills-workspace-profile.ts` (new — secure loader with cache)
+- `src/main/claude/agent-runner.ts` (resolveSkillPaths filtering + getSessionDisabledSkills)
+- `src/main/index.ts` (IPC handlers wired + session.start seeding + stripKnownPrefix helper)
+- `src/renderer/types/index.ts` (ClientEvent + ServerEvent payload updates)
+- `tests/skills-workspace-profile.test.ts` (new — 11 tests)
 
-### Acceptance Criteria
+### Notes from Code Review
 
-- Disabling a skill mid-session removes it from agent's available tools on next message
-- `.cowork/skills-profile.json` is respected on session creation
-- Save/load round-trips correctly
-- Session cleanup doesn't leak state
+- `SessionManager.stripKnownPrefix()` centralizes prefix stripping for cross-format comparison
+- Pinned-wins invariant enforced in three places: `toggleSessionPinnedSkill`, `toggleSessionDisabledSkill`, and `startSession` initial disabled filtering
+- Workspace profile loading uses loader's built-in security (lstat + realpath boundary + size limit), not redundant IPC-level checks
+- `skills.session-disabled-changed` event includes `pinnedSkills` for renderer reconciliation
+- Remaining tech debt: integration tests for session lifecycle + agent filtering, SKILL.md validation when expanding parent dirs
 
 ---
 
@@ -279,7 +276,7 @@ Phases 3, 4, and 5 can also run in parallel once their respective backends are c
 ## Phase 4: Workspace Profiles UI — Context Panel
 
 **Estimate:** 2–3 days
-**Depends on:** Phase 2
+**Depends on:** Phase 2 ✅
 **Unlocks:** Phase 6
 
 ### Tasks
@@ -325,7 +322,7 @@ Phases 3, 4, and 5 can also run in parallel once their respective backends are c
 ## Phase 5: Welcome Page Integration
 
 **Estimate:** 1–2 days
-**Depends on:** Phase 2
+**Depends on:** Phase 2 ✅
 **Unlocks:** Phase 6
 
 ### Tasks
