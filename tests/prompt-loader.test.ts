@@ -136,7 +136,7 @@ describe('prompt-loader', () => {
       ensurePromptFiles();
       const prompt = assembleUserPrompt();
 
-      expect(prompt).toContain('You are an Open Cowork assistant');
+      expect(prompt).toContain('Sqowe Pilot');
       expect(prompt).toContain('CRITICAL BEHAVIORAL RULES');
       expect(prompt).toContain('<citation_requirements>');
       expect(prompt).toContain('<tool_behavior>');
@@ -148,7 +148,7 @@ describe('prompt-loader', () => {
 
       const prompt = assembleUserPrompt();
 
-      expect(prompt).toContain('You are an Open Cowork assistant');
+      expect(prompt).toContain('Sqowe Pilot');
       expect(prompt).not.toContain('<citation_requirements>');
     });
 
@@ -158,7 +158,7 @@ describe('prompt-loader', () => {
       togglePromptSection('identity.md', true);
 
       const prompt = assembleUserPrompt();
-      const identityIdx = prompt.indexOf('Open Cowork assistant');
+      const identityIdx = prompt.indexOf('Sqowe Pilot');
       const rulesIdx = prompt.indexOf('CRITICAL BEHAVIORAL RULES');
       const citationsIdx = prompt.indexOf('<citation_requirements>');
       const toolIdx = prompt.indexOf('<tool_behavior>');
@@ -171,7 +171,7 @@ describe('prompt-loader', () => {
     it('reflects external file edits on next call (mtime-based invalidation)', () => {
       ensurePromptFiles();
       const before = assembleUserPrompt();
-      expect(before).toContain('Open Cowork assistant');
+      expect(before).toContain('Sqowe Pilot');
 
       // External edit
       const promptsDir = path.join(testUserDataDir, 'prompts');
@@ -181,7 +181,7 @@ describe('prompt-loader', () => {
 
       const after = assembleUserPrompt();
       expect(after).toContain('Custom AI persona');
-      expect(after).not.toContain('Open Cowork assistant');
+      expect(after).not.toContain('Sqowe Pilot');
     });
 
     it('uses cache when files have not changed (same mtime)', () => {
@@ -205,7 +205,7 @@ describe('prompt-loader', () => {
       const prompt = assembleUserPrompt({ cwd: workspaceDir });
 
       expect(prompt).toContain('You are a Python expert.');
-      expect(prompt).not.toContain('Open Cowork assistant');
+      expect(prompt).not.toContain('Sqowe Pilot');
       // Other sections still come from global
       expect(prompt).toContain('CRITICAL BEHAVIORAL RULES');
     });
@@ -218,7 +218,7 @@ describe('prompt-loader', () => {
       invalidatePromptCache();
       const prompt = assembleUserPrompt({ cwd: workspaceDir });
 
-      expect(prompt).toContain('Open Cowork assistant');
+      expect(prompt).toContain('Sqowe Pilot');
     });
 
     it('workspace override for one section does not affect others', () => {
@@ -237,7 +237,7 @@ describe('prompt-loader', () => {
 
       expect(prompt).toContain('Custom citation rules for this project.');
       expect(prompt).not.toContain('<citation_requirements>');
-      expect(prompt).toContain('Open Cowork assistant');
+      expect(prompt).toContain('Sqowe Pilot');
       expect(prompt).toContain('<tool_behavior>');
     });
 
@@ -254,7 +254,7 @@ describe('prompt-loader', () => {
       const prompt = assembleUserPrompt({ cwd: workspaceDir });
 
       expect(prompt).not.toContain('Should not appear');
-      expect(prompt).not.toContain('Open Cowork assistant');
+      expect(prompt).not.toContain('Sqowe Pilot');
     });
   });
 
@@ -310,7 +310,7 @@ describe('prompt-loader', () => {
       const prompt = assembleUserPrompt({ cwd: '/tmp', model: 'test' });
 
       // Default content has no {{...}} so should be unchanged
-      expect(prompt).toContain('Open Cowork assistant');
+      expect(prompt).toContain('Sqowe Pilot');
       expect(prompt).not.toContain('{{');
     });
 
@@ -612,7 +612,7 @@ describe('prompt-loader', () => {
   describe('getDefaultContent', () => {
     it('returns default content for known sections', () => {
       const content = getDefaultContent('identity.md');
-      expect(content).toContain('Open Cowork assistant');
+      expect(content).toContain('Sqowe Pilot');
     });
 
     it('returns null for unknown sections', () => {
@@ -673,7 +673,7 @@ describe('prompt-loader', () => {
       ensurePromptFiles();
       // First call
       const before = assembleUserPrompt();
-      expect(before).toContain('Open Cowork assistant');
+      expect(before).toContain('Sqowe Pilot');
 
       // External edit (simulating user editing via Finder)
       const promptsDir = path.join(testUserDataDir, 'prompts');
@@ -682,14 +682,14 @@ describe('prompt-loader', () => {
       // Next call immediately reflects the change (no cache)
       const after = assembleUserPrompt();
       expect(after).toContain('Externally modified');
-      expect(after).not.toContain('Open Cowork assistant');
+      expect(after).not.toContain('Sqowe Pilot');
     });
 
     it('invalidatePromptCache causes loadPromptSections to re-read from disk', () => {
       ensurePromptFiles();
       // First load — caches sections for UI
       const sectionsBefore = loadPromptSections();
-      expect(sectionsBefore[0].content).toContain('Open Cowork assistant');
+      expect(sectionsBefore[0].content).toContain('Sqowe Pilot');
 
       // External edit
       const promptsDir = path.join(testUserDataDir, 'prompts');
@@ -697,7 +697,7 @@ describe('prompt-loader', () => {
 
       // Without invalidation, loadPromptSections returns cached
       const stillCached = loadPromptSections();
-      expect(stillCached[0].content).toContain('Open Cowork assistant');
+      expect(stillCached[0].content).toContain('Sqowe Pilot');
 
       // After invalidation, picks up external edit
       invalidatePromptCache();
@@ -774,7 +774,7 @@ describe('prompt-loader', () => {
       invalidatePromptCache();
       const prompt = assembleUserPrompt();
       // Should still return content from in-memory defaults
-      expect(prompt).toContain('Open Cowork assistant');
+      expect(prompt).toContain('Sqowe Pilot');
       expect(prompt).toContain('CRITICAL BEHAVIORAL RULES');
 
       // Cleanup
