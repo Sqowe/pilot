@@ -18,6 +18,7 @@ import {
   Shield,
   ShieldOff,
   Link,
+  AlertTriangle,
 } from 'lucide-react';
 import type {
   Skill,
@@ -29,6 +30,7 @@ import type {
 import { useAppStore } from '../../store';
 import { SettingsContentSection } from './shared';
 import type { LocalizedBanner } from './shared';
+import { useSkillConflicts } from '../../hooks/useSkillConflicts';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
@@ -60,6 +62,13 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
   const [builtinStatuses, setBuiltinStatuses] = useState<BuiltinSkillStatus[]>([]);
   const pluginToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const componentOrder: PluginComponentKind[] = ['skills', 'commands', 'agents', 'hooks', 'mcp'];
+  const {
+    config: conflictConfig,
+    conflicts,
+    setPolicy: setConflictPolicy,
+    toggleDisabled: toggleSkillDisabled,
+    resetToBuiltin,
+  } = useSkillConflicts();
 
   function normalizePluginLookupKey(value: string | undefined): string {
     if (!value) {
@@ -555,6 +564,99 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
           </div>
         )}
       </SettingsContentSection>
+
+      {/* Conflict Resolution — only show when conflicts exist or user has custom skills */}
+      {(conflicts.length > 0 || customSkills.length > 0) && conflictConfig && (
+        <SettingsContentSection
+          title={t('skills.conflictResolution')}
+          description={t('skills.conflictResolutionDesc')}
+        >
+          <div className="space-y-2">
+            {(['custom-wins', 'builtin-wins', 'ask'] as const).map((policy) => (
+              <label
+                key={policy}
+                className="flex items-start gap-3 p-3 rounded-lg border border-border hover:border-accent/50 cursor-pointer transition-colors"
+              >
+                <input
+                  type="radio"
+                  name="conflictPolicy"
+                  value={policy}
+                  checked={conflictConfig.conflictPolicy === policy}
+                  onChange={() => setConflictPolicy(policy)}
+                  className="mt-0.5 accent-accent"
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-text-primary">
+                    {t(
+                      `skills.policy${policy === 'custom-wins' ? 'CustomWins' : policy === 'builtin-wins' ? 'BuiltinWins' : 'Ask'}`
+                    )}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {t(
+                      `skills.policy${policy === 'custom-wins' ? 'CustomWins' : policy === 'builtin-wins' ? 'BuiltinWins' : 'Ask'}Desc`
+                    )}
+                  </div>
+                </div>
+              </label>
+            ))}
+          </div>
+
+          {conflicts.length > 0 && (
+            <div className="mt-4 space-y-2">
+              <h5 className="text-xs font-semibold text-text-muted uppercase tracking-wide">
+                {t('skills.conflictCount', { count: conflicts.length })}
+              </h5>
+              {conflicts.map((conflict) => (
+                <div
+                  key={conflict.skillName}
+                  className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-warning/5 border border-warning/20"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <AlertTriangle className="w-3.5 h-3.5 text-warning shrink-0" />
+                    <span className="text-sm text-text-primary font-medium truncate">
+                      {conflict.skillName}
+                    </span>
+                    <span className="text-xs text-text-muted">
+                      {t(
+                        `skills.conflictSource${conflict.activeSource.charAt(0).toUpperCase() + conflict.activeSource.slice(1)}`
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {conflictConfig.disabledSkills.includes(conflict.skillName) ? (
+                      <button
+                        onClick={() => toggleSkillDisabled(conflict.skillName, false)}
+                        className="text-xs px-2 py-1 rounded bg-surface-muted text-text-muted hover:text-text-primary transition-colors"
+                      >
+                        {t('common.enable')}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => toggleSkillDisabled(conflict.skillName, true)}
+                        className="text-xs px-2 py-1 rounded bg-surface-muted text-text-muted hover:text-text-primary transition-colors"
+                      >
+                        {t('common.disable')}
+                      </button>
+                    )}
+                    {conflictConfig.sourceOverrides[conflict.skillName] && (
+                      <button
+                        onClick={() => resetToBuiltin(conflict.skillName)}
+                        className="text-xs px-2 py-1 rounded bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+                      >
+                        {t('skills.conflictResetToBuiltin')}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {conflicts.length === 0 && (
+            <p className="text-xs text-text-muted">{t('skills.conflictNoConflicts')}</p>
+          )}
+        </SettingsContentSection>
+      )}
 
       {/* Built-in Skills */}
       <SettingsContentSection

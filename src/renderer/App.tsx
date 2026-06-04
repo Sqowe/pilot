@@ -156,10 +156,14 @@ function App() {
     (action: GlobalNoticeAction) => {
       if (action === 'open_api_settings') {
         setShowConfigModal(true);
+      } else if (action === 'navigate_settings_skills') {
+        // Set the settings tab to skills so the panel opens to the right section
+        useAppStore.getState().setSettingsTab('skills');
+        setShowSettings(true);
       }
       clearGlobalNotice();
     },
-    [clearGlobalNotice, setShowConfigModal]
+    [clearGlobalNotice, setShowConfigModal, setShowSettings]
   );
 
   // Determine if we should show the sandbox setup dialog

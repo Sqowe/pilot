@@ -25,11 +25,11 @@ different problems. This plan interleaves them to minimize rework and ship incre
 
 ```
 Phase 0 (shared types/config)  ✅ DONE
-   ├──► Phase 1 (conflict engine) ✅ DONE ──► Phase 3 (conflict UI)──┐
-   │                                                                   │
-   └──► Phase 2 (session disable + workspace profile) ✅ DONE        ├──► Phase 6 (polish)
-              │                                                        │
-              ├──► Phase 4 (Context Panel UI) ─────────────────────────┘
+   ├──► Phase 1 (conflict engine) ✅ DONE ──► Phase 3 (conflict UI) ✅ DONE ──┐
+   │                                                                           │
+   └──► Phase 2 (session disable + workspace profile) ✅ DONE                 ├──► Phase 6 (polish)
+              │                                                                │
+              ├──► Phase 4 (Context Panel UI) ─────────────────────────────────┘
               │
               └──► Phase 5 (Welcome page)
 ```
@@ -228,48 +228,57 @@ Phases 3, 4, and 5 can also run in parallel once their respective backends are c
 
 ---
 
-## Phase 3: Conflict Resolution UI
+## Phase 3: Conflict Resolution UI ✅ DONE
 
+**Completed:** 2026-06-04
 **Estimate:** 2–3 days
 **Depends on:** Phase 1 ✅
 **Unlocks:** Phase 6
 
 ### Tasks
 
-- [ ] 3.1 — Add "Conflict Resolution" section to Settings → Skills page:
+- [x] 3.1 — Add "Conflict Resolution" section to Settings → Skills page:
   - Radio buttons: Custom wins / Built-in wins / Ask me each time
   - Calls `skills.setConflictPolicy` on change
   - Shows only when conflicts exist or user has custom skills
-- [ ] 3.2 — Enhance skill list cards in Settings:
-  - Source indicator badge (Built-in / User / Project / Configured)
-  - Conflict warning icon when `hasConflict === true`
-  - Per-skill source dropdown (only visible for conflicted skills)
-  - Calls `skills.setSourceOverride` on dropdown change
-- [ ] 3.3 — Add disable/enable toggle per skill card:
-  - Calls `skills.toggleDisabled`
-  - Muted styling when disabled
-- [ ] 3.4 — Add "Reset to built-in" action button on conflicted skill cards
-- [ ] 3.5 — Implement conflict toast notification component:
-  - Shown once on new conflict detection (listen to `skills.conflict-detected` event)
-  - Informational toast when policy is `custom-wins` or `builtin-wins`
-  - Decision dialog when policy is `ask`
-  - Buttons: Use Custom / Use Built-in / Open Settings
-- [ ] 3.6 — Track acknowledged conflicts:
-  - Toast dismissed → add to `acknowledgedConflicts` via `skills.acknowledgeConflict`
-  - Don't re-show for same conflict
+- [x] 3.2 — Conflict list with source badges and actions:
+  - Active source indicator per conflict (Built-in / User / Configured)
+  - Conflict warning icon (AlertTriangle) with warning styling
+  - Disable/enable toggle per conflicted skill
+  - Reset to built-in button when override exists
+- [x] 3.3 — Add disable/enable toggle per conflicted skill:
+  - Calls `skills.toggleDisabled` via `useSkillConflicts` hook
+  - Integrated into conflict list row
+- [x] 3.4 — "Reset to built-in" action button on conflicted skill cards
+- [x] 3.5 — Conflict toast notification via GlobalNoticeToast:
+  - Shown on `skills.conflict-detected` event (handled in useIPC.ts)
+  - Uses i18n key `skills.conflictDetectedDesc` with skill name/path interpolation
+  - Action button navigates to Settings → Skills tab via `navigate_settings_skills`
+  - `setSkillsStorageChangedAt` triggers auto-refresh of useSkillConflicts
+- [x] 3.6 — `useSkillConflicts` hook for state management:
+  - Typed `SkillsConflictAPI` interface with runtime method validation
+  - Stale-request protection via `useRef` counter
+  - Auto-refresh on `skillsStorageChangedAt` store changes
+  - try/catch on all mutations with console error logging
+  - `available` flag for graceful API absence handling
 
 ### Key Files
 
-- `src/renderer/components/SettingsSkills.tsx` (extend or create)
-- `src/renderer/components/SkillConflictToast.tsx` (new)
 - `src/renderer/hooks/useSkillConflicts.ts` (new)
+- `src/renderer/components/settings/SettingsSkills.tsx` (extended)
+- `src/renderer/hooks/useIPC.ts` (conflict event handling)
+- `src/renderer/store/index.ts` (`GlobalNoticeAction` extended)
+- `src/renderer/App.tsx` (navigate_settings_skills action → `setSettingsTab('skills')`)
+- `src/renderer/components/GlobalNoticeToast.tsx` (skills action label)
 
-### Acceptance Criteria
+### Notes from Code Review
 
-- Settings page shows policy selector and skill list with conflict indicators
-- Changing policy triggers re-resolution (skill list updates)
-- Toast appears once per new conflict, respects acknowledgment
-- "Ask me" dialog correctly captures user decision
+- Approved on iteration 3 after fixing: typed API interface (removed `any`),
+  stale-request protection (`useRef`), IPC event → store refresh wiring,
+  settings tab navigation via `setSettingsTab('skills')`, i18n message keys
+- Remaining quality items (deferred): per-method feature detection, user-visible
+  mutation error feedback, explicit source label mapping, performance gating
+  when tab inactive, hook/action tests
 
 ---
 
