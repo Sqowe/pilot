@@ -70,6 +70,12 @@ function makeConfig(): AppConfig {
     mcpToolTimeoutSeconds: 240,
     isConfigured: true,
     notificationsEnabled: true,
+    skillConflictConfig: {
+      conflictPolicy: 'custom-wins',
+      disabledSkills: [],
+      sourceOverrides: {},
+      acknowledgedConflicts: [],
+    },
   };
 }
 

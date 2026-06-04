@@ -1,7 +1,7 @@
 # Skill Features Implementation Plan
 
 **Created:** 2026-06-04
-**Status:** Planning
+**Status:** In Progress
 **Covers:** Skill Conflict Resolution + Skill Workspace Profiles
 **Design docs:** [skill-conflict-resolution.md](./skill-conflict-resolution.md), [skill-workspace-profiles.md](./skill-workspace-profiles.md)
 
@@ -24,7 +24,7 @@ different problems. This plan interleaves them to minimize rework and ship incre
 ## Dependency Graph
 
 ```
-Phase 0 (shared types/config)
+Phase 0 (shared types/config)  ✅ DONE
    ├──► Phase 1 (conflict engine)──► Phase 3 (conflict UI)──┐
    │                                                          │
    └──► Phase 2 (session disable + workspace profile)        ├──► Phase 6 (polish)
@@ -39,55 +39,72 @@ Phases 3, 4, and 5 can also run in parallel once their respective backends are c
 
 ---
 
-## Phase 0: Shared Foundation
+## Phase 0: Shared Foundation ✅ DONE
 
+**Completed:** 2026-06-04
 **Estimate:** 1–2 days
 **Depends on:** Nothing
 **Unlocks:** Phase 1, Phase 2
 
 ### Tasks
 
-- [ ] 0.1 — Extend `Skill` interface in `src/main/skills/skills-manager.ts` with new fields:
-  - `source: 'builtin' | 'user' | 'project' | 'configured'`
-  - `sourcePath: string`
-  - `hasConflict: boolean`
-  - `conflictSources: string[]`
-  - `isActive: boolean`
-- [ ] 0.2 — Add shared type definitions in `src/shared/skill-types.ts`:
+- [x] 0.1 — Extend `Skill` interface in `src/renderer/types/index.ts` with new fields:
+  - `source?: SkillSource` (imported from shared types)
+  - `sourcePath?: string`
+  - `hasConflict?: boolean`
+  - `conflictSources?: SkillSource[]`
+  - `isActive?: boolean`
+- [x] 0.2 — Add shared type definitions in `src/shared/skill-conflict-types.ts`:
   - `SkillConflictConfig` interface
   - `SkillsWorkspaceProfile` interface
   - `SkillSource` type union
   - `ConflictPolicy` type union
-  - Default config constant (`DEFAULT_SKILL_CONFLICT_CONFIG`)
-- [ ] 0.3 — Add `skillConflictConfig` key to config store (electron-store) with defaults
-- [ ] 0.4 — Add preload bridge stubs for all new IPC endpoints in `src/preload/index.ts`:
+  - `DEFAULT_SKILL_CONFLICT_CONFIG` frozen constant
+  - `createDefaultSkillConflictConfig()` factory (mutation-safe)
+  - `normalizeSkillConflictConfig()` with `isValidSkillId` validation, dedup, caps
+  - `isValidConflictPolicy()` / `isValidSkillSource()` validators
+- [x] 0.3 — Add `skillConflictConfig` key to config store (electron-store) with defaults
+  - Normalization via `normalizeSkillConflictConfig` in `getAll()`
+- [x] 0.4 — Add preload bridge + IPC handlers for all new endpoints:
   - Conflict: `getConflictConfig`, `setConflictPolicy`, `setSourceOverride`,
     `toggleDisabled`, `acknowledgeConflict`, `getConflicts`, `resetToBuiltin`
   - Profiles: `toggleSessionDisabled`, `getSessionDisabledSkills`,
     `getWorkspaceProfile`, `saveWorkspaceProfile`
-- [ ] 0.5 — Add i18n keys to `src/renderer/i18n/en.json` and `zh.json` for both features
-- [ ] 0.6 — Add `skills.session-disabled-changed` and `skills.conflict-detected` server event types
+  - All handlers include: `isValidSkillId` validation, size caps (200 entries),
+    runtime type checks, workspace CWD authorization, symlink rejection,
+    atomic file writes (`O_CREAT|O_EXCL` + `renameSync`)
+- [x] 0.5 — Add i18n keys to `en.json` and `zh.json` for both features
+- [x] 0.6 — Add server event types to `ServerEvent` union:
+  - `skills.conflict-detected`
+  - `skills.conflict-resolved`
+  - `skills.session-disabled-changed`
 
 ### Key Files
 
-- `src/shared/skill-types.ts` (new)
-- `src/shared/skill-pinning-constants.ts` (extend or re-export)
-- `src/main/config/config-store.ts`
-- `src/preload/index.ts`
-- `src/renderer/i18n/en.json`, `zh.json`
+- `src/shared/skill-conflict-types.ts` (new)
+- `src/renderer/types/index.ts` (extended Skill + ServerEvent)
+- `src/main/config/config-store.ts` (AppConfig + defaults + normalization)
+- `src/preload/index.ts` (IPC bridge)
+- `src/main/index.ts` (IPC handlers with security validation)
+- `src/renderer/i18n/locales/en.json`, `zh.json` (i18n keys)
+- `tests/skill-conflict-types.test.ts` (24 tests)
 
-### Acceptance Criteria
+### Notes from Code Review
 
-- TypeScript compiles cleanly with new types
-- Config store has `skillConflictConfig` with correct defaults on fresh install
-- Preload bridge exposes all new IPC methods (no-op implementations OK)
+- All IPC handlers implement workspace CWD authorization (same pattern as MCP profiles)
+- `saveWorkspaceProfile` uses atomic writes with crypto-random temp files and `O_CREAT|O_EXCL`
+- `getWorkspaceProfile` uses `lstatSync` + `realpathSync` to reject symlinks
+- `resetToBuiltin` sets `sourceOverrides[name] = 'builtin'` (works under `custom-wins` policy)
+- `getConflicts` returns `{ conflicts: [], notImplemented: true }` until Phase 1
+- `toggleSessionDisabled` returns not-implemented error until Phase 2
+- Remaining tech debt: concurrent config mutations could use a serialize helper (low risk in Electron)
 
 ---
 
 ## Phase 1: Conflict Detection & Policy Engine
 
 **Estimate:** 2–3 days
-**Depends on:** Phase 0
+**Depends on:** Phase 0 ✅
 **Unlocks:** Phase 3
 
 ### Tasks
@@ -146,7 +163,7 @@ Phases 3, 4, and 5 can also run in parallel once their respective backends are c
 ## Phase 2: Session-Level Skill Disable & Workspace Profile
 
 **Estimate:** 2–3 days
-**Depends on:** Phase 0
+**Depends on:** Phase 0 ✅
 **Unlocks:** Phase 4, Phase 5
 
 ### Tasks

@@ -2653,6 +2653,459 @@ ipcMain.handle('skills.forceRefreshBuiltin', async (_event, skillName: string) =
   }
 });
 
+// --- Skill Conflict Resolution IPC Handlers ---
+
+ipcMain.handle('skills.getConflictConfig', async () => {
+  try {
+    return configStore.get('skillConflictConfig');
+  } catch (error) {
+    logError('[Skills] Error getting conflict config:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('skills.setConflictPolicy', async (_event, policy: string) => {
+  try {
+    const { isValidConflictPolicy } = await import('../shared/skill-conflict-types');
+    if (!isValidConflictPolicy(policy)) {
+      return { success: false, error: `Invalid policy: ${policy}` };
+    }
+    const current = configStore.get('skillConflictConfig');
+    configStore.set('skillConflictConfig', { ...current, conflictPolicy: policy });
+    sessionManager?.invalidateSkillsSetup();
+    return { success: true };
+  } catch (error) {
+    logError('[Skills] Error setting conflict policy:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('skills.setSourceOverride', async (_event, skillName: string, source: string) => {
+  try {
+    const { isValidSkillSource } = await import('../shared/skill-conflict-types');
+    const { isValidSkillId } = await import('../shared/skill-pinning-constants');
+    if (!isValidSkillId(skillName)) {
+      return { success: false, error: 'Invalid skill name' };
+    }
+    if (!isValidSkillSource(source)) {
+      return { success: false, error: `Invalid source: ${source}` };
+    }
+    const current = configStore.get('skillConflictConfig');
+    // Cap sourceOverrides size to prevent unbounded growth
+    const MAX_OVERRIDES = 200;
+    if (
+      Object.keys(current.sourceOverrides).length >= MAX_OVERRIDES &&
+      !(skillName in current.sourceOverrides)
+    ) {
+      return { success: false, error: `Too many source overrides (max ${MAX_OVERRIDES})` };
+    }
+    const sourceOverrides = { ...current.sourceOverrides, [skillName]: source };
+    configStore.set('skillConflictConfig', { ...current, sourceOverrides });
+    sessionManager?.invalidateSkillsSetup();
+    return { success: true };
+  } catch (error) {
+    logError('[Skills] Error setting source override:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('skills.toggleDisabled', async (_event, skillName: string, disabled: boolean) => {
+  try {
+    const { isValidSkillId } = await import('../shared/skill-pinning-constants');
+    if (!isValidSkillId(skillName)) {
+      return { success: false, error: 'Invalid skill name' };
+    }
+    if (typeof disabled !== 'boolean') {
+      return { success: false, error: 'Invalid disabled flag: must be a boolean' };
+    }
+    const current = configStore.get('skillConflictConfig');
+    const disabledSkills = new Set(current.disabledSkills);
+    // Cap disabled list size
+    const MAX_DISABLED = 200;
+    if (disabled && disabledSkills.size >= MAX_DISABLED && !disabledSkills.has(skillName)) {
+      return { success: false, error: `Too many disabled skills (max ${MAX_DISABLED})` };
+    }
+    if (disabled) {
+      disabledSkills.add(skillName);
+    } else {
+      disabledSkills.delete(skillName);
+    }
+    configStore.set('skillConflictConfig', {
+      ...current,
+      disabledSkills: [...disabledSkills],
+    });
+    sessionManager?.invalidateSkillsSetup();
+    return { success: true };
+  } catch (error) {
+    logError('[Skills] Error toggling disabled skill:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('skills.acknowledgeConflict', async (_event, skillName: string, choice: string) => {
+  try {
+    const { isValidSkillSource } = await import('../shared/skill-conflict-types');
+    const { isValidSkillId } = await import('../shared/skill-pinning-constants');
+    if (!isValidSkillId(skillName)) {
+      return { success: false, error: 'Invalid skill name' };
+    }
+    if (!isValidSkillSource(choice)) {
+      return { success: false, error: `Invalid choice: ${choice}` };
+    }
+    const current = configStore.get('skillConflictConfig');
+    // Cap acknowledged list size
+    const MAX_ENTRIES = 200;
+    const acknowledgedConflicts = new Set(current.acknowledgedConflicts);
+    if (acknowledgedConflicts.size >= MAX_ENTRIES && !acknowledgedConflicts.has(skillName)) {
+      return { success: false, error: `Too many acknowledged conflicts (max ${MAX_ENTRIES})` };
+    }
+    // Cap sourceOverrides size
+    if (
+      Object.keys(current.sourceOverrides).length >= MAX_ENTRIES &&
+      !(skillName in current.sourceOverrides)
+    ) {
+      return { success: false, error: `Too many source overrides (max ${MAX_ENTRIES})` };
+    }
+    acknowledgedConflicts.add(skillName);
+    const sourceOverrides = { ...current.sourceOverrides, [skillName]: choice };
+    configStore.set('skillConflictConfig', {
+      ...current,
+      acknowledgedConflicts: [...acknowledgedConflicts],
+      sourceOverrides,
+    });
+    sessionManager?.invalidateSkillsSetup();
+    return { success: true };
+  } catch (error) {
+    logError('[Skills] Error acknowledging conflict:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('skills.getConflicts', async () => {
+  // Conflict detection requires the skill-conflict-detector module (Phase 1).
+  // Return a distinguishable empty-with-reason response so renderers know this is
+  // not yet functional, rather than interpreting it as "zero conflicts detected."
+  return { conflicts: [], notImplemented: true };
+});
+
+ipcMain.handle('skills.resetToBuiltin', async (_event, skillName: string) => {
+  try {
+    const { isValidSkillId } = await import('../shared/skill-pinning-constants');
+    if (!isValidSkillId(skillName)) {
+      return { success: false, error: 'Invalid skill name' };
+    }
+    const current = configStore.get('skillConflictConfig');
+    // Cap sourceOverrides size (resetToBuiltin adds an entry)
+    const MAX_OVERRIDES = 200;
+    if (
+      Object.keys(current.sourceOverrides).length >= MAX_OVERRIDES &&
+      !(skillName in current.sourceOverrides)
+    ) {
+      return { success: false, error: `Too many source overrides (max ${MAX_OVERRIDES})` };
+    }
+    // Explicitly select 'builtin' as the source override — this ensures the built-in
+    // version is used regardless of the global policy (including 'custom-wins').
+    const sourceOverrides = { ...current.sourceOverrides, [skillName]: 'builtin' as const };
+    const acknowledgedConflicts = current.acknowledgedConflicts.filter((n) => n !== skillName);
+    configStore.set('skillConflictConfig', {
+      ...current,
+      sourceOverrides,
+      acknowledgedConflicts,
+    });
+    sessionManager?.invalidateSkillsSetup();
+    return { success: true };
+  } catch (error) {
+    logError('[Skills] Error resetting to builtin:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+// --- Skill Workspace Profile IPC Handlers ---
+
+ipcMain.handle(
+  'skills.toggleSessionDisabled',
+  async (_event, sessionId: string, skillId: string, disabled: boolean) => {
+    try {
+      if (!sessionManager) {
+        return { success: false, error: 'Session manager not initialized' };
+      }
+      // Validate skillId format using shared validation
+      const { isValidSkillId } = await import('../shared/skill-pinning-constants');
+      if (!isValidSkillId(skillId)) {
+        return { success: false, error: `Invalid skill ID: ${skillId}` };
+      }
+      // Session-level skill disable will be fully implemented in Phase 2
+      // when sessionDisabledSkills Map is added to SessionManager.
+      log(
+        `[Skills] Session ${sessionId}: skill ${skillId} ${disabled ? 'disabled' : 'enabled'} (not yet implemented)`
+      );
+      return { success: false, error: 'Session-level skill disable not yet implemented (Phase 2)' };
+    } catch (error) {
+      logError('[Skills] Error toggling session disabled skill:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+);
+
+ipcMain.handle('skills.getSessionDisabledSkills', async (_event, sessionId: string) => {
+  try {
+    if (!sessionManager) {
+      return [];
+    }
+    // Full implementation in Phase 2 (SessionManager.getSessionDisabledSkills).
+    // Return empty — no session-level skill disabling until Phase 2 implementation.
+    void sessionId;
+    return [];
+  } catch (error) {
+    logError('[Skills] Error getting session disabled skills:', error);
+    return [];
+  }
+});
+
+ipcMain.handle('skills.getWorkspaceProfile', async (_event, cwd: string) => {
+  try {
+    if (!cwd || !isAbsolute(cwd)) {
+      return null;
+    }
+    // Security: validate cwd against authorized workspaces (same as save handler)
+    const authorizedWorkspaces: string[] = [];
+    const globalCwd = getWorkingDir();
+    if (globalCwd) authorizedWorkspaces.push(globalCwd);
+    if (sessionManager) {
+      for (const session of sessionManager.listSessions()) {
+        if (session.cwd) authorizedWorkspaces.push(session.cwd);
+      }
+    }
+    const validation = validateWorkspaceCwd(cwd, authorizedWorkspaces);
+    if (!validation.valid) {
+      return null; // Unauthorized workspace — silent null (read-only, no error leak)
+    }
+    const trustedCwd = validation.canonicalCwd;
+
+    const profilePath = join(trustedCwd, '.cowork', 'skills-profile.json');
+
+    // Check file exists, reject symlinks, and verify size before reading
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(profilePath);
+    } catch {
+      return null; // File doesn't exist
+    }
+    if (!stat.isFile()) return null; // Reject symlinks, directories, etc.
+
+    // Verify the real path stays within the workspace boundary
+    let realProfilePath: string;
+    try {
+      realProfilePath = fs.realpathSync(profilePath);
+    } catch {
+      return null;
+    }
+    const relToWorkspace = relative(trustedCwd, realProfilePath);
+    if (!relToWorkspace || relToWorkspace.startsWith('..') || isAbsolute(relToWorkspace)) {
+      logWarn(`[Skills] Workspace profile escapes workspace boundary: ${profilePath}`);
+      return null;
+    }
+
+    const MAX_PROFILE_SIZE = 64 * 1024; // 64KB — generous for a JSON list of skill IDs
+    if (stat.size > MAX_PROFILE_SIZE) {
+      logWarn(`[Skills] Workspace profile too large (${stat.size} bytes): ${profilePath}`);
+      return null;
+    }
+
+    const raw = fs.readFileSync(profilePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    // Sanitize: validate skill IDs, dedup, and cap at same limits as save
+    const { isValidSkillId } = await import('../shared/skill-pinning-constants');
+    const MAX_ENTRIES = 200;
+
+    return {
+      pinned: Array.isArray(parsed.pinned)
+        ? [
+            ...new Set(
+              parsed.pinned.filter(
+                (v: unknown): v is string => typeof v === 'string' && isValidSkillId(v)
+              )
+            ),
+          ].slice(0, MAX_ENTRIES)
+        : undefined,
+      disabled: Array.isArray(parsed.disabled)
+        ? [
+            ...new Set(
+              parsed.disabled.filter(
+                (v: unknown): v is string => typeof v === 'string' && isValidSkillId(v)
+              )
+            ),
+          ].slice(0, MAX_ENTRIES)
+        : undefined,
+    };
+  } catch (error) {
+    logError('[Skills] Error loading workspace profile:', error);
+    return null;
+  }
+});
+
+ipcMain.handle(
+  'skills.saveWorkspaceProfile',
+  async (_event, cwd: string, profile: { pinned?: string[]; disabled?: string[] }) => {
+    try {
+      // Security: validate cwd against authorized workspaces (same pattern as MCP profiles)
+      const authorizedWorkspaces: string[] = [];
+      const globalCwd = getWorkingDir();
+      if (globalCwd) authorizedWorkspaces.push(globalCwd);
+      if (sessionManager) {
+        for (const session of sessionManager.listSessions()) {
+          if (session.cwd) authorizedWorkspaces.push(session.cwd);
+        }
+      }
+
+      const validation = validateWorkspaceCwd(cwd, authorizedWorkspaces);
+      if (!validation.valid) {
+        return { success: false, error: validation.error };
+      }
+      const trustedCwd = validation.canonicalCwd;
+
+      // Validate profile schema
+      if (!profile || typeof profile !== 'object') {
+        return { success: false, error: 'Invalid profile object' };
+      }
+
+      const { isValidSkillId } = await import('../shared/skill-pinning-constants');
+      const MAX_ENTRIES = 200;
+      const sanitized: { pinned?: string[]; disabled?: string[] } = {};
+
+      if ('pinned' in profile && profile.pinned !== undefined) {
+        if (!Array.isArray(profile.pinned)) {
+          return { success: false, error: 'pinned must be an array' };
+        }
+        if (profile.pinned.length > MAX_ENTRIES) {
+          return { success: false, error: `pinned exceeds max entries (${MAX_ENTRIES})` };
+        }
+        for (const id of profile.pinned) {
+          if (typeof id !== 'string' || !isValidSkillId(id)) {
+            return { success: false, error: `Invalid skill ID in pinned: ${String(id)}` };
+          }
+        }
+        sanitized.pinned = [...new Set(profile.pinned)];
+      }
+
+      if ('disabled' in profile && profile.disabled !== undefined) {
+        if (!Array.isArray(profile.disabled)) {
+          return { success: false, error: 'disabled must be an array' };
+        }
+        if (profile.disabled.length > MAX_ENTRIES) {
+          return { success: false, error: `disabled exceeds max entries (${MAX_ENTRIES})` };
+        }
+        for (const id of profile.disabled) {
+          if (typeof id !== 'string' || !isValidSkillId(id)) {
+            return { success: false, error: `Invalid skill ID in disabled: ${String(id)}` };
+          }
+        }
+        sanitized.disabled = [...new Set(profile.disabled)];
+      }
+
+      // If both arrays are empty or undefined, delete the file
+      const isEmpty =
+        (!sanitized.pinned || sanitized.pinned.length === 0) &&
+        (!sanitized.disabled || sanitized.disabled.length === 0);
+
+      const coworkDir = join(trustedCwd, '.cowork');
+      const profilePath = join(coworkDir, 'skills-profile.json');
+
+      // Security: reject symlinks in the write path to prevent symlink attacks
+      if (fs.existsSync(coworkDir)) {
+        const coworkStat = fs.lstatSync(coworkDir);
+        if (coworkStat.isSymbolicLink()) {
+          return {
+            success: false,
+            error: '.cowork directory is a symlink (rejected for security)',
+          };
+        }
+        if (!coworkStat.isDirectory()) {
+          return { success: false, error: '.cowork exists but is not a directory' };
+        }
+      }
+      if (fs.existsSync(profilePath)) {
+        const fileStat = fs.lstatSync(profilePath);
+        if (fileStat.isSymbolicLink()) {
+          return {
+            success: false,
+            error: 'skills-profile.json is a symlink (rejected for security)',
+          };
+        }
+        if (!fileStat.isFile()) {
+          return { success: false, error: 'skills-profile.json exists but is not a regular file' };
+        }
+      }
+
+      // Verify the resolved paths remain within the trusted workspace
+      const resolvedCoworkDir = resolve(coworkDir);
+      const resolvedProfilePath = resolve(profilePath);
+      const relCowork = relative(trustedCwd, resolvedCoworkDir);
+      const relProfile = relative(trustedCwd, resolvedProfilePath);
+      if (
+        !relCowork ||
+        relCowork.startsWith('..') ||
+        isAbsolute(relCowork) ||
+        !relProfile ||
+        relProfile.startsWith('..') ||
+        isAbsolute(relProfile)
+      ) {
+        return { success: false, error: 'Resolved path escapes workspace boundary' };
+      }
+
+      if (isEmpty) {
+        if (fs.existsSync(profilePath)) {
+          fs.unlinkSync(profilePath);
+          log(`[Skills] Removed empty workspace profile: ${profilePath}`);
+        }
+      } else {
+        if (!fs.existsSync(coworkDir)) {
+          fs.mkdirSync(coworkDir, { recursive: true });
+        }
+        // Re-verify .cowork after mkdir: confirm it's a real directory within workspace
+        const coworkLstat = fs.lstatSync(coworkDir);
+        if (coworkLstat.isSymbolicLink() || !coworkLstat.isDirectory()) {
+          return { success: false, error: '.cowork is not a real directory after creation' };
+        }
+        const realCoworkDir = fs.realpathSync(coworkDir);
+        const relCoworkReal = relative(trustedCwd, realCoworkDir);
+        if (!relCoworkReal || relCoworkReal.startsWith('..') || isAbsolute(relCoworkReal)) {
+          return { success: false, error: '.cowork realpath escapes workspace' };
+        }
+
+        // Atomic write: use crypto-random temp name with O_CREAT|O_EXCL to prevent
+        // symlink pre-creation attacks. Then rename over the target.
+        const { randomUUID } = await import('crypto');
+        const tmpName = `.skills-profile.${randomUUID()}.tmp`;
+        const tmpPath = join(realCoworkDir, tmpName);
+        const content = JSON.stringify(sanitized, null, 2) + '\n';
+        // O_CREAT | O_EXCL | O_WRONLY = create exclusively, fail if exists
+        const fd = fs.openSync(
+          tmpPath,
+          fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+          0o644
+        );
+        try {
+          fs.writeSync(fd, content);
+        } finally {
+          fs.closeSync(fd);
+        }
+        // Atomic rename within same directory/filesystem
+        const finalPath = join(realCoworkDir, 'skills-profile.json');
+        fs.renameSync(tmpPath, finalPath);
+        log(`[Skills] Workspace profile saved: ${finalPath}`);
+      }
+
+      return { success: true };
+    } catch (error) {
+      logError('[Skills] Error saving workspace profile:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+);
+
 ipcMain.handle('plugins.listCatalog', async (_event, options?: { installableOnly?: boolean }) => {
   try {
     if (!pluginRuntimeService) {

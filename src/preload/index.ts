@@ -317,6 +317,54 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('skills.setUserModified', skillName, protect),
     forceRefreshBuiltin: (skillName: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('skills.forceRefreshBuiltin', skillName),
+
+    // --- Conflict Resolution ---
+    getConflictConfig: (): Promise<import('../shared/skill-conflict-types').SkillConflictConfig> =>
+      ipcRenderer.invoke('skills.getConflictConfig'),
+    setConflictPolicy: (
+      policy: import('../shared/skill-conflict-types').ConflictPolicy
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.setConflictPolicy', policy),
+    setSourceOverride: (
+      skillName: string,
+      source: import('../shared/skill-conflict-types').SkillSource
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.setSourceOverride', skillName, source),
+    toggleDisabled: (
+      skillName: string,
+      disabled: boolean
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.toggleDisabled', skillName, disabled),
+    acknowledgeConflict: (
+      skillName: string,
+      choice: import('../shared/skill-conflict-types').SkillSource
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.acknowledgeConflict', skillName, choice),
+    getConflicts: (): Promise<{
+      conflicts: import('../shared/skill-conflict-types').SkillConflict[];
+      notImplemented?: boolean;
+    }> => ipcRenderer.invoke('skills.getConflicts'),
+    resetToBuiltin: (skillName: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.resetToBuiltin', skillName),
+
+    // --- Workspace Profiles ---
+    toggleSessionDisabled: (
+      sessionId: string,
+      skillId: string,
+      disabled: boolean
+    ): Promise<{ success: boolean; disabledSkills?: string[]; error?: string }> =>
+      ipcRenderer.invoke('skills.toggleSessionDisabled', sessionId, skillId, disabled),
+    getSessionDisabledSkills: (sessionId: string): Promise<string[]> =>
+      ipcRenderer.invoke('skills.getSessionDisabledSkills', sessionId),
+    getWorkspaceProfile: (
+      cwd: string
+    ): Promise<import('../shared/skill-conflict-types').SkillsWorkspaceProfile | null> =>
+      ipcRenderer.invoke('skills.getWorkspaceProfile', cwd),
+    saveWorkspaceProfile: (
+      cwd: string,
+      profile: import('../shared/skill-conflict-types').SkillsWorkspaceProfile
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.saveWorkspaceProfile', cwd, profile),
   },
 
   // Environment methods

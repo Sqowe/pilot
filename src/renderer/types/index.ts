@@ -1,3 +1,5 @@
+import type { SkillSource } from '../../shared/skill-conflict-types';
+
 // Session types
 export interface Session {
   id: string;
@@ -252,6 +254,18 @@ export interface Skill {
   enabled: boolean;
   config?: Record<string, unknown>;
   createdAt: number;
+
+  // Conflict resolution fields (Phase 0)
+  /** Where this skill was loaded from. */
+  source?: SkillSource;
+  /** Actual file path of this skill on disk. */
+  sourcePath?: string;
+  /** Whether another source has a skill with the same name. */
+  hasConflict?: boolean;
+  /** Other sources where this skill name exists (when conflict detected). */
+  conflictSources?: SkillSource[];
+  /** Whether this version is the one currently being used by the agent. */
+  isActive?: boolean;
 }
 
 export type SkillType = 'builtin' | 'mcp' | 'custom';
@@ -677,6 +691,15 @@ export type ServerEvent =
   | { type: 'sandbox.progress'; payload: SandboxSetupProgress }
   | { type: 'sandbox.sync'; payload: SandboxSyncStatus }
   | { type: 'skills.storageChanged'; payload: SkillsStorageChangeEvent }
+  | {
+      type: 'skills.conflict-detected';
+      payload: { skillName: string; builtinPath: string; customPath: string };
+    }
+  | { type: 'skills.conflict-resolved'; payload: { skillName: string; winner: string } }
+  | {
+      type: 'skills.session-disabled-changed';
+      payload: { sessionId: string; disabledSkills: string[] };
+    }
   | {
       type: 'plugins.runtimeApplied';
       payload: { sessionId: string; plugins: Array<{ name: string; path: string }> };

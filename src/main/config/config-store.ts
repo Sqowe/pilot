@@ -36,6 +36,10 @@ import {
 } from '../../shared/system-prompt-file-choices';
 import { sanitizeBashCommandList } from './permission-rules-store';
 import { isValidCatchUpPolicy, isValidConflictPolicy } from '../../shared/schedule/types';
+import {
+  createDefaultSkillConflictConfig,
+  normalizeSkillConflictConfig,
+} from '../../shared/skill-conflict-types';
 
 /**
  * Application configuration schema
@@ -170,6 +174,11 @@ export interface AppConfig {
   // Native desktop notifications when the app is not focused.
   // Fires on permission requests and agent response completion.
   notificationsEnabled: boolean;
+
+  // Skill conflict resolution config.
+  // Controls how name collisions between custom and built-in skills are resolved,
+  // which skills are disabled, and per-skill source overrides.
+  skillConflictConfig: import('../../shared/skill-conflict-types').SkillConflictConfig;
 }
 
 export interface MemoryModelRuntimeConfig {
@@ -346,6 +355,7 @@ const defaultConfig: AppConfig = {
   permissionTimeoutSeconds: 300,
   mcpToolTimeoutSeconds: 240,
   notificationsEnabled: true,
+  skillConflictConfig: createDefaultSkillConflictConfig(),
 };
 
 export const PROVIDER_PRESETS = API_PROVIDER_PRESETS;
@@ -1162,6 +1172,7 @@ export class ConfigStore {
       permissionTimeoutSeconds: normalizePermissionTimeout(raw.permissionTimeoutSeconds),
       mcpToolTimeoutSeconds: normalizeMcpToolTimeout(raw.mcpToolTimeoutSeconds),
       notificationsEnabled: toBoolean(raw.notificationsEnabled, defaultConfig.notificationsEnabled),
+      skillConflictConfig: normalizeSkillConflictConfig(raw.skillConflictConfig),
     };
     this.normalizeModelIds(result);
     return result;
