@@ -727,6 +727,46 @@ declare global {
           protect: boolean
         ) => Promise<{ success: boolean; error?: string }>;
         forceRefreshBuiltin: (skillName: string) => Promise<{ success: boolean; error?: string }>;
+
+        // Conflict Resolution
+        getConflictConfig: () => Promise<
+          import('../shared/skill-conflict-types').SkillConflictConfig
+        >;
+        setConflictPolicy: (
+          policy: import('../shared/skill-conflict-types').ConflictPolicy
+        ) => Promise<{ success: boolean; error?: string }>;
+        setSourceOverride: (
+          skillName: string,
+          source: import('../shared/skill-conflict-types').SkillSource
+        ) => Promise<{ success: boolean; error?: string }>;
+        toggleDisabled: (
+          skillName: string,
+          disabled: boolean
+        ) => Promise<{ success: boolean; error?: string }>;
+        acknowledgeConflict: (
+          skillName: string,
+          choice: import('../shared/skill-conflict-types').SkillSource
+        ) => Promise<{ success: boolean; error?: string }>;
+        getConflicts: () => Promise<{
+          conflicts: import('../shared/skill-conflict-types').SkillConflict[];
+          notImplemented?: boolean;
+        }>;
+        resetToBuiltin: (skillName: string) => Promise<{ success: boolean; error?: string }>;
+
+        // Workspace Profiles
+        toggleSessionDisabled: (
+          sessionId: string,
+          skillId: string,
+          disabled: boolean
+        ) => Promise<{ success: boolean; disabledSkills?: string[]; error?: string }>;
+        getSessionDisabledSkills: (sessionId: string) => Promise<string[]>;
+        getWorkspaceProfile: (
+          cwd: string
+        ) => Promise<import('../shared/skill-conflict-types').SkillsWorkspaceProfile | null>;
+        saveWorkspaceProfile: (
+          cwd: string,
+          profile: import('../shared/skill-conflict-types').SkillsWorkspaceProfile
+        ) => Promise<{ success: boolean; error?: string }>;
       };
       env: {
         getEffectivePath: () => Promise<string>;

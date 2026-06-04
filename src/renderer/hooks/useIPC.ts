@@ -321,6 +321,8 @@ export function useIPC() {
               event.payload.sessionId,
               event.payload.disabledSkills
             );
+            // Trigger re-fetch in ContextPanel so disabled skills state stays in sync
+            store.setSkillsStorageChangedAt(Date.now());
             break;
 
           case 'workdir.changed':

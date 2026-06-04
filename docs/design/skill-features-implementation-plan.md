@@ -29,7 +29,7 @@ Phase 0 (shared types/config)  ✅ DONE
    │                                                                           │
    └──► Phase 2 (session disable + workspace profile) ✅ DONE                 ├──► Phase 6 (polish)
               │                                                                │
-              ├──► Phase 4 (Context Panel UI) ─────────────────────────────────┘
+              ├──► Phase 4 (Context Panel UI) ✅ DONE ─────────────────────────┘
               │
               └──► Phase 5 (Welcome page)
 ```
@@ -284,32 +284,33 @@ Phases 3, 4, and 5 can also run in parallel once their respective backends are c
 
 ## Phase 4: Workspace Profiles UI — Context Panel
 
+**Completed:** 2026-06-04
 **Estimate:** 2–3 days
 **Depends on:** Phase 2 ✅
 **Unlocks:** Phase 6
 
 ### Tasks
 
-- [ ] 4.1 — Add [✕] remove button to each skill chip in Context Panel sidebar
+- [x] 4.1 — Add [✕] remove button to each skill chip in Context Panel sidebar
   - Calls `skills.toggleSessionDisabled(sessionId, skillId, true)`
   - Skill moves to "Removed" section
-- [ ] 4.2 — Add "Removed" collapsible section at bottom:
+- [x] 4.2 — Add "Removed" collapsible section at bottom:
   - Muted/strikethrough styling (mirror MCP disabled servers pattern)
   - [+] restore button per skill → calls `toggleSessionDisabled(…, false)`
-- [ ] 4.3 — Update section header with counter: `PINNED SKILLS (3/14 active · 6 removed)`
+- [x] 4.3 — Update section header with counter: `PINNED SKILLS (3/14 active · 6 removed)`
   - `pinned` = skills with filled star
   - `active` = total loaded (pinned + available, not removed)
   - `removed` = disabled count
-- [ ] 4.4 — Add 💾 save button to section header:
+- [x] 4.4 — Add 💾 save button to section header:
   - Visible when session state differs from workspace profile
   - Compare current pinned + disabled sets vs loaded workspace profile
   - On click: calls `skills.saveWorkspaceProfile(cwd, { pinned, disabled })`
   - Hides after successful save
   - Success/error notice (mirrors MCP save pattern)
-- [ ] 4.5 — Load workspace profile on panel mount:
+- [x] 4.5 — Load workspace profile on panel mount:
   - Derive initial disabled set from workspace profile
   - Show correct state when switching sessions/workspaces
-- [ ] 4.6 — Handle removing a pinned skill:
+- [x] 4.6 — Handle removing a pinned skill:
   - Removing unpins automatically (Pin + Remove = invalid)
   - Star disappears, skill moves to Removed section
 
@@ -317,6 +318,19 @@ Phases 3, 4, and 5 can also run in parallel once their respective backends are c
 
 - `src/renderer/components/ContextPanel.tsx` (extend skills section)
 - `src/renderer/utils/skills-profile-derive.ts` (new, mirror `mcp-profile-derive.ts`)
+- `src/preload/index.ts` (Window type declaration extended with conflict + profile methods)
+- `src/renderer/hooks/useIPC.ts` (skills.session-disabled-changed → trigger refresh)
+
+### Notes from Implementation
+
+- Mirrors MCP Connectors pattern: section header with counter + 💾 save button
+- Skills are divided into three visual groups: Pinned (★ amber), Available (☆ chips), Removed (strikethrough + dashed border)
+- `isSkillsProfileDirty()` utility compares session state vs workspace profile for save button visibility
+- Removing a pinned skill first unpins it (async), then disables — enforcing the Pin+Remove=invalid invariant
+- `skills.session-disabled-changed` event now triggers `skillsStorageChangedAt` so ContextPanel refreshes
+- Window type declaration updated with all conflict resolution + workspace profile methods
+- Workspace profile loaded via `skills.getWorkspaceProfile(cwd)` on mount and workspace change
+- After successful save, local `skillsWorkspaceProfile` state is updated to hide the save button
 
 ### Acceptance Criteria
 
