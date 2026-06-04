@@ -3,7 +3,7 @@
 ## 1. Purpose of This Document
 
 This is the architectural source of truth for Open Cowork, an Electron desktop AI agent
-application. It describes the system as it exists today (v3.3.0-sqowe.7), not as imagined.
+application. It describes the system as it exists today (v3.3.0-sqowe.8), not as imagined.
 
 Any AI coder working on this repository MUST read this document first to understand
 structure, boundaries, and where to find authoritative coding rules. This document

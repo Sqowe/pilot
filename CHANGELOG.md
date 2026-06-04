@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0-sqowe.8] - 2026-06-04
+
+### Changed
+
+- Updated default system prompt sections to Sqowe Pilot identity with expanded behavioral rules and tool-routing policies
+- Uplifted `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` from 0.78.0 to 0.78.1
+
 ## [3.3.0-sqowe.7] - 2026-05-27
 
 ### Added
@@ -16,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Per-tool permission overrides (sparse, exception-based)
   - Workspace-shareable policies via `.cowork/mcp-permissions.json`
   - Progressive trust tracking (suggests auto-allow after 5 manual approvals)
-  - Read-only tool classification heuristic (get*\*, list*_, search\__, etc.)
+  - Read-only tool classification heuristic (get*\*, list*\_, search\_\_, etc.)
   - Workspace trust boundary (untrusted repos can restrict but not grant)
   - Canonical server-name normalization with collision detection (fail-closed)
   - Runtime validation for workspace policy JSON
@@ -198,7 +205,8 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.7...HEAD
+[Unreleased]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.8...HEAD
+[3.3.0-sqowe.8]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.7...v3.3.0-sqowe.8
 [3.3.0-sqowe.7]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.6...v3.3.0-sqowe.7
 [3.3.0-sqowe.6]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.5...v3.3.0-sqowe.6
 [3.3.0-sqowe.5]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.4...v3.3.0-sqowe.5
