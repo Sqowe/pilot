@@ -23,8 +23,8 @@ These six libraries are **the AI pipeline**. A new Claude / GPT / Gemini model, 
 
 | Package                           | Installed | Role                                                                                                                                                           |
 | --------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@earendil-works/pi-coding-agent` | 0.78.0    | Agent execution engine. Drives `src/main/claude/agent-runner.ts` (~1500 lines) — session lifecycle, tool dispatch, streaming. Heart of the app.                |
-| `@earendil-works/pi-ai`           | 0.78.0    | Unified LLM abstraction — provider routing, model registry, auth. Resolves which concrete SDK/endpoint to call. Must be version-locked with `pi-coding-agent`. |
+| `@earendil-works/pi-coding-agent` | 0.78.1    | Agent execution engine. Drives `src/main/claude/agent-runner.ts` (~1500 lines) — session lifecycle, tool dispatch, streaming. Heart of the app.                |
+| `@earendil-works/pi-ai`           | 0.78.1    | Unified LLM abstraction — provider routing, model registry, auth. Resolves which concrete SDK/endpoint to call. Must be version-locked with `pi-coding-agent`. |
 | `@modelcontextprotocol/sdk`       | 1.27.1    | MCP client + server (stdio, SSE, Streamable HTTP). Powers the entire MCP connector ecosystem in `src/main/mcp/mcp-manager.ts`.                                 |
 | `@anthropic-ai/sdk`               | 0.92.0    | Official Anthropic SDK. Used for Claude diagnostics and probes. Tracks new Claude model families.                                                              |
 | `openai`                          | 6.32.0    | Official OpenAI SDK. Used across all OpenAI-compatible endpoints (OpenAI, OpenRouter, Ollama, DashScope, custom proxies).                                      |
@@ -32,7 +32,7 @@ These six libraries are **the AI pipeline**. A new Claude / GPT / Gemini model, 
 
 **Why these are Tier 1:** if OpenAI ships a new Responses API feature, Anthropic ships a new `claude-opus-5`, or MCP publishes a new transport — the only way to expose that in the app is to bump the relevant package here. A missed release = a missed feature.
 
-**Special note on `@earendil-works/pi-*`:** both packages live in a single monorepo (formerly `github.com/badlogic/pi-mono`, now under the `earendil-works` org). They are pre-1.0, ship frequently, and must be uplifted together. The old `@mariozechner/pi-*` scope is deprecated as of 0.73.1. Current: 0.78.0 (uplifted 2026-05-30).
+**Special note on `@earendil-works/pi-*`:** both packages live in a single monorepo (formerly `github.com/badlogic/pi-mono`, now under the `earendil-works` org). They are pre-1.0, ship frequently, and must be uplifted together. The old `@mariozechner/pi-*` scope is deprecated as of 0.73.1. Current: 0.78.1 (uplifted 2026-06-04).
 
 ---
 
