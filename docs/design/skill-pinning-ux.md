@@ -1,7 +1,8 @@
 # Skill Pinning — UX Design
 
 **Date:** 2025-05-19  
-**Status:** Concept  
+**Status:** ✅ Implemented  
+**Implemented:** 2026-05-19  
 **Author:** Discussion between user and AI
 
 ---
@@ -140,6 +141,33 @@ If no directive is defined, fall back to: `"Use {skill-name} for this request"`
 - **Skill presets** — named combinations like "Research mode" (semantic-index + firecrawl) or "Document mode" (docx + pdf)
 - **Auto-suggest** — based on file types in working dir or conversation topic, suggest relevant skills to pin
 - **Pin history** — remember which skills were useful in past sessions with similar topics
+
+---
+
+## Implementation Summary (completed)
+
+All core features from this design are implemented:
+
+| Feature                                | Status | Location                                                   |
+| -------------------------------------- | ------ | ---------------------------------------------------------- |
+| Welcome screen picker (star/unstar)    | ✅     | `src/renderer/components/WelcomeView.tsx`                  |
+| ContextPanel section (pin/unpin)       | ✅     | `src/renderer/components/ContextPanel.tsx`                 |
+| Directive injection into system prompt | ✅     | `agent-runner.ts` → `buildPinnedSkillsDirective()`         |
+| Per-session storage                    | ✅     | `session-manager.ts` → `sessionPinnedSkills` Map           |
+| IPC bridge                             | ✅     | `skills.toggleSessionPin`, `skills.getSessionPinnedSkills` |
+| Validation & security                  | ✅     | `src/shared/skill-pinning-constants.ts`                    |
+| Initial pins on session creation       | ✅     | `initialPinnedSkills` in session.start payload             |
+| Limit enforcement (client + server)    | ✅     | `MAX_PINNED_SKILLS_PER_SESSION`                            |
+| Tests                                  | ✅     | `tests/skill-pinning.test.ts`                              |
+
+**Not implemented (deferred to Future Extensions):**
+
+- Per-message pinning (chips that apply to single message only)
+- Skill presets (named combinations like "Research mode")
+- Auto-suggest based on file types or conversation topic
+- Pin history (remember which skills were useful in similar sessions)
+- Workspace-level defaults (`.cowork/skills-profile.json`)
+- Default pinned skills in Settings
 
 ---
 

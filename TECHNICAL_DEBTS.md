@@ -198,3 +198,141 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 **Risk:** Low — find callers via grep, replace, delete.
 
 ---
+
+## 16. Chat Export: Phase 3 (Rich Export) Not Implemented
+
+**Design doc:** `docs/design/chat-export-markdown.md`
+
+**Status:** Phases 1 (Full Export) and 2 (Selective Export) are ✅ Done. Phase 3 is unimplemented.
+
+**Remaining work:**
+
+- Folder export mode (directory picker + image extraction as separate files)
+- Persist user's last-used export options in electron-store
+- Batch export from sidebar (select multiple sessions → export all)
+- Keyboard shortcut (`Cmd+Shift+E` for export)
+
+**Risk:** Low — quality-of-life feature, no functional regression.
+
+---
+
+## 17. Chat Smart Scrolling: Entirely Unimplemented
+
+**Design doc:** `docs/design/chat-smart-scrolling.md`
+
+**Status:** Concept only. No implementation started.
+
+**Designed features (none done):**
+
+- Sticky day separator that pins to viewport top while scrolling (IntersectionObserver + fixed overlay)
+- Click day separator to jump — date list popover for quick navigation
+- Jump-to-date picker for very long conversations (calendar icon)
+
+**Dependencies:** Requires existing day separators from `chat-timestamps.md` Phase 1 (✅ done).
+
+**Risk:** Low — UX enhancement for long conversations only.
+
+---
+
+## ~~18. MCP Server Descriptions~~ ✅ DONE
+
+**Design doc:** `docs/design/mcp-server-descriptions.md`
+
+**Status:** Fully implemented. All 6 phases complete:
+
+- Data model (`description`, `descriptionToolsHash`, `descriptionSource` on MCPServerConfig)
+- Generator module (`mcp-description-generator.ts`) with LLM one-shot + heuristic fallback
+- MCPManager integration (auto-generate on first connect, change detection via hash)
+- System prompt injection (`buildMcpServerDirectory()` in agent-runner with `<mcp_server_directory>` XML block)
+- IPC endpoints (`mcp.regenerateDescription`, manual edit saves with `descriptionSource: 'manual'`)
+- UI (description display, ✨/✍️ source badge, Regenerate button, manual edit in server config dialog)
+
+---
+
+## 19. Memory: Contradiction Annotation at Retrieval Time
+
+**Design doc:** `docs/design/memory-fact-staleness-problem.md`
+
+**Status:** Recommendations 6.1 (aggressive core memory updates) and 6.3 (stronger recency + supersession) are ✅ Done. Recommendation 6.2 is next in priority but unimplemented.
+
+**Remaining work (6.2):**
+
+- When `search_workspace_chats` returns results, cross-reference against current core memory
+- If a chunk contains a value contradicting a core memory entry, annotate it with a warning
+- Model sees explicit "⚠️ This chunk may contain outdated info" annotations
+
+**Higher-effort remaining items (6.4, 6.5):**
+
+- Fact layer with structured fact extraction and contradiction tracking (High effort)
+- Write-time contradiction detection for experience memory (High effort)
+
+**Risk:** Medium — without annotation, models still sometimes act on stale experience memory.
+
+---
+
+## 20. Memory Lens Panel: Phase 3/4 Incomplete Items
+
+**Design doc:** `docs/design/memory-lens-panel.md`
+
+**Status:** Phases 1, 2 mostly done. Phase 3 partially done. Phase 4 partially done.
+
+**Remaining work:**
+
+- "Full Memory View" modal with search/filter (deferred — only "View all →" link exists)
+- Animations (pulse on update, smooth expand/collapse)
+- Historical retrieval log (last 5 turns, not just the latest)
+
+**Risk:** Low — cosmetic polish items.
+
+---
+
+## ~~21. Skill Pinning UX~~ ✅ DONE
+
+**Design doc:** `docs/design/skill-pinning-ux.md`
+
+**Status:** Fully implemented with comprehensive test coverage (`tests/skill-pinning.test.ts`):
+
+- Welcome screen skill pinning picker (star/unstar with limit enforcement)
+- ContextPanel section with pin/unpin toggle per skill
+- `buildPinnedSkillsDirective()` in agent-runner injects `<pinned_skills>` block into system prompt
+- `SessionManager.toggleSessionPinnedSkill()` with validation and per-session storage
+- IPC endpoints (`skills.toggleSessionPin`, `skills.getSessionPinnedSkills`)
+- Preload bridge exposure
+- Shared constants (`SAFE_SKILL_ID_REGEX`, `MAX_PINNED_SKILLS_PER_SESSION`, `isValidSkillId`)
+- Defense-in-depth: sanitization of skill IDs before prompt injection
+- `initialPinnedSkills` passed on session creation from WelcomeView
+- Cleanup on session delete
+
+---
+
+## 22. Scheduler v2: Sandbox Integration Not Wired
+
+**Design doc:** `docs/design/scheduler-v2.md`
+
+**Status:** All 5 implementation phases (Data Model, Engine, IPC, UI, Testing) are ✅ Done. The `sandboxMode` field exists in the schema but is **not functionally wired**.
+
+**Remaining work:**
+
+- When `sandboxEnabled` is un-gated in Settings UI, wire `sandboxMode` into `ScheduledTaskManager.handleTrigger()`
+- Implement `'require'` mode (refuse execution without sandbox)
+- Implement `'skip'` mode (always run native even when sandbox is global)
+
+**Risk:** Low — schema is future-proofed. Implementation deferred until sandbox feature ships.
+
+---
+
+## 23. Memory: Known Architectural Limitations
+
+**Design doc:** `docs/design/memory-system-architecture.md` (Section 9)
+
+**Documented limitations without planned fixes:**
+
+- No temporal versioning (facts don't carry valid_from/valid_until)
+- Experience memory is append-only (old chunks never updated/invalidated)
+- No confidence/strength scoring (all entries equally weighted regardless of confirmation count)
+- No fact extraction from experience (stores narrative chunks, not structured facts)
+- Core memory update is per-session (profiler can't assess cross-session frequency)
+
+**Risk:** These are known architectural constraints. The staleness problem doc proposes solutions, but most require High/Very High effort.
+
+---
