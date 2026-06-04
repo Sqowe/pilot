@@ -31,7 +31,7 @@ Phase 0 (shared types/config)  ✅ DONE
               │                                                                │
               ├──► Phase 4 (Context Panel UI) ✅ DONE ─────────────────────────┘
               │
-              └──► Phase 5 (Welcome page)
+              └──► Phase 5 (Welcome page) ✅ DONE
 ```
 
 Phases 1 and 2 can run **in parallel** after Phase 0.
@@ -344,35 +344,49 @@ Phases 3, 4, and 5 can also run in parallel once their respective backends are c
 
 ## Phase 5: Welcome Page Integration
 
+**Completed:** 2026-06-04
 **Estimate:** 1–2 days
 **Depends on:** Phase 2 ✅
 **Unlocks:** Phase 6
 
 ### Tasks
 
-- [ ] 5.1 — Load workspace profile when workspace is selected on Welcome page:
+- [x] 5.1 — Load workspace profile when workspace is selected on Welcome page:
   - Call `skills.getWorkspaceProfile(workingDir)` on mount / workspace change
   - Pre-set removed skills from `profile.disabled`
   - Pre-set pinned skills from `profile.pinned`
-- [ ] 5.2 — Show three visual states for skill cards:
+- [x] 5.2 — Show three visual states for skill cards:
   - ★ Pinned (filled star, accent color)
   - ☆ Available (empty star, normal)
   - ✕ Removed (muted, strikethrough or dimmed)
-- [ ] 5.3 — Interactions:
+- [x] 5.3 — Interactions:
   - Click star on available → pin
   - Click star on pinned → unpin (back to available)
   - Click card on removed skill → restore to available
   - Right-click / long-press on available → remove
   - Or: add small ✕ icon to card corner for removal
-- [ ] 5.4 — Pass both sets to session creation:
+- [x] 5.4 — Pass both sets to session creation:
   - `initialPinnedSkills` (existing)
   - `initialDisabledSkills` (new)
-- [ ] 5.5 — Footer text: `14 active · 6 removed from workspace profile`
+- [x] 5.5 — Footer text: `14 active · 6 removed from workspace profile`
 
 ### Key Files
 
 - `src/renderer/components/WelcomeView.tsx` (extend skills section)
+- `src/renderer/hooks/useIPC.ts` (startSession + initialDisabledSkills param)
+- `src/renderer/i18n/locales/en.json` (new welcome.skillsActive/Removed/FromProfile keys)
+- `src/renderer/i18n/locales/zh.json` (matching Chinese translations)
 - Types for `session.start` payload (already extended in Phase 2)
+
+### Notes from Implementation
+
+- Three-state skill cards: Pinned (★ amber border), Available (☆ neutral), Removed (strikethrough + dashed border + opacity)
+- Workspace profile seeded on workspace change: `getWorkspaceProfile(workingDir)` → sets both pinnedSkillIds and removedSkillIds
+- Star is a clickable button (pin/unpin), ✕ is a removal button on each active skill card
+- Removed skills shown in a separate section below active skills; clicking restores them
+- `startSession` extended with 6th parameter `initialDisabledSkills`
+- Footer shows "{active} active · {removed} removed from workspace profile" when profile is active
+- "Clear all" resets both pinned and removed sets
 
 ### Acceptance Criteria
 

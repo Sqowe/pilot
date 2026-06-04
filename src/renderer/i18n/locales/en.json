@@ -56,7 +56,10 @@
     "skillsPinned": "{{count}} skills pinned",
     "skillsForChat": "Prioritize skills for this chat",
     "skillsNone": "No skills available",
-    "skillsClearAll": "Clear all"
+    "skillsClearAll": "Clear all",
+    "skillsActive": "active",
+    "skillsRemoved": "removed",
+    "skillsFromProfile": "from workspace profile"
   },
   "settings": {
     "title": "Settings",

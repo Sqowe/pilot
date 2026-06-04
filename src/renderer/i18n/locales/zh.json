@@ -56,7 +56,10 @@
     "skillsPinned": "已固定 {{count}} 个技能",
     "skillsForChat": "为本次对话优先使用的技能",
     "skillsNone": "暂无可用技能",
-    "skillsClearAll": "清除全部"
+    "skillsClearAll": "清除全部",
+    "skillsActive": "已激活",
+    "skillsRemoved": "已移除",
+    "skillsFromProfile": "来自工作区配置"
   },
   "settings": {
     "title": "设置",

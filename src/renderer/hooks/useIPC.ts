@@ -489,7 +489,8 @@ export function useIPC() {
       promptOrContent: string | ContentBlock[],
       cwd?: string,
       initialDisabledMcpServers?: string[],
-      initialPinnedSkills?: string[]
+      initialPinnedSkills?: string[],
+      initialDisabledSkills?: string[]
     ) => {
       setLoading(true);
       console.log('[useIPC] Starting session:', title);
@@ -572,6 +573,7 @@ export function useIPC() {
             content, // Send full content blocks including images
             initialDisabledMcpServers,
             initialPinnedSkills,
+            initialDisabledSkills,
           },
         });
         if (session) {
