@@ -3092,6 +3092,78 @@ ipcMain.handle(
   }
 );
 
+// Atomic workspace profile seeding: applies profile defaults to a session only if
+// the session has not been manually customized (both pinned and disabled are empty).
+ipcMain.handle(
+  'skills.seedSessionFromProfile',
+  async (
+    _event,
+    sessionId: string,
+    profile: { pinned?: string[]; disabled?: string[] }
+  ): Promise<{
+    success: boolean;
+    pinnedSkills?: string[];
+    disabledSkills?: string[];
+    error?: string;
+  }> => {
+    try {
+      if (!sessionManager) {
+        return { success: false, error: 'Session manager not initialized' };
+      }
+      if (!sessionId || typeof sessionId !== 'string') {
+        return { success: false, error: 'Invalid session ID' };
+      }
+      if (!profile || typeof profile !== 'object') {
+        return { success: false, error: 'Invalid profile object' };
+      }
+
+      // Import validation before the critical check-then-apply section (no async gap)
+      const { isValidSkillId } = await import('../shared/skill-pinning-constants');
+
+      // Atomic check-then-apply: no awaits between reading session state and mutating it
+      const existingPinned = sessionManager.getSessionPinnedSkills(sessionId);
+      const existingDisabled = sessionManager.getSessionDisabledSkills(sessionId);
+      if (existingPinned.length > 0 || existingDisabled.length > 0) {
+        // Session already customized — return current state without modification
+        return {
+          success: true,
+          pinnedSkills: existingPinned,
+          disabledSkills: existingDisabled,
+        };
+      }
+
+      // Apply disabled skills
+      const disabledToApply = (profile.disabled || []).filter(
+        (id): id is string => typeof id === 'string' && isValidSkillId(id)
+      );
+      if (disabledToApply.length > 0) {
+        for (const skillId of disabledToApply) {
+          sessionManager.toggleSessionDisabledSkill(sessionId, skillId, true);
+        }
+      }
+
+      // Apply pinned skills (respecting pinned-wins-over-disabled)
+      const pinnedToApply = (profile.pinned || []).filter(
+        (id): id is string => typeof id === 'string' && isValidSkillId(id)
+      );
+      if (pinnedToApply.length > 0) {
+        for (const skillId of pinnedToApply) {
+          sessionManager.toggleSessionPinnedSkill(sessionId, skillId, true);
+        }
+      }
+
+      return {
+        success: true,
+        pinnedSkills: sessionManager.getSessionPinnedSkills(sessionId),
+        disabledSkills: sessionManager.getSessionDisabledSkills(sessionId),
+      };
+    } catch (error) {
+      logError('[Skills] Error seeding session from profile:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+);
+
 ipcMain.handle('plugins.listCatalog', async (_event, options?: { installableOnly?: boolean }) => {
   try {
     if (!pluginRuntimeService) {

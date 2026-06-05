@@ -365,6 +365,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       profile: import('../shared/skill-conflict-types').SkillsWorkspaceProfile
     ): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('skills.saveWorkspaceProfile', cwd, profile),
+    seedSessionFromProfile: (
+      sessionId: string,
+      profile: { pinned?: string[]; disabled?: string[] }
+    ): Promise<{
+      success: boolean;
+      pinnedSkills?: string[];
+      disabledSkills?: string[];
+      error?: string;
+    }> => ipcRenderer.invoke('skills.seedSessionFromProfile', sessionId, profile),
   },
 
   // Environment methods
@@ -767,6 +776,15 @@ declare global {
           cwd: string,
           profile: import('../shared/skill-conflict-types').SkillsWorkspaceProfile
         ) => Promise<{ success: boolean; error?: string }>;
+        seedSessionFromProfile: (
+          sessionId: string,
+          profile: { pinned?: string[]; disabled?: string[] }
+        ) => Promise<{
+          success: boolean;
+          pinnedSkills?: string[];
+          disabledSkills?: string[];
+          error?: string;
+        }>;
       };
       env: {
         getEffectivePath: () => Promise<string>;

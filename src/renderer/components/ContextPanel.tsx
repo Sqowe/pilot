@@ -570,6 +570,109 @@ export function ContextPanel() {
     };
   }, [currentWorkingDir, contextPanelCollapsed]);
 
+  // Seed workspace profile disabled/pinned skills into session if session is empty
+  // and a workspace profile exists. This ensures sessions created before the profile
+  // was saved (or before this feature existed) still reflect the workspace defaults.
+  // Only runs once per session+workspace+profile-content combination.
+  // Tracks seeded state by a key that includes profile content hash to detect changes.
+  const [skillsProfileSeededKey, setSkillsProfileSeededKey] = useState<string | null>(null);
+  // Track whether user has manually modified skills in this session (prevents re-seeding)
+  const [userModifiedSessionSkills, setUserModifiedSessionSkills] = useState(false);
+  const userModifiedSessionSkillsRef = useRef(false);
+  useEffect(() => {
+    // Reset on session change
+    setSkillsProfileSeededKey(null);
+    setUserModifiedSessionSkills(false);
+    userModifiedSessionSkillsRef.current = false;
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    // Derive a content-based key so profile changes trigger re-seeding
+    const profileContent = JSON.stringify({
+      d: skillsWorkspaceProfile?.disabled ?? [],
+      p: skillsWorkspaceProfile?.pinned ?? [],
+    });
+    const currentSeededKey = `${activeSessionId}:${currentWorkingDir}:${profileContent}`;
+
+    if (
+      !activeSessionId ||
+      !skillsSessionLoaded ||
+      !skillsProfileLoaded ||
+      skillsProfileSeededKey === currentSeededKey ||
+      userModifiedSessionSkills ||
+      skillsSessionLoadedFor !== activeSessionId ||
+      skillsProfileCwd !== currentWorkingDir
+    ) {
+      return;
+    }
+
+    // Only seed if workspace profile has something to apply
+    const profileDisabled = skillsWorkspaceProfile?.disabled ?? [];
+    const profilePinned = skillsWorkspaceProfile?.pinned ?? [];
+    if (profileDisabled.length === 0 && profilePinned.length === 0) {
+      // No profile to apply — mark as seeded (nothing to do)
+      setSkillsProfileSeededKey(currentSeededKey);
+      return;
+    }
+
+    // If session already has disabled or pinned skills, user has customized — don't overwrite
+    if (sessionDisabledSkills.size > 0 || sessionPinnedSkills.size > 0) {
+      setSkillsProfileSeededKey(currentSeededKey);
+      return;
+    }
+
+    // Seed from workspace profile using atomic backend operation
+    const sessionId = activeSessionId;
+    const seedKey = currentSeededKey;
+    let cancelled = false;
+
+    const seedFromProfile = async () => {
+      const skillsApi = window.electronAPI?.skills;
+      if (!skillsApi?.seedSessionFromProfile) {
+        return;
+      }
+
+      try {
+        if (cancelled || userModifiedSessionSkillsRef.current) return;
+        const result = await skillsApi.seedSessionFromProfile(sessionId, {
+          pinned: profilePinned,
+          disabled: profileDisabled,
+        });
+        if (
+          cancelled ||
+          activeSessionIdRef.current !== sessionId ||
+          userModifiedSessionSkillsRef.current
+        )
+          return;
+        if (result?.success) {
+          setSessionDisabledSkills(new Set(result.disabledSkills || []));
+          setSessionPinnedSkills(new Set(result.pinnedSkills || []));
+          setSkillsProfileSeededKey(seedKey);
+        }
+      } catch (error) {
+        console.error('[ContextPanel] Failed to seed skills from workspace profile:', error);
+      }
+    };
+
+    seedFromProfile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeSessionId,
+    skillsSessionLoaded,
+    skillsSessionLoadedFor,
+    skillsProfileLoaded,
+    skillsProfileCwd,
+    currentWorkingDir,
+    skillsProfileSeededKey,
+    skillsWorkspaceProfile,
+    userModifiedSessionSkills,
+    sessionDisabledSkills.size,
+    sessionPinnedSkills.size,
+  ]);
+
   const handleToggleSessionServer = async (serverId: string, disabled: boolean) => {
     if (!activeSessionId) return;
     // Capture session ID to guard against stale updates from session switches
@@ -660,6 +763,8 @@ export function ContextPanel() {
 
   const handleToggleSessionPinnedSkill = async (skillId: string, pinned: boolean) => {
     if (!activeSessionId) return;
+    setUserModifiedSessionSkills(true);
+    userModifiedSessionSkillsRef.current = true;
     try {
       const result = await window.electronAPI?.skills?.toggleSessionPin(
         activeSessionId,
@@ -676,6 +781,8 @@ export function ContextPanel() {
 
   const handleToggleSessionDisabledSkill = async (skillId: string, disabled: boolean) => {
     if (!activeSessionId) return;
+    setUserModifiedSessionSkills(true);
+    userModifiedSessionSkillsRef.current = true;
     const skillsApi = window.electronAPI?.skills;
     if (!skillsApi?.toggleSessionDisabled || !skillsApi?.toggleSessionPin) {
       console.error('[ContextPanel] Required skills IPC methods unavailable for toggle');
