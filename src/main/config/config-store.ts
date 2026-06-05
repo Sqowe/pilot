@@ -209,6 +209,8 @@ export interface MemoryRuntimeConfig {
   recencyDecayDays?: number;
   supersessionPenalty?: number;
   supersessionKeywordThreshold?: number;
+  /** Tool name patterns whose results are included in extraction but workspace-pinned. */
+  pinnedToolPatterns?: string[];
 }
 
 const DEFAULT_CONFIG_SET_ID = 'default';
@@ -346,6 +348,7 @@ const defaultConfig: AppConfig = {
     recencyDecayDays: 90,
     supersessionPenalty: 0.2,
     supersessionKeywordThreshold: 0.5,
+    pinnedToolPatterns: ['^mcp__claude_cowork_memory__cowork_'],
   },
   enableThinking: false,
   isConfigured: false,
@@ -588,6 +591,9 @@ function normalizeMemoryRuntimeConfig(raw: unknown): MemoryRuntimeConfig {
       Number.isFinite(value.supersessionKeywordThreshold)
         ? Math.max(0.3, Math.min(0.8, value.supersessionKeywordThreshold))
         : defaultConfig.memoryRuntime.supersessionKeywordThreshold,
+    pinnedToolPatterns: Array.isArray(value.pinnedToolPatterns)
+      ? value.pinnedToolPatterns.filter((item): item is string => typeof item === 'string')
+      : defaultConfig.memoryRuntime.pinnedToolPatterns,
   };
   // Enforce floor <= ceiling: if floor exceeds ceiling, clamp floor down
   if (

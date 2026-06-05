@@ -39,6 +39,7 @@ import {
   isoNow,
   loadJsonFile,
   messagesToTranscript,
+  messagesToTranscriptFiltered,
   normalizeWorkspaceKey,
   parseCoreCombinedKey,
   safeRemoveFile,
@@ -627,11 +628,27 @@ export class MemoryService {
     }
 
     const fullTurns = messagesToTranscript(messages);
-    const deltaTurns = messagesToTranscript(messages.slice(lastProcessedMessageCount));
+    const deltaMessages = messages.slice(lastProcessedMessageCount);
     const sessionDate = this.resolveSessionDate(session, messages);
 
+    // Build filtered transcripts for core memory extraction (tool result scoping).
+    // normalTurns: user/assistant text only — entries can promote cross-workspace.
+    // pinnedTurns: pinned MCP tool results — entries are workspace-pinned.
+    const pinnedPatterns = this.getPinnedToolPatterns();
+    const { normalTurns, pinnedTurns } = messagesToTranscriptFiltered(messages, deltaMessages, {
+      pinnedToolPatterns: pinnedPatterns,
+    });
+
     try {
-      await this.updateCoreMemory(session.id, sessionDate, deltaTurns, sourceWorkspace);
+      // Extract core memory from normal conversation (unpinned)
+      await this.updateCoreMemory(session.id, sessionDate, normalTurns, sourceWorkspace);
+      // Extract core memory from pinned tool content (workspace-pinned).
+      // Only run when a concrete workspace is available — pinned entries need a workspace to scope to.
+      if (pinnedTurns.length && sourceWorkspace) {
+        await this.updateCoreMemory(session.id, sessionDate, pinnedTurns, sourceWorkspace, {
+          workspacePinned: true,
+        });
+      }
       if (this.deletedSessionIds.has(session.id)) {
         stateStore.delete(session.id);
         return;
@@ -686,12 +703,31 @@ export class MemoryService {
   }
 
   private async ingestExtractedBundle(bundle: ExtractionBundle): Promise<void> {
+    // Build filtered transcripts for core memory extraction (tool result scoping)
+    const pinnedPatterns = this.getPinnedToolPatterns();
+    const { normalTurns, pinnedTurns } = messagesToTranscriptFiltered(
+      bundle.fullMessages,
+      bundle.fullMessages,
+      { pinnedToolPatterns: pinnedPatterns }
+    );
+    // Extract core memory from normal conversation (unpinned)
     await this.updateCoreMemory(
       bundle.session.id,
       bundle.sessionDate,
-      bundle.fullTurns,
+      normalTurns,
       bundle.sourceWorkspace
     );
+    // Extract core memory from pinned tool content (workspace-pinned).
+    // Only run when a concrete workspace is available.
+    if (pinnedTurns.length && bundle.sourceWorkspace) {
+      await this.updateCoreMemory(
+        bundle.session.id,
+        bundle.sessionDate,
+        pinnedTurns,
+        bundle.sourceWorkspace,
+        { workspacePinned: true }
+      );
+    }
     if (bundle.fullTurns.length) {
       await this.storeExperienceSession({
         sourceWorkspace: bundle.sourceWorkspace,
@@ -757,7 +793,8 @@ export class MemoryService {
     sessionId: string,
     sessionDate: string,
     turns: MemoryTranscriptTurn[],
-    sourceWorkspace?: string | null
+    sourceWorkspace?: string | null,
+    options?: { workspacePinned?: boolean }
   ): Promise<void> {
     if (!turns.length) {
       return;
@@ -771,7 +808,7 @@ export class MemoryService {
       sourceWorkspace,
     });
     if (actions.length) {
-      coreStore.applyActions(actions, sourceWorkspace);
+      coreStore.applyActions(actions, sourceWorkspace, options);
     }
   }
 
@@ -1137,6 +1174,30 @@ export class MemoryService {
 
   private getAppConfig(): AppConfig {
     return configStore.getAll();
+  }
+
+  private pinnedToolPatternsCache: { patterns: string[]; compiled: RegExp[] } | null = null;
+
+  private getPinnedToolPatterns(): RegExp[] {
+    const patterns = this.getAppConfig().memoryRuntime.pinnedToolPatterns || [];
+    // Cache compiled regexes — only recompile when config changes
+    if (
+      this.pinnedToolPatternsCache &&
+      this.pinnedToolPatternsCache.patterns.length === patterns.length &&
+      this.pinnedToolPatternsCache.patterns.every((p, i) => p === patterns[i])
+    ) {
+      return this.pinnedToolPatternsCache.compiled;
+    }
+    const compiled: RegExp[] = [];
+    for (const pattern of patterns) {
+      try {
+        compiled.push(new RegExp(pattern));
+      } catch {
+        logWarn('[MemoryService] Invalid pinnedToolPatterns regex, skipping:', pattern);
+      }
+    }
+    this.pinnedToolPatternsCache = { patterns: [...patterns], compiled };
+    return compiled;
   }
 
   private getCustomPromptPath(): string | undefined {

@@ -885,6 +885,8 @@ export interface MemoryRuntimeConfig {
   recencyDecayDays?: number;
   supersessionPenalty?: number;
   supersessionKeywordThreshold?: number;
+  /** Tool name patterns whose results are included in extraction but workspace-pinned. */
+  pinnedToolPatterns?: string[];
 }
 
 export interface AppConfig {

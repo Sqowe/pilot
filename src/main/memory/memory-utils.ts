@@ -187,6 +187,37 @@ export function extractTextFromContent(content: ContentBlock[]): string {
     .trim();
 }
 
+/**
+ * Options for filtering tool results during transcript construction for memory ingestion.
+ */
+export interface TranscriptFilterOptions {
+  /**
+   * Compiled RegExp patterns for tools whose results are included but workspace-pinned.
+   * Tool results matching these patterns are included in the transcript.
+   * All other tool_result/tool_use blocks are excluded.
+   */
+  pinnedToolPatterns: RegExp[];
+}
+
+/**
+ * Result of building a filtered transcript for memory ingestion.
+ */
+export interface FilteredTranscriptResult {
+  /** Turns from normal user/assistant text (no tool results). */
+  normalTurns: MemoryTranscriptTurn[];
+  /** Turns containing pinned tool results (workspace-scoped content). */
+  pinnedTurns: MemoryTranscriptTurn[];
+}
+
+/** Safely test a tool name against patterns, resetting lastIndex for stateful regexes. */
+function matchesPinnedPattern(toolName: string, patterns: RegExp[]): boolean {
+  for (const p of patterns) {
+    p.lastIndex = 0;
+    if (p.test(toolName)) return true;
+  }
+  return false;
+}
+
 export function messagesToTranscript(messages: Message[]): MemoryTranscriptTurn[] {
   return messages
     .map((message): MemoryTranscriptTurn | null => {
@@ -202,6 +233,175 @@ export function messagesToTranscript(messages: Message[]): MemoryTranscriptTurn[
       };
     })
     .filter((item): item is MemoryTranscriptTurn => Boolean(item));
+}
+
+/**
+ * Build a filtered transcript for memory ingestion with tool result scoping.
+ * Produces two separate transcript streams:
+ * - normalTurns: content from user/assistant text (no tool results)
+ * - pinnedTurns: content from pinned tool results only
+ *
+ * This separation allows the caller to extract core memory from each stream
+ * independently, applying workspacePinned only to entries from pinnedTurns.
+ *
+ * Assistant messages that immediately follow a pinned tool result are routed
+ * to the pinned stream because they typically summarize/restate the tool content.
+ * The taint window resets on the next independent user message.
+ *
+ * @param allMessages Full message list for the session (used to resolve
+ *   tool_use → tool_result links even when processing a slice).
+ * @param deltaMessages The message slice to extract turns from.
+ * @param filterOptions Tool filtering configuration.
+ */
+export function messagesToTranscriptFiltered(
+  allMessages: Message[],
+  deltaMessages: Message[],
+  filterOptions: TranscriptFilterOptions
+): FilteredTranscriptResult {
+  const pinnedPatterns = filterOptions.pinnedToolPatterns;
+
+  // Build a lookup map for O(1) tool name resolution from tool_use ID.
+  const toolNameById = new Map<string, string>();
+  for (const msg of allMessages) {
+    for (const block of msg.content) {
+      if (block.type === 'tool_use') {
+        toolNameById.set(block.id, block.name);
+      }
+    }
+  }
+
+  const normalTurns: MemoryTranscriptTurn[] = [];
+  const pinnedTurns: MemoryTranscriptTurn[] = [];
+
+  // Taint state tracks whether subsequent assistant messages should be:
+  // - 'none': no taint, route to normalTurns
+  // - 'pinned': route to pinnedTurns (after pinned tool results)
+  // - 'excluded': drop entirely (after non-pinned tool results)
+  type TaintState = 'none' | 'pinned' | 'excluded';
+
+  // Compute initial taint state from messages before the delta range.
+  let taint: TaintState = 'none';
+  const deltaIds = new Set(deltaMessages.map((m) => m.id));
+  for (const msg of allMessages) {
+    if (deltaIds.has(msg.id)) break; // Reached the delta range
+    const hasToolResult = msg.content.some((block) => block.type === 'tool_result');
+    if (hasToolResult) {
+      const hasPinnedResult = msg.content.some((block) => {
+        if (block.type !== 'tool_result') return false;
+        const toolName = toolNameById.get(block.toolUseId);
+        return toolName != null && matchesPinnedPattern(toolName, pinnedPatterns);
+      });
+      const hasNonPinnedResult = msg.content.some((block) => {
+        if (block.type !== 'tool_result') return false;
+        const toolName = toolNameById.get(block.toolUseId);
+        return !toolName || !matchesPinnedPattern(toolName, pinnedPatterns);
+      });
+      if (hasPinnedResult && !hasNonPinnedResult) {
+        taint = 'pinned';
+      } else {
+        taint = 'excluded'; // Non-pinned or mixed
+      }
+    } else if (msg.role === 'user') {
+      taint = 'none';
+    }
+  }
+
+  for (const message of deltaMessages) {
+    const normalParts: string[] = [];
+    const pinnedParts: string[] = [];
+    let messageHasPinnedResult = false;
+    let messageHasAnyToolResult = false;
+
+    for (const block of message.content) {
+      switch (block.type) {
+        case 'text':
+          normalParts.push(block.text);
+          break;
+        case 'thinking':
+          normalParts.push(block.thinking);
+          break;
+        case 'tool_result': {
+          messageHasAnyToolResult = true;
+          const toolName = toolNameById.get(block.toolUseId);
+          if (toolName && matchesPinnedPattern(toolName, pinnedPatterns)) {
+            pinnedParts.push(block.content);
+            messageHasPinnedResult = true;
+          }
+          // All other tool results excluded from both streams
+          break;
+        }
+        case 'tool_use': {
+          // tool_use inputs excluded from both streams
+          break;
+        }
+        case 'file_attachment':
+          normalParts.push(`[file] ${block.filename}`);
+          break;
+        case 'image':
+          normalParts.push('[image]');
+          break;
+        default:
+          break;
+      }
+    }
+
+    // Update taint based on tool results in this message.
+    // If message has any non-pinned tool result, prefer 'excluded' (safety first).
+    // Only set 'pinned' if ALL tool results in the message are pinned.
+    if (messageHasAnyToolResult) {
+      if (
+        messageHasPinnedResult &&
+        !message.content.some(
+          (block) =>
+            block.type === 'tool_result' &&
+            !matchesPinnedPattern(toolNameById.get(block.toolUseId) || '', pinnedPatterns)
+        )
+      ) {
+        taint = 'pinned'; // All tool results are pinned
+      } else if (messageHasPinnedResult) {
+        taint = 'excluded'; // Mixed — prefer exclusion for safety
+      } else {
+        taint = 'excluded'; // Only non-pinned tool results
+      }
+    }
+
+    // Route normal text based on taint state:
+    // - 'pinned' + assistant: route to pinned stream (restates pinned tool content)
+    // - 'excluded' + assistant: drop (restates non-pinned tool content)
+    // - 'none' or user message: route to normal stream
+    const normalText = normalParts.filter(Boolean).join('\n').trim();
+    if (normalText) {
+      if (taint === 'pinned' && message.role === 'assistant') {
+        pinnedParts.push(normalText);
+      } else if (taint === 'excluded' && message.role === 'assistant') {
+        // Drop — assistant is likely restating non-pinned tool results
+      } else {
+        normalTurns.push({
+          role: message.role,
+          content: normalText,
+          messageId: message.id,
+          timestamp: message.timestamp,
+        });
+      }
+    }
+
+    // Clear taint when an independent user message arrives (no tool results)
+    if (message.role === 'user' && !messageHasAnyToolResult) {
+      taint = 'none';
+    }
+
+    const pinnedText = pinnedParts.filter(Boolean).join('\n').trim();
+    if (pinnedText) {
+      pinnedTurns.push({
+        role: message.role,
+        content: pinnedText,
+        messageId: message.id,
+        timestamp: message.timestamp,
+      });
+    }
+  }
+
+  return { normalTurns, pinnedTurns };
 }
 
 export function compactTranscript(turns: MemoryTranscriptTurn[]): string {
@@ -325,31 +525,58 @@ export function parseCoreCombinedKey(combinedKey: string): CoreMemoryEntry {
 }
 
 export function applyCoreMemoryActions(
-  existingMemory: Record<string, { value: string; sourceWorkspaces: string[] }>,
+  existingMemory: Record<
+    string,
+    { value: string; sourceWorkspaces: string[]; workspacePinned?: boolean; scopeHash?: string }
+  >,
   actions: CoreMemoryActionInput[],
-  sourceWorkspace: string | null
+  sourceWorkspace: string | null,
+  options?: { workspacePinned?: boolean }
 ): {
-  nextMemory: Record<string, { value: string; sourceWorkspaces: string[] }>;
+  nextMemory: Record<
+    string,
+    { value: string; sourceWorkspaces: string[]; workspacePinned?: boolean; scopeHash?: string }
+  >;
   applied: AppliedCoreMemoryAction[];
 } {
+  // Pinned actions require a concrete workspace — reject early if missing.
+  if (options?.workspacePinned && !sourceWorkspace) {
+    return { nextMemory: { ...existingMemory }, applied: [] };
+  }
+
   const nextMemory = { ...existingMemory };
-  // Deep-copy entries so mutations don't affect the original
+  // Deep-copy entries preserving all fields including workspacePinned and scopeHash
   for (const key of Object.keys(nextMemory)) {
+    const entry = nextMemory[key];
     nextMemory[key] = {
-      ...nextMemory[key],
-      sourceWorkspaces: [...nextMemory[key].sourceWorkspaces],
+      value: entry.value,
+      sourceWorkspaces: [...entry.sourceWorkspaces],
+      ...(entry.workspacePinned ? { workspacePinned: true } : {}),
+      ...(entry.scopeHash ? { scopeHash: entry.scopeHash } : {}),
     };
   }
   const applied: AppliedCoreMemoryAction[] = [];
 
   for (const action of actions) {
     const op = action.op;
-    const combinedKey = resolveCoreCombinedKey(action.category, action.key);
-    if (!combinedKey) {
+    const baseCombinedKey = resolveCoreCombinedKey(action.category, action.key);
+    if (!baseCombinedKey) {
       continue;
     }
 
+    // For workspace-pinned actions, namespace the key with the workspace hash
+    // to prevent conflicts with unpinned entries or pinned entries from other workspaces.
+    const scopeHash =
+      options?.workspacePinned && sourceWorkspace
+        ? hashWorkspaceKey(normalizeWorkspaceKey(sourceWorkspace) || sourceWorkspace)
+        : undefined;
+    const combinedKey = scopeHash ? `${baseCombinedKey}@${scopeHash}` : baseCombinedKey;
+
     if (op === 'delete') {
+      // Pinned actions can only delete pinned entries (namespaced key ensures this)
+      if (options?.workspacePinned && !nextMemory[combinedKey]?.workspacePinned) {
+        continue; // Don't delete unpinned entries from pinned transcripts
+      }
       delete nextMemory[combinedKey];
       applied.push({
         op,
@@ -376,7 +603,12 @@ export function applyCoreMemoryActions(
         ? [...existingWorkspaces, effectiveWorkspace]
         : [...existingWorkspaces];
 
-    nextMemory[combinedKey] = { value, sourceWorkspaces: mergedWorkspaces };
+    nextMemory[combinedKey] = {
+      value,
+      sourceWorkspaces: mergedWorkspaces,
+      ...(options?.workspacePinned ? { workspacePinned: true } : {}),
+      ...(scopeHash ? { scopeHash } : {}),
+    };
     applied.push({
       op,
       category: action.category,
@@ -390,7 +622,10 @@ export function applyCoreMemoryActions(
 }
 
 export function coreMemoryToPromptBlock(
-  memory: Record<string, string | { value: string; sourceWorkspaces?: string[] }>
+  memory: Record<
+    string,
+    string | { value: string; sourceWorkspaces?: string[]; scopeHash?: string }
+  >
 ): string {
   const entries = Object.entries(memory);
   if (!entries.length) {
@@ -399,7 +634,13 @@ export function coreMemoryToPromptBlock(
   return entries
     .map(([key, stored]) => {
       const value = typeof stored === 'string' ? stored : stored.value;
-      return `- ${key}: ${value}`;
+      // For pinned entries with scopeHash, strip the @hash suffix using safe string ops
+      let displayKey = key;
+      if (typeof stored === 'object' && stored.scopeHash && key.endsWith(`@${stored.scopeHash}`)) {
+        displayKey = key.slice(0, -(stored.scopeHash.length + 1));
+        displayKey = `${displayKey} [workspace-scoped]`;
+      }
+      return `- ${displayKey}: ${value}`;
     })
     .join('\n');
 }
