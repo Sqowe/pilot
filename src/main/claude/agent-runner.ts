@@ -31,6 +31,7 @@ import {
   isSessionAutonomous,
   getAutonomousBlockCallback,
   setMcpServerConfigLookup,
+  setMcpToolAnnotationsLookup,
   setSessionCwd,
 } from '../config/permission-rules-store';
 import { canonicalizeMcpServerName } from '../../shared/mcp-tool-classification';
@@ -1466,6 +1467,14 @@ RULES:
           );
         }
         return match;
+      });
+
+      // Register MCP tool annotations lookup for enhanced read-only classification.
+      // This allows the permission engine to use server-provided readOnlyHint annotations
+      // when deciding whether a tool is read-only (for the 'allow-reads' policy).
+      setMcpToolAnnotationsLookup((fullToolName: string) => {
+        const tool = mcpManager.getTool(fullToolName);
+        return tool?.annotations || undefined;
       });
     }
   }

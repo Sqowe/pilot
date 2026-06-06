@@ -1044,4 +1044,12 @@ export interface MCPToolInfo {
   description: string;
   serverId: string;
   serverName: string;
+  /** MCP ToolAnnotations from the server (readOnlyHint, destructiveHint, etc.) */
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+    title?: string;
+  };
 }

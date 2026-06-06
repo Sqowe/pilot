@@ -150,7 +150,7 @@ Policy levels (first match wins):
 2. **Per-tool override** — `MCPServerConfig.toolPermissions` (sparse, exception-based)
 3. **Server default policy** — `MCPServerConfig.defaultToolPolicy`:
    - `allow-all`: auto-approve every tool without prompting
-   - `allow-reads`: auto-approve tools classified as read-only (heuristic: `get_*`, `list_*`, etc.)
+   - `allow-reads`: auto-approve tools classified as read-only (uses MCP `annotations.readOnlyHint` if available, falls back to name-based heuristic detecting action verbs as prefix or infix)
    - `ask-all`: always prompt (default, backward-compatible)
    - `deny-all`: block all tools from this server
 4. **Generic permission rules** — existing `PermissionRule[]` engine (fallback)

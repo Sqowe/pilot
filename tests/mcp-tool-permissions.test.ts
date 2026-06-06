@@ -24,6 +24,7 @@ import {
   rememberAlwaysAllow,
   forgetSessionPermissions,
   setMcpServerConfigLookup,
+  setMcpToolAnnotationsLookup,
   setSessionCwd,
 } from '../src/main/config/permission-rules-store';
 import * as fs from 'fs';
@@ -78,6 +79,81 @@ describe('isToolLikelyReadOnly', () => {
     expect(isToolLikelyReadOnly('GET_DATA')).toBe(true);
     expect(isToolLikelyReadOnly('List_Items')).toBe(true);
     expect(isToolLikelyReadOnly('DELETE_Record')).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Server-namespaced tool names (infix/suffix verb matching)
+  // -------------------------------------------------------------------------
+
+  it('classifies server-namespaced read tools via infix verb matching', () => {
+    expect(isToolLikelyReadOnly('openhab_list_items')).toBe(true);
+    expect(isToolLikelyReadOnly('openhab_get_item')).toBe(true);
+    expect(isToolLikelyReadOnly('weather_get_forecast')).toBe(true);
+    expect(isToolLikelyReadOnly('weather_search_alerts')).toBe(true);
+    expect(isToolLikelyReadOnly('github_list_repos')).toBe(true);
+    expect(isToolLikelyReadOnly('db_query_users')).toBe(true);
+  });
+
+  it('classifies server-namespaced write tools via infix verb matching', () => {
+    expect(isToolLikelyReadOnly('openhab_create_item')).toBe(false);
+    expect(isToolLikelyReadOnly('openhab_update_item')).toBe(false);
+    expect(isToolLikelyReadOnly('github_delete_issue')).toBe(false);
+    expect(isToolLikelyReadOnly('db_insert_record')).toBe(false);
+    expect(isToolLikelyReadOnly('slack_send_message')).toBe(false);
+  });
+
+  it('classifies suffix verb patterns', () => {
+    expect(isToolLikelyReadOnly('items_list')).toBe(true);
+    expect(isToolLikelyReadOnly('data_fetch')).toBe(true);
+    expect(isToolLikelyReadOnly('record_delete')).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Annotation precedence tests
+  // -------------------------------------------------------------------------
+
+  it('readOnlyHint: false forces NOT read-only even for read-verb names', () => {
+    // A tool named get_* but server says it is NOT read-only
+    expect(isToolLikelyReadOnly('get_item', { readOnlyHint: false })).toBe(false);
+    expect(isToolLikelyReadOnly('list_users', { readOnlyHint: false })).toBe(false);
+    expect(isToolLikelyReadOnly('search_docs', { readOnlyHint: false })).toBe(false);
+  });
+
+  it('readOnlyHint: true does NOT grant read-only for unknown tools (security)', () => {
+    // CRITICAL: annotations alone cannot bypass permission prompts for unknown tools
+    expect(isToolLikelyReadOnly('custom_tool', { readOnlyHint: true })).toBe(false);
+    expect(isToolLikelyReadOnly('do_something', { readOnlyHint: true })).toBe(false);
+    expect(isToolLikelyReadOnly('navigate_page', { readOnlyHint: true })).toBe(false);
+    expect(isToolLikelyReadOnly('process_order', { readOnlyHint: true })).toBe(false);
+  });
+
+  it('readOnlyHint: true CANNOT override write verb indicators (security)', () => {
+    // CRITICAL: A write-named tool with readOnlyHint: true must NOT be auto-allowed
+    expect(isToolLikelyReadOnly('delete_file', { readOnlyHint: true })).toBe(false);
+    expect(isToolLikelyReadOnly('send_email', { readOnlyHint: true })).toBe(false);
+    expect(isToolLikelyReadOnly('execute_command', { readOnlyHint: true })).toBe(false);
+    expect(isToolLikelyReadOnly('create_user', { readOnlyHint: true })).toBe(false);
+    expect(isToolLikelyReadOnly('github_delete_issue', { readOnlyHint: true })).toBe(false);
+    expect(isToolLikelyReadOnly('openhab_update_item', { readOnlyHint: true })).toBe(false);
+  });
+
+  it('destructiveHint has no effect on classification (only readOnlyHint matters)', () => {
+    // destructiveHint is informational, classification uses readOnlyHint only
+    expect(isToolLikelyReadOnly('get_data', { destructiveHint: true })).toBe(true);
+    expect(isToolLikelyReadOnly('get_data', { destructiveHint: false })).toBe(true);
+  });
+
+  it('null or undefined annotations fall through to name-based heuristic', () => {
+    expect(isToolLikelyReadOnly('get_data', null)).toBe(true);
+    expect(isToolLikelyReadOnly('get_data', undefined)).toBe(true);
+    expect(isToolLikelyReadOnly('create_item', null)).toBe(false);
+    expect(isToolLikelyReadOnly('create_item', undefined)).toBe(false);
+  });
+
+  it('annotations with readOnlyHint undefined fall through to name heuristic', () => {
+    expect(isToolLikelyReadOnly('get_data', {})).toBe(true);
+    expect(isToolLikelyReadOnly('create_item', {})).toBe(false);
+    expect(isToolLikelyReadOnly('openhab_list_items', { destructiveHint: false })).toBe(true);
   });
 });
 
@@ -211,6 +287,50 @@ describe('decideMcpToolPermission', () => {
     expect(decideMcpToolPermission(server, 'list_items')).toBe('allow');
     expect(decideMcpToolPermission(server, 'delete_record')).toBe('ask');
     expect(decideMcpToolPermission(server, 'execute_trade')).toBe('ask');
+  });
+
+  it('allow-reads with annotations: readOnlyHint does NOT grant allow for unknown tools', () => {
+    const server = { ...baseServer, defaultToolPolicy: 'allow-reads' as const };
+    // Unknown tool (no verb match) with readOnlyHint: true → still ask (untrusted)
+    expect(
+      decideMcpToolPermission(server, 'custom_tool', null, false, { readOnlyHint: true })
+    ).toBe('ask');
+    expect(
+      decideMcpToolPermission(server, 'process_order', null, false, { readOnlyHint: true })
+    ).toBe('ask');
+  });
+
+  it('allow-reads with annotations: readOnlyHint CANNOT override write verbs', () => {
+    const server = { ...baseServer, defaultToolPolicy: 'allow-reads' as const };
+    // Write-named tool with readOnlyHint: true → still ask (security)
+    expect(
+      decideMcpToolPermission(server, 'delete_file', null, false, { readOnlyHint: true })
+    ).toBe('ask');
+    expect(decideMcpToolPermission(server, 'send_email', null, false, { readOnlyHint: true })).toBe(
+      'ask'
+    );
+  });
+
+  it('allow-reads with annotations: readOnlyHint=false forces ask for read-named tools', () => {
+    const server = { ...baseServer, defaultToolPolicy: 'allow-reads' as const };
+    // Read-named tool with readOnlyHint: false → ask (server says not read-only)
+    expect(decideMcpToolPermission(server, 'get_data', null, false, { readOnlyHint: false })).toBe(
+      'ask'
+    );
+    expect(
+      decideMcpToolPermission(server, 'list_items', null, false, { readOnlyHint: false })
+    ).toBe('ask');
+  });
+
+  it('allow-reads with server-namespaced tools (infix matching)', () => {
+    const server = { ...baseServer, defaultToolPolicy: 'allow-reads' as const };
+    // Namespaced read tools → allow
+    expect(decideMcpToolPermission(server, 'openhab_list_items')).toBe('allow');
+    expect(decideMcpToolPermission(server, 'openhab_get_item')).toBe('allow');
+    expect(decideMcpToolPermission(server, 'weather_search_alerts')).toBe('allow');
+    // Namespaced write tools → ask
+    expect(decideMcpToolPermission(server, 'openhab_create_item')).toBe('ask');
+    expect(decideMcpToolPermission(server, 'github_delete_issue')).toBe('ask');
   });
 
   // Per-tool override takes priority over server default
@@ -406,6 +526,71 @@ describe('decidePermission with MCP tool policies', () => {
     rememberAlwaysAllow('s1', 'mcp__My_Server__dangerous_tool');
     // Deny is authoritative — cannot be bypassed
     expect(decidePermission('s1', 'mcp__My_Server__dangerous_tool', {})).toBe('deny');
+  });
+
+  it('annotations lookup: readOnlyHint=false forces ask for read-named tools', () => {
+    // Register annotation lookup that returns readOnlyHint: false for a specific tool
+    setMcpToolAnnotationsLookup((fullToolName: string) => {
+      if (fullToolName === 'mcp__EODHD__get_company_news') {
+        return { readOnlyHint: false };
+      }
+      return undefined;
+    });
+    // Normally get_* would be auto-allowed, but annotation says NOT read-only
+    expect(decidePermission('s1', 'mcp__EODHD__get_company_news', {})).toBe('ask');
+    // Other read tools without annotation override still work
+    expect(decidePermission('s1', 'mcp__EODHD__list_exchanges', {})).toBe('allow');
+    // Cleanup
+    setMcpToolAnnotationsLookup(null as unknown as (name: string) => undefined);
+  });
+
+  it('annotations lookup: readOnlyHint=true cannot grant allow for unknown tools', () => {
+    // Register annotation lookup that returns readOnlyHint: true for an unknown tool
+    setMcpToolAnnotationsLookup((fullToolName: string) => {
+      if (fullToolName === 'mcp__EODHD__custom_action') {
+        return { readOnlyHint: true };
+      }
+      return undefined;
+    });
+    // Unknown tool name (no verb match) — annotation alone cannot grant allow
+    expect(decidePermission('s1', 'mcp__EODHD__custom_action', {})).toBe('ask');
+    // Cleanup
+    setMcpToolAnnotationsLookup(null as unknown as (name: string) => undefined);
+  });
+
+  it('annotations lookup: readOnlyHint=true cannot override write verbs', () => {
+    setMcpToolAnnotationsLookup((fullToolName: string) => {
+      if (fullToolName === 'mcp__EODHD__execute_trade') {
+        return { readOnlyHint: true };
+      }
+      return undefined;
+    });
+    // execute_trade has explicit deny override in test config, so it stays deny
+    expect(decidePermission('s1', 'mcp__EODHD__execute_trade', {})).toBe('deny');
+    // Cleanup
+    setMcpToolAnnotationsLookup(null as unknown as (name: string) => undefined);
+  });
+
+  it('annotations lookup: server-namespaced infix tools classified correctly', () => {
+    // No annotation override — pure name-based classification
+    setMcpServerConfigLookup((serverName: string) => {
+      if (serverName === 'OpenHAB') {
+        return {
+          id: 'oh-1',
+          name: 'OpenHAB',
+          type: 'stdio' as const,
+          enabled: true,
+          defaultToolPolicy: 'allow-reads' as const,
+        };
+      }
+      return undefined;
+    });
+    // Infix read verbs → allow
+    expect(decidePermission('s1', 'mcp__OpenHAB__openhab_list_items', {})).toBe('allow');
+    expect(decidePermission('s1', 'mcp__OpenHAB__openhab_get_item', {})).toBe('allow');
+    // Infix write verbs → ask
+    expect(decidePermission('s1', 'mcp__OpenHAB__openhab_create_item', {})).toBe('ask');
+    expect(decidePermission('s1', 'mcp__OpenHAB__openhab_update_item', {})).toBe('ask');
   });
 });
 
