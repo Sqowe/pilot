@@ -114,7 +114,7 @@ website/.vitepress/cache/
 !resources/social-preview.png
 
 # SQOWE
-docs/chats/
+# docs/chats/
 
 # Kiro
 .kiro/
