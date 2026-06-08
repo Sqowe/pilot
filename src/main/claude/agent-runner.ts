@@ -3012,9 +3012,13 @@ RULES:
           ? `<workspace_info>
 Your current workspace is located at: ${VIRTUAL_WORKSPACE_PATH}
 This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the root path for file operations.
+When the user refers to "the project", "the workspace", "the working directory", or any equivalent term in their language, they mean this path.
 </workspace_info>`
           : workingDir
-            ? `<workspace_info>Your current workspace is: ${workingDir}</workspace_info>`
+            ? `<workspace_info>
+Your current workspace is: ${workingDir}
+When the user refers to "the project", "the workspace", "the working directory", or any equivalent term in their language, they mean this path.
+</workspace_info>`
             : '';
 
       const coworkAppendPrompt = [
