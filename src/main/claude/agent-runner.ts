@@ -3013,11 +3013,13 @@ RULES:
 Your current workspace is located at: ${VIRTUAL_WORKSPACE_PATH}
 This is an isolated sandbox environment. Use ${VIRTUAL_WORKSPACE_PATH} as the root path for file operations.
 When the user refers to "the project", "the workspace", "the working directory", or any equivalent term in their language, they mean this path.
+Relative file paths or folder names mentioned by the user (e.g. "src/utils/helper.ts", "in the docs/ folder") always resolve relative to this workspace path.
 </workspace_info>`
           : workingDir
             ? `<workspace_info>
 Your current workspace is: ${workingDir}
 When the user refers to "the project", "the workspace", "the working directory", or any equivalent term in their language, they mean this path.
+Relative file paths or folder names mentioned by the user (e.g. "src/utils/helper.ts", "in the docs/ folder") always resolve relative to this workspace path.
 </workspace_info>`
             : '';
 
