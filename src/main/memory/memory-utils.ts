@@ -424,7 +424,7 @@ export function tokenizeSearchQuery(query: string): string[] {
 }
 
 export function simpleTokenize(text: string): string[] {
-  return (text.toLowerCase().match(/[a-z0-9][a-z0-9_-]{1,}|[\u4e00-\u9fff]{2,}/g) || []).filter(
+  return (text.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}_-]{1,}/gu) || []).filter(
     (token) => !EN_STOP_WORDS.has(token) && !ZH_STOP_WORDS.includes(token)
   );
 }
