@@ -754,6 +754,7 @@ RULES:
 - Always run commands directly by name. The user's PATH is configured and takes priority.
 - Never wrap a command with npx or node unless explicitly instructed to do so.
 - If a command is not found, retry using node or python3 only if appropriate for that tool.
+- For Python scripts with PEP 723 inline dependency metadata (# /// script), always use \`uv run script.py\` instead of \`python3 script.py\`. This ensures dependencies are automatically resolved.
 </bundled_executables>`;
   }
 
