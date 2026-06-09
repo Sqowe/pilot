@@ -375,6 +375,7 @@ electron-store (JSON)          better-sqlite3
 | TypeScript        | 5.3+                             | Strict mode; `tsconfig.json` + `tsconfig.node.json`   |
 | OS targets        | macOS (arm64/x64), Windows (x64) | Linux: build-from-source only                         |
 | Python            | Optional, for skills             | Bundled via `scripts/prepare-python.js`               |
+| uv                | Required for skill scripts       | PEP 723 inline deps; user-installed or bundled        |
 | Commit convention | Conventional Commits             | `commitlint.config.cjs` + Husky                       |
 
 Environment variables (`.env.example`): `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
@@ -415,6 +416,7 @@ the dedicated rule files listed below.
 | `BASH_COMMAND_RESTRICTIONS.md` | Bash permission engine internals, trust/denylist semantics, pipeline splitting, shell syntax      | ✅ Active |
 | `AI_FRONTEND.md`               | React/Zustand/Tailwind conventions, i18n, accessibility                                           | ✅ Active |
 | `AI_MAIN_PROCESS.md`           | Pi SDK integration, IPC patterns, MCP bridging, SQLite, security boundaries                       | ✅ Active |
+| `AI_SKILLS_MAINTENANCE.md`     | Builtin skill dependency management, PEP 723 metadata, upstream sync rules                        | ✅ Active |
 
 ### Rule Precedence (Highest → Lowest)
 
@@ -434,6 +436,7 @@ the dedicated rule files listed below.
 - **MCP servers run on host only** — never route MCP spawns through sandbox bridges
 - **Renderer must never import Node/Electron directly** — all access via `window.electronAPI`
 - **Security changes require explicit confirmation** — path containment, permission hooks, sandbox boundaries
+- **Builtin skill scripts use `uv run`** — all `.claude/skills/*/scripts/*.py` with third-party imports must have PEP 723 inline metadata; after upstream sync run `scripts/reapply-skill-deps.py`
 - **Check `docs/chats/` for prior decisions** before proposing architectural changes
 - If any rule conflict or ambiguity is detected, **stop and ask for clarification**
 
