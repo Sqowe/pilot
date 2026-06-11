@@ -58,6 +58,18 @@ export function WelcomeView() {
   // Track whether skills profile is currently loading
   const [skillsProfileLoading, setSkillsProfileLoading] = useState(false);
 
+  // Plugin pinning state (for the Welcome page — passed as initial pinned plugins on session start)
+  const [welcomePlugins, setWelcomePlugins] = useState<
+    Array<{
+      pluginId: string;
+      name: string;
+      description?: string;
+      orchestratorSkill?: string | null;
+      componentCounts: { skills: number };
+    }>
+  >([]);
+  const [pinnedPluginIds, setPinnedPluginIds] = useState<Set<string>>(new Set());
+
   // Sync local prompt to store on every change (persists across navigation)
   const setPrompt = (value: string) => {
     setPromptLocal(value);
@@ -228,6 +240,30 @@ export function WelcomeView() {
       }
     };
     loadSkills();
+  }, []);
+
+  // Load installed plugins for plugin pinning on Welcome page
+  useEffect(() => {
+    const loadPlugins = async () => {
+      try {
+        const pluginsApi = window.electronAPI?.plugins;
+        if (!pluginsApi?.listInstalled) return;
+        const allPlugins = await pluginsApi.listInstalled();
+        const enabled = (allPlugins || [])
+          .filter((p) => p.enabled && p.componentsEnabled.skills && p.componentCounts.skills > 0)
+          .map((p) => ({
+            pluginId: p.pluginId,
+            name: p.name,
+            description: p.description,
+            orchestratorSkill: p.orchestratorSkill,
+            componentCounts: { skills: p.componentCounts.skills },
+          }));
+        setWelcomePlugins(enabled);
+      } catch (error) {
+        console.error('[WelcomeView] Failed to load plugins:', error);
+      }
+    };
+    loadPlugins();
   }, []);
 
   // Load workspace skills profile when workingDir changes
@@ -594,6 +630,19 @@ export function WelcomeView() {
         normalizedDisabled.length > 0 ? normalizedDisabled : undefined
       );
       if (session) {
+        // Pin selected plugins for the new session
+        if (pinnedPluginIds.size > 0) {
+          const pluginsApi = window.electronAPI?.plugins;
+          if (pluginsApi?.toggleSessionPluginPin) {
+            for (const pluginId of pinnedPluginIds) {
+              try {
+                await pluginsApi.toggleSessionPluginPin(session.id, pluginId);
+              } catch (error) {
+                console.error(`[WelcomeView] Failed to pin plugin ${pluginId}:`, error);
+              }
+            }
+          }
+        }
         setPrompt('');
         if (textareaRef.current) {
           textareaRef.current.value = '';
@@ -986,6 +1035,71 @@ export function WelcomeView() {
                     </button>
                   )}
                 </div>
+
+                {/* Plugin pinning */}
+                {welcomePlugins.length > 0 && (
+                  <div className="border-b border-border-muted pb-2 mb-1 space-y-1.5">
+                    <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
+                      {t('context.plugins')}
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {welcomePlugins.map((plugin) => {
+                        const isPinned = pinnedPluginIds.has(plugin.pluginId);
+                        return (
+                          <div
+                            key={plugin.pluginId}
+                            className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-colors ${
+                              isPinned
+                                ? 'border-purple-500/30 bg-purple-500/5'
+                                : 'border-border-muted bg-surface-muted hover:bg-surface-hover'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPinnedPluginIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (prev.has(plugin.pluginId)) {
+                                    next.delete(plugin.pluginId);
+                                  } else {
+                                    next.add(plugin.pluginId);
+                                  }
+                                  return next;
+                                });
+                              }}
+                              className="shrink-0"
+                              aria-label={
+                                isPinned ? t('context.unpinPlugin') : t('context.pinPlugin')
+                              }
+                            >
+                              <Star
+                                className={`w-4 h-4 transition-colors ${
+                                  isPinned
+                                    ? 'text-purple-500 fill-purple-500'
+                                    : 'text-text-muted hover:text-purple-400'
+                                }`}
+                              />
+                            </button>
+                            <div className="flex-1 min-w-0">
+                              <span
+                                className={`text-sm truncate block ${isPinned ? 'text-text-primary' : 'text-text-muted'}`}
+                              >
+                                {plugin.name}
+                                {plugin.orchestratorSkill && (
+                                  <span className="text-amber-500 ml-1">★</span>
+                                )}
+                              </span>
+                              <span className="text-xs text-text-muted truncate block">
+                                {plugin.componentCounts.skills} {t('context.pluginSkillCount')}
+                                {plugin.description ? ` · ${plugin.description}` : ''}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {/* Active skills (pinned + available) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
