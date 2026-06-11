@@ -3254,6 +3254,32 @@ ipcMain.handle('plugins.uninstall', async (_event, pluginId: string) => {
   }
 });
 
+ipcMain.handle('plugins.installFromFile', async () => {
+  try {
+    if (!pluginRuntimeService) {
+      throw new Error('PluginRuntimeService not initialized');
+    }
+
+    // Always show file dialog in main process — never accept paths from renderer
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'Plugin Archives', extensions: ['plugin', 'zip'] }],
+      title: 'Select Plugin Archive',
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    const targetPath = result.filePaths[0];
+    const installResult = await pluginRuntimeService.installFromArchive(targetPath);
+    sessionManager?.invalidateSkillsSetup();
+    return installResult;
+  } catch (error) {
+    logError('[Plugins] Error installing plugin from file:', error);
+    throw error;
+  }
+});
+
 // Window control IPC handlers
 ipcMain.on('window.minimize', () => {
   try {

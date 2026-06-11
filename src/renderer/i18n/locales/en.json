@@ -681,6 +681,8 @@
     "pluginInstalled": "Installed",
     "pluginInstallSuccess": "Plugin \"{{name}}\" installed successfully",
     "pluginInstallFailed": "Failed to install plugin",
+    "pluginImportFailed": "Failed to import plugin archive",
+    "importPlugin": "Import Plugin",
     "pluginNoSkills": "This plugin has no installable skills in V1",
     "pluginNoComponents": "This plugin has no loadable components",
     "pluginManage": "Manage",

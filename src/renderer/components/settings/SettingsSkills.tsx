@@ -259,6 +259,29 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
     await loadPlugins();
   }
 
+  async function handleImportPlugin() {
+    try {
+      setIsPluginLoading(true);
+      const result = await window.electronAPI.plugins.installFromFile();
+      if (!result) {
+        // User cancelled the file dialog
+        return;
+      }
+      setPluginToastMessage(
+        tRef.current('skills.pluginInstallSuccess', { name: result.plugin.name })
+      );
+      if (pluginToastTimerRef.current) clearTimeout(pluginToastTimerRef.current);
+      pluginToastTimerRef.current = setTimeout(() => setPluginToastMessage(''), 4000);
+      await loadPlugins();
+      await loadSkills();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setError({ text: `${tRef.current('skills.pluginImportFailed')}: ${message}` });
+    } finally {
+      setIsPluginLoading(false);
+    }
+  }
+
   async function handleInstall() {
     try {
       const folderPath = await window.electronAPI.invoke<string | null>({
@@ -754,7 +777,7 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
         title={t('skills.pluginsTitle')}
         description={t('skills.pluginsDesc')}
       >
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
           <button
             onClick={handleBrowsePlugins}
             disabled={isLoading || isPluginLoading}
@@ -766,6 +789,18 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
               <Package className="w-5 h-5" />
             )}
             {t('skills.browsePlugins')}
+          </button>
+          <button
+            onClick={handleImportPlugin}
+            disabled={isLoading || isPluginLoading}
+            className="w-full py-3 px-4 rounded-lg border border-border-subtle hover:border-accent hover:bg-accent/5 transition-all flex items-center justify-center gap-2 text-text-secondary hover:text-accent disabled:opacity-50"
+          >
+            {isPluginLoading ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <FolderOpen className="w-5 h-5" />
+            )}
+            {t('skills.importPlugin')}
           </button>
           <button
             onClick={handleInstall}

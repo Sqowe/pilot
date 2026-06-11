@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { app } from 'electron';
@@ -201,6 +202,237 @@ export class PluginRuntimeService {
       `[PluginRuntime] Imported plugin: ${result.plugin.name} (${result.plugin.pluginId}), components=${JSON.stringify(result.plugin.componentCounts)}`
     );
     return result;
+  }
+
+  /**
+   * Install a plugin from a local .plugin or .zip archive file.
+   * Extracts the archive to a temporary directory and delegates to installFromDirectory.
+   */
+  async installFromArchive(archivePath: string): Promise<PluginInstallResultV2> {
+    if (!fs.existsSync(archivePath)) {
+      throw new Error('Plugin archive not found');
+    }
+
+    const stat = fs.statSync(archivePath);
+    if (!stat.isFile()) {
+      throw new Error('Plugin archive path is not a file');
+    }
+
+    const ext = path.extname(archivePath).toLowerCase();
+    if (ext !== '.plugin' && ext !== '.zip') {
+      throw new Error('Unsupported archive format. Expected .plugin or .zip file.');
+    }
+
+    // Use mkdtempSync for guaranteed unique temp directory
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cowork-plugin-'));
+
+    try {
+      await this.extractZipSafe(archivePath, tempDir);
+
+      // Handle archives that contain a single top-level directory (common pattern).
+      // Ignore known metadata entries like __MACOSX, .DS_Store, etc.
+      const topEntries = fs.readdirSync(tempDir, { withFileTypes: true });
+      const meaningfulEntries = topEntries.filter((e) => {
+        const name = e.name;
+        return (
+          e.isDirectory() && name !== '__MACOSX' && name !== '.DS_Store' && !name.startsWith('._')
+        );
+      });
+
+      let pluginRoot = tempDir;
+      if (meaningfulEntries.length === 1) {
+        const singleDir = path.join(tempDir, meaningfulEntries[0].name);
+        // Check if the plugin structure is inside the single directory
+        const hasPluginMarker =
+          fs.existsSync(path.join(singleDir, '.claude-plugin', 'plugin.json')) ||
+          fs.existsSync(path.join(singleDir, 'skills'));
+        if (hasPluginMarker) {
+          pluginRoot = singleDir;
+        }
+      }
+
+      const result = await this.installFromDirectory(pluginRoot);
+      log(`[PluginRuntime] Archive install completed: ${result.plugin.name} from ${archivePath}`);
+      return result;
+    } finally {
+      // Clean up temp directory; don't mask original errors on cleanup failure
+      try {
+        await this.removePathWithRetries(tempDir);
+      } catch (cleanupErr) {
+        logError(`[PluginRuntime] Failed to clean up temp directory: ${tempDir}`, cleanupErr);
+      }
+    }
+  }
+
+  /**
+   * Safely extract a zip/plugin archive to a target directory.
+   * Uses yauzl directly for full control: validates each entry before writing,
+   * rejects symlinks, enforces path traversal protection, and counts actual bytes.
+   */
+  private async extractZipSafe(archivePath: string, targetDir: string): Promise<void> {
+    const absoluteArchive = path.resolve(archivePath);
+    const absoluteTarget = path.resolve(targetDir);
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const yauzl = require('yauzl') as typeof import('yauzl');
+
+    const MAX_ENTRIES = 10000;
+    const MAX_TOTAL_SIZE = 500 * 1024 * 1024; // 500 MB
+
+    const zipFile = await new Promise<import('yauzl').ZipFile>((resolve, reject) => {
+      yauzl.open(absoluteArchive, { lazyEntries: true, decodeStrings: true }, (err, zf) => {
+        if (err) return reject(err);
+        if (!zf) return reject(new Error('Failed to open zip file'));
+        resolve(zf);
+      });
+    });
+
+    let entryCount = 0;
+    let totalBytesWritten = 0;
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+
+        const safeReject = (err: Error) => {
+          if (settled) return;
+          settled = true;
+          try {
+            zipFile.close();
+          } catch {
+            /* already closed */
+          }
+          reject(err);
+        };
+
+        const safeResolve = () => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        };
+
+        zipFile.on('error', safeReject);
+
+        zipFile.on('entry', (entry: import('yauzl').Entry) => {
+          if (settled) return;
+
+          try {
+            entryCount++;
+            if (entryCount > MAX_ENTRIES) {
+              return safeReject(
+                new Error(`Archive contains too many entries (>${MAX_ENTRIES}). Aborting.`)
+              );
+            }
+
+            const fileName = entry.fileName;
+
+            // Reject absolute paths
+            if (fileName.startsWith('/')) {
+              return safeReject(
+                new Error(`Unsafe archive entry (absolute path): ${fileName}. Aborting.`)
+              );
+            }
+
+            // Reject path traversal
+            const normalized = path.normalize(fileName);
+            if (normalized.startsWith('..') || normalized.includes(`${path.sep}..`)) {
+              return safeReject(
+                new Error(`Unsafe archive entry (path traversal): ${fileName}. Aborting.`)
+              );
+            }
+
+            // Reject symlinks: external file attributes encode Unix mode in upper 16 bits
+            const externalAttrs = entry.externalFileAttributes;
+            const unixMode = (externalAttrs >>> 16) & 0xffff;
+            const S_IFLNK = 0o120000;
+            if (unixMode !== 0 && (unixMode & 0o170000) === S_IFLNK) {
+              return safeReject(
+                new Error(`Unsafe archive entry (symlink): ${fileName}. Aborting.`)
+              );
+            }
+
+            const destPath = path.join(absoluteTarget, fileName);
+
+            // Verify resolved path is within target directory
+            const resolvedDest = path.resolve(destPath);
+            if (
+              !resolvedDest.startsWith(absoluteTarget + path.sep) &&
+              resolvedDest !== absoluteTarget
+            ) {
+              return safeReject(
+                new Error(`Archive entry escapes target directory: ${fileName}. Aborting.`)
+              );
+            }
+
+            // Directory entry
+            if (fileName.endsWith('/')) {
+              fs.mkdirSync(destPath, { recursive: true });
+              zipFile.readEntry();
+              return;
+            }
+
+            // File entry — check projected size
+            if (totalBytesWritten + entry.uncompressedSize > MAX_TOTAL_SIZE) {
+              return safeReject(
+                new Error(`Archive uncompressed size exceeds ${MAX_TOTAL_SIZE} bytes. Aborting.`)
+              );
+            }
+
+            // Ensure parent directory exists (and validate it's not a symlink)
+            const parentDir = path.dirname(destPath);
+            fs.mkdirSync(parentDir, { recursive: true });
+            const parentStat = fs.lstatSync(parentDir);
+            if (parentStat.isSymbolicLink()) {
+              return safeReject(
+                new Error(`Parent directory is a symlink for entry: ${fileName}. Aborting.`)
+              );
+            }
+
+            zipFile.openReadStream(entry, (err, readStream) => {
+              if (settled) return;
+              if (err) return safeReject(err);
+              if (!readStream) return safeReject(new Error(`Failed to read entry: ${fileName}`));
+
+              const writeStream = fs.createWriteStream(destPath);
+
+              readStream.on('data', (chunk: Buffer) => {
+                if (settled) return;
+                totalBytesWritten += chunk.length;
+                if (totalBytesWritten > MAX_TOTAL_SIZE) {
+                  readStream.destroy();
+                  writeStream.destroy();
+                  safeReject(
+                    new Error(`Archive extraction exceeded ${MAX_TOTAL_SIZE} bytes. Aborting.`)
+                  );
+                }
+              });
+
+              readStream.pipe(writeStream);
+
+              writeStream.on('finish', () => {
+                if (!settled) zipFile.readEntry();
+              });
+
+              writeStream.on('error', (writeErr) => safeReject(writeErr));
+              readStream.on('error', (readErr) => safeReject(readErr));
+            });
+          } catch (err) {
+            safeReject(err instanceof Error ? err : new Error(String(err)));
+          }
+        });
+
+        zipFile.on('end', safeResolve);
+
+        zipFile.readEntry();
+      });
+    } finally {
+      // Ensure zipFile is closed even on unexpected errors
+      try {
+        zipFile.close();
+      } catch {
+        // Already closed
+      }
+    }
   }
 
   async setEnabled(pluginId: string, enabled: boolean): Promise<PluginToggleResult> {
