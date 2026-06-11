@@ -94,6 +94,18 @@ export function ContextPanel() {
   >([]);
   const [copiedPath, setCopiedPath] = useState(false);
   const [isChangingDir, setIsChangingDir] = useState(false);
+  const [installedPlugins, setInstalledPlugins] = useState<
+    Array<{
+      pluginId: string;
+      name: string;
+      description?: string;
+      enabled: boolean;
+      orchestratorSkill?: string | null;
+      componentCounts: { skills: number };
+    }>
+  >([]);
+  const [sessionPinnedPlugins, setSessionPinnedPlugins] = useState<Set<string>>(new Set());
+  const [pinnedPluginsOpen, setPinnedPluginsOpen] = useState(true);
   const [recentWorkspaceFiles, setRecentWorkspaceFiles] = useState<
     Array<{
       path: string;
@@ -455,6 +467,8 @@ export function ContextPanel() {
       setSessionPinnedSkills(new Set());
       setSessionDisabledSkills(new Set());
       setAvailableSkills([]);
+      setInstalledPlugins([]);
+      setSessionPinnedPlugins(new Set());
       setSkillsSessionLoaded(false);
       setSkillsSessionLoadedFor(null);
       return;
@@ -463,6 +477,8 @@ export function ContextPanel() {
     setSessionPinnedSkills(new Set());
     setSessionDisabledSkills(new Set());
     setAvailableSkills([]);
+    setInstalledPlugins([]);
+    setSessionPinnedPlugins(new Set());
     setSkillsSessionLoaded(false);
     setSkillsSessionLoadedFor(null);
     const sessionId = activeSessionId;
@@ -516,6 +532,36 @@ export function ContextPanel() {
       setSkillsSessionLoaded(profileStateLoaded);
       if (profileStateLoaded) {
         setSkillsSessionLoadedFor(sessionId);
+      }
+
+      // Load installed plugins and session-pinned plugins
+      try {
+        const pluginsApi = window.electronAPI?.plugins;
+        if (pluginsApi?.listInstalled && pluginsApi?.getSessionPinnedPlugins) {
+          const [allPlugins, pinnedPluginIds] = await Promise.all([
+            pluginsApi.listInstalled(),
+            pluginsApi.getSessionPinnedPlugins(sessionId),
+          ]);
+          if (!cancelled && activeSessionIdRef.current === sessionId) {
+            const enabledPlugins = (allPlugins || [])
+              .filter(
+                (p) => p.enabled && p.componentsEnabled.skills && p.componentCounts.skills > 0
+              )
+              .map((p) => ({
+                pluginId: p.pluginId,
+                name: p.name,
+                description: p.description,
+                enabled: p.enabled,
+                orchestratorSkill: p.orchestratorSkill,
+                componentCounts: { skills: p.componentCounts.skills },
+              }));
+            setInstalledPlugins(enabledPlugins);
+            // Keep all pinned IDs — UI will show stale ones with unpin action
+            setSessionPinnedPlugins(new Set(pinnedPluginIds || []));
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load plugin pinning state:', error);
       }
     };
 
@@ -776,6 +822,21 @@ export function ContextPanel() {
       }
     } catch (error) {
       console.error('Failed to toggle session pinned skill:', error);
+    }
+  };
+
+  const handleTogglePluginPin = async (pluginId: string) => {
+    if (!activeSessionId) return;
+    try {
+      const result = await window.electronAPI?.plugins?.toggleSessionPluginPin(
+        activeSessionId,
+        pluginId
+      );
+      if (result) {
+        setSessionPinnedPlugins(new Set(result));
+      }
+    } catch (error) {
+      console.error('Failed to toggle plugin pin:', error);
     }
   };
 
@@ -1292,6 +1353,92 @@ export function ContextPanel() {
             </div>
           </div>
         </div>
+
+        {/* Plugin Pinning */}
+        {(installedPlugins.length > 0 || sessionPinnedPlugins.size > 0) && (
+          <div className="border-b border-border-muted">
+            <div className="w-full px-4 py-2.5 flex items-center justify-between">
+              <button
+                onClick={() => setPinnedPluginsOpen(!pinnedPluginsOpen)}
+                className="flex items-center gap-1 flex-1 hover:bg-surface-hover transition-colors rounded -ml-1 px-1"
+              >
+                <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
+                  {t('context.plugins')}
+                  {sessionPinnedPlugins.size > 0 && (
+                    <span className="ml-1.5 text-purple-500">
+                      ({sessionPinnedPlugins.size} {t('context.pluginsPinned')})
+                    </span>
+                  )}
+                </span>
+              </button>
+            </div>
+
+            {pinnedPluginsOpen && (
+              <div className="px-4 pb-2.5 space-y-1">
+                {/* Stale pinned plugins (pinned but no longer available) */}
+                {Array.from(sessionPinnedPlugins)
+                  .filter((id) => !installedPlugins.some((p) => p.pluginId === id))
+                  .map((staleId) => (
+                    <div
+                      key={staleId}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-red-500/5 border border-red-500/20"
+                    >
+                      <button
+                        onClick={() => handleTogglePluginPin(staleId)}
+                        className="shrink-0 text-red-400 transition-colors"
+                        title={t('context.unpinPlugin')}
+                      >
+                        <Star className="w-3.5 h-3.5 fill-red-400" />
+                      </button>
+                      <span className="text-xs text-text-muted flex-1 truncate">
+                        {staleId}
+                        <span className="text-red-400 ml-1">
+                          ({t('context.pluginUnavailable')})
+                        </span>
+                      </span>
+                    </div>
+                  ))}
+
+                {/* Available plugins */}
+                {installedPlugins.map((plugin) => {
+                  const isPinned = sessionPinnedPlugins.has(plugin.pluginId);
+                  return (
+                    <div
+                      key={plugin.pluginId}
+                      className={`flex items-center gap-2 px-2 py-1.5 rounded-md ${
+                        isPinned
+                          ? 'bg-purple-500/5 border border-purple-500/20'
+                          : 'border border-border-muted'
+                      }`}
+                    >
+                      <button
+                        onClick={() => handleTogglePluginPin(plugin.pluginId)}
+                        className={`shrink-0 ${isPinned ? 'text-purple-500' : 'text-text-muted hover:text-purple-500'} transition-colors`}
+                        title={isPinned ? t('context.unpinPlugin') : t('context.pinPlugin')}
+                      >
+                        <Star className={`w-3.5 h-3.5 ${isPinned ? 'fill-purple-500' : ''}`} />
+                      </button>
+                      <span className="text-xs text-text-primary flex-1 truncate">
+                        {plugin.name}
+                      </span>
+                      <span className="text-[10px] text-text-muted">
+                        {plugin.componentCounts.skills} {t('context.pluginSkillCount')}
+                      </span>
+                      {plugin.orchestratorSkill && (
+                        <span
+                          className="text-[10px] text-amber-500"
+                          title={t('context.pluginHasOrchestrator')}
+                        >
+                          ★
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Pinned Skills */}
         {(availableSkills.length > 0 ||

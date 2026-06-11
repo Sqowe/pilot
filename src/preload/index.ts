@@ -395,6 +395,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('plugins.install', pluginName),
     installFromFile: (): Promise<PluginInstallResultV2 | null> =>
       ipcRenderer.invoke('plugins.installFromFile'),
+    getSessionPinnedPlugins: (sessionId: string): Promise<string[]> =>
+      ipcRenderer.invoke('plugins.getSessionPinnedPlugins', sessionId),
+    toggleSessionPluginPin: (sessionId: string, pluginId: string): Promise<string[]> =>
+      ipcRenderer.invoke('plugins.toggleSessionPluginPin', sessionId, pluginId),
     setEnabled: (pluginId: string, enabled: boolean): Promise<PluginToggleResult> =>
       ipcRenderer.invoke('plugins.setEnabled', pluginId, enabled),
     setComponentEnabled: (
@@ -799,6 +803,8 @@ declare global {
         listInstalled: () => Promise<InstalledPlugin[]>;
         install: (pluginName: string) => Promise<PluginInstallResultV2>;
         installFromFile: () => Promise<PluginInstallResultV2 | null>;
+        getSessionPinnedPlugins: (sessionId: string) => Promise<string[]>;
+        toggleSessionPluginPin: (sessionId: string, pluginId: string) => Promise<string[]>;
         setEnabled: (pluginId: string, enabled: boolean) => Promise<PluginToggleResult>;
         setComponentEnabled: (
           pluginId: string,

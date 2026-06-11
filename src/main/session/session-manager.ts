@@ -128,6 +128,13 @@ export class SessionManager {
   private sessionPinnedSkills: Map<string, Set<string>> = new Map();
 
   /**
+   * Per-session pinned plugins (in-memory, ephemeral).
+   * Pinned plugins get their directives injected into the system prompt.
+   * Cleared when session is deleted.
+   */
+  private sessionPinnedPlugins: Map<string, Set<string>> = new Map();
+
+  /**
    * Per-session disabled skills (in-memory, ephemeral).
    * Skills in this set are excluded from the agent's available skill paths.
    * Cleared when session is deleted.
@@ -190,6 +197,7 @@ export class SessionManager {
         getSessionDisabledMcpServers: (sessionId: string) =>
           this.getSessionDisabledMcpServers(sessionId),
         getSessionPinnedSkills: (sessionId: string) => this.getSessionPinnedSkills(sessionId),
+        getSessionPinnedPlugins: (sessionId: string) => this.getSessionPinnedPlugins(sessionId),
         getSessionDisabledSkills: (sessionId: string) => this.getSessionDisabledSkills(sessionId),
       },
       this.pathResolver,
@@ -347,6 +355,73 @@ export class SessionManager {
    */
   getSessionPinnedSkills(sessionId: string): string[] {
     const pinnedSet = this.sessionPinnedSkills.get(sessionId);
+    return pinnedSet ? Array.from(pinnedSet) : [];
+  }
+
+  /**
+   * Toggle a plugin's pinned state for a specific session (ephemeral, in-memory only).
+   * Returns the updated list of pinned plugin IDs for the session.
+   * Validates that the plugin exists and is enabled before pinning.
+   */
+  toggleSessionPluginPin(sessionId: string, pluginId: string): string[] {
+    if (!sessionId || typeof sessionId !== 'string') {
+      throw new Error('Invalid sessionId');
+    }
+    if (!pluginId || typeof pluginId !== 'string' || pluginId.length > 256) {
+      throw new Error('Invalid pluginId');
+    }
+    const session = this.loadSession(sessionId);
+    if (!session) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+
+    let pinnedSet = this.sessionPinnedPlugins.get(sessionId);
+
+    // If unpinning, always allow (even if plugin was since disabled/removed)
+    if (pinnedSet?.has(pluginId)) {
+      pinnedSet.delete(pluginId);
+      if (pinnedSet.size === 0) {
+        this.sessionPinnedPlugins.delete(sessionId);
+      }
+      log(`[SessionManager] Plugin ${pluginId} unpinned for session ${sessionId}`);
+      const currentSet = this.sessionPinnedPlugins.get(sessionId);
+      return currentSet ? Array.from(currentSet) : [];
+    }
+
+    // Pinning — validate plugin exists and is enabled
+    if (!this.pluginRuntimeService) {
+      throw new Error('PluginRuntimeService not initialized');
+    }
+    const installed = this.pluginRuntimeService.listInstalled();
+    const plugin = installed.find((p) => p.pluginId === pluginId);
+    if (!plugin) {
+      throw new Error(`Plugin not found: ${pluginId}`);
+    }
+    if (!plugin.enabled) {
+      throw new Error(`Plugin is disabled: ${pluginId}`);
+    }
+    if (!plugin.componentsEnabled.skills || plugin.componentCounts.skills === 0) {
+      throw new Error(`Plugin has no enabled skills: ${pluginId}`);
+    }
+
+    if (!pinnedSet) {
+      pinnedSet = new Set();
+      this.sessionPinnedPlugins.set(sessionId, pinnedSet);
+    }
+    pinnedSet.add(pluginId);
+
+    log(`[SessionManager] Plugin ${pluginId} pinned for session ${sessionId}`);
+    const currentSet = this.sessionPinnedPlugins.get(sessionId);
+    return currentSet ? Array.from(currentSet) : [];
+  }
+
+  /**
+   * Get the list of pinned plugin IDs for a session.
+   * Returns empty array for unknown sessions (no validation, read-only).
+   */
+  getSessionPinnedPlugins(sessionId: string): string[] {
+    if (!sessionId || typeof sessionId !== 'string') return [];
+    const pinnedSet = this.sessionPinnedPlugins.get(sessionId);
     return pinnedSet ? Array.from(pinnedSet) : [];
   }
 
@@ -1311,6 +1386,7 @@ export class SessionManager {
     this.titleGenerationTokens.delete(sessionId);
     this.sessionDisabledMcpServers.delete(sessionId);
     this.sessionPinnedSkills.delete(sessionId);
+    this.sessionPinnedPlugins.delete(sessionId);
     this.sessionDisabledSkills.delete(sessionId);
     forgetSessionPermissions(sessionId);
     if (this.extensionManager) {
@@ -1348,6 +1424,7 @@ export class SessionManager {
         this.titleGenerationTokens.delete(sessionId);
         this.sessionDisabledMcpServers.delete(sessionId);
         this.sessionPinnedSkills.delete(sessionId);
+        this.sessionPinnedPlugins.delete(sessionId);
         this.sessionDisabledSkills.delete(sessionId);
         forgetSessionPermissions(sessionId);
       }

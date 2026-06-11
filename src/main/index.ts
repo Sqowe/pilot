@@ -3282,6 +3282,33 @@ ipcMain.handle('plugins.installFromFile', async () => {
   }
 });
 
+ipcMain.handle('plugins.getSessionPinnedPlugins', async (_event, sessionId: string) => {
+  try {
+    if (!sessionManager) {
+      throw new Error('SessionManager not initialized');
+    }
+    return sessionManager.getSessionPinnedPlugins(sessionId);
+  } catch (error) {
+    logError('[Plugins] Error getting pinned plugins:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle(
+  'plugins.toggleSessionPluginPin',
+  async (_event, sessionId: string, pluginId: string) => {
+    try {
+      if (!sessionManager) {
+        throw new Error('SessionManager not initialized');
+      }
+      return sessionManager.toggleSessionPluginPin(sessionId, pluginId);
+    } catch (error) {
+      logError('[Plugins] Error toggling plugin pin:', error);
+      throw error;
+    }
+  }
+);
+
 // Window control IPC handlers
 ipcMain.on('window.minimize', () => {
   try {
