@@ -4,32 +4,32 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 
 ## Priority & Risk Summary
 
-| #   | Item                                     | Priority | Risk            | Effort | Recommendation                                             |
-| --- | ---------------------------------------- | -------- | --------------- | ------ | ---------------------------------------------------------- |
-| 1   | Dead code: ToolExecutor                  | P3       | Low             | 1h     | Delete next cleanup sprint                                 |
-| 2   | Shared types duplication                 | P2       | Medium          | 2h     | Do soon — prevents silent drift bugs                       |
-| 3   | Credential delivery                      | P1       | **High**        | 4h     | Security-critical — address before any credential feature  |
-| 4   | Skills MCP server lifecycle              | P2       | Medium          | 8h     | Blocks skill ecosystem growth                              |
-| 5   | Workspace trust system                   | P3       | Low             | 8h     | Fails safe, can wait                                       |
-| 6   | Remote channel support                   | P4       | Low             | Varies | Implement per user demand                                  |
-| 7   | Feishu encryption                        | P2       | Medium          | 4h     | Blocks enterprise users                                    |
-| 8   | Scheduler bounded replay                 | P3       | Low             | 2h     | Preventive — no current issue                              |
-| 9   | Permission UI desync                     | P3       | Low             | 4h     | Cosmetic annoyance only                                    |
-| 10  | Windows tray icon                        | P4       | Negligible      | 0.5h   | Trivial when someone cares                                 |
-| 11  | Permission persistence                   | P3       | Low             | 4h     | Works fine with current approach                           |
-| 12  | Legacy encryption keys                   | P4       | Low             | 2h     | Wait 6+ months, then remove                                |
-| 13  | Before-tool-call hook fragility          | P1       | **Medium-High** | 2h     | Silent failure = no permissions                            |
-| 14  | Legacy Ollama config                     | P4       | Low             | 1h     | Remove after migration window                              |
-| 15  | Deprecated sandbox methods               | P4       | Low             | 1h     | Quick grep + delete                                        |
-| 16  | Chat export Phase 3                      | P3       | Low             | 4h     | Nice-to-have, no urgency                                   |
-| 17  | Chat smart scrolling                     | P4       | Low             | 8h     | UX polish, low user demand                                 |
-| 18  | ~~MCP descriptions~~                     | —        | —               | —      | ✅ Done                                                    |
-| 19  | Memory contradiction annotation          | P2       | Medium          | 8h     | Next memory improvement                                    |
-| 20  | Memory Lens Panel polish                 | P4       | Low             | 4h     | Cosmetic only                                              |
-| 21  | ~~Skill Pinning~~                        | —        | —               | —      | ✅ Done                                                    |
-| 22  | Scheduler sandbox wiring                 | P4       | Low             | 4h     | Blocked by sandbox feature                                 |
-| 23  | Memory architectural limits              | P3       | Medium          | High   | Long-term research topic                                   |
-| 24  | Plugin skills bypass conflict resolution | P2       | Medium          | 8h     | Integrate into SkillsManager before plugin ecosystem grows |
+| #   | Item                               | Priority | Risk            | Effort | Recommendation                                             |
+| --- | ---------------------------------- | -------- | --------------- | ------ | ---------------------------------------------------------- |
+| 1   | Dead code: ToolExecutor            | P3       | Low             | 1h     | Delete next cleanup sprint                                 |
+| 2   | Shared types duplication           | P2       | Medium          | 2h     | Do soon — prevents silent drift bugs                       |
+| 3   | Credential delivery                | P1       | **High**        | 4h     | Security-critical — address before any credential feature  |
+| 4   | Skills MCP server lifecycle        | P2       | Medium          | 8h     | Blocks skill ecosystem growth                              |
+| 5   | Workspace trust system             | P3       | Low             | 8h     | Fails safe, can wait                                       |
+| 6   | Remote channel support             | P4       | Low             | Varies | Implement per user demand                                  |
+| 7   | Feishu encryption                  | P2       | Medium          | 4h     | Blocks enterprise users                                    |
+| 8   | Scheduler bounded replay           | P3       | Low             | 2h     | Preventive — no current issue                              |
+| 9   | Permission UI desync               | P3       | Low             | 4h     | Cosmetic annoyance only                                    |
+| 10  | Windows tray icon                  | P4       | Negligible      | 0.5h   | Trivial when someone cares                                 |
+| 11  | Permission persistence             | P3       | Low             | 4h     | Works fine with current approach                           |
+| 12  | Legacy encryption keys             | P4       | Low             | 2h     | Wait 6+ months, then remove                                |
+| 13  | Before-tool-call hook fragility    | P1       | **Medium-High** | 2h     | Silent failure = no permissions                            |
+| 14  | Legacy Ollama config               | P4       | Low             | 1h     | Remove after migration window                              |
+| 15  | Deprecated sandbox methods         | P4       | Low             | 1h     | Quick grep + delete                                        |
+| 16  | Chat export Phase 3                | P3       | Low             | 4h     | Nice-to-have, no urgency                                   |
+| 17  | Chat smart scrolling               | P4       | Low             | 8h     | UX polish, low user demand                                 |
+| 18  | ~~MCP descriptions~~               | —        | —               | —      | ✅ Done                                                    |
+| 19  | Memory contradiction annotation    | P2       | Medium          | 8h     | Next memory improvement                                    |
+| 20  | Memory Lens Panel polish           | P4       | Low             | 4h     | Cosmetic only                                              |
+| 21  | ~~Skill Pinning~~                  | —        | —               | —      | ✅ Done                                                    |
+| 22  | Scheduler sandbox wiring           | P4       | Low             | 4h     | Blocked by sandbox feature                                 |
+| 23  | Memory architectural limits        | P3       | Medium          | High   | Long-term research topic                                   |
+| 24  | Plugin skills not in SkillsManager | P3       | Low             | 8h     | Only needed if individual plugin skill pinning is required |
 
 ### My analysis
 
@@ -44,7 +44,6 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 - **#4** (Skills MCP lifecycle): Skills that declare MCP servers are broken today — they silently do nothing. This blocks the skill ecosystem.
 - **#7** (Feishu encryption): Enterprise deployments require encryption. This is a 4-hour task with clear AES-256-CBC implementation.
 - **#19** (Memory contradiction): The memory system's biggest remaining weakness. Without annotation, models confidently act on stale facts from experience memory.
-- **#24** (Plugin skill conflict resolution): Plugin skills bypass SkillsManager and conflict detection. Safe for now (plugins yield to user skills), but must integrate before plugin ecosystem grows.
 
 **Do when convenient (P3 — cleanup):**
 

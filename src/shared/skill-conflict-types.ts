@@ -15,8 +15,8 @@ import { isValidSkillId } from './skill-pinning-constants';
 // Skill Source & Conflict Resolution
 // ---------------------------------------------------------------------------
 
-/** Where a skill was loaded from (priority: project > configured > user > plugin > builtin). */
-export type SkillSource = 'builtin' | 'user' | 'project' | 'configured' | 'plugin';
+/** Where a skill was loaded from (priority: project > configured > user > builtin). */
+export type SkillSource = 'builtin' | 'user' | 'project' | 'configured';
 
 /** Global policy for resolving name collisions between custom and built-in skills. */
 export type ConflictPolicy = 'custom-wins' | 'builtin-wins' | 'ask';
@@ -96,13 +96,7 @@ export function isValidConflictPolicy(value: unknown): value is ConflictPolicy {
 
 /** Validate skill source value. */
 export function isValidSkillSource(value: unknown): value is SkillSource {
-  return (
-    value === 'builtin' ||
-    value === 'user' ||
-    value === 'project' ||
-    value === 'configured' ||
-    value === 'plugin'
-  );
+  return value === 'builtin' || value === 'user' || value === 'project' || value === 'configured';
 }
 
 /**
