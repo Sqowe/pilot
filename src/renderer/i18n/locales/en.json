@@ -683,6 +683,8 @@
     "pluginInstallFailed": "Failed to install plugin",
     "pluginImportFailed": "Failed to import plugin archive",
     "importPlugin": "Import Plugin",
+    "installedPluginsTitle": "Installed Plugins",
+    "installedPluginsDesc": "Manage installed plugin bundles. Enable, disable, or uninstall plugins and their components.",
     "pluginNoSkills": "This plugin has no installable skills in V1",
     "pluginNoComponents": "This plugin has no loadable components",
     "pluginManage": "Manage",

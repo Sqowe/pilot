@@ -675,6 +675,8 @@
     "pluginInstallFailed": "插件安装失败",
     "pluginImportFailed": "导入插件压缩包失败",
     "importPlugin": "导入插件",
+    "installedPluginsTitle": "已安装插件",
+    "installedPluginsDesc": "管理已安装的插件包。启用、停用或卸载插件及其组件。",
     "pluginNoSkills": "该插件在 V1 中没有可安装技能",
     "pluginNoComponents": "该插件没有可加载组件",
     "pluginManage": "管理",

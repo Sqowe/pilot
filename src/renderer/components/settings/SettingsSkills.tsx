@@ -196,6 +196,7 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
     }
 
     void loadSkills();
+    void loadInstalledPluginsOnly();
 
     // Load localDevPath from config
     window.electronAPI.config.get().then((config) => {
@@ -225,33 +226,46 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
         window.electronAPI.plugins.listInstalled(),
       ]);
       setPlugins(catalog || []);
-      const nextInstalledByKey: Record<string, InstalledPlugin> = {};
-      const addLookupKey = (key: string, plugin: InstalledPlugin) => {
-        if (!key || nextInstalledByKey[key]) {
-          return;
-        }
-        nextInstalledByKey[key] = plugin;
-      };
-      for (const plugin of installed || []) {
-        const candidates = [
-          plugin.name,
-          plugin.name?.toLowerCase(),
-          normalizePluginLookupKey(plugin.name),
-          plugin.pluginId,
-          plugin.pluginId?.toLowerCase(),
-          normalizePluginLookupKey(plugin.pluginId),
-        ].filter((value): value is string => Boolean(value));
-        for (const key of candidates) {
-          addLookupKey(key, plugin);
-        }
-      }
-      setInstalledPluginsByKey(nextInstalledByKey);
+      updateInstalledPluginsMap(installed || []);
       setError(null);
     } catch (err) {
       setError({ text: err instanceof Error ? err.message : t('skills.pluginInstallFailed') });
     } finally {
       setIsPluginLoading(false);
     }
+  }
+
+  async function loadInstalledPluginsOnly() {
+    try {
+      const installed = await window.electronAPI.plugins.listInstalled();
+      updateInstalledPluginsMap(installed || []);
+    } catch (err) {
+      console.error('Failed to load installed plugins:', err);
+    }
+  }
+
+  function updateInstalledPluginsMap(installed: InstalledPlugin[]) {
+    const nextInstalledByKey: Record<string, InstalledPlugin> = {};
+    const addLookupKey = (key: string, plugin: InstalledPlugin) => {
+      if (!key || nextInstalledByKey[key]) {
+        return;
+      }
+      nextInstalledByKey[key] = plugin;
+    };
+    for (const plugin of installed) {
+      const candidates = [
+        plugin.name,
+        plugin.name?.toLowerCase(),
+        normalizePluginLookupKey(plugin.name),
+        plugin.pluginId,
+        plugin.pluginId?.toLowerCase(),
+        normalizePluginLookupKey(plugin.pluginId),
+      ].filter((value): value is string => Boolean(value));
+      for (const key of candidates) {
+        addLookupKey(key, plugin);
+      }
+    }
+    setInstalledPluginsByKey(nextInstalledByKey);
   }
 
   async function handleBrowsePlugins() {
@@ -272,7 +286,7 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
       );
       if (pluginToastTimerRef.current) clearTimeout(pluginToastTimerRef.current);
       pluginToastTimerRef.current = setTimeout(() => setPluginToastMessage(''), 4000);
-      await loadPlugins();
+      await loadInstalledPluginsOnly();
       await loadSkills();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -812,6 +826,119 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
           </button>
         </div>
       </SettingsContentSection>
+
+      {/* Installed plugins list (shows all installed plugins for management) */}
+      {Object.values(installedPluginsByKey).length > 0 && (
+        <SettingsContentSection
+          title={t('skills.installedPluginsTitle')}
+          description={t('skills.installedPluginsDesc')}
+        >
+          <div className="space-y-2">
+            {Object.values(installedPluginsByKey)
+              .filter(
+                (plugin, index, arr) =>
+                  arr.findIndex((p) => p.pluginId === plugin.pluginId) === index
+              )
+              .map((plugin) => {
+                const componentEntries = componentOrder.filter(
+                  (c) => plugin.componentCounts[c] > 0
+                );
+                return (
+                  <div key={plugin.pluginId} className="rounded-lg border border-border p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-medium text-text-primary truncate">{plugin.name}</h4>
+                          {plugin.orchestratorSkill && (
+                            <span
+                              className="text-xs text-amber-500"
+                              title={`Orchestrator: ${plugin.orchestratorSkill}`}
+                            >
+                              ★
+                            </span>
+                          )}
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
+                              plugin.enabled
+                                ? 'bg-success/10 text-success'
+                                : 'bg-warning/10 text-warning'
+                            }`}
+                          >
+                            {plugin.enabled ? t('skills.pluginEnable') : t('skills.pluginDisabled')}
+                          </span>
+                        </div>
+                        {plugin.description && (
+                          <p className="text-xs text-text-muted mt-1 line-clamp-2">
+                            {plugin.description}
+                          </p>
+                        )}
+                        <p className="text-xs text-text-muted mt-1">
+                          {t('skills.pluginComponents', {
+                            skills: plugin.componentCounts.skills,
+                            commands: plugin.componentCounts.commands,
+                            agents: plugin.componentCounts.agents,
+                            hooks: plugin.componentCounts.hooks,
+                            mcp: plugin.componentCounts.mcp,
+                          })}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => handleSetPluginEnabled(plugin, !plugin.enabled)}
+                          disabled={pluginActionKey !== null}
+                          className={`px-3 py-1.5 rounded-md text-xs ${
+                            plugin.enabled
+                              ? 'bg-warning/10 text-warning hover:bg-warning/20'
+                              : 'bg-success/10 text-success hover:bg-success/20'
+                          } disabled:opacity-50`}
+                        >
+                          {plugin.enabled ? t('skills.pluginDisable') : t('skills.pluginEnable')}
+                        </button>
+                        <button
+                          onClick={() => handleUninstallPlugin(plugin)}
+                          disabled={pluginActionKey !== null}
+                          className="px-3 py-1.5 rounded-md text-xs bg-error/10 text-error hover:bg-error/20 disabled:opacity-50"
+                        >
+                          {t('skills.pluginManageUninstall')}
+                        </button>
+                      </div>
+                    </div>
+                    {componentEntries.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-border space-y-1">
+                        {componentEntries.map((component) => {
+                          const enabled = plugin.componentsEnabled[component];
+                          return (
+                            <div
+                              key={`${plugin.pluginId}:${component}`}
+                              className="flex items-center justify-between gap-2"
+                            >
+                              <span className="text-xs text-text-muted capitalize">
+                                {component} ({plugin.componentCounts[component]})
+                              </span>
+                              <button
+                                onClick={() =>
+                                  handleSetComponentEnabled(plugin, component, !enabled)
+                                }
+                                disabled={pluginActionKey !== null}
+                                className={`px-2 py-1 rounded text-xs ${
+                                  enabled
+                                    ? 'bg-success/10 text-success hover:bg-success/20'
+                                    : 'bg-surface text-text-muted hover:bg-surface-active'
+                                } disabled:opacity-50`}
+                              >
+                                {enabled ? t('skills.pluginDisable') : t('skills.pluginEnable')}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        </SettingsContentSection>
+      )}
 
       {isPluginModalOpen && (
         <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
