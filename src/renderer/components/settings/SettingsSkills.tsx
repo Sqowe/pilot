@@ -827,7 +827,7 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
         </div>
       </SettingsContentSection>
 
-      {/* Installed plugins list (shows all installed plugins for management) */}
+      {/* Installed plugins list — icon-based layout matching skill boxes */}
       {Object.values(installedPluginsByKey).length > 0 && (
         <SettingsContentSection
           title={t('skills.installedPluginsTitle')}
@@ -845,10 +845,18 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
                 );
                 return (
                   <div key={plugin.pluginId} className="rounded-lg border border-border p-4">
-                    <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                          plugin.enabled ? 'bg-success' : 'bg-text-muted'
+                        }`}
+                        aria-hidden="true"
+                      />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <h4 className="font-medium text-text-primary truncate">{plugin.name}</h4>
+                          <span className="font-medium text-text-primary truncate">
+                            {plugin.name}
+                          </span>
                           {plugin.orchestratorSkill && (
                             <span
                               className="text-xs text-amber-500"
@@ -857,80 +865,73 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
                               ★
                             </span>
                           )}
-                          <span
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
-                              plugin.enabled
-                                ? 'bg-success/10 text-success'
-                                : 'bg-warning/10 text-warning'
-                            }`}
-                          >
-                            {plugin.enabled ? t('skills.pluginEnable') : t('skills.pluginDisabled')}
-                          </span>
                         </div>
                         {plugin.description && (
-                          <p className="text-xs text-text-muted mt-1 line-clamp-2">
+                          <p className="text-xs text-text-muted mt-0.5 line-clamp-1">
                             {plugin.description}
                           </p>
                         )}
-                        <p className="text-xs text-text-muted mt-1">
-                          {t('skills.pluginComponents', {
-                            skills: plugin.componentCounts.skills,
-                            commands: plugin.componentCounts.commands,
-                            agents: plugin.componentCounts.agents,
-                            hooks: plugin.componentCounts.hooks,
-                            mcp: plugin.componentCounts.mcp,
-                          })}
-                        </p>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-3 shrink-0">
                         <button
                           onClick={() => handleSetPluginEnabled(plugin, !plugin.enabled)}
                           disabled={pluginActionKey !== null}
-                          className={`px-3 py-1.5 rounded-md text-xs ${
+                          className={`p-1.5 rounded-md transition-colors disabled:opacity-50 ${
                             plugin.enabled
-                              ? 'bg-warning/10 text-warning hover:bg-warning/20'
-                              : 'bg-success/10 text-success hover:bg-success/20'
-                          } disabled:opacity-50`}
+                              ? 'text-success hover:bg-success/10'
+                              : 'text-text-muted hover:bg-surface-hover'
+                          }`}
+                          title={
+                            plugin.enabled ? t('skills.pluginDisable') : t('skills.pluginEnable')
+                          }
+                          aria-label={
+                            plugin.enabled ? t('skills.pluginDisable') : t('skills.pluginEnable')
+                          }
                         >
-                          {plugin.enabled ? t('skills.pluginDisable') : t('skills.pluginEnable')}
+                          {plugin.enabled ? (
+                            <Power className="w-[18px] h-[18px]" />
+                          ) : (
+                            <PowerOff className="w-[18px] h-[18px]" />
+                          )}
                         </button>
                         <button
                           onClick={() => handleUninstallPlugin(plugin)}
                           disabled={pluginActionKey !== null}
-                          className="px-3 py-1.5 rounded-md text-xs bg-error/10 text-error hover:bg-error/20 disabled:opacity-50"
+                          className="p-1.5 rounded-md text-error/70 hover:text-error hover:bg-error/10 transition-colors disabled:opacity-50"
+                          title={t('skills.pluginManageUninstall')}
+                          aria-label={t('skills.pluginManageUninstall')}
                         >
-                          {t('skills.pluginManageUninstall')}
+                          <Trash2 className="w-[18px] h-[18px]" />
                         </button>
                       </div>
                     </div>
+                    {/* Component summary + per-component controls */}
                     {componentEntries.length > 0 && (
-                      <div className="mt-2 pt-2 border-t border-border space-y-1">
-                        {componentEntries.map((component) => {
-                          const enabled = plugin.componentsEnabled[component];
-                          return (
-                            <div
-                              key={`${plugin.pluginId}:${component}`}
-                              className="flex items-center justify-between gap-2"
-                            >
-                              <span className="text-xs text-text-muted capitalize">
-                                {component} ({plugin.componentCounts[component]})
-                              </span>
+                      <div className="mt-2 pt-2 border-t border-border-muted">
+                        <div className="flex flex-wrap gap-x-4 gap-y-1">
+                          {componentEntries.map((component) => {
+                            const enabled = plugin.componentsEnabled[component];
+                            return (
                               <button
+                                key={`${plugin.pluginId}:${component}`}
                                 onClick={() =>
                                   handleSetComponentEnabled(plugin, component, !enabled)
                                 }
                                 disabled={pluginActionKey !== null}
-                                className={`px-2 py-1 rounded text-xs ${
+                                className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors disabled:opacity-50 ${
                                   enabled
                                     ? 'bg-success/10 text-success hover:bg-success/20'
                                     : 'bg-surface text-text-muted hover:bg-surface-active'
-                                } disabled:opacity-50`}
+                                }`}
+                                title={`${enabled ? t('skills.pluginDisable') : t('skills.pluginEnable')} ${component}`}
+                                aria-label={`${enabled ? t('skills.pluginDisable') : t('skills.pluginEnable')} ${component}`}
                               >
-                                {enabled ? t('skills.pluginDisable') : t('skills.pluginEnable')}
+                                <span className="capitalize">{component}</span>
+                                <span>({plugin.componentCounts[component]})</span>
                               </button>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </div>
