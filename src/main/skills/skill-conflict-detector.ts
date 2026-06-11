@@ -50,9 +50,10 @@ export interface SkillResolution {
 
 const SOURCE_PRIORITY: Record<SkillSource, number> = {
   builtin: 0,
-  user: 1,
-  configured: 2,
-  project: 3,
+  plugin: 1,
+  user: 2,
+  configured: 3,
+  project: 4,
 };
 
 // ---------------------------------------------------------------------------
