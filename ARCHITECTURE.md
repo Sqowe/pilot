@@ -230,6 +230,31 @@ allow explicit choices. Conflicts are surfaced via toast notifications and Setti
 Key files: `skill-conflict-detector.ts` (engine), `agent-runner.ts` (sync decisions),
 `useSkillConflicts.ts` (renderer hook), `SettingsSkills.tsx` (conflict UI).
 
+**Plugin system:**
+
+Plugins are bundles of skills, commands, agents, hooks, and MCP configs installed from
+the Claude marketplace or local `.plugin`/`.zip` archive files. The plugin runtime manages
+source/runtime directory materialization, per-component enablement, and the plugin registry.
+
+Key capabilities:
+
+- **Archive install** — users can import `.plugin` or `.zip` files via Settings UI;
+  extraction uses `yauzl` with path traversal protection, symlink rejection, and size limits.
+- **Orchestrator detection** — at install time, SKILL.md frontmatter is scanned for
+  orchestrator keywords (`orchestrat`, `coordinat`, `delegates to`). The detected entry
+  point is stored as `InstalledPlugin.orchestratorSkill` and advertised to the LLM.
+- **Plugin pinning** — session-scoped, ephemeral. Users pin entire plugins in the
+  ContextPanel; `buildPinnedPluginsDirective()` generates a `<pinned_plugins>` XML block
+  injected into the system prompt (~60-80 tokens per plugin vs ~1480 for individual skills).
+  Validates plugin enabled state and per-component skill enablement before injection.
+  Plugin metadata is XML-escaped and framed as untrusted data.
+
+Key files: `plugin-runtime-service.ts` (install, archive, orchestrator, runtime),
+`plugin-registry-store.ts` (electron-store persistence), `plugin-catalog-service.ts`
+(marketplace), `session-manager.ts` (sessionPinnedPlugins), `agent-runner.ts`
+(buildPinnedPluginsDirective), `ContextPanel.tsx` (pinning UI), `SettingsSkills.tsx`
+(archive import UI).
+
 ### 4.4 Sandbox & Security (`src/main/sandbox/`)
 
 Platform-aware execution facade: `SandboxAdapter` routes to WSL2 (Windows), Lima (macOS),
@@ -385,21 +410,22 @@ Environment variables (`.env.example`): `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_
 
 ## 7. Stability Zones
 
-| Zone                | Components                                                                                                                | Notes                                                                 |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| ✅ **Stable**       | Renderer UI, Config Store, IPC bridge, Session management, i18n, electron-updater, Skills loader, MCP Manager (stdio/SSE) | Production-ready, low risk                                            |
-| ✅ **Stable**       | Skill conflict resolution, Skill workspace profiles, Skill pinning                                                        | Phase 0–5 complete; policy engine, session disable, profile save/load |
-| ✅ **Stable**       | Bash permission engine (trust/denylist), Path containment                                                                 | Security-critical, well-tested                                        |
-| ✅ **Stable**       | System prompt loader (editable sections, workspace overrides, template variables)                                         | 46 tests, file-based, no external deps                                |
-| 🔄 **Semi-Stable**  | `ClaudeAgentRunner` + pi-coding-agent integration                                                                         | Functional but coupled to pre-1.0 SDK; breaks on Pi upgrades          |
-| 🔄 **Semi-Stable**  | Remote channels (Feishu/Slack), GUI-operate server                                                                        | Working but APIs evolve; Feishu SDK updates frequently                |
-| 🔄 **Semi-Stable**  | SQLite persistence layer                                                                                                  | Schema may evolve with memory system                                  |
-| ⚠️ **Experimental** | Sandbox (WSL2/Lima)                                                                                                       | Code-complete, UI-gated, not user-facing yet                          |
-| ⚠️ **Experimental** | Memory system (`src/main/memory/`)                                                                                        | Active retrieval via tools + passive core injection                   |
-| 🔄 **Semi-Stable**  | Schedule system (`src/main/schedule/`)                                                                                    | v2 complete: time windows, catch-up, budgets, run history             |
-| 🔮 **Planned**      | Plugin system, Multi-agent orchestration                                                                                  | See `ROADMAP.md`                                                      |
-| 🔮 **Planned**      | Linux first-class support                                                                                                 | Build-from-source only today                                          |
-| 🔮 **Planned**      | Web version (server mode)                                                                                                 | Architecture supports it (clean IPC boundary)                         |
+| Zone                | Components                                                                                                                | Notes                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| ✅ **Stable**       | Renderer UI, Config Store, IPC bridge, Session management, i18n, electron-updater, Skills loader, MCP Manager (stdio/SSE) | Production-ready, low risk                                             |
+| ✅ **Stable**       | Skill conflict resolution, Skill workspace profiles, Skill pinning                                                        | Phase 0–5 complete; policy engine, session disable, profile save/load  |
+| ✅ **Stable**       | Bash permission engine (trust/denylist), Path containment                                                                 | Security-critical, well-tested                                         |
+| ✅ **Stable**       | System prompt loader (editable sections, workspace overrides, template variables)                                         | 46 tests, file-based, no external deps                                 |
+| 🔄 **Semi-Stable**  | `ClaudeAgentRunner` + pi-coding-agent integration                                                                         | Functional but coupled to pre-1.0 SDK; breaks on Pi upgrades           |
+| 🔄 **Semi-Stable**  | Remote channels (Feishu/Slack), GUI-operate server                                                                        | Working but APIs evolve; Feishu SDK updates frequently                 |
+| 🔄 **Semi-Stable**  | SQLite persistence layer                                                                                                  | Schema may evolve with memory system                                   |
+| ⚠️ **Experimental** | Sandbox (WSL2/Lima)                                                                                                       | Code-complete, UI-gated, not user-facing yet                           |
+| ⚠️ **Experimental** | Memory system (`src/main/memory/`)                                                                                        | Active retrieval via tools + passive core injection                    |
+| 🔄 **Semi-Stable**  | Schedule system (`src/main/schedule/`)                                                                                    | v2 complete: time windows, catch-up, budgets, run history              |
+| 🔄 **Semi-Stable**  | Plugin system (`src/main/skills/plugin-runtime-service.ts`)                                                               | Archive install, orchestrator detection, session-scoped plugin pinning |
+| 🔮 **Planned**      | Multi-agent orchestration                                                                                                 | See `ROADMAP.md`                                                       |
+| 🔮 **Planned**      | Linux first-class support                                                                                                 | Build-from-source only today                                           |
+| 🔮 **Planned**      | Web version (server mode)                                                                                                 | Architecture supports it (clean IPC boundary)                          |
 
 ---
 

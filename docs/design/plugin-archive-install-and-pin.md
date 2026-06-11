@@ -1,6 +1,6 @@
 # Plugin Archive Install + Plugin-Level Pinning
 
-**Status:** Proposed
+**Status:** ✅ Implemented
 **Date:** 2026-06-11
 **Author:** Mike Obodnikov + Kiro
 **Scope:** `plugin-runtime-service.ts`, `main/index.ts`, `preload/index.ts`, `SettingsSkills.tsx`, `agent-runner.ts`, `session-manager.ts`
@@ -345,24 +345,26 @@ plugins: {
 
 ## Implementation Order
 
-1. **Phase 1: Archive Install** (small, self-contained)
+1. **Phase 1: Archive Install** ✅ (commit `117ee25`)
    - Add `extractZip` + `installFromArchive` to `PluginRuntimeService`
    - Add IPC handler + preload bridge
    - Add "Import Plugin" button to SettingsSkills
    - Add i18n keys
-   - Tests: archive extraction + install flow
+   - Tests: archive extraction + install flow (12 tests)
 
-2. **Phase 2: Orchestrator Detection** (small, no UI)
+2. **Phase 2: Orchestrator Detection** ✅ (commit `1567334`)
    - Add `detectOrchestrator` to `PluginRuntimeService`
    - Store in `InstalledPlugin.orchestratorSkill`
-   - Backfill for already-installed plugins on app start (one-time scan)
+   - Backfill for already-installed plugins on app start (deferred via setImmediate)
+   - Tests: detection, backfill, legacy migration (14 tests)
 
-3. **Phase 3: Plugin Pinning** (medium, full-stack)
+3. **Phase 3: Plugin Pinning** ✅ (commit `30b7d8d`)
    - Session state in `SessionManager`
-   - Directive generation in `agent-runner.ts`
+   - Directive generation in `agent-runner.ts` (with XML escaping + untrusted-data framing)
    - IPC channels
-   - ContextPanel UI
-   - Workspace profile support (optional, can defer)
+   - ContextPanel UI (with stale plugin display)
+   - Workspace profile support (deferred to follow-up)
+   - Tests: source-pattern tests for directive, session, IPC, renderer (12 tests)
 
 ---
 
