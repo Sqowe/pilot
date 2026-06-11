@@ -332,6 +332,7 @@ export interface InstalledPlugin {
   componentsEnabled: PluginComponentEnabledState;
   installedAt: number;
   updatedAt: number;
+  orchestratorSkill?: string | null;
 }
 
 export interface PluginInstallResultV2 {

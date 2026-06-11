@@ -165,6 +165,7 @@ export class PluginRuntimeService {
     const now = Date.now();
     const defaultComponentState = this.getDefaultComponentState(componentCounts);
     const hasAnyComponent = this.hasAnyEnabledComponent(defaultComponentState, componentCounts);
+    const orchestratorSkill = this.detectOrchestrator(sourcePath);
     const installedPlugin: InstalledPlugin = {
       pluginId,
       name: displayName,
@@ -178,6 +179,10 @@ export class PluginRuntimeService {
       componentsEnabled: defaultComponentState,
       installedAt: now,
       updatedAt: now,
+      // undefined = scan failed (will be retried on next backfill)
+      // null = scan succeeded, no orchestrator found
+      // string = orchestrator skill name
+      orchestratorSkill: orchestratorSkill,
     };
 
     pluginRegistryStore.save(installedPlugin);
@@ -1096,6 +1101,189 @@ export class PluginRuntimeService {
     } catch (error) {
       logError(`[PluginRuntime] Failed to parse plugin manifest: ${manifestPath}`, error);
       return null;
+    }
+  }
+
+  /**
+   * Detect the orchestrator skill within a plugin's skills directory.
+   * Scans SKILL.md frontmatter descriptions for orchestrator keywords.
+   * Returns:
+   *   - string: orchestrator skill name found
+   *   - null: scan completed successfully, no orchestrator found
+   *   - undefined: scan failed due to filesystem error (caller should retry later)
+   */
+  private detectOrchestrator(pluginRootPath: string): string | null | undefined {
+    try {
+      // First verify the plugin root exists — if not, this is a missing/moved plugin
+      let rootStat: fs.Stats;
+      try {
+        rootStat = fs.statSync(pluginRootPath);
+      } catch (err) {
+        // Plugin root inaccessible — signal scan failure for retry
+        logError(`[PluginRuntime] Cannot access plugin root: ${pluginRootPath}`, err);
+        return undefined;
+      }
+      if (!rootStat.isDirectory()) return undefined;
+
+      const skillsDir = path.join(pluginRootPath, 'skills');
+
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(skillsDir);
+      } catch (err) {
+        // ENOENT = skills dir doesn't exist within a valid plugin — no orchestrator
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        // Other errors (EACCES, EIO, etc.) = scan failure
+        logError(`[PluginRuntime] Cannot access skills dir: ${skillsDir}`, err);
+        return undefined;
+      }
+
+      if (!stat.isDirectory()) return null;
+
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+      } catch (err) {
+        logError(`[PluginRuntime] Cannot read skills dir: ${skillsDir}`, err);
+        return undefined;
+      }
+
+      // Sort for deterministic selection when multiple candidates exist
+      const sortedEntries = entries
+        .filter((e) => e.isDirectory())
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      for (const entry of sortedEntries) {
+        const skillMd = path.join(skillsDir, entry.name, 'SKILL.md');
+
+        let content: string;
+        try {
+          content = fs.readFileSync(skillMd, 'utf8');
+        } catch {
+          // Missing or unreadable SKILL.md — skip this skill, continue scanning
+          continue;
+        }
+
+        const frontmatter = this.extractFrontmatter(content);
+        if (
+          frontmatter?.description &&
+          /orchestrat|coordinat|delegates?\s+to/i.test(frontmatter.description)
+        ) {
+          log(`[PluginRuntime] Detected orchestrator skill: ${entry.name} in ${pluginRootPath}`);
+          return entry.name;
+        }
+      }
+      return null;
+    } catch (error) {
+      // Unexpected error — treat as scan failure
+      logError(
+        `[PluginRuntime] Unexpected error scanning for orchestrator in ${pluginRootPath}`,
+        error
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * Extract YAML-like frontmatter from a SKILL.md file content.
+   * Returns parsed key-value pairs from the --- delimited block.
+   * Supports single-line values and multiline folded/literal scalars (> or |).
+   */
+  private extractFrontmatter(content: string): Record<string, string> | null {
+    const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
+    if (!match) return null;
+
+    const lines = match[1].split('\n');
+    const result: Record<string, string> = {};
+    let currentKey = '';
+    let currentValue = '';
+    let isMultiline = false;
+
+    const commitEntry = () => {
+      if (currentKey) {
+        result[currentKey] = currentValue.trim();
+      }
+    };
+
+    for (const line of lines) {
+      // Check if this is a new key-value pair (non-indented, has colon)
+      const keyMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)\s*:\s*(.*)/);
+
+      if (keyMatch && !isMultiline) {
+        commitEntry();
+        currentKey = keyMatch[1];
+        let value = keyMatch[2].trim();
+
+        // Check for multiline indicators
+        if (value === '>' || value === '|' || value === '>-' || value === '|-') {
+          isMultiline = true;
+          currentValue = '';
+          continue;
+        }
+
+        // Strip surrounding quotes if present
+        if (
+          (value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))
+        ) {
+          value = value.slice(1, -1);
+        }
+        currentValue = value;
+        isMultiline = false;
+      } else if (isMultiline || (currentKey && /^\s+/.test(line))) {
+        // Continuation line for multiline value (indented)
+        if (/^\s+/.test(line)) {
+          isMultiline = true;
+          currentValue += (currentValue ? ' ' : '') + line.trim();
+        } else if (line.trim() === '') {
+          // Empty line in multiline — add space separator
+          currentValue += ' ';
+        } else {
+          // Non-indented, non-empty line that isn't a key — end multiline
+          isMultiline = false;
+          commitEntry();
+          currentKey = '';
+          currentValue = '';
+        }
+      }
+    }
+
+    commitEntry();
+    return Object.keys(result).length > 0 ? result : null;
+  }
+
+  /**
+   * Backfill orchestrator detection for all installed plugins that haven't
+   * been scanned yet. Called once on service initialization.
+   * Plugins with orchestratorSkill === null have already been scanned (no orchestrator).
+   * Plugins with orchestratorSkill === undefined have never been scanned.
+   * Best-effort: errors are logged but never crash app startup.
+   */
+  backfillOrchestrators(): void {
+    try {
+      const plugins = pluginRegistryStore.list();
+      for (const plugin of plugins) {
+        // Skip if already scanned (either found an orchestrator or explicitly set to null)
+        if (plugin.orchestratorSkill !== undefined) continue;
+
+        try {
+          const orchestrator = this.detectOrchestrator(plugin.sourcePath);
+          // undefined means scan failed — do not persist, allow retry on next startup
+          if (orchestrator === undefined) continue;
+
+          // Persist result (string or null) to avoid re-scanning
+          plugin.orchestratorSkill = orchestrator;
+          plugin.updatedAt = Date.now();
+          pluginRegistryStore.save(plugin);
+          if (orchestrator) {
+            log(`[PluginRuntime] Backfilled orchestrator for ${plugin.name}: ${orchestrator}`);
+          }
+        } catch (error) {
+          logError(`[PluginRuntime] Error backfilling orchestrator for ${plugin.name}`, error);
+        }
+      }
+    } catch (error) {
+      logError('[PluginRuntime] Error during orchestrator backfill', error);
     }
   }
 

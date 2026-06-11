@@ -928,6 +928,8 @@ app
     const db = initDatabase();
 
     pluginRuntimeService = new PluginRuntimeService(new PluginCatalogService());
+    // Defer orchestrator backfill to avoid blocking startup with synchronous disk I/O
+    setImmediate(() => pluginRuntimeService?.backfillOrchestrators());
     memoryService = new MemoryService(db);
     const extensionManager = new AgentRuntimeExtensionManager([new MemoryExtension(memoryService)]);
 
