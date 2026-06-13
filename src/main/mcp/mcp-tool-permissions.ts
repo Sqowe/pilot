@@ -22,9 +22,11 @@ import * as path from 'path';
 import { log, logWarn } from '../utils/logger';
 import type { MCPServerConfig } from './mcp-manager';
 import { isToolLikelyReadOnly } from '../../shared/mcp-tool-classification';
+import type { McpToolAnnotations } from '../../shared/mcp-tool-classification';
 
 // Re-export for convenience
 export { isToolLikelyReadOnly } from '../../shared/mcp-tool-classification';
+export type { McpToolAnnotations } from '../../shared/mcp-tool-classification';
 
 // ---------------------------------------------------------------------------
 // MCP tool name parsing
@@ -59,13 +61,15 @@ export function parseMcpToolName(
  * @param shortToolName - The tool's short name (without mcp__Server__ prefix)
  * @param workspacePolicy - Optional workspace-level policy override
  * @param workspaceTrusted - Whether the workspace is trusted (only trusted workspaces can grant 'allow')
+ * @param annotations - Optional MCP ToolAnnotations from the server (readOnlyHint, etc.)
  * @returns 'allow' | 'deny' | 'ask' | null (null = no opinion, fall through to generic rules)
  */
 export function decideMcpToolPermission(
   serverConfig: MCPServerConfig | undefined,
   shortToolName: string,
   workspacePolicy?: WorkspaceMcpPermissions | null,
-  workspaceTrusted: boolean = false
+  workspaceTrusted: boolean = false,
+  annotations?: McpToolAnnotations | null
 ): 'allow' | 'deny' | 'ask' | null {
   if (!serverConfig) return null;
 
@@ -87,7 +91,11 @@ export function decideMcpToolPermission(
       }
       // Workspace-level default policy for this server
       if (wsServerPolicy.defaultPolicy) {
-        const decision = applyDefaultPolicy(wsServerPolicy.defaultPolicy, shortToolName);
+        const decision = applyDefaultPolicy(
+          wsServerPolicy.defaultPolicy,
+          shortToolName,
+          annotations
+        );
         if (decision === 'allow' && !workspaceTrusted) {
           // Untrusted workspace cannot grant allow — treat as 'ask'
           return 'ask';
@@ -107,7 +115,7 @@ export function decideMcpToolPermission(
 
   // 3. Apply server-level default policy (user-configured, always trusted)
   if (serverConfig.defaultToolPolicy) {
-    return applyDefaultPolicy(serverConfig.defaultToolPolicy, shortToolName);
+    return applyDefaultPolicy(serverConfig.defaultToolPolicy, shortToolName, annotations);
   }
 
   // 4. No opinion — fall through to the generic permission rule engine
@@ -119,7 +127,8 @@ export function decideMcpToolPermission(
  */
 function applyDefaultPolicy(
   policy: 'allow-all' | 'allow-reads' | 'ask-all' | 'deny-all',
-  shortToolName: string
+  shortToolName: string,
+  annotations?: McpToolAnnotations | null
 ): 'allow' | 'deny' | 'ask' {
   switch (policy) {
     case 'allow-all':
@@ -129,7 +138,7 @@ function applyDefaultPolicy(
     case 'ask-all':
       return 'ask';
     case 'allow-reads':
-      return isToolLikelyReadOnly(shortToolName) ? 'allow' : 'ask';
+      return isToolLikelyReadOnly(shortToolName, annotations) ? 'allow' : 'ask';
     default:
       return 'ask';
   }

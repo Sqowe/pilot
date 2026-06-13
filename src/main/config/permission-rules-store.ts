@@ -21,6 +21,7 @@ import {
   recordMcpToolApproval,
 } from '../mcp/mcp-tool-permissions';
 import type { MCPServerConfig } from '../mcp/mcp-manager';
+import type { McpToolAnnotations } from '../mcp/mcp-tool-permissions';
 
 // Mirrors the renderer defaults in src/renderer/store/index.ts
 const DEFAULT_RULES: PermissionRule[] = [
@@ -48,6 +49,10 @@ const alwaysAllowBySession = new Map<string, Set<string>>();
 /** Callback to look up an MCP server config by server name. Set by the agent runner. */
 let mcpServerConfigLookup: ((serverName: string) => MCPServerConfig | undefined) | null = null;
 
+/** Callback to look up MCP tool annotations by full prefixed tool name. */
+let mcpToolAnnotationsLookup: ((fullToolName: string) => McpToolAnnotations | undefined) | null =
+  null;
+
 /** Per-session working directory, used to load workspace MCP permission files. */
 const sessionCwdMap = new Map<string, string>();
 
@@ -59,6 +64,16 @@ export function setMcpServerConfigLookup(
   lookup: (serverName: string) => MCPServerConfig | undefined
 ): void {
   mcpServerConfigLookup = lookup;
+}
+
+/**
+ * Register the MCP tool annotations lookup function.
+ * Called once during app initialization (from agent-runner or main/index.ts).
+ */
+export function setMcpToolAnnotationsLookup(
+  lookup: (fullToolName: string) => McpToolAnnotations | undefined
+): void {
+  mcpToolAnnotationsLookup = lookup;
 }
 
 /**
@@ -519,11 +534,14 @@ export function decidePermission(
     // They can restrict (deny/ask) but cannot grant (allow) unless workspace is trusted.
     // TODO: integrate with workspace trust system when available.
     const workspaceTrusted = false;
+    // Look up server-provided annotations (readOnlyHint, etc.) for enhanced classification
+    const annotations = mcpToolAnnotationsLookup ? mcpToolAnnotationsLookup(toolName) : undefined;
     mcpDecision = decideMcpToolPermission(
       serverConfig,
       mcpParsed.toolName,
       workspacePolicy,
-      workspaceTrusted
+      workspaceTrusted,
+      annotations
     );
     // 'deny' and 'allow' are authoritative — short-circuit immediately.
     // 'ask' falls through to session memory check below.

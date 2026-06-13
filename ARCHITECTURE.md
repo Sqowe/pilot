@@ -3,7 +3,7 @@
 ## 1. Purpose of This Document
 
 This is the architectural source of truth for Open Cowork, an Electron desktop AI agent
-application. It describes the system as it exists today (v3.3.0-sqowe.7), not as imagined.
+application. It describes the system as it exists today (v3.3.0-sqowe.8), not as imagined.
 
 Any AI coder working on this repository MUST read this document first to understand
 structure, boundaries, and where to find authoritative coding rules. This document
@@ -150,7 +150,7 @@ Policy levels (first match wins):
 2. **Per-tool override** — `MCPServerConfig.toolPermissions` (sparse, exception-based)
 3. **Server default policy** — `MCPServerConfig.defaultToolPolicy`:
    - `allow-all`: auto-approve every tool without prompting
-   - `allow-reads`: auto-approve tools classified as read-only (heuristic: `get_*`, `list_*`, etc.)
+   - `allow-reads`: auto-approve tools classified as read-only (uses MCP `annotations.readOnlyHint` if available, falls back to name-based heuristic detecting action verbs as prefix or infix)
    - `ask-all`: always prompt (default, backward-compatible)
    - `deny-all`: block all tools from this server
 4. **Generic permission rules** — existing `PermissionRule[]` engine (fallback)
@@ -201,6 +201,59 @@ prompt bloat. Shared constants live in `src/shared/skill-pinning-constants.ts`.
 
 Key files: `session-manager.ts` (state), `agent-runner.ts` (directive injection),
 `skill-pinning-constants.ts` (shared validation).
+
+**Per-session skill disable & workspace profiles:**
+
+Skills can be disabled per-session to reduce context window usage. The pattern mirrors
+MCP server toggles with a three-layer resolution (highest priority wins):
+
+1. **Session override** (ephemeral) — user removes skills in ContextPanel, stored in-memory
+   in `SessionManager.sessionDisabledSkills` Map. Cleared on session delete.
+2. **Workspace profile** — `{cwd}/.cowork/skills-profile.json` with `pinned`/`disabled` arrays.
+   Committable to git, team-shared. Seeded into session state on `session.start`.
+3. **Global config** — `skillConflictConfig.disabledSkills` in electron-store (Settings UI).
+
+Agent-runner filters disabled skills from `additionalSkillPaths` before passing to the SDK.
+Welcome page and ContextPanel both load/save workspace profiles via IPC.
+
+Key files: `skills-workspace-profile.ts` (loader), `session-manager.ts` (state),
+`agent-runner.ts` (filtering), `skill-conflict-types.ts` (shared types),
+`skills-profile-derive.ts` (renderer dirty-state utility).
+
+**Skill conflict resolution:**
+
+When a custom skill and built-in skill share the same name, the conflict policy
+(`custom-wins` / `builtin-wins` / `ask`) determines which version is loaded at runtime.
+The detector scans builtin, user, and configured directories. Per-skill source overrides
+allow explicit choices. Conflicts are surfaced via toast notifications and Settings UI.
+
+Key files: `skill-conflict-detector.ts` (engine), `agent-runner.ts` (sync decisions),
+`useSkillConflicts.ts` (renderer hook), `SettingsSkills.tsx` (conflict UI).
+
+**Plugin system:**
+
+Plugins are bundles of skills, commands, agents, hooks, and MCP configs installed from
+the Claude marketplace or local `.plugin`/`.zip` archive files. The plugin runtime manages
+source/runtime directory materialization, per-component enablement, and the plugin registry.
+
+Key capabilities:
+
+- **Archive install** — users can import `.plugin` or `.zip` files via Settings UI;
+  extraction uses `yauzl` with path traversal protection, symlink rejection, and size limits.
+- **Orchestrator detection** — at install time, SKILL.md frontmatter is scanned for
+  orchestrator keywords (`orchestrat`, `coordinat`, `delegates to`). The detected entry
+  point is stored as `InstalledPlugin.orchestratorSkill` and advertised to the LLM.
+- **Plugin pinning** — session-scoped, ephemeral. Users pin entire plugins in the
+  ContextPanel; `buildPinnedPluginsDirective()` generates a `<pinned_plugins>` XML block
+  injected into the system prompt (~60-80 tokens per plugin vs ~1480 for individual skills).
+  Validates plugin enabled state and per-component skill enablement before injection.
+  Plugin metadata is XML-escaped and framed as untrusted data.
+
+Key files: `plugin-runtime-service.ts` (install, archive, orchestrator, runtime),
+`plugin-registry-store.ts` (electron-store persistence), `plugin-catalog-service.ts`
+(marketplace), `session-manager.ts` (sessionPinnedPlugins), `agent-runner.ts`
+(buildPinnedPluginsDirective), `ContextPanel.tsx` (pinning UI), `SettingsSkills.tsx`
+(archive import UI).
 
 ### 4.4 Sandbox & Security (`src/main/sandbox/`)
 
@@ -347,6 +400,7 @@ electron-store (JSON)          better-sqlite3
 | TypeScript        | 5.3+                             | Strict mode; `tsconfig.json` + `tsconfig.node.json`   |
 | OS targets        | macOS (arm64/x64), Windows (x64) | Linux: build-from-source only                         |
 | Python            | Optional, for skills             | Bundled via `scripts/prepare-python.js`               |
+| uv                | Required for skill scripts       | PEP 723 inline deps; user-installed or bundled        |
 | Commit convention | Conventional Commits             | `commitlint.config.cjs` + Husky                       |
 
 Environment variables (`.env.example`): `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
@@ -356,20 +410,22 @@ Environment variables (`.env.example`): `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_
 
 ## 7. Stability Zones
 
-| Zone                | Components                                                                                                                | Notes                                                        |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| ✅ **Stable**       | Renderer UI, Config Store, IPC bridge, Session management, i18n, electron-updater, Skills loader, MCP Manager (stdio/SSE) | Production-ready, low risk                                   |
-| ✅ **Stable**       | Bash permission engine (trust/denylist), Path containment                                                                 | Security-critical, well-tested                               |
-| ✅ **Stable**       | System prompt loader (editable sections, workspace overrides, template variables)                                         | 46 tests, file-based, no external deps                       |
-| 🔄 **Semi-Stable**  | `ClaudeAgentRunner` + pi-coding-agent integration                                                                         | Functional but coupled to pre-1.0 SDK; breaks on Pi upgrades |
-| 🔄 **Semi-Stable**  | Remote channels (Feishu/Slack), GUI-operate server                                                                        | Working but APIs evolve; Feishu SDK updates frequently       |
-| 🔄 **Semi-Stable**  | SQLite persistence layer                                                                                                  | Schema may evolve with memory system                         |
-| ⚠️ **Experimental** | Sandbox (WSL2/Lima)                                                                                                       | Code-complete, UI-gated, not user-facing yet                 |
-| ⚠️ **Experimental** | Memory system (`src/main/memory/`)                                                                                        | Active retrieval via tools + passive core injection          |
-| 🔄 **Semi-Stable**  | Schedule system (`src/main/schedule/`)                                                                                    | v2 complete: time windows, catch-up, budgets, run history    |
-| 🔮 **Planned**      | Plugin system, Multi-agent orchestration                                                                                  | See `ROADMAP.md`                                             |
-| 🔮 **Planned**      | Linux first-class support                                                                                                 | Build-from-source only today                                 |
-| 🔮 **Planned**      | Web version (server mode)                                                                                                 | Architecture supports it (clean IPC boundary)                |
+| Zone                | Components                                                                                                                | Notes                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| ✅ **Stable**       | Renderer UI, Config Store, IPC bridge, Session management, i18n, electron-updater, Skills loader, MCP Manager (stdio/SSE) | Production-ready, low risk                                             |
+| ✅ **Stable**       | Skill conflict resolution, Skill workspace profiles, Skill pinning                                                        | Phase 0–5 complete; policy engine, session disable, profile save/load  |
+| ✅ **Stable**       | Bash permission engine (trust/denylist), Path containment                                                                 | Security-critical, well-tested                                         |
+| ✅ **Stable**       | System prompt loader (editable sections, workspace overrides, template variables)                                         | 46 tests, file-based, no external deps                                 |
+| 🔄 **Semi-Stable**  | `ClaudeAgentRunner` + pi-coding-agent integration                                                                         | Functional but coupled to pre-1.0 SDK; breaks on Pi upgrades           |
+| 🔄 **Semi-Stable**  | Remote channels (Feishu/Slack), GUI-operate server                                                                        | Working but APIs evolve; Feishu SDK updates frequently                 |
+| 🔄 **Semi-Stable**  | SQLite persistence layer                                                                                                  | Schema may evolve with memory system                                   |
+| ⚠️ **Experimental** | Sandbox (WSL2/Lima)                                                                                                       | Code-complete, UI-gated, not user-facing yet                           |
+| ⚠️ **Experimental** | Memory system (`src/main/memory/`)                                                                                        | Active retrieval via tools + passive core injection                    |
+| 🔄 **Semi-Stable**  | Schedule system (`src/main/schedule/`)                                                                                    | v2 complete: time windows, catch-up, budgets, run history              |
+| 🔄 **Semi-Stable**  | Plugin system (`src/main/skills/plugin-runtime-service.ts`)                                                               | Archive install, orchestrator detection, session-scoped plugin pinning |
+| 🔮 **Planned**      | Multi-agent orchestration                                                                                                 | See `ROADMAP.md`                                                       |
+| 🔮 **Planned**      | Linux first-class support                                                                                                 | Build-from-source only today                                           |
+| 🔮 **Planned**      | Web version (server mode)                                                                                                 | Architecture supports it (clean IPC boundary)                          |
 
 ---
 
@@ -386,6 +442,7 @@ the dedicated rule files listed below.
 | `BASH_COMMAND_RESTRICTIONS.md` | Bash permission engine internals, trust/denylist semantics, pipeline splitting, shell syntax      | ✅ Active |
 | `AI_FRONTEND.md`               | React/Zustand/Tailwind conventions, i18n, accessibility                                           | ✅ Active |
 | `AI_MAIN_PROCESS.md`           | Pi SDK integration, IPC patterns, MCP bridging, SQLite, security boundaries                       | ✅ Active |
+| `AI_SKILLS_MAINTENANCE.md`     | Builtin skill dependency management, PEP 723 metadata, upstream sync rules                        | ✅ Active |
 
 ### Rule Precedence (Highest → Lowest)
 
@@ -405,6 +462,7 @@ the dedicated rule files listed below.
 - **MCP servers run on host only** — never route MCP spawns through sandbox bridges
 - **Renderer must never import Node/Electron directly** — all access via `window.electronAPI`
 - **Security changes require explicit confirmation** — path containment, permission hooks, sandbox boundaries
+- **Builtin skill scripts use `uv run`** — all `.claude/skills/*/scripts/*.py` with third-party imports must have PEP 723 inline metadata; after upstream sync run `scripts/reapply-skill-deps.py`
 - **Check `docs/chats/` for prior decisions** before proposing architectural changes
 - If any rule conflict or ambiguity is detected, **stop and ask for clarification**
 

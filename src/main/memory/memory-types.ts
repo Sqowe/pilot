@@ -37,6 +37,10 @@ export interface CoreMemoryEntry {
   value: string;
   /** Workspaces where this entry was observed/confirmed. */
   sourceWorkspaces?: string[];
+  /** If true, entry never promotes to global — stays in its source workspace(s) only. */
+  workspacePinned?: boolean;
+  /** Workspace hash for disambiguation of pinned entries from different workspaces. */
+  scopeHash?: string;
 }
 
 export interface MemoryRetrievalMetrics {

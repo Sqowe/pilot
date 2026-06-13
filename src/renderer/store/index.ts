@@ -14,7 +14,7 @@ import type {
 import { applySessionUpdate } from '../utils/session-update';
 
 export type GlobalNoticeType = 'info' | 'warning' | 'error' | 'success';
-export type GlobalNoticeAction = 'open_api_settings';
+export type GlobalNoticeAction = 'open_api_settings' | 'navigate_settings_skills';
 
 export interface GlobalNotice {
   id: string;

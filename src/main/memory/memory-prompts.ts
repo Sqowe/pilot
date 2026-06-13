@@ -94,6 +94,11 @@ Chunking policy:
 - A session may have 1-8 chunks; do not over-fragment
 - source_turns are 1-based and every turn must be covered by at least one chunk
 
+Language policy:
+- Write summaries, details, and keywords in the same language(s) the user used in the conversation. Do not translate.
+- If the conversation mixes languages (e.g., native language + English technical terms), the output should mix them the same way.
+- Keywords should include terms in all languages present in the conversation.
+
 Write retrieval-friendly content:
 - session_summary: the overall purpose and result of the session
 - summary: short, specific, high-signal retrieval line

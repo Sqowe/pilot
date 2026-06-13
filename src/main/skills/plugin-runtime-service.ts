@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { app } from 'electron';
@@ -164,6 +165,7 @@ export class PluginRuntimeService {
     const now = Date.now();
     const defaultComponentState = this.getDefaultComponentState(componentCounts);
     const hasAnyComponent = this.hasAnyEnabledComponent(defaultComponentState, componentCounts);
+    const orchestratorSkill = this.detectOrchestrator(sourcePath);
     const installedPlugin: InstalledPlugin = {
       pluginId,
       name: displayName,
@@ -177,6 +179,10 @@ export class PluginRuntimeService {
       componentsEnabled: defaultComponentState,
       installedAt: now,
       updatedAt: now,
+      // undefined = scan failed (will be retried on next backfill)
+      // null = scan succeeded, no orchestrator found
+      // string = orchestrator skill name
+      orchestratorSkill: orchestratorSkill,
     };
 
     pluginRegistryStore.save(installedPlugin);
@@ -201,6 +207,237 @@ export class PluginRuntimeService {
       `[PluginRuntime] Imported plugin: ${result.plugin.name} (${result.plugin.pluginId}), components=${JSON.stringify(result.plugin.componentCounts)}`
     );
     return result;
+  }
+
+  /**
+   * Install a plugin from a local .plugin or .zip archive file.
+   * Extracts the archive to a temporary directory and delegates to installFromDirectory.
+   */
+  async installFromArchive(archivePath: string): Promise<PluginInstallResultV2> {
+    if (!fs.existsSync(archivePath)) {
+      throw new Error('Plugin archive not found');
+    }
+
+    const stat = fs.statSync(archivePath);
+    if (!stat.isFile()) {
+      throw new Error('Plugin archive path is not a file');
+    }
+
+    const ext = path.extname(archivePath).toLowerCase();
+    if (ext !== '.plugin' && ext !== '.zip') {
+      throw new Error('Unsupported archive format. Expected .plugin or .zip file.');
+    }
+
+    // Use mkdtempSync for guaranteed unique temp directory
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cowork-plugin-'));
+
+    try {
+      await this.extractZipSafe(archivePath, tempDir);
+
+      // Handle archives that contain a single top-level directory (common pattern).
+      // Ignore known metadata entries like __MACOSX, .DS_Store, etc.
+      const topEntries = fs.readdirSync(tempDir, { withFileTypes: true });
+      const meaningfulEntries = topEntries.filter((e) => {
+        const name = e.name;
+        return (
+          e.isDirectory() && name !== '__MACOSX' && name !== '.DS_Store' && !name.startsWith('._')
+        );
+      });
+
+      let pluginRoot = tempDir;
+      if (meaningfulEntries.length === 1) {
+        const singleDir = path.join(tempDir, meaningfulEntries[0].name);
+        // Check if the plugin structure is inside the single directory
+        const hasPluginMarker =
+          fs.existsSync(path.join(singleDir, '.claude-plugin', 'plugin.json')) ||
+          fs.existsSync(path.join(singleDir, 'skills'));
+        if (hasPluginMarker) {
+          pluginRoot = singleDir;
+        }
+      }
+
+      const result = await this.installFromDirectory(pluginRoot);
+      log(`[PluginRuntime] Archive install completed: ${result.plugin.name} from ${archivePath}`);
+      return result;
+    } finally {
+      // Clean up temp directory; don't mask original errors on cleanup failure
+      try {
+        await this.removePathWithRetries(tempDir);
+      } catch (cleanupErr) {
+        logError(`[PluginRuntime] Failed to clean up temp directory: ${tempDir}`, cleanupErr);
+      }
+    }
+  }
+
+  /**
+   * Safely extract a zip/plugin archive to a target directory.
+   * Uses yauzl directly for full control: validates each entry before writing,
+   * rejects symlinks, enforces path traversal protection, and counts actual bytes.
+   */
+  private async extractZipSafe(archivePath: string, targetDir: string): Promise<void> {
+    const absoluteArchive = path.resolve(archivePath);
+    const absoluteTarget = path.resolve(targetDir);
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const yauzl = require('yauzl') as typeof import('yauzl');
+
+    const MAX_ENTRIES = 10000;
+    const MAX_TOTAL_SIZE = 500 * 1024 * 1024; // 500 MB
+
+    const zipFile = await new Promise<import('yauzl').ZipFile>((resolve, reject) => {
+      yauzl.open(absoluteArchive, { lazyEntries: true, decodeStrings: true }, (err, zf) => {
+        if (err) return reject(err);
+        if (!zf) return reject(new Error('Failed to open zip file'));
+        resolve(zf);
+      });
+    });
+
+    let entryCount = 0;
+    let totalBytesWritten = 0;
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+
+        const safeReject = (err: Error) => {
+          if (settled) return;
+          settled = true;
+          try {
+            zipFile.close();
+          } catch {
+            /* already closed */
+          }
+          reject(err);
+        };
+
+        const safeResolve = () => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        };
+
+        zipFile.on('error', safeReject);
+
+        zipFile.on('entry', (entry: import('yauzl').Entry) => {
+          if (settled) return;
+
+          try {
+            entryCount++;
+            if (entryCount > MAX_ENTRIES) {
+              return safeReject(
+                new Error(`Archive contains too many entries (>${MAX_ENTRIES}). Aborting.`)
+              );
+            }
+
+            const fileName = entry.fileName;
+
+            // Reject absolute paths
+            if (fileName.startsWith('/')) {
+              return safeReject(
+                new Error(`Unsafe archive entry (absolute path): ${fileName}. Aborting.`)
+              );
+            }
+
+            // Reject path traversal
+            const normalized = path.normalize(fileName);
+            if (normalized.startsWith('..') || normalized.includes(`${path.sep}..`)) {
+              return safeReject(
+                new Error(`Unsafe archive entry (path traversal): ${fileName}. Aborting.`)
+              );
+            }
+
+            // Reject symlinks: external file attributes encode Unix mode in upper 16 bits
+            const externalAttrs = entry.externalFileAttributes;
+            const unixMode = (externalAttrs >>> 16) & 0xffff;
+            const S_IFLNK = 0o120000;
+            if (unixMode !== 0 && (unixMode & 0o170000) === S_IFLNK) {
+              return safeReject(
+                new Error(`Unsafe archive entry (symlink): ${fileName}. Aborting.`)
+              );
+            }
+
+            const destPath = path.join(absoluteTarget, fileName);
+
+            // Verify resolved path is within target directory
+            const resolvedDest = path.resolve(destPath);
+            if (
+              !resolvedDest.startsWith(absoluteTarget + path.sep) &&
+              resolvedDest !== absoluteTarget
+            ) {
+              return safeReject(
+                new Error(`Archive entry escapes target directory: ${fileName}. Aborting.`)
+              );
+            }
+
+            // Directory entry
+            if (fileName.endsWith('/')) {
+              fs.mkdirSync(destPath, { recursive: true });
+              zipFile.readEntry();
+              return;
+            }
+
+            // File entry — check projected size
+            if (totalBytesWritten + entry.uncompressedSize > MAX_TOTAL_SIZE) {
+              return safeReject(
+                new Error(`Archive uncompressed size exceeds ${MAX_TOTAL_SIZE} bytes. Aborting.`)
+              );
+            }
+
+            // Ensure parent directory exists (and validate it's not a symlink)
+            const parentDir = path.dirname(destPath);
+            fs.mkdirSync(parentDir, { recursive: true });
+            const parentStat = fs.lstatSync(parentDir);
+            if (parentStat.isSymbolicLink()) {
+              return safeReject(
+                new Error(`Parent directory is a symlink for entry: ${fileName}. Aborting.`)
+              );
+            }
+
+            zipFile.openReadStream(entry, (err, readStream) => {
+              if (settled) return;
+              if (err) return safeReject(err);
+              if (!readStream) return safeReject(new Error(`Failed to read entry: ${fileName}`));
+
+              const writeStream = fs.createWriteStream(destPath);
+
+              readStream.on('data', (chunk: Buffer) => {
+                if (settled) return;
+                totalBytesWritten += chunk.length;
+                if (totalBytesWritten > MAX_TOTAL_SIZE) {
+                  readStream.destroy();
+                  writeStream.destroy();
+                  safeReject(
+                    new Error(`Archive extraction exceeded ${MAX_TOTAL_SIZE} bytes. Aborting.`)
+                  );
+                }
+              });
+
+              readStream.pipe(writeStream);
+
+              writeStream.on('finish', () => {
+                if (!settled) zipFile.readEntry();
+              });
+
+              writeStream.on('error', (writeErr) => safeReject(writeErr));
+              readStream.on('error', (readErr) => safeReject(readErr));
+            });
+          } catch (err) {
+            safeReject(err instanceof Error ? err : new Error(String(err)));
+          }
+        });
+
+        zipFile.on('end', safeResolve);
+
+        zipFile.readEntry();
+      });
+    } finally {
+      // Ensure zipFile is closed even on unexpected errors
+      try {
+        zipFile.close();
+      } catch {
+        // Already closed
+      }
+    }
   }
 
   async setEnabled(pluginId: string, enabled: boolean): Promise<PluginToggleResult> {
@@ -864,6 +1101,189 @@ export class PluginRuntimeService {
     } catch (error) {
       logError(`[PluginRuntime] Failed to parse plugin manifest: ${manifestPath}`, error);
       return null;
+    }
+  }
+
+  /**
+   * Detect the orchestrator skill within a plugin's skills directory.
+   * Scans SKILL.md frontmatter descriptions for orchestrator keywords.
+   * Returns:
+   *   - string: orchestrator skill name found
+   *   - null: scan completed successfully, no orchestrator found
+   *   - undefined: scan failed due to filesystem error (caller should retry later)
+   */
+  private detectOrchestrator(pluginRootPath: string): string | null | undefined {
+    try {
+      // First verify the plugin root exists — if not, this is a missing/moved plugin
+      let rootStat: fs.Stats;
+      try {
+        rootStat = fs.statSync(pluginRootPath);
+      } catch (err) {
+        // Plugin root inaccessible — signal scan failure for retry
+        logError(`[PluginRuntime] Cannot access plugin root: ${pluginRootPath}`, err);
+        return undefined;
+      }
+      if (!rootStat.isDirectory()) return undefined;
+
+      const skillsDir = path.join(pluginRootPath, 'skills');
+
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(skillsDir);
+      } catch (err) {
+        // ENOENT = skills dir doesn't exist within a valid plugin — no orchestrator
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        // Other errors (EACCES, EIO, etc.) = scan failure
+        logError(`[PluginRuntime] Cannot access skills dir: ${skillsDir}`, err);
+        return undefined;
+      }
+
+      if (!stat.isDirectory()) return null;
+
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+      } catch (err) {
+        logError(`[PluginRuntime] Cannot read skills dir: ${skillsDir}`, err);
+        return undefined;
+      }
+
+      // Sort for deterministic selection when multiple candidates exist
+      const sortedEntries = entries
+        .filter((e) => e.isDirectory())
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      for (const entry of sortedEntries) {
+        const skillMd = path.join(skillsDir, entry.name, 'SKILL.md');
+
+        let content: string;
+        try {
+          content = fs.readFileSync(skillMd, 'utf8');
+        } catch {
+          // Missing or unreadable SKILL.md — skip this skill, continue scanning
+          continue;
+        }
+
+        const frontmatter = this.extractFrontmatter(content);
+        if (
+          frontmatter?.description &&
+          /orchestrat|coordinat|delegates?\s+to/i.test(frontmatter.description)
+        ) {
+          log(`[PluginRuntime] Detected orchestrator skill: ${entry.name} in ${pluginRootPath}`);
+          return entry.name;
+        }
+      }
+      return null;
+    } catch (error) {
+      // Unexpected error — treat as scan failure
+      logError(
+        `[PluginRuntime] Unexpected error scanning for orchestrator in ${pluginRootPath}`,
+        error
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * Extract YAML-like frontmatter from a SKILL.md file content.
+   * Returns parsed key-value pairs from the --- delimited block.
+   * Supports single-line values and multiline folded/literal scalars (> or |).
+   */
+  private extractFrontmatter(content: string): Record<string, string> | null {
+    const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
+    if (!match) return null;
+
+    const lines = match[1].split('\n');
+    const result: Record<string, string> = {};
+    let currentKey = '';
+    let currentValue = '';
+    let isMultiline = false;
+
+    const commitEntry = () => {
+      if (currentKey) {
+        result[currentKey] = currentValue.trim();
+      }
+    };
+
+    for (const line of lines) {
+      // Check if this is a new key-value pair (non-indented, has colon)
+      const keyMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)\s*:\s*(.*)/);
+
+      if (keyMatch && !isMultiline) {
+        commitEntry();
+        currentKey = keyMatch[1];
+        let value = keyMatch[2].trim();
+
+        // Check for multiline indicators
+        if (value === '>' || value === '|' || value === '>-' || value === '|-') {
+          isMultiline = true;
+          currentValue = '';
+          continue;
+        }
+
+        // Strip surrounding quotes if present
+        if (
+          (value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))
+        ) {
+          value = value.slice(1, -1);
+        }
+        currentValue = value;
+        isMultiline = false;
+      } else if (isMultiline || (currentKey && /^\s+/.test(line))) {
+        // Continuation line for multiline value (indented)
+        if (/^\s+/.test(line)) {
+          isMultiline = true;
+          currentValue += (currentValue ? ' ' : '') + line.trim();
+        } else if (line.trim() === '') {
+          // Empty line in multiline — add space separator
+          currentValue += ' ';
+        } else {
+          // Non-indented, non-empty line that isn't a key — end multiline
+          isMultiline = false;
+          commitEntry();
+          currentKey = '';
+          currentValue = '';
+        }
+      }
+    }
+
+    commitEntry();
+    return Object.keys(result).length > 0 ? result : null;
+  }
+
+  /**
+   * Backfill orchestrator detection for all installed plugins that haven't
+   * been scanned yet. Called once on service initialization.
+   * Plugins with orchestratorSkill === null have already been scanned (no orchestrator).
+   * Plugins with orchestratorSkill === undefined have never been scanned.
+   * Best-effort: errors are logged but never crash app startup.
+   */
+  backfillOrchestrators(): void {
+    try {
+      const plugins = pluginRegistryStore.list();
+      for (const plugin of plugins) {
+        // Skip if already scanned (either found an orchestrator or explicitly set to null)
+        if (plugin.orchestratorSkill !== undefined) continue;
+
+        try {
+          const orchestrator = this.detectOrchestrator(plugin.sourcePath);
+          // undefined means scan failed — do not persist, allow retry on next startup
+          if (orchestrator === undefined) continue;
+
+          // Persist result (string or null) to avoid re-scanning
+          plugin.orchestratorSkill = orchestrator;
+          plugin.updatedAt = Date.now();
+          pluginRegistryStore.save(plugin);
+          if (orchestrator) {
+            log(`[PluginRuntime] Backfilled orchestrator for ${plugin.name}: ${orchestrator}`);
+          }
+        } catch (error) {
+          logError(`[PluginRuntime] Error backfilling orchestrator for ${plugin.name}`, error);
+        }
+      }
+    } catch (error) {
+      logError('[PluginRuntime] Error during orchestrator backfill', error);
     }
   }
 

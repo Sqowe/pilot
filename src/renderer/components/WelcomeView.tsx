@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
@@ -51,7 +51,24 @@ export function WelcomeView() {
   // Skill pinning state
   const [availableSkills, setAvailableSkills] = useState<Skill[]>([]);
   const [pinnedSkillIds, setPinnedSkillIds] = useState<Set<string>>(new Set());
+  const [removedSkillIds, setRemovedSkillIds] = useState<Set<string>>(new Set());
   const [skillsExpanded, setSkillsExpanded] = useState(false);
+  // Ref tracks whether user has modified skill state since last profile load started
+  const userModifiedSkillsRef = useRef(false);
+  // Track whether skills profile is currently loading
+  const [skillsProfileLoading, setSkillsProfileLoading] = useState(false);
+
+  // Plugin pinning state (for the Welcome page — passed as initial pinned plugins on session start)
+  const [welcomePlugins, setWelcomePlugins] = useState<
+    Array<{
+      pluginId: string;
+      name: string;
+      description?: string;
+      orchestratorSkill?: string | null;
+      componentCounts: { skills: number };
+    }>
+  >([]);
+  const [pinnedPluginIds, setPinnedPluginIds] = useState<Set<string>>(new Set());
 
   // Sync local prompt to store on every change (persists across navigation)
   const setPrompt = (value: string) => {
@@ -61,7 +78,8 @@ export function WelcomeView() {
 
   const canSubmit =
     (prompt.trim().length > 0 || pastedImages.length > 0 || attachedFiles.length > 0) &&
-    !mcpProfilePending;
+    !mcpProfilePending &&
+    !skillsProfileLoading;
 
   // Config set selection
   const appConfig = useAppStore((state) => state.appConfig);
@@ -223,6 +241,87 @@ export function WelcomeView() {
     };
     loadSkills();
   }, []);
+
+  // Load installed plugins for plugin pinning on Welcome page
+  useEffect(() => {
+    const loadPlugins = async () => {
+      try {
+        const pluginsApi = window.electronAPI?.plugins;
+        if (!pluginsApi?.listInstalled) return;
+        const allPlugins = await pluginsApi.listInstalled();
+        const enabled = (allPlugins || [])
+          .filter((p) => p.enabled && p.componentsEnabled.skills && p.componentCounts.skills > 0)
+          .map((p) => ({
+            pluginId: p.pluginId,
+            name: p.name,
+            description: p.description,
+            orchestratorSkill: p.orchestratorSkill,
+            componentCounts: { skills: p.componentCounts.skills },
+          }));
+        setWelcomePlugins(enabled);
+      } catch (error) {
+        console.error('[WelcomeView] Failed to load plugins:', error);
+      }
+    };
+    loadPlugins();
+  }, []);
+
+  // Load workspace skills profile when workingDir changes
+  useEffect(() => {
+    // Always clear both sets synchronously to prevent stale state leaking across workspaces
+    setPinnedSkillIds(new Set());
+    setRemovedSkillIds(new Set());
+    userModifiedSkillsRef.current = false;
+
+    if (!isElectron || !workingDir) {
+      setSkillsProfileLoading(false);
+      return;
+    }
+    setSkillsProfileLoading(true);
+    let cancelled = false;
+    const loadSkillsProfile = async () => {
+      try {
+        const profile = await window.electronAPI?.skills?.getWorkspaceProfile?.(workingDir);
+        if (cancelled) return;
+        // Only apply profile if user hasn't modified skills since this load started
+        if (userModifiedSkillsRef.current) {
+          setSkillsProfileLoading(false);
+          return;
+        }
+        if (profile) {
+          if (profile.pinned?.length) {
+            setPinnedSkillIds(new Set(profile.pinned));
+          }
+          if (profile.disabled?.length) {
+            setRemovedSkillIds(new Set(profile.disabled));
+          }
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('[WelcomeView] Failed to load workspace skills profile:', error);
+        }
+      } finally {
+        if (!cancelled) {
+          setSkillsProfileLoading(false);
+        }
+      }
+    };
+    loadSkillsProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [workingDir, isElectron]);
+
+  // Derive effective skill counts (normalized against available skills)
+  const effectiveSkillCounts = useMemo(() => {
+    const availableIds = new Set(availableSkills.map((s) => s.id));
+    const effectivePinnedCount = Array.from(pinnedSkillIds).filter(
+      (id) => availableIds.has(id) && !removedSkillIds.has(id)
+    ).length;
+    const effectiveRemovedCount = availableSkills.filter((s) => removedSkillIds.has(s.id)).length;
+    const effectiveActiveCount = availableSkills.filter((s) => !removedSkillIds.has(s.id)).length;
+    return { effectivePinnedCount, effectiveRemovedCount, effectiveActiveCount };
+  }, [availableSkills, pinnedSkillIds, removedSkillIds]);
 
   // Handle paste event for images
   const handlePaste = async (e: React.ClipboardEvent) => {
@@ -505,14 +604,45 @@ export function WelcomeView() {
     setIsSubmitting(true);
     try {
       const sessionTitle = getInitialSessionTitle(currentPrompt, attachedFiles[0]?.name);
+      // Normalize: only send skill IDs that exist in available skills (when loaded),
+      // and ensure disabled IDs are excluded from pinned (Pin + Remove = invalid).
+      // If availableSkills hasn't loaded yet, pass raw profile IDs as-is to preserve intent.
+      const availableIds = new Set(availableSkills.map((s) => s.id));
+      const hasSkillInventory = availableSkills.length > 0;
+
+      const normalizedPinned = hasSkillInventory
+        ? Array.from(pinnedSkillIds).filter(
+            (id) => availableIds.has(id) && !removedSkillIds.has(id)
+          )
+        : Array.from(pinnedSkillIds).filter((id) => !removedSkillIds.has(id));
+      // Enforce max pinned skills cap (profile may contain more than allowed)
+      const cappedPinned = normalizedPinned.slice(0, MAX_PINNED_SKILLS_PER_SESSION);
+      const normalizedDisabled = hasSkillInventory
+        ? Array.from(removedSkillIds).filter((id) => availableIds.has(id))
+        : Array.from(removedSkillIds);
+
       const session = await startSession(
         sessionTitle,
         contentBlocks,
         workingDir || undefined,
         mcpDisabledIds.size > 0 ? Array.from(mcpDisabledIds) : undefined,
-        pinnedSkillIds.size > 0 ? Array.from(pinnedSkillIds) : undefined
+        cappedPinned.length > 0 ? cappedPinned : undefined,
+        normalizedDisabled.length > 0 ? normalizedDisabled : undefined
       );
       if (session) {
+        // Pin selected plugins for the new session
+        if (pinnedPluginIds.size > 0) {
+          const pluginsApi = window.electronAPI?.plugins;
+          if (pluginsApi?.toggleSessionPluginPin) {
+            for (const pluginId of pinnedPluginIds) {
+              try {
+                await pluginsApi.toggleSessionPluginPin(session.id, pluginId);
+              } catch (error) {
+                console.error(`[WelcomeView] Failed to pin plugin ${pluginId}:`, error);
+              }
+            }
+          }
+        }
         setPrompt('');
         if (textareaRef.current) {
           textareaRef.current.value = '';
@@ -872,8 +1002,8 @@ export function WelcomeView() {
               <div className="flex items-center gap-2 text-sm text-text-secondary">
                 <Star className="w-4 h-4 text-amber-500" />
                 <span>
-                  {pinnedSkillIds.size > 0
-                    ? `${pinnedSkillIds.size}/${MAX_PINNED_SKILLS_PER_SESSION} ${t('welcome.skillsPinned', { count: pinnedSkillIds.size })}`
+                  {pinnedSkillIds.size > 0 || removedSkillIds.size > 0
+                    ? `${effectiveSkillCounts.effectiveActiveCount} ${t('welcome.skillsActive')} · ${effectiveSkillCounts.effectiveRemovedCount} ${t('welcome.skillsRemoved')}`
                     : t('welcome.skillsForChat')}
                 </span>
               </div>
@@ -891,68 +1021,229 @@ export function WelcomeView() {
                   <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
                     {t('welcome.skillsForChat')}
                   </span>
-                  {pinnedSkillIds.size > 0 && (
+                  {(pinnedSkillIds.size > 0 || removedSkillIds.size > 0) && (
                     <button
                       type="button"
-                      onClick={() => setPinnedSkillIds(new Set())}
+                      onClick={() => {
+                        userModifiedSkillsRef.current = true;
+                        setPinnedSkillIds(new Set());
+                        setRemovedSkillIds(new Set());
+                      }}
                       className="text-xs text-text-muted hover:text-text-primary transition-colors"
                     >
                       {t('welcome.skillsClearAll')}
                     </button>
                   )}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                  {availableSkills.map((skill) => {
-                    const isPinned = pinnedSkillIds.has(skill.id);
-                    return (
-                      <button
-                        key={skill.id}
-                        type="button"
-                        onClick={() => {
-                          setPinnedSkillIds((prev) => {
-                            const next = new Set(prev);
-                            if (prev.has(skill.id)) {
-                              next.delete(skill.id);
-                            } else {
-                              // Enforce client-side limit
-                              if (next.size >= MAX_PINNED_SKILLS_PER_SESSION) return prev;
-                              next.add(skill.id);
-                            }
-                            return next;
-                          });
-                        }}
-                        disabled={!isPinned && pinnedSkillIds.size >= MAX_PINNED_SKILLS_PER_SESSION}
-                        className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-colors text-left ${
-                          isPinned
-                            ? 'border-amber-500/30 bg-amber-500/5 hover:bg-amber-500/10'
-                            : pinnedSkillIds.size >= MAX_PINNED_SKILLS_PER_SESSION
-                              ? 'border-border-muted bg-surface-muted opacity-40 cursor-not-allowed'
-                              : 'border-border-muted bg-surface-muted hover:bg-surface-hover'
-                        }`}
-                      >
-                        <Star
-                          className={`w-4 h-4 shrink-0 transition-colors ${
-                            isPinned ? 'text-amber-500 fill-amber-500' : 'text-text-muted'
-                          }`}
-                        />
-                        <div className="flex-1 min-w-0">
-                          <span
-                            className={`text-sm truncate block ${
-                              isPinned ? 'text-text-primary' : 'text-text-muted'
+
+                {/* Plugin pinning */}
+                {welcomePlugins.length > 0 && (
+                  <div className="border-b border-border-muted pb-2 mb-1 space-y-1.5">
+                    <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
+                      {t('context.plugins')}
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {welcomePlugins.map((plugin) => {
+                        const isPinned = pinnedPluginIds.has(plugin.pluginId);
+                        return (
+                          <div
+                            key={plugin.pluginId}
+                            className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-colors ${
+                              isPinned
+                                ? 'border-purple-500/30 bg-purple-500/5'
+                                : 'border-border-muted bg-surface-muted hover:bg-surface-hover'
                             }`}
                           >
-                            {skill.name}
-                          </span>
-                          {skill.description && (
-                            <span className="text-xs text-text-muted truncate block">
-                              {skill.description}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPinnedPluginIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (prev.has(plugin.pluginId)) {
+                                    next.delete(plugin.pluginId);
+                                  } else {
+                                    next.add(plugin.pluginId);
+                                  }
+                                  return next;
+                                });
+                              }}
+                              className="shrink-0"
+                              aria-label={
+                                isPinned ? t('context.unpinPlugin') : t('context.pinPlugin')
+                              }
+                            >
+                              <Star
+                                className={`w-4 h-4 transition-colors ${
+                                  isPinned
+                                    ? 'text-purple-500 fill-purple-500'
+                                    : 'text-text-muted hover:text-purple-400'
+                                }`}
+                              />
+                            </button>
+                            <div className="flex-1 min-w-0">
+                              <span
+                                className={`text-sm truncate block ${isPinned ? 'text-text-primary' : 'text-text-muted'}`}
+                              >
+                                {plugin.name}
+                                {plugin.orchestratorSkill && (
+                                  <span className="text-amber-500 ml-1">★</span>
+                                )}
+                              </span>
+                              <span className="text-xs text-text-muted truncate block">
+                                {plugin.componentCounts.skills} {t('context.pluginSkillCount')}
+                                {plugin.description ? ` · ${plugin.description}` : ''}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Active skills (pinned + available) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {availableSkills
+                    .filter((s) => !removedSkillIds.has(s.id))
+                    .map((skill) => {
+                      const isPinned = pinnedSkillIds.has(skill.id);
+                      return (
+                        <div
+                          key={skill.id}
+                          className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-colors text-left ${
+                            isPinned
+                              ? 'border-amber-500/30 bg-amber-500/5 hover:bg-amber-500/10'
+                              : effectiveSkillCounts.effectivePinnedCount >=
+                                  MAX_PINNED_SKILLS_PER_SESSION
+                                ? 'border-border-muted bg-surface-muted'
+                                : 'border-border-muted bg-surface-muted hover:bg-surface-hover'
+                          }`}
+                        >
+                          {/* Star toggle (pin/unpin) */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              userModifiedSkillsRef.current = true;
+                              setPinnedSkillIds((prev) => {
+                                const next = new Set(prev);
+                                if (prev.has(skill.id)) {
+                                  next.delete(skill.id);
+                                } else {
+                                  // Use effective count: only count IDs that are available and non-removed
+                                  const availableIds = new Set(availableSkills.map((s) => s.id));
+                                  const effectiveCount = Array.from(next).filter(
+                                    (id) => availableIds.has(id) && !removedSkillIds.has(id)
+                                  ).length;
+                                  if (effectiveCount >= MAX_PINNED_SKILLS_PER_SESSION) return prev;
+                                  next.add(skill.id);
+                                }
+                                return next;
+                              });
+                            }}
+                            disabled={
+                              !isPinned &&
+                              effectiveSkillCounts.effectivePinnedCount >=
+                                MAX_PINNED_SKILLS_PER_SESSION
+                            }
+                            className="shrink-0"
+                            aria-label={isPinned ? t('context.unpinSkill') : t('context.pinSkill')}
+                          >
+                            <Star
+                              className={`w-4 h-4 transition-colors ${
+                                isPinned
+                                  ? 'text-amber-500 fill-amber-500'
+                                  : 'text-text-muted hover:text-amber-400'
+                              }`}
+                            />
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <span
+                              className={`text-sm truncate block ${
+                                isPinned ? 'text-text-primary' : 'text-text-muted'
+                              }`}
+                            >
+                              {skill.name}
                             </span>
-                          )}
+                            {skill.description && (
+                              <span className="text-xs text-text-muted truncate block">
+                                {skill.description}
+                              </span>
+                            )}
+                          </div>
+                          {/* Remove button */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              userModifiedSkillsRef.current = true;
+                              // Removing also unpins
+                              setPinnedSkillIds((prev) => {
+                                const next = new Set(prev);
+                                next.delete(skill.id);
+                                return next;
+                              });
+                              setRemovedSkillIds((prev) => {
+                                const next = new Set(prev);
+                                next.add(skill.id);
+                                return next;
+                              });
+                            }}
+                            className="shrink-0 text-text-muted/40 hover:text-error transition-colors"
+                            title={t('skills.profileRemove')}
+                            aria-label={t('skills.profileRemove')}
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
                         </div>
-                      </button>
-                    );
-                  })}
+                      );
+                    })}
                 </div>
+
+                {/* Removed skills section */}
+                {effectiveSkillCounts.effectiveRemovedCount > 0 && (
+                  <div className="border-t border-border-muted pt-2 space-y-1.5">
+                    <span className="text-xs text-text-muted">
+                      {t('skills.profileRemovedSection')} (
+                      {effectiveSkillCounts.effectiveRemovedCount})
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {availableSkills
+                        .filter((s) => removedSkillIds.has(s.id))
+                        .map((skill) => (
+                          <button
+                            key={skill.id}
+                            type="button"
+                            onClick={() => {
+                              userModifiedSkillsRef.current = true;
+                              // Restore: remove from disabled set
+                              setRemovedSkillIds((prev) => {
+                                const next = new Set(prev);
+                                next.delete(skill.id);
+                                return next;
+                              });
+                            }}
+                            className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-dashed border-border-muted bg-surface-muted/50 hover:bg-surface-hover transition-colors text-left opacity-60 hover:opacity-100"
+                            aria-label={`${t('skills.profileRestore')} ${skill.name}`}
+                          >
+                            <span className="text-sm text-text-muted line-through truncate flex-1">
+                              {skill.name}
+                            </span>
+                            <span className="text-xs text-text-muted shrink-0">
+                              {t('skills.profileRestore')}
+                            </span>
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Footer text */}
+                {(pinnedSkillIds.size > 0 || removedSkillIds.size > 0) && (
+                  <p className="text-xs text-text-muted text-center pt-1">
+                    {effectiveSkillCounts.effectiveActiveCount} {t('welcome.skillsActive')} ·{' '}
+                    {effectiveSkillCounts.effectiveRemovedCount} {t('welcome.skillsRemoved')}
+                    {workingDir && removedSkillIds.size > 0 && ` ${t('welcome.skillsFromProfile')}`}
+                  </p>
+                )}
               </div>
             )}
           </div>

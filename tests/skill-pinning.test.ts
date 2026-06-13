@@ -125,7 +125,8 @@ describe('skill pinning: session-manager integration', () => {
 
 describe('skill pinning: agent-runner directive generation', () => {
   it('imports SAFE_SKILL_ID_REGEX from shared constants', () => {
-    expect(agentRunnerSource).toContain('import { SAFE_SKILL_ID_REGEX }');
+    expect(agentRunnerSource).toContain('SAFE_SKILL_ID_REGEX');
+    expect(agentRunnerSource).toContain("from '../../shared/skill-pinning-constants'");
   });
 
   it('uses shared regex for sanitization', () => {

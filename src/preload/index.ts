@@ -317,6 +317,63 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('skills.setUserModified', skillName, protect),
     forceRefreshBuiltin: (skillName: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('skills.forceRefreshBuiltin', skillName),
+
+    // --- Conflict Resolution ---
+    getConflictConfig: (): Promise<import('../shared/skill-conflict-types').SkillConflictConfig> =>
+      ipcRenderer.invoke('skills.getConflictConfig'),
+    setConflictPolicy: (
+      policy: import('../shared/skill-conflict-types').ConflictPolicy
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.setConflictPolicy', policy),
+    setSourceOverride: (
+      skillName: string,
+      source: import('../shared/skill-conflict-types').SkillSource
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.setSourceOverride', skillName, source),
+    toggleDisabled: (
+      skillName: string,
+      disabled: boolean
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.toggleDisabled', skillName, disabled),
+    acknowledgeConflict: (
+      skillName: string,
+      choice: import('../shared/skill-conflict-types').SkillSource
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.acknowledgeConflict', skillName, choice),
+    getConflicts: (): Promise<{
+      conflicts: import('../shared/skill-conflict-types').SkillConflict[];
+      notImplemented?: boolean;
+    }> => ipcRenderer.invoke('skills.getConflicts'),
+    resetToBuiltin: (skillName: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.resetToBuiltin', skillName),
+
+    // --- Workspace Profiles ---
+    toggleSessionDisabled: (
+      sessionId: string,
+      skillId: string,
+      disabled: boolean
+    ): Promise<{ success: boolean; disabledSkills?: string[]; error?: string }> =>
+      ipcRenderer.invoke('skills.toggleSessionDisabled', sessionId, skillId, disabled),
+    getSessionDisabledSkills: (sessionId: string): Promise<string[]> =>
+      ipcRenderer.invoke('skills.getSessionDisabledSkills', sessionId),
+    getWorkspaceProfile: (
+      cwd: string
+    ): Promise<import('../shared/skill-conflict-types').SkillsWorkspaceProfile | null> =>
+      ipcRenderer.invoke('skills.getWorkspaceProfile', cwd),
+    saveWorkspaceProfile: (
+      cwd: string,
+      profile: import('../shared/skill-conflict-types').SkillsWorkspaceProfile
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('skills.saveWorkspaceProfile', cwd, profile),
+    seedSessionFromProfile: (
+      sessionId: string,
+      profile: { pinned?: string[]; disabled?: string[] }
+    ): Promise<{
+      success: boolean;
+      pinnedSkills?: string[];
+      disabledSkills?: string[];
+      error?: string;
+    }> => ipcRenderer.invoke('skills.seedSessionFromProfile', sessionId, profile),
   },
 
   // Environment methods
@@ -336,6 +393,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listInstalled: (): Promise<InstalledPlugin[]> => ipcRenderer.invoke('plugins.listInstalled'),
     install: (pluginName: string): Promise<PluginInstallResultV2> =>
       ipcRenderer.invoke('plugins.install', pluginName),
+    installFromFile: (): Promise<PluginInstallResultV2 | null> =>
+      ipcRenderer.invoke('plugins.installFromFile'),
+    getSessionPinnedPlugins: (sessionId: string): Promise<string[]> =>
+      ipcRenderer.invoke('plugins.getSessionPinnedPlugins', sessionId),
+    toggleSessionPluginPin: (sessionId: string, pluginId: string): Promise<string[]> =>
+      ipcRenderer.invoke('plugins.toggleSessionPluginPin', sessionId, pluginId),
     setEnabled: (pluginId: string, enabled: boolean): Promise<PluginToggleResult> =>
       ipcRenderer.invoke('plugins.setEnabled', pluginId, enabled),
     setComponentEnabled: (
@@ -679,6 +742,55 @@ declare global {
           protect: boolean
         ) => Promise<{ success: boolean; error?: string }>;
         forceRefreshBuiltin: (skillName: string) => Promise<{ success: boolean; error?: string }>;
+
+        // Conflict Resolution
+        getConflictConfig: () => Promise<
+          import('../shared/skill-conflict-types').SkillConflictConfig
+        >;
+        setConflictPolicy: (
+          policy: import('../shared/skill-conflict-types').ConflictPolicy
+        ) => Promise<{ success: boolean; error?: string }>;
+        setSourceOverride: (
+          skillName: string,
+          source: import('../shared/skill-conflict-types').SkillSource
+        ) => Promise<{ success: boolean; error?: string }>;
+        toggleDisabled: (
+          skillName: string,
+          disabled: boolean
+        ) => Promise<{ success: boolean; error?: string }>;
+        acknowledgeConflict: (
+          skillName: string,
+          choice: import('../shared/skill-conflict-types').SkillSource
+        ) => Promise<{ success: boolean; error?: string }>;
+        getConflicts: () => Promise<{
+          conflicts: import('../shared/skill-conflict-types').SkillConflict[];
+          notImplemented?: boolean;
+        }>;
+        resetToBuiltin: (skillName: string) => Promise<{ success: boolean; error?: string }>;
+
+        // Workspace Profiles
+        toggleSessionDisabled: (
+          sessionId: string,
+          skillId: string,
+          disabled: boolean
+        ) => Promise<{ success: boolean; disabledSkills?: string[]; error?: string }>;
+        getSessionDisabledSkills: (sessionId: string) => Promise<string[]>;
+        getWorkspaceProfile: (
+          cwd: string
+        ) => Promise<import('../shared/skill-conflict-types').SkillsWorkspaceProfile | null>;
+        saveWorkspaceProfile: (
+          cwd: string,
+          profile: import('../shared/skill-conflict-types').SkillsWorkspaceProfile
+        ) => Promise<{ success: boolean; error?: string }>;
+        seedSessionFromProfile: (
+          sessionId: string,
+          profile: { pinned?: string[]; disabled?: string[] }
+        ) => Promise<{
+          success: boolean;
+          pinnedSkills?: string[];
+          disabledSkills?: string[];
+          error?: string;
+        }>;
       };
       env: {
         getEffectivePath: () => Promise<string>;
@@ -690,6 +802,9 @@ declare global {
         listCatalog: (options?: { installableOnly?: boolean }) => Promise<PluginCatalogItemV2[]>;
         listInstalled: () => Promise<InstalledPlugin[]>;
         install: (pluginName: string) => Promise<PluginInstallResultV2>;
+        installFromFile: () => Promise<PluginInstallResultV2 | null>;
+        getSessionPinnedPlugins: (sessionId: string) => Promise<string[]>;
+        toggleSessionPluginPin: (sessionId: string, pluginId: string) => Promise<string[]>;
         setEnabled: (pluginId: string, enabled: boolean) => Promise<PluginToggleResult>;
         setComponentEnabled: (
           pluginId: string,

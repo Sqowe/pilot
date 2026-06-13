@@ -36,6 +36,10 @@ import {
 } from '../../shared/system-prompt-file-choices';
 import { sanitizeBashCommandList } from './permission-rules-store';
 import { isValidCatchUpPolicy, isValidConflictPolicy } from '../../shared/schedule/types';
+import {
+  createDefaultSkillConflictConfig,
+  normalizeSkillConflictConfig,
+} from '../../shared/skill-conflict-types';
 
 /**
  * Application configuration schema
@@ -170,6 +174,11 @@ export interface AppConfig {
   // Native desktop notifications when the app is not focused.
   // Fires on permission requests and agent response completion.
   notificationsEnabled: boolean;
+
+  // Skill conflict resolution config.
+  // Controls how name collisions between custom and built-in skills are resolved,
+  // which skills are disabled, and per-skill source overrides.
+  skillConflictConfig: import('../../shared/skill-conflict-types').SkillConflictConfig;
 }
 
 export interface MemoryModelRuntimeConfig {
@@ -200,6 +209,8 @@ export interface MemoryRuntimeConfig {
   recencyDecayDays?: number;
   supersessionPenalty?: number;
   supersessionKeywordThreshold?: number;
+  /** Tool name patterns whose results are included in extraction but workspace-pinned. */
+  pinnedToolPatterns?: string[];
 }
 
 const DEFAULT_CONFIG_SET_ID = 'default';
@@ -337,6 +348,7 @@ const defaultConfig: AppConfig = {
     recencyDecayDays: 90,
     supersessionPenalty: 0.2,
     supersessionKeywordThreshold: 0.5,
+    pinnedToolPatterns: ['^mcp__claude_cowork_memory__cowork_'],
   },
   enableThinking: false,
   isConfigured: false,
@@ -346,6 +358,7 @@ const defaultConfig: AppConfig = {
   permissionTimeoutSeconds: 300,
   mcpToolTimeoutSeconds: 240,
   notificationsEnabled: true,
+  skillConflictConfig: createDefaultSkillConflictConfig(),
 };
 
 export const PROVIDER_PRESETS = API_PROVIDER_PRESETS;
@@ -578,6 +591,9 @@ function normalizeMemoryRuntimeConfig(raw: unknown): MemoryRuntimeConfig {
       Number.isFinite(value.supersessionKeywordThreshold)
         ? Math.max(0.3, Math.min(0.8, value.supersessionKeywordThreshold))
         : defaultConfig.memoryRuntime.supersessionKeywordThreshold,
+    pinnedToolPatterns: Array.isArray(value.pinnedToolPatterns)
+      ? value.pinnedToolPatterns.filter((item): item is string => typeof item === 'string')
+      : defaultConfig.memoryRuntime.pinnedToolPatterns,
   };
   // Enforce floor <= ceiling: if floor exceeds ceiling, clamp floor down
   if (
@@ -1162,6 +1178,7 @@ export class ConfigStore {
       permissionTimeoutSeconds: normalizePermissionTimeout(raw.permissionTimeoutSeconds),
       mcpToolTimeoutSeconds: normalizeMcpToolTimeout(raw.mcpToolTimeoutSeconds),
       notificationsEnabled: toBoolean(raw.notificationsEnabled, defaultConfig.notificationsEnabled),
+      skillConflictConfig: normalizeSkillConflictConfig(raw.skillConflictConfig),
     };
     this.normalizeModelIds(result);
     return result;

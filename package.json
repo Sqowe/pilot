@@ -1,6 +1,6 @@
 {
   "name": "open-cowork",
-  "version": "3.3.0-sqowe.7",
+  "version": "3.3.0-sqowe.8",
   "description": "Open-source AI agent desktop app for Windows & macOS — one-click install Claude Code, MCP tools, and Skills with sandbox isolation and multi-model support",
   "keywords": [
     "ai-agent",
@@ -68,8 +68,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",
-    "@earendil-works/pi-ai": "0.78.0",
-    "@earendil-works/pi-coding-agent": "0.78.0",
+    "@earendil-works/pi-ai": "0.78.1",
+    "@earendil-works/pi-coding-agent": "0.78.1",
     "@google/genai": "^1.52.0",
     "@larksuiteoapi/node-sdk": "^1.66.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
@@ -80,6 +80,7 @@
     "chokidar": "^4.0.1",
     "dotenv": "^17.2.3",
     "electron-store": "^11.0.2",
+    "yauzl": "^2.10.0",
     "electron-updater": "^6.3.0",
     "glob": "^10.3.10",
     "highlight.js": "^11.11.1",
@@ -113,6 +114,7 @@
     "@types/node": "^25.5.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@types/yauzl": "^2.10.3",
     "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",

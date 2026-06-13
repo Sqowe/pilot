@@ -290,6 +290,41 @@ export function useIPC() {
             store.setSkillsStorageChangedAt(Date.now());
             break;
 
+          case 'skills.conflict-detected':
+            console.log('[useIPC] skills.conflict-detected:', event.payload.skillName);
+            // Trigger conflict state refresh in useSkillConflicts
+            store.setSkillsStorageChangedAt(Date.now());
+            store.setGlobalNotice({
+              id: `skill-conflict-${event.payload.skillName}-${Date.now()}`,
+              type: 'warning',
+              message: `Skill conflict: "${event.payload.skillName}"`,
+              messageKey: 'skills.conflictDetectedDesc',
+              messageValues: {
+                name: event.payload.skillName,
+                path: event.payload.customPath,
+              },
+              action: 'navigate_settings_skills',
+            });
+            break;
+
+          case 'skills.conflict-resolved':
+            console.log(
+              '[useIPC] skills.conflict-resolved:',
+              event.payload.skillName,
+              event.payload.winner
+            );
+            break;
+
+          case 'skills.session-disabled-changed':
+            console.log(
+              '[useIPC] skills.session-disabled-changed:',
+              event.payload.sessionId,
+              event.payload.disabledSkills
+            );
+            // Trigger re-fetch in ContextPanel so disabled skills state stays in sync
+            store.setSkillsStorageChangedAt(Date.now());
+            break;
+
           case 'workdir.changed':
             console.log('[useIPC] workdir.changed received:', event.payload.path);
             store.setWorkingDir(event.payload.path || null);
@@ -454,7 +489,8 @@ export function useIPC() {
       promptOrContent: string | ContentBlock[],
       cwd?: string,
       initialDisabledMcpServers?: string[],
-      initialPinnedSkills?: string[]
+      initialPinnedSkills?: string[],
+      initialDisabledSkills?: string[]
     ) => {
       setLoading(true);
       console.log('[useIPC] Starting session:', title);
@@ -537,6 +573,7 @@ export function useIPC() {
             content, // Send full content blocks including images
             initialDisabledMcpServers,
             initialPinnedSkills,
+            initialDisabledSkills,
           },
         });
         if (session) {

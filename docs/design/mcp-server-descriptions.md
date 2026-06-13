@@ -1,7 +1,8 @@
 # MCP Server Descriptions — Design Document
 
 > Feature: User-facing and LLM-facing descriptions for MCP servers to improve tool routing
-> Status: Draft
+> Status: ✅ Implemented
+> Implemented: 2026-05-16
 > Author: AI-assisted design session
 > Date: 2026-05-16
 
@@ -393,7 +394,7 @@ Description: Firecrawl: scrape, search, crawl, map, extract  [heuristic]
 
 ## 9. Implementation Plan
 
-### Phase 1: Data Model & Config Store
+### Phase 1: Data Model & Config Store ✅
 
 1. Add `description`, `descriptionToolsHash`, `descriptionSource` to `MCPServerConfig`
 2. Mirror changes in `src/shared/ipc-types.ts` (`McpServerConfig`)
@@ -401,34 +402,34 @@ Description: Firecrawl: scrape, search, crawl, map, extract  [heuristic]
 4. Add `computeToolsHash()` utility
 5. Ensure backward compatibility (existing configs without new fields work unchanged)
 
-### Phase 2: Description Generator Module
+### Phase 2: Description Generator Module ✅
 
 1. Create `src/main/mcp/mcp-description-generator.ts`
 2. Implement `generateServerDescription()` (LLM one-shot)
 3. Implement `generateHeuristicDescription()` (fallback)
 4. Unit tests for heuristic generation (deterministic, no LLM needed)
 
-### Phase 3: Integration with MCPManager
+### Phase 3: Integration with MCPManager ✅
 
 1. Hook into `refreshTools()` — trigger generation when description is empty
 2. Hook into `refreshTools()` — detect tool list hash changes
 3. Emit events to renderer on generation complete / tools changed
 4. Ensure async/non-blocking (don't delay tool availability)
 
-### Phase 4: System Prompt Injection
+### Phase 4: System Prompt Injection ✅
 
 1. Implement `buildMcpServerDirectory()` in agent-runner
 2. Inject into system prompt assembly (after MCP servers config is built)
 3. Verify token budget impact with multiple servers
 
-### Phase 5: IPC & Renderer Integration
+### Phase 5: IPC & Renderer Integration ✅
 
 1. Add `mcp.regenerateDescription` IPC handler
 2. Add `mcp.saveDescription` IPC handler
 3. Wire `mcp:description-generated` and `mcp:tools-changed` events
 4. Handle events in renderer state management
 
-### Phase 6: UI
+### Phase 6: UI ✅
 
 1. Add description display to MCP server settings card
 2. Add Edit/Regenerate buttons

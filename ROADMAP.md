@@ -8,6 +8,8 @@
 - **Security**: Full filesystem sandboxing + path traversal / zip-slip hardening
 - **VM Sandbox**: WSL2 (Windows) and Lima (macOS) VM-level isolation
 - **Skills**: PPTX, DOCX, PDF, XLSX support + custom skill management + hot-reload
+- **Skills Conflict Resolution**: Policy engine (custom-wins/builtin-wins/ask), per-skill source overrides, toast notifications, Settings UI
+- **Skills Workspace Profiles**: Per-session disable/restore, workspace profile persistence (`.cowork/skills-profile.json`), Welcome page + Context Panel integration
 - **MCP Connectors**: Custom connector support (stdio / SSE / Streamable HTTP)
 - **Rich Input**: File upload and image input in chat
 - **Multi-Model**: Claude, GPT, Gemini, DeepSeek, Qwen, GLM, Kimi, Grok, MiniMax, Ollama

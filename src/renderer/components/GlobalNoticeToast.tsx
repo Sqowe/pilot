@@ -37,7 +37,8 @@ export function GlobalNoticeToast({ notice, onDismiss, onAction }: Props) {
   const message = notice.messageKey ? t(notice.messageKey, notice.messageValues) : notice.message;
   const actionLabel =
     notice.actionLabel ||
-    (notice.action === 'open_api_settings' ? t('api.openSettingsAction') : '');
+    (notice.action === 'open_api_settings' ? t('api.openSettingsAction') : '') ||
+    (notice.action === 'navigate_settings_skills' ? t('skills.conflictOpenSettings') : '');
   const noticeAction = notice.action;
 
   return (

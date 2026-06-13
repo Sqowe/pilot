@@ -48,6 +48,7 @@ export function ChatView() {
   const [isSwitchingSet, setIsSwitchingSet] = useState(false);
   const switchRequestRef = useRef(0);
   const headerRef = useRef<HTMLDivElement>(null);
+  const exportBtnRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const [pastedImages, setPastedImages] = useState<
     Array<{ url: string; base64: string; mediaType: string }>
@@ -986,7 +987,7 @@ export function ChatView() {
         {/* Right toolbar — action icons in a badge */}
         <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-muted/60 border border-border-subtle justify-self-end">
           {displayedMessages.length > 0 && (
-            <div className="relative">
+            <div className="relative" ref={exportBtnRef}>
               <button
                 onClick={() => setShowExportDropdown((prev) => !prev)}
                 className="w-6 h-6 rounded-md flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
@@ -994,35 +995,44 @@ export function ChatView() {
               >
                 <Download className="w-3.5 h-3.5" />
               </button>
-              {showExportDropdown && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setShowExportDropdown(false)}
-                  />
-                  <div className="absolute top-full right-0 mt-1 z-50 bg-background border border-border-muted rounded-xl shadow-lg py-1 min-w-[180px] animate-fade-in">
-                    <button
-                      onClick={() => {
-                        setShowExportDropdown(false);
-                        handleExportFull();
-                      }}
-                      className="w-full px-4 py-2 text-left text-[13px] text-text-primary hover:bg-surface-hover transition-colors"
-                    >
-                      {t('export.fullExport')}
-                    </button>
-                    <button
-                      onClick={handleEnterSelectMode}
-                      className="w-full px-4 py-2 text-left text-[13px] text-text-primary hover:bg-surface-hover transition-colors"
-                    >
-                      {t('export.selectExport')}
-                    </button>
-                  </div>
-                </>
-              )}
             </div>
           )}
         </div>
       </div>
+
+      {/* Export dropdown — rendered outside header to avoid stacking context / overflow clipping */}
+      {showExportDropdown && (
+        <>
+          <div className="fixed inset-0 z-[100]" onClick={() => setShowExportDropdown(false)} />
+          <div
+            className="fixed z-[101] bg-background border border-border-muted rounded-xl shadow-lg py-1 min-w-[180px] animate-fade-in"
+            style={{
+              top: exportBtnRef.current
+                ? exportBtnRef.current.getBoundingClientRect().bottom + 4
+                : 0,
+              right: exportBtnRef.current
+                ? window.innerWidth - exportBtnRef.current.getBoundingClientRect().right
+                : 0,
+            }}
+          >
+            <button
+              onClick={() => {
+                setShowExportDropdown(false);
+                handleExportFull();
+              }}
+              className="w-full px-4 py-2 text-left text-[13px] text-text-primary hover:bg-surface-hover transition-colors"
+            >
+              {t('export.fullExport')}
+            </button>
+            <button
+              onClick={handleEnterSelectMode}
+              className="w-full px-4 py-2 text-left text-[13px] text-text-primary hover:bg-surface-hover transition-colors"
+            >
+              {t('export.selectExport')}
+            </button>
+          </div>
+        </>
+      )}
 
       {/* Messages */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">

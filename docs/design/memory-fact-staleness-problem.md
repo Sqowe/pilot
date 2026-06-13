@@ -415,6 +415,31 @@ if (chunk.supersededAt) {
 
 **Verdict:** Not recommended for now. The simpler approaches (6.1–6.5) address the immediate pain. Revisit if memory becomes a product-level feature with multi-user requirements.
 
+### 6.7 Tool Result Scoping: Prevent MCP-Driven Cross-Workspace Contamination (Effort: Medium)
+
+**Design doc:** [memory-tool-result-scoping.md](./memory-tool-result-scoping.md)
+
+**Problem:** MCP tool responses (especially from the Claude CoWork Memory server) get included in the session transcript fed to the core memory profiler. The profiler treats this content as user-stated facts and extracts core memory entries from it. When the same tool returns similar content in a second workspace, the entry promotes to global visibility and contaminates unrelated workspaces.
+
+**What:**
+
+1. **Exclude most tool results from profiler transcript** — `tool_result` blocks from generic MCP tools (firecrawl, filesystem, etc.) and built-in tools (read_file, bash) are operational artifacts and should not influence the user profile.
+
+2. **CoWork memory tool results: include but workspace-pin** — The Claude CoWork Memory MCP server returns legitimate user knowledge, but scoped to a specific project. Entries derived from these responses get a `workspacePinned: true` flag, preventing cross-workspace promotion even if seen in 2+ workspaces.
+
+3. **Only direct user/assistant conversation can promote globally** — Cross-workspace promotion (`sourceWorkspaces.length >= 2`) only applies to entries derived from what the user actually types or the assistant says in normal dialogue.
+
+**Implementation:**
+
+- Add `workspacePinned?: boolean` flag to `CoreMemoryEntry`
+- Filter `tool_result` blocks in `extractTextFromContent()` / `messagesToTranscript()` based on tool name patterns
+- Configurable `pinnedToolPatterns` (default: `[/^mcp__claude_cowork_memory__cowork_/]`)
+- Modify `getEntriesForWorkspace()` to respect the pin flag
+
+**Impact:** Prevents the most common source of cross-workspace memory contamination. The CoWork memory MCP server can still enrich workspace-local context without "leaking" project-specific facts to unrelated workspaces.
+
+**Risk:** Low. Additive flag, no breaking changes to storage format. Existing contaminated entries require manual cleanup or rebuild.
+
 ---
 
 ## 7. Recommended Implementation Order
@@ -423,9 +448,10 @@ if (chunk.supersededAt) {
 | -------- | --------------------------------------------- | ---------- | ------------------------------------------- | ------- |
 | 1        | 6.1 — Aggressive core memory updates          | Low        | Fixes core memory staleness                 | ✅ Done |
 | 2        | 6.3 — Stronger recency + supersession penalty | Low-Medium | Reduces experience staleness                | ✅ Done |
-| 3        | 6.2 — Contradiction annotation at retrieval   | Medium     | Model gets explicit warnings                |         |
-| 4        | 6.4 — Fact layer with contradiction tracking  | High       | Comprehensive long-term solution            |         |
-| 5        | 6.5 — Write-time contradiction detection      | High       | Prevents ghost context accumulation         |         |
+| 3        | 6.7 — Tool result scoping                     | Medium     | Prevents cross-workspace contamination      |         |
+| 4        | 6.2 — Contradiction annotation at retrieval   | Medium     | Model gets explicit warnings                |         |
+| 5        | 6.4 — Fact layer with contradiction tracking  | High       | Comprehensive long-term solution            |         |
+| 6        | 6.5 — Write-time contradiction detection      | High       | Prevents ghost context accumulation         |         |
 | —        | 6.6 — Temporal knowledge graph                | Very High  | Deferred unless memory becomes core product |         |
 
 ### Suggested first iteration: ✅ COMPLETED

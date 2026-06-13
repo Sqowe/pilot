@@ -18,6 +18,7 @@ import {
   Shield,
   ShieldOff,
   Link,
+  AlertTriangle,
 } from 'lucide-react';
 import type {
   Skill,
@@ -29,6 +30,7 @@ import type {
 import { useAppStore } from '../../store';
 import { SettingsContentSection } from './shared';
 import type { LocalizedBanner } from './shared';
+import { useSkillConflicts } from '../../hooks/useSkillConflicts';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
@@ -60,6 +62,13 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
   const [builtinStatuses, setBuiltinStatuses] = useState<BuiltinSkillStatus[]>([]);
   const pluginToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const componentOrder: PluginComponentKind[] = ['skills', 'commands', 'agents', 'hooks', 'mcp'];
+  const {
+    config: conflictConfig,
+    conflicts,
+    setPolicy: setConflictPolicy,
+    toggleDisabled: toggleSkillDisabled,
+    resetToBuiltin,
+  } = useSkillConflicts();
 
   function normalizePluginLookupKey(value: string | undefined): string {
     if (!value) {
@@ -187,6 +196,7 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
     }
 
     void loadSkills();
+    void loadInstalledPluginsOnly();
 
     // Load localDevPath from config
     window.electronAPI.config.get().then((config) => {
@@ -216,27 +226,7 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
         window.electronAPI.plugins.listInstalled(),
       ]);
       setPlugins(catalog || []);
-      const nextInstalledByKey: Record<string, InstalledPlugin> = {};
-      const addLookupKey = (key: string, plugin: InstalledPlugin) => {
-        if (!key || nextInstalledByKey[key]) {
-          return;
-        }
-        nextInstalledByKey[key] = plugin;
-      };
-      for (const plugin of installed || []) {
-        const candidates = [
-          plugin.name,
-          plugin.name?.toLowerCase(),
-          normalizePluginLookupKey(plugin.name),
-          plugin.pluginId,
-          plugin.pluginId?.toLowerCase(),
-          normalizePluginLookupKey(plugin.pluginId),
-        ].filter((value): value is string => Boolean(value));
-        for (const key of candidates) {
-          addLookupKey(key, plugin);
-        }
-      }
-      setInstalledPluginsByKey(nextInstalledByKey);
+      updateInstalledPluginsMap(installed || []);
       setError(null);
     } catch (err) {
       setError({ text: err instanceof Error ? err.message : t('skills.pluginInstallFailed') });
@@ -245,9 +235,65 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
     }
   }
 
+  async function loadInstalledPluginsOnly() {
+    try {
+      const installed = await window.electronAPI.plugins.listInstalled();
+      updateInstalledPluginsMap(installed || []);
+    } catch (err) {
+      console.error('Failed to load installed plugins:', err);
+    }
+  }
+
+  function updateInstalledPluginsMap(installed: InstalledPlugin[]) {
+    const nextInstalledByKey: Record<string, InstalledPlugin> = {};
+    const addLookupKey = (key: string, plugin: InstalledPlugin) => {
+      if (!key || nextInstalledByKey[key]) {
+        return;
+      }
+      nextInstalledByKey[key] = plugin;
+    };
+    for (const plugin of installed) {
+      const candidates = [
+        plugin.name,
+        plugin.name?.toLowerCase(),
+        normalizePluginLookupKey(plugin.name),
+        plugin.pluginId,
+        plugin.pluginId?.toLowerCase(),
+        normalizePluginLookupKey(plugin.pluginId),
+      ].filter((value): value is string => Boolean(value));
+      for (const key of candidates) {
+        addLookupKey(key, plugin);
+      }
+    }
+    setInstalledPluginsByKey(nextInstalledByKey);
+  }
+
   async function handleBrowsePlugins() {
     setIsPluginModalOpen(true);
     await loadPlugins();
+  }
+
+  async function handleImportPlugin() {
+    try {
+      setIsPluginLoading(true);
+      const result = await window.electronAPI.plugins.installFromFile();
+      if (!result) {
+        // User cancelled the file dialog
+        return;
+      }
+      setPluginToastMessage(
+        tRef.current('skills.pluginInstallSuccess', { name: result.plugin.name })
+      );
+      if (pluginToastTimerRef.current) clearTimeout(pluginToastTimerRef.current);
+      pluginToastTimerRef.current = setTimeout(() => setPluginToastMessage(''), 4000);
+      await loadInstalledPluginsOnly();
+      await loadSkills();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setError({ text: `${tRef.current('skills.pluginImportFailed')}: ${message}` });
+    } finally {
+      setIsPluginLoading(false);
+    }
   }
 
   async function handleInstall() {
@@ -556,6 +602,99 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
         )}
       </SettingsContentSection>
 
+      {/* Conflict Resolution — only show when conflicts exist or user has custom skills */}
+      {(conflicts.length > 0 || customSkills.length > 0) && conflictConfig && (
+        <SettingsContentSection
+          title={t('skills.conflictResolution')}
+          description={t('skills.conflictResolutionDesc')}
+        >
+          <div className="space-y-2">
+            {(['custom-wins', 'builtin-wins', 'ask'] as const).map((policy) => (
+              <label
+                key={policy}
+                className="flex items-start gap-3 p-3 rounded-lg border border-border hover:border-accent/50 cursor-pointer transition-colors"
+              >
+                <input
+                  type="radio"
+                  name="conflictPolicy"
+                  value={policy}
+                  checked={conflictConfig.conflictPolicy === policy}
+                  onChange={() => setConflictPolicy(policy)}
+                  className="mt-0.5 accent-accent"
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-text-primary">
+                    {t(
+                      `skills.policy${policy === 'custom-wins' ? 'CustomWins' : policy === 'builtin-wins' ? 'BuiltinWins' : 'Ask'}`
+                    )}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {t(
+                      `skills.policy${policy === 'custom-wins' ? 'CustomWins' : policy === 'builtin-wins' ? 'BuiltinWins' : 'Ask'}Desc`
+                    )}
+                  </div>
+                </div>
+              </label>
+            ))}
+          </div>
+
+          {conflicts.length > 0 && (
+            <div className="mt-4 space-y-2">
+              <h5 className="text-xs font-semibold text-text-muted uppercase tracking-wide">
+                {t('skills.conflictCount', { count: conflicts.length })}
+              </h5>
+              {conflicts.map((conflict) => (
+                <div
+                  key={conflict.skillName}
+                  className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-warning/5 border border-warning/20"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <AlertTriangle className="w-3.5 h-3.5 text-warning shrink-0" />
+                    <span className="text-sm text-text-primary font-medium truncate">
+                      {conflict.skillName}
+                    </span>
+                    <span className="text-xs text-text-muted">
+                      {t(
+                        `skills.conflictSource${conflict.activeSource.charAt(0).toUpperCase() + conflict.activeSource.slice(1)}`
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {conflictConfig.disabledSkills.includes(conflict.skillName) ? (
+                      <button
+                        onClick={() => toggleSkillDisabled(conflict.skillName, false)}
+                        className="text-xs px-2 py-1 rounded bg-surface-muted text-text-muted hover:text-text-primary transition-colors"
+                      >
+                        {t('common.enable')}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => toggleSkillDisabled(conflict.skillName, true)}
+                        className="text-xs px-2 py-1 rounded bg-surface-muted text-text-muted hover:text-text-primary transition-colors"
+                      >
+                        {t('common.disable')}
+                      </button>
+                    )}
+                    {conflictConfig.sourceOverrides[conflict.skillName] && (
+                      <button
+                        onClick={() => resetToBuiltin(conflict.skillName)}
+                        className="text-xs px-2 py-1 rounded bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+                      >
+                        {t('skills.conflictResetToBuiltin')}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {conflicts.length === 0 && (
+            <p className="text-xs text-text-muted">{t('skills.conflictNoConflicts')}</p>
+          )}
+        </SettingsContentSection>
+      )}
+
       {/* Built-in Skills */}
       <SettingsContentSection
         title={t('skills.builtinSkills')}
@@ -652,7 +791,7 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
         title={t('skills.pluginsTitle')}
         description={t('skills.pluginsDesc')}
       >
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
           <button
             onClick={handleBrowsePlugins}
             disabled={isLoading || isPluginLoading}
@@ -666,6 +805,18 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
             {t('skills.browsePlugins')}
           </button>
           <button
+            onClick={handleImportPlugin}
+            disabled={isLoading || isPluginLoading}
+            className="w-full py-3 px-4 rounded-lg border border-border-subtle hover:border-accent hover:bg-accent/5 transition-all flex items-center justify-center gap-2 text-text-secondary hover:text-accent disabled:opacity-50"
+          >
+            {isPluginLoading ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <FolderOpen className="w-5 h-5" />
+            )}
+            {t('skills.importPlugin')}
+          </button>
+          <button
             onClick={handleInstall}
             disabled={isLoading}
             className="w-full py-3 px-4 rounded-lg border-2 border-dashed border-border-subtle hover:border-accent hover:bg-accent/5 transition-all flex items-center justify-center gap-2 text-text-secondary hover:text-accent disabled:opacity-50"
@@ -675,6 +826,120 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
           </button>
         </div>
       </SettingsContentSection>
+
+      {/* Installed plugins list — icon-based layout matching skill boxes */}
+      {Object.values(installedPluginsByKey).length > 0 && (
+        <SettingsContentSection
+          title={t('skills.installedPluginsTitle')}
+          description={t('skills.installedPluginsDesc')}
+        >
+          <div className="space-y-2">
+            {Object.values(installedPluginsByKey)
+              .filter(
+                (plugin, index, arr) =>
+                  arr.findIndex((p) => p.pluginId === plugin.pluginId) === index
+              )
+              .map((plugin) => {
+                const componentEntries = componentOrder.filter(
+                  (c) => plugin.componentCounts[c] > 0
+                );
+                return (
+                  <div key={plugin.pluginId} className="rounded-lg border border-border p-4">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                          plugin.enabled ? 'bg-success' : 'bg-text-muted'
+                        }`}
+                        aria-hidden="true"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-text-primary truncate">
+                            {plugin.name}
+                          </span>
+                          {plugin.orchestratorSkill && (
+                            <span
+                              className="text-xs text-amber-500"
+                              title={`Orchestrator: ${plugin.orchestratorSkill}`}
+                            >
+                              ★
+                            </span>
+                          )}
+                        </div>
+                        {plugin.description && (
+                          <p className="text-xs text-text-muted mt-0.5 line-clamp-1">
+                            {plugin.description}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <button
+                          onClick={() => handleSetPluginEnabled(plugin, !plugin.enabled)}
+                          disabled={pluginActionKey !== null}
+                          className={`p-1.5 rounded-md transition-colors disabled:opacity-50 ${
+                            plugin.enabled
+                              ? 'text-success hover:bg-success/10'
+                              : 'text-text-muted hover:bg-surface-hover'
+                          }`}
+                          title={
+                            plugin.enabled ? t('skills.pluginDisable') : t('skills.pluginEnable')
+                          }
+                          aria-label={
+                            plugin.enabled ? t('skills.pluginDisable') : t('skills.pluginEnable')
+                          }
+                        >
+                          {plugin.enabled ? (
+                            <Power className="w-[18px] h-[18px]" />
+                          ) : (
+                            <PowerOff className="w-[18px] h-[18px]" />
+                          )}
+                        </button>
+                        <button
+                          onClick={() => handleUninstallPlugin(plugin)}
+                          disabled={pluginActionKey !== null}
+                          className="p-1.5 rounded-md text-error/70 hover:text-error hover:bg-error/10 transition-colors disabled:opacity-50"
+                          title={t('skills.pluginManageUninstall')}
+                          aria-label={t('skills.pluginManageUninstall')}
+                        >
+                          <Trash2 className="w-[18px] h-[18px]" />
+                        </button>
+                      </div>
+                    </div>
+                    {/* Component summary + per-component controls */}
+                    {componentEntries.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-border-muted">
+                        <div className="flex flex-wrap gap-x-4 gap-y-1">
+                          {componentEntries.map((component) => {
+                            const enabled = plugin.componentsEnabled[component];
+                            return (
+                              <button
+                                key={`${plugin.pluginId}:${component}`}
+                                onClick={() =>
+                                  handleSetComponentEnabled(plugin, component, !enabled)
+                                }
+                                disabled={pluginActionKey !== null}
+                                className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors disabled:opacity-50 ${
+                                  enabled
+                                    ? 'bg-success/10 text-success hover:bg-success/20'
+                                    : 'bg-surface text-text-muted hover:bg-surface-active'
+                                }`}
+                                title={`${enabled ? t('skills.pluginDisable') : t('skills.pluginEnable')} ${component}`}
+                                aria-label={`${enabled ? t('skills.pluginDisable') : t('skills.pluginEnable')} ${component}`}
+                              >
+                                <span className="capitalize">{component}</span>
+                                <span>({plugin.componentCounts[component]})</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        </SettingsContentSection>
+      )}
 
       {isPluginModalOpen && (
         <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">

@@ -72,7 +72,7 @@ export function McpToolPermissions({
       const override = toolPermissions[shortName];
       if (override) {
         overridden.push({ ...tool, override });
-      } else if (isToolLikelyReadOnly(shortName)) {
+      } else if (isToolLikelyReadOnly(shortName, tool.annotations)) {
         readOnly.push(tool);
       } else {
         write.push(tool);
@@ -107,7 +107,7 @@ export function McpToolPermissions({
             asked++;
             break;
           case 'allow-reads':
-            if (isToolLikelyReadOnly(shortName)) allowed++;
+            if (isToolLikelyReadOnly(shortName, tool.annotations)) allowed++;
             else asked++;
             break;
         }
@@ -191,7 +191,7 @@ export function McpToolPermissions({
               {currentPolicy === 'allow-reads' &&
                 t('mcp.policyAllowReadsDesc', {
                   defaultValue:
-                    'Read-only tools (get_*, list_*, search_*) auto-approved. Write tools still prompt.',
+                    'Read-only tools auto-approved based on server annotations or name patterns (e.g. *_get_*, *_list_*). Write tools still prompt.',
                 })}
               {currentPolicy === 'ask-all' &&
                 t('mcp.policyAskAllDesc', {
@@ -275,7 +275,7 @@ export function McpToolPermissions({
                     const shortName = getToolShortName(tool.name);
                     const hasOverride = shortName in toolPermissions;
                     if (hasOverride) return null; // Already shown above
-                    const readOnly = isToolLikelyReadOnly(shortName);
+                    const readOnly = isToolLikelyReadOnly(shortName, tool.annotations);
                     return (
                       <ToolRow
                         key={tool.name}

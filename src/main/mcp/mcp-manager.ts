@@ -75,6 +75,14 @@ export interface MCPTool {
   };
   serverId: string;
   serverName: string;
+  /** MCP ToolAnnotations from the server (readOnlyHint, destructiveHint, etc.) */
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+    title?: string;
+  };
 }
 
 function normalizeWindowsPathForComparison(candidate: string): string {
@@ -1439,6 +1447,9 @@ export class MCPManager {
             },
             serverId,
             serverName: config.name,
+            // Capture MCP ToolAnnotations if provided by the server
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            annotations: (tool as any).annotations || undefined,
           });
         }
 

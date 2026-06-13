@@ -46,6 +46,14 @@ export interface MCPToolInfo {
   serverId: string;
   name: string;
   description?: string;
+  /** MCP ToolAnnotations from the server (readOnlyHint, destructiveHint, etc.) */
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+    title?: string;
+  };
 }
 
 export interface MCPPreset {

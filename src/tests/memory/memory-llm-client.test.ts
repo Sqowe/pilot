@@ -102,6 +102,12 @@ function makeConfig(timeoutMs: number): AppConfig {
     mcpToolTimeoutSeconds: 240,
     isConfigured: true,
     notificationsEnabled: true,
+    skillConflictConfig: {
+      conflictPolicy: 'custom-wins',
+      disabledSkills: [],
+      sourceOverrides: {},
+      acknowledgedConflicts: [],
+    },
   };
 }
 
@@ -117,10 +123,12 @@ describe('MemoryLLMClient', () => {
 
   it('aborts one-shot completions with the configured memory LLM timeout', async () => {
     let signal: AbortSignal | undefined;
-    completeSimpleMock.mockImplementation((_model: unknown, _msgs: unknown, options: { signal?: AbortSignal }) => {
-      signal = options?.signal;
-      return new Promise(() => undefined);
-    });
+    completeSimpleMock.mockImplementation(
+      (_model: unknown, _msgs: unknown, options: { signal?: AbortSignal }) => {
+        signal = options?.signal;
+        return new Promise(() => undefined);
+      }
+    );
 
     const client = new MemoryLLMClient(() => makeConfig(5000));
     const completion = client
