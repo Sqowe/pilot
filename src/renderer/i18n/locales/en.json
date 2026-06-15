@@ -1288,5 +1288,24 @@
     "description": "An unexpected error occurred in the application. You can try to recover by clicking the button below.",
     "details": "Error details",
     "retry": "Try again"
+  },
+  "workspace": {
+    "orphansDetected": "Workspace profile has {{total}} stale reference(s) to removed skills/servers",
+    "orphansSkillsOnly": "Workspace profile references {{count}} skill(s) no longer installed",
+    "orphansMcpOnly": "Workspace profile references {{count}} MCP server(s) no longer configured",
+    "reviewCleanup": "Review & Clean Up",
+    "cleanupTitle": "Clean Up Workspace Profile",
+    "cleanupDescription": "The following entries reference skills or MCP servers that are no longer installed.",
+    "cleanupRemoveAll": "Remove All",
+    "cleanupRemoveSelected": "Remove Selected",
+    "cleanupDismiss": "Dismiss",
+    "cleanupDontRemind": "Don't remind me for this workspace",
+    "cleanupSuccess": "Removed {{count}} stale entries from workspace profile",
+    "cleanupFailed": "Failed to update workspace profile",
+    "sectionSkills": "Skills",
+    "sectionMcp": "MCP Servers",
+    "wasInPinned": "was in \"pinned\"",
+    "wasInDisabled": "was in \"disabled\"",
+    "wasInEnabled": "was in \"enabled\""
   }
 }

@@ -14,7 +14,10 @@ import type {
 import { applySessionUpdate } from '../utils/session-update';
 
 export type GlobalNoticeType = 'info' | 'warning' | 'error' | 'success';
-export type GlobalNoticeAction = 'open_api_settings' | 'navigate_settings_skills';
+export type GlobalNoticeAction =
+  | 'open_api_settings'
+  | 'navigate_settings_skills'
+  | 'open_orphan_cleanup';
 
 export interface GlobalNotice {
   id: string;
@@ -110,6 +113,10 @@ interface AppState {
   hasSeenInitialConfigStatus: boolean;
   globalNotice: GlobalNotice | null;
 
+  // Workspace orphan detection
+  workspaceOrphans: import('../../shared/workspace-orphan-types').OrphanDetectionResult | null;
+  showOrphanCleanup: boolean;
+
   // Working directory
   workingDir: string | null;
 
@@ -179,6 +186,10 @@ interface AppState {
   markInitialConfigStatusSeen: () => void;
   setGlobalNotice: (notice: GlobalNotice | null) => void;
   clearGlobalNotice: () => void;
+  setWorkspaceOrphans: (
+    orphans: import('../../shared/workspace-orphan-types').OrphanDetectionResult | null
+  ) => void;
+  setShowOrphanCleanup: (show: boolean) => void;
 
   // Working directory actions
   setWorkingDir: (path: string | null) => void;
@@ -257,6 +268,8 @@ export const useAppStore = create<AppState>((set) => ({
   showConfigModal: false,
   hasSeenInitialConfigStatus: false,
   globalNotice: null,
+  workspaceOrphans: null,
+  showOrphanCleanup: false,
   workingDir: null,
   sandboxSetupProgress: null,
   isSandboxSetupComplete: false,
@@ -597,6 +610,8 @@ export const useAppStore = create<AppState>((set) => ({
   markInitialConfigStatusSeen: () => set({ hasSeenInitialConfigStatus: true }),
   setGlobalNotice: (notice) => set({ globalNotice: notice }),
   clearGlobalNotice: () => set({ globalNotice: null }),
+  setWorkspaceOrphans: (orphans) => set({ workspaceOrphans: orphans }),
+  setShowOrphanCleanup: (show) => set({ showOrphanCleanup: show }),
 
   // Working directory actions
   setWorkingDir: (path) => set({ workingDir: path }),

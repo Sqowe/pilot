@@ -328,6 +328,13 @@ export function useIPC() {
           case 'workdir.changed':
             console.log('[useIPC] workdir.changed received:', event.payload.path);
             store.setWorkingDir(event.payload.path || null);
+            // Clear stale orphan data from previous workspace
+            store.setWorkspaceOrphans(null);
+            store.setShowOrphanCleanup(false);
+            // Clear orphan-related global notice if still showing
+            if (useAppStore.getState().globalNotice?.action === 'open_orphan_cleanup') {
+              store.clearGlobalNotice();
+            }
             break;
 
           case 'session.contextInfo':
@@ -375,6 +382,96 @@ export function useIPC() {
               store.setShowSettings(true);
             }
             break;
+
+          case 'workspace.orphans_detected': {
+            const payload = event.payload;
+            // Validate payload shape (main process may be a different version)
+            if (
+              !payload ||
+              typeof payload !== 'object' ||
+              typeof payload.cwd !== 'string' ||
+              typeof payload.totalOrphans !== 'number'
+            ) {
+              console.warn('[useIPC] workspace.orphans_detected: invalid payload, ignoring');
+              break;
+            }
+
+            // Ignore stale events for a different workspace or when no workspace is set
+            const currentCwd = useAppStore.getState().workingDir;
+            if (!currentCwd || payload.cwd !== currentCwd) {
+              console.log(
+                '[useIPC] workspace.orphans_detected: ignoring event for',
+                payload.cwd,
+                '(current:',
+                currentCwd || 'null',
+                ')'
+              );
+              break;
+            }
+
+            // Normalize nested arrays — ensure all are string arrays
+            const toStringArray = (val: unknown): string[] =>
+              Array.isArray(val) ? val.filter((v): v is string => typeof v === 'string') : [];
+
+            const normalizedSkills = {
+              inPinned: toStringArray(payload.orphanedSkills?.inPinned),
+              inDisabled: toStringArray(payload.orphanedSkills?.inDisabled),
+            };
+            const normalizedMcp = {
+              inDisabled: toStringArray(payload.orphanedMcpServers?.inDisabled),
+              inEnabled: toStringArray(payload.orphanedMcpServers?.inEnabled),
+            };
+
+            const skillCount =
+              normalizedSkills.inPinned.length + normalizedSkills.inDisabled.length;
+            const mcpCount = normalizedMcp.inDisabled.length + normalizedMcp.inEnabled.length;
+            const totalOrphans = skillCount + mcpCount;
+
+            // Ignore if normalization results in 0 actual orphans
+            if (totalOrphans === 0) {
+              console.log(
+                '[useIPC] workspace.orphans_detected: no valid orphans after normalization'
+              );
+              break;
+            }
+
+            console.log(
+              `[useIPC] workspace.orphans_detected: ${totalOrphans} orphans in ${payload.cwd}`
+            );
+
+            // Store normalized orphan data for the cleanup modal
+            const normalizedPayload = {
+              orphanedSkills: normalizedSkills,
+              orphanedMcpServers: normalizedMcp,
+              totalOrphans,
+              cwd: payload.cwd,
+            };
+            store.setWorkspaceOrphans(normalizedPayload);
+
+            // Build appropriate message
+            let messageKey: string;
+            const messageValues: Record<string, string | number> = { total: totalOrphans };
+            if (skillCount > 0 && mcpCount > 0) {
+              messageKey = 'workspace.orphansDetected';
+            } else if (skillCount > 0) {
+              messageKey = 'workspace.orphansSkillsOnly';
+              messageValues.count = skillCount;
+            } else {
+              messageKey = 'workspace.orphansMcpOnly';
+              messageValues.count = mcpCount;
+            }
+
+            store.setGlobalNotice({
+              id: `workspace-orphans-${Date.now()}`,
+              type: 'warning',
+              message: `Workspace profile has ${totalOrphans} stale reference(s)`,
+              messageKey,
+              messageValues,
+              action: 'open_orphan_cleanup',
+              actionLabel: i18n.t('workspace.reviewCleanup'),
+            });
+            break;
+          }
 
           default:
             console.log('[useIPC] Unknown server event:', event);

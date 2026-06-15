@@ -281,6 +281,16 @@ export function useGlobalNotice(): GlobalNotice | null {
   return useAppStore((s) => s.globalNotice);
 }
 
+/** Returns workspace orphan detection result (or null when none). */
+export function useWorkspaceOrphans() {
+  return useAppStore((s) => s.workspaceOrphans);
+}
+
+/** Returns whether the orphan cleanup modal is open. */
+export function useShowOrphanCleanup(): boolean {
+  return useAppStore((s) => s.showOrphanCleanup);
+}
+
 /** Returns the current working directory. */
 export function useWorkingDir(): string | null {
   return useAppStore((s) => s.workingDir);

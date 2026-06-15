@@ -1,8 +1,9 @@
 # Stale Workspace Config Cleanup — Design Document
 
 **Created:** 2026-06-15  
-**Status:** In Progress (Phase 1 complete)  
+**Status:** In Progress (Phase 1–4 complete)  
 **Phase 1 Implemented:** 2026-06-15  
+**Phase 3–4 Implemented:** 2026-06-15  
 **Author:** AI-assisted design session
 
 ---
@@ -506,31 +507,52 @@ PINNED SKILLS (3/14 active · 6 removed · ⚠️ 2 stale)
   unknown field preservation in skills-profile.json
 - 33 unit tests covering detection, dismissal, cleanup, safety, and symlink cases
 
-### Phase 2: Cleanup Logic (Main Process)
+### Phase 2: Cleanup Logic (Main Process) ✅
 
-1. Add `workspace.cleanupOrphans` IPC handler
-2. Reuse existing `saveSkillsWorkspaceProfile` and `saveWorkspaceMcpProfile` functions
-3. Handle empty-profile deletion (existing pattern)
-4. Add preload bridge for new IPC endpoints
-5. Tests: cleanup execution, partial removal, empty-profile deletion
+_Implemented as part of Phase 1 — cleanup IPC handler, preload bridge, and tests
+were built together with the detection engine._
 
-### Phase 3: Notification (Renderer)
+1. ~~Add `workspace.cleanupOrphans` IPC handler~~
+2. ~~Reuse existing `saveSkillsWorkspaceProfile` and `saveWorkspaceMcpProfile` functions~~
+3. ~~Handle empty-profile deletion (existing pattern)~~
+4. ~~Add preload bridge for new IPC endpoints~~
+5. ~~Tests: cleanup execution, partial removal, empty-profile deletion~~
 
-1. Add `'open_orphan_cleanup'` to `GlobalNoticeAction` type
-2. Handle `workspace_orphans_detected` server event in `useIPC.ts`
-3. Add `workspaceOrphans` state to Zustand store
-4. Show `GlobalNoticeToast` with correct message variant
-5. Add i18n keys (en.json + zh.json)
-6. Tests: toast rendering, action dispatch
+### Phase 3: Notification (Renderer) ✅
 
-### Phase 4: Cleanup Modal (Renderer)
+1. ~~Add `'open_orphan_cleanup'` to `GlobalNoticeAction` type~~
+2. ~~Handle `workspace.orphans_detected` server event in `useIPC.ts`~~
+3. ~~Add `workspaceOrphans` state to Zustand store~~
+4. ~~Show `GlobalNoticeToast` with correct message variant~~
+5. ~~Add i18n keys (en.json + zh.json)~~
+6. Tests: toast rendering, action dispatch — _deferred_
 
-1. Create `src/renderer/components/WorkspaceOrphanCleanupModal.tsx`
-2. List orphaned entries with checkboxes (grouped by type)
-3. "Remove All" / "Remove Selected" / "Dismiss" buttons
-4. "Don't remind" checkbox → calls `workspace.dismissOrphanNotice`
-5. Success toast after cleanup
-6. Tests: modal interactions, IPC calls
+**Implementation notes (Phase 3):**
+
+- Added `open_orphan_cleanup` to `GlobalNoticeAction` type
+- IPC handler normalizes nested payload arrays, validates shape, rejects stale CWDs
+- Added `workspaceOrphans`, `showOrphanCleanup` state + actions + selectors to Zustand
+- Workspace change clears orphan state, modal visibility, and related global notices
+- Added 12 i18n keys to en.json and zh.json
+
+### Phase 4: Cleanup Modal (Renderer) ✅
+
+1. ~~Create `src/renderer/components/WorkspaceOrphanCleanupModal.tsx`~~
+2. ~~List orphaned entries with checkboxes (grouped by type, deduplicated by ID)~~
+3. ~~"Remove All" / "Remove Selected" / "Dismiss" buttons~~
+4. ~~"Don't remind" checkbox → calls `workspace.dismissOrphanNotice`~~
+5. ~~Success toast after cleanup~~
+6. Tests: modal interactions, IPC calls — _deferred_
+
+**Implementation notes (Phase 4):**
+
+- Modal keyed on `orphans.cwd + totalOrphans` to remount on payload changes
+- Entries deduplicated by `type:id` — same skill in pinned+disabled shows once
+- Async cleanup guarded with `mountedRef` and workspace-change check
+- Dismiss clears state before async IPC call to prevent stale mutations
+- X button behaves like Dismiss (consistent close semantics)
+- Accessible: `role="dialog"`, `aria-modal`, `aria-labelledby`
+- Auto-close on success after 1.2s (timer cleaned up on unmount)
 
 ### Phase 5: Context Panel Badge (Optional Enhancement)
 
