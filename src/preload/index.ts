@@ -387,6 +387,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('workspace-instructions.getStatus', cwd),
   },
 
+  // Workspace orphan detection & cleanup
+  workspace: {
+    detectOrphans: (
+      cwd: string
+    ): Promise<import('../shared/workspace-orphan-types').OrphanDetectionResult | null> =>
+      ipcRenderer.invoke('workspace.detectOrphans', cwd),
+    cleanupOrphans: (
+      payload: import('../shared/workspace-orphan-types').OrphanCleanupPayload
+    ): Promise<import('../shared/workspace-orphan-types').OrphanCleanupResult> =>
+      ipcRenderer.invoke('workspace.cleanupOrphans', payload),
+    dismissOrphanNotice: (cwd: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('workspace.dismissOrphanNotice', cwd),
+  },
+
   plugins: {
     listCatalog: (options?: { installableOnly?: boolean }): Promise<PluginCatalogItemV2[]> =>
       ipcRenderer.invoke('plugins.listCatalog', options),
@@ -797,6 +811,15 @@ declare global {
       };
       workspaceInstructions: {
         getStatus: (cwd?: string) => Promise<WorkspaceInstructionsStatus>;
+      };
+      workspace: {
+        detectOrphans: (
+          cwd: string
+        ) => Promise<import('../shared/workspace-orphan-types').OrphanDetectionResult | null>;
+        cleanupOrphans: (
+          payload: import('../shared/workspace-orphan-types').OrphanCleanupPayload
+        ) => Promise<import('../shared/workspace-orphan-types').OrphanCleanupResult>;
+        dismissOrphanNotice: (cwd: string) => Promise<{ success: boolean; error?: string }>;
       };
       plugins: {
         listCatalog: (options?: { installableOnly?: boolean }) => Promise<PluginCatalogItemV2[]>;
