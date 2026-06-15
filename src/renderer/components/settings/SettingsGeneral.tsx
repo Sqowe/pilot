@@ -7,7 +7,13 @@ export function SettingsGeneral() {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const appConfig = useAppStore((s) => s.appConfig);
-  const currentLang = i18n.language.startsWith('zh') ? 'zh' : 'en';
+  const currentLang = i18n.language.startsWith('zh')
+    ? 'zh'
+    : i18n.language.startsWith('ru')
+      ? 'ru'
+      : i18n.language.startsWith('hu')
+        ? 'hu'
+        : 'en';
   const [appVer, setAppVer] = useState('');
   useEffect(() => {
     try {
@@ -24,6 +30,8 @@ export function SettingsGeneral() {
   const languages = [
     { code: 'en', nativeName: 'English' },
     { code: 'zh', nativeName: '中文' },
+    { code: 'ru', nativeName: 'Русский' },
+    { code: 'hu', nativeName: 'Magyar' },
   ];
 
   const themeOptions = [

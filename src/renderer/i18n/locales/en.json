@@ -249,6 +249,8 @@
   "language": {
     "english": "English",
     "chinese": "Chinese",
+    "russian": "Russian",
+    "hungarian": "Hungarian",
     "selectLanguage": "Select Language",
     "currentLanguage": "Current language"
   },
