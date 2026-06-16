@@ -776,7 +776,9 @@ function runOrphanDetection(cwd: string): void {
     }
 
     const installedSkillIds = new Set(skillsManager.getAllSkills().map((s) => s.id));
-    const configuredServerNames = new Set(mcpConfigStore.getServers().map((s) => s.name));
+    const configuredServerNames = new Set(
+      mcpConfigStore.getServers().flatMap((s) => [s.id, s.name])
+    );
 
     const result = detectWorkspaceOrphans(cwd, installedSkillIds, configuredServerNames);
     if (!result) return;
@@ -3275,7 +3277,7 @@ ipcMain.handle('workspace.detectOrphans', async (_event, cwd: string) => {
     // MCP config store is always available (singleton, initialized before session manager)
     // but guard defensively in case of future changes
     const configuredServerNames = new Set(
-      mcpConfigStore ? mcpConfigStore.getServers().map((s) => s.name) : []
+      mcpConfigStore ? mcpConfigStore.getServers().flatMap((s) => [s.id, s.name]) : []
     );
 
     return detectWorkspaceOrphans(
@@ -3335,7 +3337,7 @@ ipcMain.handle('workspace.cleanupOrphans', async (_event, payload: OrphanCleanup
     // Only fetch MCP servers when MCP cleanup is actually requested
     const configuredServerNames =
       mcpServerNames.length > 0 && mcpConfigStore
-        ? new Set(mcpConfigStore.getServers().map((s) => s.name))
+        ? new Set(mcpConfigStore.getServers().flatMap((s) => [s.id, s.name]))
         : new Set<string>();
 
     const result = await cleanupOrphans(
@@ -3346,11 +3348,41 @@ ipcMain.handle('workspace.cleanupOrphans', async (_event, payload: OrphanCleanup
       configuredServerNames
     );
 
-    // Persist updated dismissals
-    if (result.success) {
+    // Persist updated dismissals and sync session state
+    if (result.success && result.removed) {
       configStore.update({
         orphanDismissals: getDismissals(),
       } as Partial<AppConfig>);
+
+      // Also remove cleaned-up skills from any active session's disabled set
+      // so the ContextPanel refreshes immediately without requiring a restart.
+      if (result.removed.skills > 0 && skillIds.length > 0 && sessionManager) {
+        for (const session of sessionManager.listSessions()) {
+          if (session.cwd === validation.canonicalCwd) {
+            const currentDisabled = sessionManager.getSessionDisabledSkills(session.id);
+            const removedSet = new Set(skillIds.filter((id) => !installedSkillIds.has(id)));
+            let changed = false;
+            for (const id of currentDisabled) {
+              if (removedSet.has(id)) {
+                sessionManager.toggleSessionDisabledSkill(session.id, id, false);
+                changed = true;
+              }
+            }
+            if (changed) {
+              const updatedDisabled = sessionManager.getSessionDisabledSkills(session.id);
+              const updatedPinned = sessionManager.getSessionPinnedSkills(session.id);
+              sendToRenderer({
+                type: 'skills.session-disabled-changed',
+                payload: {
+                  sessionId: session.id,
+                  disabledSkills: updatedDisabled,
+                  pinnedSkills: updatedPinned,
+                },
+              });
+            }
+          }
+        }
+      }
     }
 
     return result;
@@ -4654,6 +4686,12 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
           effectivePinnedSkills,
           effectiveDisabledSkills
         );
+
+        // Trigger orphan detection for the session's workspace
+        if (event.payload.cwd) {
+          scheduleOrphanDetection(event.payload.cwd);
+        }
+
         return session;
       }
 

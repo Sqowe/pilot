@@ -272,6 +272,51 @@ export function Sidebar() {
 
       // Activate session AFTER data is loaded so ChatView renders with messages immediately
       setActiveSession(sessionId);
+
+      // Trigger workspace orphan detection for the session's CWD
+      const session = useAppStore.getState().sessions.find((s) => s.id === sessionId);
+      if (session?.cwd && isElectron) {
+        // Delay to allow UI to settle before showing notifications
+        setTimeout(async () => {
+          try {
+            const result = await window.electronAPI?.workspace?.detectOrphans(session.cwd!);
+            if (result && result.totalOrphans > 0) {
+              const store = useAppStore.getState();
+              // Only show if still on the same session
+              if (store.activeSessionId === sessionId) {
+                store.setWorkspaceOrphans(result);
+                const skillCount =
+                  result.orphanedSkills.inPinned.length + result.orphanedSkills.inDisabled.length;
+                const mcpCount =
+                  result.orphanedMcpServers.inDisabled.length +
+                  result.orphanedMcpServers.inEnabled.length;
+                let messageKey = 'workspace.orphansDetected';
+                const messageValues: Record<string, string | number> = {
+                  total: result.totalOrphans,
+                };
+                if (skillCount > 0 && mcpCount === 0) {
+                  messageKey = 'workspace.orphansSkillsOnly';
+                  messageValues.count = skillCount;
+                } else if (mcpCount > 0 && skillCount === 0) {
+                  messageKey = 'workspace.orphansMcpOnly';
+                  messageValues.count = mcpCount;
+                }
+                store.setGlobalNotice({
+                  id: `workspace-orphans-${Date.now()}`,
+                  type: 'warning',
+                  message: `Workspace profile has ${result.totalOrphans} stale reference(s)`,
+                  messageKey,
+                  messageValues,
+                  action: 'open_orphan_cleanup',
+                  actionLabel: t('workspace.reviewCleanup'),
+                });
+              }
+            }
+          } catch {
+            // Ignore detection errors — best-effort background check
+          }
+        }, 2000);
+      }
     },
     [
       activeSessionId,

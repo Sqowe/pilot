@@ -177,13 +177,13 @@ export function clearDismissal(cwd: string): void {
  *
  * @param cwd - Workspace root directory
  * @param installedSkillIds - Set of all currently known skill IDs (from skillsManager.getAllSkills())
- * @param configuredServerNames - Set of all configured MCP server names (from mcpConfigStore.getServers())
+ * @param configuredServerIdentifiers - Set of all configured MCP server IDs and names (from mcpConfigStore.getServers())
  * @returns Detection result, or null if no orphans found or detection should be skipped
  */
 export function detectWorkspaceOrphans(
   cwd: string,
   installedSkillIds: Set<string>,
-  configuredServerNames: Set<string>
+  configuredServerIdentifiers: Set<string>
 ): OrphanDetectionResult | null {
   if (!cwd) return null;
 
@@ -206,10 +206,14 @@ export function detectWorkspaceOrphans(
     inDisabled: (skillsProfile?.disabled || []).filter((id) => !installedSkillIds.has(id)),
   };
 
-  // Compute orphaned MCP servers
+  // Compute orphaned MCP servers (profile may store IDs or names)
   const orphanedMcpServers = {
-    inDisabled: (mcpProfile?.disabled || []).filter((name) => !configuredServerNames.has(name)),
-    inEnabled: (mcpProfile?.enabled || []).filter((name) => !configuredServerNames.has(name)),
+    inDisabled: (mcpProfile?.disabled || []).filter(
+      (entry) => !configuredServerIdentifiers.has(entry)
+    ),
+    inEnabled: (mcpProfile?.enabled || []).filter(
+      (entry) => !configuredServerIdentifiers.has(entry)
+    ),
   };
 
   const totalOrphans =
@@ -249,7 +253,7 @@ export function detectWorkspaceOrphans(
  * @param skillIds - Specific skill IDs to remove (empty array = don't touch skills)
  * @param mcpServerNames - Specific MCP server names to remove (empty array = don't touch MCP)
  * @param installedSkillIds - Current installed skills (used to verify orphan status)
- * @param configuredServerNames - Current MCP servers (used to verify orphan status)
+ * @param configuredServerIdentifiers - Current MCP server IDs and names (used to verify orphan status)
  * @returns Cleanup result
  */
 export async function cleanupOrphans(
@@ -257,7 +261,7 @@ export async function cleanupOrphans(
   skillIds: string[],
   mcpServerNames: string[],
   installedSkillIds: Set<string>,
-  configuredServerNames: Set<string>
+  configuredServerIdentifiers: Set<string>
 ): Promise<{ success: boolean; error?: string; removed: { skills: number; mcp: number } }> {
   let skillsRemoved = 0;
   let mcpRemoved = 0;
@@ -297,7 +301,7 @@ export async function cleanupOrphans(
       if (mcpProfile) {
         // Only remove names that are actually orphaned (not in configured set)
         const verifiedOrphanMcp = new Set(
-          mcpServerNames.filter((name) => !configuredServerNames.has(name))
+          mcpServerNames.filter((name) => !configuredServerIdentifiers.has(name))
         );
 
         if (verifiedOrphanMcp.size > 0) {
