@@ -498,10 +498,15 @@ rm
 
 ## Where the code lives
 
-- Engine: `src/main/config/permission-rules-store.ts`
+- Decision engine (pure): `src/shared/bash-restrictions/engine.ts`
   (`decideBashPermission`, `splitBashSubCommands`,
   `containsUnsupportedShellSyntax`, `matchesTrustedPrefix`,
   `matchesDenylistPattern`)
+- Settings schema & normalizers: `src/shared/bash-restrictions/settings.ts`
+  (`sanitizeBashCommandList`, `normalizePermissionTimeout`,
+  `sanitizeBashRestrictionsSettings`)
+- Main-process state & 1-arg wrapper: `src/main/config/permission-rules-store.ts`
+  (`decideBashPermission`, `setBashCommandLists`, `getBashCommandLists`)
 - Main-process installation of the permission gate:
   `src/main/claude/agent-runner.ts#installPermissionHook`
 - Hook installer (SDK shape detection): `src/main/claude/before-tool-call-hook.ts`
@@ -510,4 +515,6 @@ rm
   (`bashTrustedCommands`, `bashDenylist` fields)
 - Tests: `tests/bash-command-control.test.ts`,
   `tests/denylist-word-boundary.test.ts`,
-  `tests/before-tool-call-hook.test.ts`
+  `tests/before-tool-call-hook.test.ts`,
+  `tests/bash-restrictions-engine.test.ts`,
+  `tests/bash-restrictions-settings.test.ts`

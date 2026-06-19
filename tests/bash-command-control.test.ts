@@ -11,10 +11,21 @@ import {
 } from '../src/main/config/permission-rules-store';
 
 /**
- * Tests for the bash trust/deny layer added on top of the generic permission
- * rule engine. The module keeps its state in module-level variables, so we
- * reset both the bash lists and the generic rules after every test to keep
- * cases independent.
+ * Tests for the bash trust/deny layer in `permission-rules-store`.
+ *
+ * Since Phase 2 the store's `decideBashPermission(command)` is a 1-arg
+ * wrapper that injects the module-level lists into the shared engine
+ * (`src/shared/bash-restrictions/engine.ts`). These tests exercise that
+ * wrapper boundary and codify the required semantics:
+ *
+ *   - empty command       → null  (short-circuit, no list check)
+ *   - both lists empty    → null  (not opted-in; fall through to generic rules)
+ *   - unsupported syntax  → 'ask' (fail-closed when lists are non-empty)
+ *   - denylist precedence → 'ask' (beats trust list unconditionally)
+ *   - fully trusted       → 'allow'
+ *
+ * The module keeps its state in module-level variables, so we reset both the
+ * bash lists and the generic rules after every test to keep cases independent.
  */
 
 afterEach(() => {
@@ -73,6 +84,51 @@ describe('decideBashPermission — empty configuration', () => {
   it('returns null for an empty command regardless of lists', () => {
     setBashCommandLists(['npm *'], ['rm -rf']);
     expect(decideBashPermission('')).toBeNull();
+  });
+
+  it('returns null for unsupported shell syntax when lists are empty (falls through to generic rules)', () => {
+    // With no lists configured the wrapper short-circuits before the engine,
+    // so unsupported syntax does NOT force 'ask' — the generic rule decides.
+    expect(decideBashPermission('echo $(rm -rf /)')).toBeNull();
+  });
+
+  it('returns ask for unsupported shell syntax when lists are non-empty (fail-closed)', () => {
+    // Opt-in activates authoritative mode; the engine fails closed on
+    // unsupported syntax regardless of what is trusted.
+    setBashCommandLists(['echo *'], []);
+    expect(decideBashPermission('echo $(rm -rf /)')).toBe('ask');
+  });
+});
+
+describe('decideBashPermission — authoritative mode edge cases (non-empty lists)', () => {
+  // These cases confirm the wrapper never falls through to null when authoritative
+  // mode is active, even for inputs that are effectively empty after parsing.
+
+  it('returns ask for whitespace-only command in authoritative mode', () => {
+    setBashCommandLists(['npm *'], []);
+    expect(decideBashPermission('   ')).toBe('ask');
+  });
+
+  it('returns ask for a bare semicolon in authoritative mode', () => {
+    setBashCommandLists(['npm *'], []);
+    expect(decideBashPermission(';')).toBe('ask');
+  });
+
+  it('returns ask for repeated separators in authoritative mode', () => {
+    setBashCommandLists(['npm *'], []);
+    expect(decideBashPermission(' ; ; ')).toBe('ask');
+  });
+
+  it('returns ask for operator-only input in authoritative mode', () => {
+    setBashCommandLists(['npm *'], []);
+    expect(decideBashPermission('&&')).toBe('ask');
+  });
+
+  it('returns allow for trailing operator when the prefix is trusted (trailing && is stripped by the splitter)', () => {
+    // 'npm install &&' splits to ['npm install'] — matched by 'npm *' → allow.
+    // The trailing empty segment is dropped by splitBashSubCommands.
+    setBashCommandLists(['npm *'], []);
+    expect(decideBashPermission('npm install &&')).toBe('allow');
   });
 });
 

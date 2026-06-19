@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_BASH_RESTRICTIONS_SETTINGS } from '../src/shared/bash-restrictions';
 
 /**
  * ConfigStore persistence tests for the bash trust list and denylist.
@@ -169,5 +170,74 @@ describe('ConfigStore bash trust list and denylist', () => {
     const second = new ConfigStore();
     expect(second.get('bashTrustedCommands')).toEqual(['npm *', 'git *']);
     expect(second.get('bashDenylist')).toEqual(['rm -rf']);
+  });
+});
+
+describe('permissionTimeoutSeconds normalization via ConfigStore', () => {
+  // These tests pin down that ConfigStore.update() normalizes
+  // permissionTimeoutSeconds through the shared normalizePermissionTimeout
+  // (imported from src/shared/bash-restrictions/settings.ts), verifying
+  // it is semantically identical to the local function it replaced.
+  // The same cases are tested at the shared-module level in
+  // tests/bash-restrictions-settings.test.ts.
+
+  it('stores a valid in-range value unchanged', () => {
+    const cs = new ConfigStore();
+    cs.update({ permissionTimeoutSeconds: 300 });
+    expect(cs.get('permissionTimeoutSeconds')).toBe(300);
+  });
+
+  it('stores 0 (infinite) unchanged', () => {
+    const cs = new ConfigStore();
+    cs.update({ permissionTimeoutSeconds: 0 });
+    expect(cs.get('permissionTimeoutSeconds')).toBe(0);
+  });
+
+  it('clamps negative values to 0 (infinite)', () => {
+    const cs = new ConfigStore();
+    cs.update({ permissionTimeoutSeconds: -1 });
+    expect(cs.get('permissionTimeoutSeconds')).toBe(0);
+  });
+
+  it('clamps values below 10 up to 10', () => {
+    const cs = new ConfigStore();
+    cs.update({ permissionTimeoutSeconds: 5 });
+    expect(cs.get('permissionTimeoutSeconds')).toBe(10);
+  });
+
+  it('clamps values above 3600 down to 3600', () => {
+    const cs = new ConfigStore();
+    cs.update({ permissionTimeoutSeconds: 9999 });
+    expect(cs.get('permissionTimeoutSeconds')).toBe(3600);
+  });
+
+  it('falls back to the shared default for NaN', () => {
+    const cs = new ConfigStore();
+    cs.update({ permissionTimeoutSeconds: NaN });
+    expect(cs.get('permissionTimeoutSeconds')).toBe(
+      DEFAULT_BASH_RESTRICTIONS_SETTINGS.permissionTimeoutSeconds
+    );
+  });
+
+  it('falls back to the shared default for Infinity', () => {
+    const cs = new ConfigStore();
+    cs.update({ permissionTimeoutSeconds: Infinity });
+    expect(cs.get('permissionTimeoutSeconds')).toBe(
+      DEFAULT_BASH_RESTRICTIONS_SETTINGS.permissionTimeoutSeconds
+    );
+  });
+
+  it('falls back to the shared default for non-number input', () => {
+    const cs = new ConfigStore();
+    cs.update({ permissionTimeoutSeconds: 'forever' as unknown as number });
+    expect(cs.get('permissionTimeoutSeconds')).toBe(
+      DEFAULT_BASH_RESTRICTIONS_SETTINGS.permissionTimeoutSeconds
+    );
+  });
+
+  it('floors decimal values', () => {
+    const cs = new ConfigStore();
+    cs.update({ permissionTimeoutSeconds: 10.9 });
+    expect(cs.get('permissionTimeoutSeconds')).toBe(10);
   });
 });
