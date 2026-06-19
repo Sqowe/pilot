@@ -108,6 +108,7 @@ function makeConfig(timeoutMs: number): AppConfig {
       sourceOverrides: {},
       acknowledgedConflicts: [],
     },
+    orphanDismissals: [],
   };
 }
 

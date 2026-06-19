@@ -22,6 +22,7 @@ import { Titlebar } from './components/Titlebar';
 import { SandboxSetupDialog } from './components/SandboxSetupDialog';
 import { SandboxSyncToast } from './components/SandboxSyncToast';
 import { GlobalNoticeToast } from './components/GlobalNoticeToast';
+import { WorkspaceOrphanCleanupModal } from './components/WorkspaceOrphanCleanupModal';
 import { PanelErrorBoundary } from './components/PanelErrorBoundary';
 import type { AppConfig } from './types';
 import type { GlobalNoticeAction } from './store';
@@ -65,6 +66,8 @@ function App() {
   const { sidebarCollapsed } = useLayoutState();
   const { showConfigModal, isConfigured, appConfig } = useConfigModalState();
   const globalNotice = useGlobalNotice();
+  const workspaceOrphans = useAppStore((s) => s.workspaceOrphans);
+  const showOrphanCleanup = useAppStore((s) => s.showOrphanCleanup);
   const { progress: sandboxSetupProgress, isComplete: isSandboxSetupComplete } =
     useSandboxSetupState();
   const sandboxSyncStatus = useSandboxSyncStatus();
@@ -160,6 +163,9 @@ function App() {
         // Set the settings tab to skills so the panel opens to the right section
         useAppStore.getState().setSettingsTab('skills');
         setShowSettings(true);
+      } else if (action === 'open_orphan_cleanup') {
+        // Open the orphan cleanup modal
+        useAppStore.getState().setShowOrphanCleanup(true);
       }
       clearGlobalNotice();
     },
@@ -258,6 +264,15 @@ function App() {
         onDismiss={clearGlobalNotice}
         onAction={handleGlobalNoticeAction}
       />
+
+      {/* Workspace Orphan Cleanup Modal */}
+      {showOrphanCleanup && workspaceOrphans && (
+        <WorkspaceOrphanCleanupModal
+          key={`orphan-modal-${workspaceOrphans.cwd}-${workspaceOrphans.totalOrphans}`}
+          orphans={workspaceOrphans}
+          onClose={() => useAppStore.getState().setShowOrphanCleanup(false)}
+        />
+      )}
     </div>
   );
 }

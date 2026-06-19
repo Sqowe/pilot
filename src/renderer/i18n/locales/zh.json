@@ -1228,5 +1228,24 @@
     "description": "应用遇到了意外错误。你可以点击下方按钮尝试恢复。",
     "details": "错误详情",
     "retry": "重试"
+  },
+  "workspace": {
+    "orphansDetected": "工作区配置中有 {{total}} 个已失效的技能/服务器引用",
+    "orphansSkillsOnly": "工作区配置引用了 {{count}} 个已卸载的技能",
+    "orphansMcpOnly": "工作区配置引用了 {{count}} 个已删除的 MCP 服务器",
+    "reviewCleanup": "查看并清理",
+    "cleanupTitle": "清理工作区配置",
+    "cleanupDescription": "以下条目引用了已不存在的技能或 MCP 服务器。",
+    "cleanupRemoveAll": "全部移除",
+    "cleanupRemoveSelected": "移除所选",
+    "cleanupDismiss": "忽略",
+    "cleanupDontRemind": "不再提醒此工作区",
+    "cleanupSuccess": "已从工作区配置中移除 {{count}} 个失效条目",
+    "cleanupFailed": "更新工作区配置失败",
+    "sectionSkills": "技能",
+    "sectionMcp": "MCP 服务器",
+    "wasInPinned": "位于 \"pinned\"",
+    "wasInDisabled": "位于 \"disabled\"",
+    "wasInEnabled": "位于 \"enabled\""
   }
 }

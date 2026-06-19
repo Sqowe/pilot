@@ -79,6 +79,14 @@ import type {
 import { remoteManager, type AgentExecutor } from './remote/remote-manager';
 import { remoteConfigStore } from './remote/remote-config-store';
 import type { GatewayConfig, FeishuChannelConfig, ChannelType } from './remote/types';
+import {
+  detectWorkspaceOrphans,
+  cleanupOrphans,
+  recordDismissal,
+  initDismissals,
+  getDismissals,
+} from './workspace/workspace-orphan-detector';
+import type { OrphanCleanupPayload } from '../shared/workspace-orphan-types';
 import { startNavServer, stopNavServer } from './nav-server';
 import {
   ScheduledTaskManager,
@@ -723,7 +731,66 @@ async function setWorkingDir(
     sessionId ? `(session: ${sessionId})` : '(pending new session)'
   );
 
+  // Trigger orphan detection for the new workspace (debounced)
+  scheduleOrphanDetection(newDir);
+
   return { success: true, path: newDir };
+}
+
+// ---------------------------------------------------------------------------
+// Workspace orphan detection trigger (debounced per-CWD)
+// ---------------------------------------------------------------------------
+
+let orphanDetectionTimer: ReturnType<typeof setTimeout> | null = null;
+let orphanDetectionPendingCwd: string | null = null;
+
+/**
+ * Schedule orphan detection for a workspace.
+ * Debounced: only the last call within 3s window fires.
+ * Runs after skills and MCP managers are fully initialized.
+ */
+function scheduleOrphanDetection(cwd: string): void {
+  orphanDetectionPendingCwd = cwd;
+  if (orphanDetectionTimer) {
+    clearTimeout(orphanDetectionTimer);
+  }
+  orphanDetectionTimer = setTimeout(() => {
+    orphanDetectionTimer = null;
+    const targetCwd = orphanDetectionPendingCwd;
+    orphanDetectionPendingCwd = null;
+    if (targetCwd) {
+      runOrphanDetection(targetCwd);
+    }
+  }, 3000);
+}
+
+/**
+ * Execute orphan detection and emit result to renderer if orphans found.
+ */
+function runOrphanDetection(cwd: string): void {
+  try {
+    // Ensure managers are ready
+    if (!skillsManager || !mcpConfigStore) {
+      log('[OrphanDetector] Skipping — managers not ready');
+      return;
+    }
+
+    const installedSkillIds = new Set(skillsManager.getAllSkills().map((s) => s.id));
+    const configuredServerNames = new Set(mcpConfigStore.getServers().map((s) => s.name));
+
+    const result = detectWorkspaceOrphans(cwd, installedSkillIds, configuredServerNames);
+    if (!result) return;
+
+    // Emit to renderer
+    sendToRenderer({
+      type: 'workspace.orphans_detected',
+      payload: result,
+    } as ServerEvent);
+
+    log('[OrphanDetector] Notified renderer of orphaned entries');
+  } catch (err) {
+    logWarn('[OrphanDetector] Detection failed:', err);
+  }
 }
 
 /**
@@ -960,6 +1027,12 @@ app
     syncCoworkMemorySkillState(memoryService.isEnabled()).catch((err) => {
       logWarn('[Memory] Failed to sync cowork-memory skill state on startup:', err);
     });
+
+    // Initialize workspace orphan detection dismissals from persisted config
+    const storedDismissals = configStore.get('orphanDismissals') as
+      | import('../shared/workspace-orphan-types').WorkspaceOrphanDismissal[]
+      | undefined;
+    initDismissals(storedDismissals ?? []);
     // pi-ai handles model routing natively — no proxy warmup needed
 
     // macOS: application menu, dock menu, tray icon
@@ -3165,6 +3238,153 @@ ipcMain.handle(
     }
   }
 );
+
+// ---------------------------------------------------------------------------
+// Workspace Orphan Detection & Cleanup IPC Handlers
+// ---------------------------------------------------------------------------
+
+/** Shared helper: build authorized workspace list for validation. */
+function getAuthorizedWorkspaces(): string[] {
+  const authorizedWorkspaces: string[] = [];
+  const globalCwd = getWorkingDir();
+  if (globalCwd) authorizedWorkspaces.push(globalCwd);
+  if (sessionManager) {
+    for (const session of sessionManager.listSessions()) {
+      if (session.cwd) authorizedWorkspaces.push(session.cwd);
+    }
+  }
+  return authorizedWorkspaces;
+}
+
+ipcMain.handle('workspace.detectOrphans', async (_event, cwd: string) => {
+  try {
+    if (!cwd || !isAbsolute(cwd)) {
+      return null;
+    }
+    if (!skillsManager) {
+      return null;
+    }
+
+    // Security: validate CWD against authorized workspaces
+    const validation = validateWorkspaceCwd(cwd, getAuthorizedWorkspaces());
+    if (!validation.valid) {
+      return null; // Unauthorized — silent null (read-only, no error leak)
+    }
+
+    const installedSkillIds = new Set(skillsManager.getAllSkills().map((s) => s.id));
+    // MCP config store is always available (singleton, initialized before session manager)
+    // but guard defensively in case of future changes
+    const configuredServerNames = new Set(
+      mcpConfigStore ? mcpConfigStore.getServers().map((s) => s.name) : []
+    );
+
+    return detectWorkspaceOrphans(
+      validation.canonicalCwd,
+      installedSkillIds,
+      configuredServerNames
+    );
+  } catch (error) {
+    logError('[Workspace] Error detecting orphans:', error);
+    return null;
+  }
+});
+
+ipcMain.handle('workspace.cleanupOrphans', async (_event, payload: OrphanCleanupPayload) => {
+  try {
+    if (!payload || typeof payload !== 'object') {
+      return { success: false, error: 'Invalid payload' };
+    }
+    const { cwd } = payload;
+    if (!cwd || typeof cwd !== 'string' || !isAbsolute(cwd)) {
+      return { success: false, error: 'Invalid working directory' };
+    }
+
+    // Validate array fields from untrusted renderer
+    if (!Array.isArray(payload.skillIds) || !Array.isArray(payload.mcpServerNames)) {
+      return { success: false, error: 'skillIds and mcpServerNames must be arrays' };
+    }
+
+    // Cap array sizes and entry lengths to prevent abuse
+    const MAX_IDS = 500;
+    const MAX_ID_LENGTH = 256;
+    if (payload.skillIds.length > MAX_IDS || payload.mcpServerNames.length > MAX_IDS) {
+      return { success: false, error: `Arrays exceed maximum size (${MAX_IDS})` };
+    }
+
+    // Sanitize: only non-empty strings within length limit
+    const skillIds = payload.skillIds.filter(
+      (item): item is string =>
+        typeof item === 'string' && item.length > 0 && item.length <= MAX_ID_LENGTH
+    );
+    const mcpServerNames = payload.mcpServerNames.filter(
+      (item): item is string =>
+        typeof item === 'string' && item.length > 0 && item.length <= MAX_ID_LENGTH
+    );
+
+    // Security: validate CWD against authorized workspaces
+    const validation = validateWorkspaceCwd(cwd, getAuthorizedWorkspaces());
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+
+    if (!skillsManager) {
+      return { success: false, error: 'Skills manager not initialized' };
+    }
+
+    const installedSkillIds = new Set(skillsManager.getAllSkills().map((s) => s.id));
+    // Only fetch MCP servers when MCP cleanup is actually requested
+    const configuredServerNames =
+      mcpServerNames.length > 0 && mcpConfigStore
+        ? new Set(mcpConfigStore.getServers().map((s) => s.name))
+        : new Set<string>();
+
+    const result = await cleanupOrphans(
+      validation.canonicalCwd,
+      skillIds,
+      mcpServerNames,
+      installedSkillIds,
+      configuredServerNames
+    );
+
+    // Persist updated dismissals
+    if (result.success) {
+      configStore.update({
+        orphanDismissals: getDismissals(),
+      } as Partial<AppConfig>);
+    }
+
+    return result;
+  } catch (error) {
+    logError('[Workspace] Error cleaning up orphans:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('workspace.dismissOrphanNotice', async (_event, cwd: string) => {
+  try {
+    if (!cwd || !isAbsolute(cwd)) {
+      return { success: false, error: 'Invalid working directory' };
+    }
+
+    // Security: validate CWD against authorized workspaces
+    const validation = validateWorkspaceCwd(cwd, getAuthorizedWorkspaces());
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+
+    recordDismissal(validation.canonicalCwd);
+
+    // Persist dismissals to config store
+    configStore.update({
+      orphanDismissals: getDismissals(),
+    } as Partial<AppConfig>);
+
+    return { success: true };
+  } catch (error) {
+    logError('[Workspace] Error dismissing orphan notice:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
 
 ipcMain.handle('plugins.listCatalog', async (_event, options?: { installableOnly?: boolean }) => {
   try {

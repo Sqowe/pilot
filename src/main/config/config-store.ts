@@ -179,6 +179,10 @@ export interface AppConfig {
   // Controls how name collisions between custom and built-in skills are resolved,
   // which skills are disabled, and per-skill source overrides.
   skillConflictConfig: import('../../shared/skill-conflict-types').SkillConflictConfig;
+
+  // Workspace orphan detection dismissals.
+  // Tracks per-workspace dismissals so we don't re-notify until config files change.
+  orphanDismissals: import('../../shared/workspace-orphan-types').WorkspaceOrphanDismissal[];
 }
 
 export interface MemoryModelRuntimeConfig {
@@ -359,6 +363,7 @@ const defaultConfig: AppConfig = {
   mcpToolTimeoutSeconds: 240,
   notificationsEnabled: true,
   skillConflictConfig: createDefaultSkillConflictConfig(),
+  orphanDismissals: [],
 };
 
 export const PROVIDER_PRESETS = API_PROVIDER_PRESETS;
@@ -603,6 +608,48 @@ function normalizeMemoryRuntimeConfig(raw: unknown): MemoryRuntimeConfig {
   ) {
     result.recencyFloor = result.recencyCeiling;
   }
+  return result;
+}
+
+/**
+ * Normalize orphan dismissals array from config store.
+ * Validates each entry fully and caps the array size.
+ */
+const MAX_ORPHAN_DISMISSALS = 50;
+
+function normalizeOrphanDismissals(
+  raw: unknown
+): import('../../shared/workspace-orphan-types').WorkspaceOrphanDismissal[] {
+  if (!Array.isArray(raw)) return [];
+
+  const result: import('../../shared/workspace-orphan-types').WorkspaceOrphanDismissal[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const d = item as Record<string, unknown>;
+
+    // Validate required fields
+    if (typeof d.cwd !== 'string' || d.cwd.length === 0) continue;
+    if (typeof d.dismissedAt !== 'number' || !Number.isFinite(d.dismissedAt)) continue;
+
+    // Validate optional mtime fields: must be null or a finite number
+    const skillsMtime = d.skillsProfileMtimeMs;
+    const mcpMtime = d.mcpProfileMtimeMs;
+    const validSkillsMtime =
+      skillsMtime === null || (typeof skillsMtime === 'number' && Number.isFinite(skillsMtime));
+    const validMcpMtime =
+      mcpMtime === null || (typeof mcpMtime === 'number' && Number.isFinite(mcpMtime));
+    if (!validSkillsMtime || !validMcpMtime) continue;
+
+    result.push({
+      cwd: d.cwd,
+      dismissedAt: d.dismissedAt,
+      skillsProfileMtimeMs: (skillsMtime as number | null) ?? null,
+      mcpProfileMtimeMs: (mcpMtime as number | null) ?? null,
+    });
+
+    if (result.length >= MAX_ORPHAN_DISMISSALS) break;
+  }
+
   return result;
 }
 
@@ -1179,6 +1226,7 @@ export class ConfigStore {
       mcpToolTimeoutSeconds: normalizeMcpToolTimeout(raw.mcpToolTimeoutSeconds),
       notificationsEnabled: toBoolean(raw.notificationsEnabled, defaultConfig.notificationsEnabled),
       skillConflictConfig: normalizeSkillConflictConfig(raw.skillConflictConfig),
+      orphanDismissals: normalizeOrphanDismissals(raw.orphanDismissals),
     };
     this.normalizeModelIds(result);
     return result;

@@ -754,6 +754,10 @@ export type ServerEvent =
         code?: 'CONFIG_REQUIRED_ACTIVE_SET';
         action?: 'open_api_settings';
       };
+    }
+  | {
+      type: 'workspace.orphans_detected';
+      payload: import('../../shared/workspace-orphan-types').OrphanDetectionResult;
     };
 
 // Settings types

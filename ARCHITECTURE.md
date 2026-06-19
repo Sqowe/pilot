@@ -84,7 +84,7 @@ open-cowork/
 │   ├── renderer/               # React UI
 │   │   ├── components/        # UI components (settings, chat, etc.)
 │   │   ├── hooks/             # React hooks
-│   │   ├── i18n/              # en.json / zh.json localization
+│   │   ├── i18n/              # en/zh/ru/hu localization
 │   │   ├── store/             # Zustand state stores
 │   │   └── styles/            # Tailwind + custom CSS
 │   ├── shared/                 # Types/utils shared across processes
@@ -128,7 +128,7 @@ Critical constraint: `pi-ai` and `pi-coding-agent` MUST be version-locked togeth
 
 React 18 + Zustand + Tailwind CSS. Zero direct Node/Electron imports — all main-process
 communication goes through `window.electronAPI` (defined in `src/preload/index.ts`).
-Supports English and Chinese (i18next). Markdown rendering via `react-markdown` + remark/rehype.
+Supports English, Chinese, Russian, and Hungarian (i18next). Markdown rendering via `react-markdown` + remark/rehype.
 
 ### 4.3 MCP & Tools (`src/main/mcp/`, `src/main/tools/`)
 

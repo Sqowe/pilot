@@ -76,6 +76,7 @@ function makeConfig(): AppConfig {
       sourceOverrides: {},
       acknowledgedConflicts: [],
     },
+    orphanDismissals: [],
   };
 }
 
