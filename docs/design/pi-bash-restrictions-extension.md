@@ -1,6 +1,6 @@
 # Pi Bash Restrictions Extension — Implementation Plan
 
-**Status:** Proposed (not yet implemented)
+**Status:** In progress — ✅ Phase 1 complete (2026-06-19); Phases 2–6 pending
 **Date:** 2026-06-19
 **Owner:** @obodnikov
 **Related:** [BASH_COMMAND_RESTRICTIONS.md](../../BASH_COMMAND_RESTRICTIONS.md), [permission-rules-store.ts](../../src/main/config/permission-rules-store.ts), [config-store.ts](../../src/main/config/config-store.ts), [SettingsBashCommands.tsx](../../src/renderer/components/settings/SettingsBashCommands.tsx), `node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
@@ -160,20 +160,32 @@ clamp to `[10, 3600]`; invalid/missing → `300`.
 
 ---
 
-## 6. Extension adapter — `tool_call` mapping (with timeout)
+## 6. Extension adapter — `tool_call` mapping (timeout + deny-and-suggest)
 
-`pi`'s `tool_call` return value only controls blocking. Our engine is 3-state; the dialog adds
-a timeout. Mapping:
+`pi`'s `tool_call` return value only controls blocking, and its `reason` string is fed to the
+model as the tool result — the channel the app uses for **deny-and-suggest**. Our engine is
+3-state; the interactive path offers the app's multi-choice outcomes. Mapping:
 
-| Engine result         | Interactive (`ctx.hasUI`)                                                                                    | Headless (`!ctx.hasUI`)         |
-| --------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------- |
-| `'allow'`             | `return undefined` (let pi run it)                                                                           | `return undefined`              |
-| `'ask'`               | `ctx.ui.confirm(title, cmd, opts)` → `undefined` if approved; **`{ block: true }` if declined OR timed out** | `{ block: true }` — fail-closed |
-| `null` (not opted in) | `return undefined` (defer to pi's own approval)                                                              | `return undefined`              |
+| Engine result         | Interactive (`ctx.hasUI`)                         | Headless (`!ctx.hasUI`)         |
+| --------------------- | ------------------------------------------------- | ------------------------------- |
+| `'allow'`             | `return undefined` (let pi run it)                | `return undefined`              |
+| `'ask'`               | `ctx.ui.select(…)` → outcome below (with timeout) | `{ block: true }` — fail-closed |
+| `null` (not opted in) | `return undefined` (defer to pi's own approval)   | `return undefined`              |
 
-Where `opts` = `{ timeout: permissionTimeoutSeconds * 1000 }` when `permissionTimeoutSeconds > 0`,
-otherwise **no timeout** (omit the option → waits forever). `ctx.ui.confirm` returns `false` on
-timeout, which we treat as **deny** — identical to the app's "auto-deny on timeout".
+Interactive `'ask'` outcomes (mirror the app's `PermissionDialog`):
+
+| User choice                                        | Returns                                         | Model sees (`reason`)                                                                                                      |
+| -------------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **Allow once**                                     | `undefined`                                     | — (command runs)                                                                                                           |
+| **Deny**                                           | `{ block: true, reason }`                       | `User denied permission for 'bash'.`                                                                                       |
+| **Deny & suggest alternative**                     | `ctx.ui.input(...)` → `{ block: true, reason }` | `User denied THIS SPECIFIC invocation of 'bash'. … You may still use 'bash' for other purposes. User's suggestion: <text>` |
+| **Timed out / dismissed** (`select` → `undefined`) | `{ block: true, reason }`                       | `Blocked (timed out)` — auto-deny                                                                                          |
+
+The `select`/`input` dialogs take `{ timeout: permissionTimeoutSeconds * 1000 }` when
+`permissionTimeoutSeconds > 0`, otherwise **no timeout** (waits forever). `select` returns
+`undefined` on timeout/cancel → treated as **deny** (auto-deny, matching the app). The
+deny-and-suggest `reason` wording is copied verbatim from
+[agent-runner.ts:1806](../../src/main/claude/agent-runner.ts) for behavioral parity.
 
 Skeleton (decision→result extracted as a pure, testable function):
 
@@ -202,8 +214,29 @@ export async function resolveBashToolCall(
     settings.permissionTimeoutSeconds > 0
       ? { timeout: settings.permissionTimeoutSeconds * 1000 }
       : {};
-  const ok = await ctx.ui.confirm('Bash restriction', `Run this command?\n\n  ${command}`, opts);
-  return ok ? undefined : { block: true, reason: 'Blocked or timed out' };
+  const [ALLOW, DENY, SUGGEST] = ['Allow once', 'Deny', 'Deny & suggest alternative'];
+  const choice = await ctx.ui.select(
+    `Bash restriction\n\n  ${command}`,
+    [ALLOW, DENY, SUGGEST],
+    opts
+  );
+
+  if (choice === ALLOW) return undefined;
+  if (choice === SUGGEST) {
+    const s = (
+      (await ctx.ui.input('Suggest an alternative approach', 'e.g. "read the file instead"')) ?? ''
+    ).trim();
+    return {
+      block: true,
+      reason:
+        `User denied THIS SPECIFIC invocation of 'bash'. The tool 'bash' is NOT globally ` +
+        `blocked — only this particular call was rejected. You may still use 'bash' for ` +
+        `other purposes.` +
+        (s ? ` User's suggestion: ${s}` : ''),
+    };
+  }
+  if (choice === DENY) return { block: true, reason: "User denied permission for 'bash'." };
+  return { block: true, reason: 'Blocked (timed out)' }; // select returned undefined
 }
 
 export default function (pi: ExtensionAPI) {
@@ -277,7 +310,11 @@ await build({
 > Rule: **unit tests are written and green within the same phase as the code.** Only
 > integration + e2e are deferred to the final phase (they need all parts to exist).
 
-### Phase 1 — Shared engine + settings (pure)
+### Phase 1 — Shared engine + settings (pure) — ✅ DONE (2026-06-19)
+
+> Implemented: `src/shared/bash-restrictions/{engine.ts,settings.ts,index.ts}` with the §5 API
+> surface, plus `tests/bash-restrictions-engine.test.ts` and
+> `tests/bash-restrictions-settings.test.ts`. **Gate met: 171 unit tests passing.**
 
 - **Code:** `engine.ts`, `settings.ts`, `index.ts`.
 - **Unit tests (this phase):**
@@ -313,10 +350,12 @@ await build({
 - **Code:** `extension.ts` with the pure `resolveBashToolCall(command, ctx, settings)` (§6) and
   the `pi.on("tool_call")` wiring.
 - **Unit tests (this phase):** `pi-bash-extension-mapping.test.ts` with a fake `ctx` —
-  `allow`/`null` → `undefined`; `ask` + `hasUI:false` → block; `ask` + `hasUI:true` + confirm
-  `true` → `undefined`, confirm `false` → block; **timeout path**: confirm resolves `false`
-  under a timeout → block; assert `{ timeout: ms }` is passed when `permissionTimeoutSeconds>0`
-  and **omitted** when `0`.
+  `allow`/`null` → `undefined`; `ask` + `hasUI:false` → block (fail-closed); `ask` + `hasUI:true`
+  select **"Allow once"** → `undefined`; **"Deny"** → block with the plain-deny reason;
+  **"Deny & suggest alternative"** → `ctx.ui.input` captured → block whose `reason` contains the
+  suggestion **and** the "NOT globally blocked" wording; `select` → `undefined` (timeout/cancel)
+  → block (auto-deny). Assert `{ timeout: ms }` is passed to `select`/`input` when
+  `permissionTimeoutSeconds>0` and **omitted** when `0`.
 - **Gate:** tests green + typecheck.
 
 ### Phase 5 — Build / bundle
@@ -360,12 +399,14 @@ await build({
 
 ## 11. Resolved decisions (locked — no open questions)
 
-| #   | Decision                    | Resolution                                   | Implication                                                                                                                                                                    |
-| --- | --------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | Headless `'ask'` policy     | **Block (fail-closed)**                      | When `!ctx.hasUI`, an `'ask'` decision returns `{ block: true }`. No allow-on-no-UI path.                                                                                      |
-| 2   | Global + project list merge | **Union both** (`global ∪ project`, deduped) | `trusted` and `denied` are each concatenated + deduped. Per-project tightening is done by adding denials; denylist beats trust.                                                |
-| 3   | Gate `user_bash`?           | **No — agent bash tool only**                | Only the LLM's `bash` tool is gated via `tool_call`. The human's `!`/`!!` commands are not intercepted.                                                                        |
-| 4   | Config reload               | **Startup only**                             | `loadBashRestrictionsSettings` runs once in the extension factory. Refresh by editing the JSON and running `/reload` (pi re-runs auto-discovered extensions). No file watcher. |
+| #   | Decision                           | Resolution                                   | Implication                                                                                                                                                                         |
+| --- | ---------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Headless `'ask'` policy            | **Block (fail-closed)**                      | When `!ctx.hasUI`, an `'ask'` decision returns `{ block: true }`. No allow-on-no-UI path.                                                                                           |
+| 2   | Global + project list merge        | **Union both** (`global ∪ project`, deduped) | `trusted` and `denied` are each concatenated + deduped. Per-project tightening is done by adding denials; denylist beats trust.                                                     |
+| 3   | Gate `user_bash`?                  | **No — agent bash tool only**                | Only the LLM's `bash` tool is gated via `tool_call`. The human's `!`/`!!` commands are not intercepted.                                                                             |
+| 4   | Config reload                      | **Startup only**                             | `loadBashRestrictionsSettings` runs once in the extension factory. Refresh by editing the JSON and running `/reload` (pi re-runs auto-discovered extensions). No file watcher.      |
+| 5   | Permission outcomes (interactive)  | **Allow once / Deny / Deny & suggest**       | `'ask'` uses `ctx.ui.select` + `ctx.ui.input`; the free-text suggestion is appended to the block `reason` fed to the model, wording verbatim from the app.                          |
+| 6   | `allow_always` (app's 4th outcome) | **Skipped (intentional)**                    | Inert for bash in authoritative mode in the app too — the list engine runs before session "always allow" memory. Permanent trust = add the command to the trusted list + `/reload`. |
 
 > Mandated (not a decision): timeout-on-no-response = **deny** — fixed by parity with the app's
 > "auto-deny" semantics and the fail-closed posture.
