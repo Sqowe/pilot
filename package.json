@@ -44,6 +44,7 @@
     "build:wsl-agent": "tsc -p src/main/sandbox/wsl-agent/tsconfig.json",
     "build:lima-agent": "tsc -p src/main/sandbox/lima-agent/tsconfig.json",
     "build:mcp": "node scripts/bundle-mcp.js",
+    "build:pi-extension": "node scripts/build-pi-extension.mjs",
     "commitlint": "commitlint --config commitlint.config.cjs",
     "download:node": "node scripts/download-node.js",
     "postinstall": "node scripts/download-node.js && npm run rebuild",
