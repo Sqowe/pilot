@@ -116,13 +116,16 @@ export async function resolveBashToolCall(
   ctx: BashCtx,
   settings: BashRestrictionsSettings
 ): Promise<BlockResult | undefined> {
-  // isOptedIn is computed before the try so the catch block can reference it.
-  const isOptedIn = settings.trusted.length > 0 || settings.denied.length > 0;
-
   try {
     // Coerce command to string at the function boundary — the handler already
     // validates, but defend against callers that bypass (e.g. tests, future refactors).
     const safeCommand = typeof command === 'string' ? command : '';
+
+    // Defensively coerce list fields — sanitizeBashRestrictionsSettings always
+    // produces arrays, but callers may bypass the loader (e.g. tests, future code).
+    const trusted = Array.isArray(settings.trusted) ? settings.trusted : [];
+    const denied = Array.isArray(settings.denied) ? settings.denied : [];
+    const isOptedIn = trusted.length > 0 || denied.length > 0;
 
     // When not opted-in (both lists empty), the gate is inactive — skip engine entirely.
     if (!isOptedIn) return undefined;
@@ -136,8 +139,8 @@ export async function resolveBashToolCall(
     // (e.g. all list patterns whitespace-only after trimming) never silently
     // bypasses the gate. When not opted-in, null correctly means "gate inactive".
     const rawDecision = bashRestrictionsModule.decideBashPermission(safeCommand, {
-      trusted: settings.trusted,
-      denied: settings.denied,
+      trusted,
+      denied,
     });
     // BashDecision = 'allow' | 'ask' | null. All three values handled explicitly below.
     const decision: BashDecision = isOptedIn ? (rawDecision ?? 'ask') : rawDecision;
@@ -220,10 +223,11 @@ export async function resolveBashToolCall(
     }
   } catch (err) {
     // Catch-all for unexpected engine/config errors (e.g. malformed pattern throws).
-    // Always fail-closed when opted-in; defer to pi when the gate is inactive.
+    // Always fail-closed — any error that reaches here means the gate cannot
+    // make a safe allow decision.
     console.error('[bash-restrictions] Internal error (err suppressed for safety)');
     void err;
-    return isOptedIn ? { block: true, reason: INTERNAL_ERROR_REASON } : undefined;
+    return { block: true, reason: INTERNAL_ERROR_REASON };
   }
 }
 

@@ -386,6 +386,62 @@ describe('UI throws or rejects → fail-closed block', () => {
     const ctx = makeCtx();
     ctx.ui.select.mockRejectedValue(new Error('TUI disconnected'));
     const result = await resolveBashToolCall('docker build .', ctx, SETTINGS_OPTED_IN);
+    expect(result?.reason).toContain('unexpected dialog result');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Malformed settings — robustness at the config boundary
+// ---------------------------------------------------------------------------
+
+describe('malformed settings (array fields missing or wrong type)', () => {
+  it('fails-closed when trusted is undefined (not an array)', async () => {
+    const bad = {
+      trusted: undefined,
+      denied: ['rm'],
+      permissionTimeoutSeconds: 300,
+    } as unknown as BashRestrictionsSettings;
+    const ctx = makeCtx();
+    // isOptedIn: denied has entries → opted-in; engine call proceeds with coerced trusted=[]
+    decideSpy.mockReturnValue('ask');
+    ctx.ui.select.mockResolvedValue(CHOICE_DENY);
+    const result = await resolveBashToolCall('some cmd', ctx, bad);
+    expect(result?.block).toBe(true);
+  });
+
+  it('fails-closed when denied is null (not an array)', async () => {
+    const bad = {
+      trusted: ['npm *'],
+      denied: null,
+      permissionTimeoutSeconds: 300,
+    } as unknown as BashRestrictionsSettings;
+    const ctx = makeCtx();
+    decideSpy.mockReturnValue('ask');
+    ctx.ui.select.mockResolvedValue(CHOICE_DENY);
+    const result = await resolveBashToolCall('some cmd', ctx, bad);
+    expect(result?.block).toBe(true);
+  });
+
+  it('treats settings with both lists missing as not-opted-in (gate inactive)', async () => {
+    const bad = {
+      trusted: undefined,
+      denied: undefined,
+      permissionTimeoutSeconds: 300,
+    } as unknown as BashRestrictionsSettings;
+    const ctx = makeCtx();
+    const result = await resolveBashToolCall('some cmd', ctx, bad);
+    // isOptedIn = false (both coerce to []) → gate inactive → undefined
+    expect(result).toBeUndefined();
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when settings is completely malformed (outer catch → fail-closed)', async () => {
+    const bad = null as unknown as BashRestrictionsSettings;
+    const ctx = makeCtx();
+    // Accessing .trusted on null throws — caught by outer try/catch → INTERNAL_ERROR_REASON
+    const result = await resolveBashToolCall('some cmd', ctx, bad);
+    expect(result?.block).toBe(true);
+    expect(result?.reason).toContain('internal error');
     expect(result?.block).toBe(true);
     expect(result?.reason).toContain('ui error');
   });
@@ -400,7 +456,7 @@ describe('UI throws or rejects → fail-closed block', () => {
   });
 
   it('blocks deterministically when select returns an unexpected string value', async () => {
-    // Any non-matching string → falls to the auto-deny (timeout) path.
+    // Unexpected non-null string → UNKNOWN_CHOICE_REASON (distinct from timeout).
     const ctx = makeCtx();
     ctx.ui.select.mockResolvedValue('Unknown option not in the list');
     const result = await resolveBashToolCall('docker build .', ctx, SETTINGS_OPTED_IN);
