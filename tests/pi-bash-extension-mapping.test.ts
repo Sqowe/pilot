@@ -386,7 +386,11 @@ describe('UI throws or rejects → fail-closed block', () => {
     const ctx = makeCtx();
     ctx.ui.select.mockRejectedValue(new Error('TUI disconnected'));
     const result = await resolveBashToolCall('docker build .', ctx, SETTINGS_OPTED_IN);
-    expect(result?.reason).toContain('unexpected dialog result');
+    // A rejected select is caught by the inner try/catch → UI_ERROR_REASON.
+    // (Distinct from an unexpected non-undefined return value, which maps to
+    // UNKNOWN_CHOICE_REASON — that is a different code path.)
+    expect(result?.block).toBe(true);
+    expect(result?.reason).toContain('ui error');
   });
 });
 
@@ -442,8 +446,6 @@ describe('malformed settings (array fields missing or wrong type)', () => {
     const result = await resolveBashToolCall('some cmd', ctx, bad);
     expect(result?.block).toBe(true);
     expect(result?.reason).toContain('internal error');
-    expect(result?.block).toBe(true);
-    expect(result?.reason).toContain('ui error');
   });
 
   it('returns fail-closed block when ctx.ui.input rejects', async () => {
