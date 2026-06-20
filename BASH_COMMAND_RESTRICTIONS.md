@@ -72,15 +72,19 @@ Same `*` glyph, different meanings in the two lists:
 - Other regex metacharacters are treated literally (`.`, `(`, `)`,
   `[`, `]`, `+`, `?`, `^`, `$`, `{`, `}`, `|`, `\`).
 - Case-insensitive.
+- A literal space in the pattern must be present in the command. `ls *`
+  compiles to `^ls .*`, so it matches `ls -la` but **not** bare `ls` — the
+  space after `ls` is required. To also auto-allow the argument-less form, add
+  `ls` as its own pattern.
 
 Examples:
 
-| Pattern       | Matches                                    | Does NOT match                    |
-| ------------- | ------------------------------------------ | --------------------------------- |
-| `ls *`        | `ls`, `ls -la`, `ls /tmp`, `LS`            | `xls`, `my-ls`                    |
-| `npm run *`   | `npm run build`, `npm run test --watch`    | `npm install`, `yarn run build`   |
-| `git status`  | `git status`, `git status --short`         | `git statu`, `cd && git status`\* |
-| `./configure` | `./configure`, `./configure --prefix=/opt` | `a/configure` (literal `.`)       |
+| Pattern       | Matches                                    | Does NOT match                      |
+| ------------- | ------------------------------------------ | ----------------------------------- |
+| `ls *`        | `ls -la`, `ls /tmp`, `LS -la`              | `ls` (bare, no arg), `xls`, `my-ls` |
+| `npm run *`   | `npm run build`, `npm run test --watch`    | `npm install`, `yarn run build`     |
+| `git status`  | `git status`, `git status --short`         | `git statu`, `cd && git status`\*   |
+| `./configure` | `./configure`, `./configure --prefix=/opt` | `a/configure` (literal `.`)         |
 
 \*`cd && git status` is a chain — each piece is checked separately. The
 `git status` piece matches, but `cd` must also match a trusted pattern.
