@@ -1,6 +1,7 @@
 # Pi Bash Restrictions Extension — Implementation Plan
 
-**Status:** In progress — ✅ Phases 1–5 complete (2026-06-20); Phase 6 (integration/e2e + docs) pending
+**Status:** ✅ Phases 1–5 complete (2026-06-20); Phase 6 integration test + docs complete
+(2026-06-20) — only the manual `pi -e` smoke-test (README checklist) remains to be run by hand.
 **Date:** 2026-06-19
 **Owner:** @obodnikov
 **Related:** [BASH_COMMAND_RESTRICTIONS.md](../../BASH_COMMAND_RESTRICTIONS.md), [permission-rules-store.ts](../../src/main/config/permission-rules-store.ts), [config-store.ts](../../src/main/config/config-store.ts), [SettingsBashCommands.tsx](../../src/renderer/components/settings/SettingsBashCommands.tsx), `node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`

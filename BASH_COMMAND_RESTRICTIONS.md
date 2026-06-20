@@ -496,6 +496,22 @@ rm
 
 ---
 
+## Standalone pi CLI
+
+The same engine is available outside the Electron app as a drop-in extension
+for the standalone [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+coding CLI. It gates the agent's `bash` tool through the identical
+`decideBashPermission` engine and settings schema (shared from
+`src/shared/bash-restrictions/`), so trust/denylist/timeout behaviour matches
+the app exactly. Configuration is a JSON file (`~/.pi/agent/bash-restrictions.json`
+globally and/or `.pi/bash-restrictions.json` per project) instead of the
+Settings UI.
+
+See [pi-extensions/bash-restrictions/README.md](pi-extensions/bash-restrictions/README.md)
+for install, config format, and the interactive/headless behaviour table.
+
+---
+
 ## Where the code lives
 
 - Decision engine (pure): `src/shared/bash-restrictions/engine.ts`
@@ -513,8 +529,14 @@ rm
 - Settings UI: `src/renderer/components/settings/SettingsBashCommands.tsx`
 - Persistence: `src/main/config/config-store.ts`
   (`bashTrustedCommands`, `bashDenylist` fields)
+- Standalone pi CLI extension: `pi-extensions/bash-restrictions/`
+  (`extension.ts` mapper, `config.ts` loader, `README.md`)
 - Tests: `tests/bash-command-control.test.ts`,
   `tests/denylist-word-boundary.test.ts`,
   `tests/before-tool-call-hook.test.ts`,
   `tests/bash-restrictions-engine.test.ts`,
-  `tests/bash-restrictions-settings.test.ts`
+  `tests/bash-restrictions-settings.test.ts`,
+  `tests/pi-bash-extension-config.test.ts`,
+  `tests/pi-bash-extension-mapping.test.ts`,
+  `tests/pi-bash-extension-build.test.ts`,
+  `tests/pi-bash-extension.e2e.test.ts`
