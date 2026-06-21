@@ -4,10 +4,14 @@
  * Config loader for the pi bash-restrictions extension.
  *
  * Reads two optional JSON files and merges them into a canonical
- * BashRestrictionsSettings object:
+ * BashRestrictionsSettings object (CONFIG_DIR_NAME defaults to ".pi" but
+ * follows rebranded pi distributions):
  *
- *   Global:  <homeDir>/.pi/agent/bash-restrictions.json
- *   Project: <cwd>/.pi/bash-restrictions.json
+ *   Global:  <homeDir>/<CONFIG_DIR_NAME>/agent/bash-restrictions.json
+ *   Project: <cwd>/<CONFIG_DIR_NAME>/bash-restrictions.json   (trusted projects only)
+ *
+ * The project file is honored only when the caller reports the project as
+ * trusted (see `projectTrusted`), so an untrusted project cannot loosen the gate.
  *
  * Merge rules (§7 of docs/design/pi-bash-restrictions-extension.md):
  *   - trusted / denied  → global ∪ project (union, deduped, global-first order)
@@ -22,12 +26,27 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+// Namespace import (not a named import): CONFIG_DIR_NAME was added in pi SDK
+// 0.79; a static named import would resolve to undefined on older SDKs (and can
+// throw under strict ESM). Reading it off the namespace lets us fall back safely.
+import * as piSdk from '@earendil-works/pi-coding-agent';
 import {
   sanitizeBashCommandList,
   sanitizeBashRestrictionsSettings,
   DEFAULT_BASH_RESTRICTIONS_SETTINGS,
   type BashRestrictionsSettings,
 } from '../../src/shared/bash-restrictions';
+
+/**
+ * pi's config directory name. Defaults to ".pi" but rebranded pi distributions
+ * may use a different name (pi exposes this as CONFIG_DIR_NAME from SDK 0.79+).
+ * Falls back to ".pi" when the running SDK doesn't provide it.
+ */
+const CONFIG_DIR: string =
+  typeof (piSdk as { CONFIG_DIR_NAME?: unknown }).CONFIG_DIR_NAME === 'string' &&
+  (piSdk as { CONFIG_DIR_NAME: string }).CONFIG_DIR_NAME.trim()
+    ? (piSdk as { CONFIG_DIR_NAME: string }).CONFIG_DIR_NAME
+    : '.pi';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -72,7 +91,9 @@ function hasOwn(obj: Record<string, unknown> | null, key: string): boolean {
  *                  Passing undefined or omitting uses os.homedir().
  */
 export function resolveGlobalConfigPath(homeDir?: string): string {
-  return join(homeDir ?? homedir(), '.pi', 'agent', 'bash-restrictions.json');
+  // CONFIG_DIR (default ".pi") honors rebranded pi distributions; mirrors
+  // pi's own getAgentDir() = join(homedir(), CONFIG_DIR_NAME, "agent").
+  return join(homeDir ?? homedir(), CONFIG_DIR, 'agent', 'bash-restrictions.json');
 }
 
 /**
@@ -81,7 +102,7 @@ export function resolveGlobalConfigPath(homeDir?: string): string {
  * @param cwd - The project's working directory (pass process.cwd() in production).
  */
 export function resolveProjectConfigPath(cwd: string): string {
-  return join(cwd, '.pi', 'bash-restrictions.json');
+  return join(cwd, CONFIG_DIR, 'bash-restrictions.json');
 }
 
 // ---------------------------------------------------------------------------
@@ -91,21 +112,29 @@ export function resolveProjectConfigPath(cwd: string): string {
 /**
  * Load, merge, and normalize bash-restrictions settings.
  *
- * @param cwd     - Project working directory; used to find .pi/bash-restrictions.json.
- * @param options - Optional overrides (primarily for testing).
- *   - homeDir   - Override the home directory for the global config path.
+ * @param cwd     - Project working directory; used to find the project config.
+ * @param options - Optional overrides.
+ *   - homeDir        - Override the home directory for the global config path
+ *                      (primarily for testing).
+ *   - projectTrusted - Whether to honor the project-local config file. Defaults
+ *                      to `true` for direct callers/tests; the extension passes
+ *                      `ctx.isProjectTrusted()`. When `false`, the project file
+ *                      is ignored so an untrusted project cannot widen `trusted`
+ *                      (or otherwise loosen the gate) — only global config applies.
  *
  * @returns A fully normalized BashRestrictionsSettings object. Never throws.
  */
 export function loadBashRestrictionsSettings(
   cwd: string,
-  options?: { homeDir?: string }
+  options?: { homeDir?: string; projectTrusted?: boolean }
 ): BashRestrictionsSettings {
   // Treat an empty / whitespace-only homeDir as "not provided" so callers cannot
   // accidentally redirect the global config to the current working directory.
   const effectiveHomeDir = options?.homeDir?.trim() || undefined;
+  const projectTrusted = options?.projectTrusted ?? true;
   const globalRaw = readJsonFile(resolveGlobalConfigPath(effectiveHomeDir));
-  const projectRaw = readJsonFile(resolveProjectConfigPath(cwd));
+  // Skip the project file entirely for untrusted projects (fail-closed).
+  const projectRaw = projectTrusted ? readJsonFile(resolveProjectConfigPath(cwd)) : null;
 
   // Union-merge lists: global ∪ project, deduped (Set preserves insertion order,
   // so global entries come first, then project-only additions).

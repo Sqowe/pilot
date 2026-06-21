@@ -235,30 +235,45 @@ export async function resolveBashToolCall(
 // Pi extension factory (default export)
 // ---------------------------------------------------------------------------
 
+/** Minimal shape of the session/tool context fields the loader needs. */
+type LoadCtx = { cwd?: string; isProjectTrusted?: () => boolean };
+
 /**
  * Pi extension entry point.
  *
- * Loads settings once at startup (config reload requires `/reload` in pi or
- * a process restart) and intercepts every `bash` tool_call event.
- *
- * Note on `process.cwd()`: pi invokes extensions with the working directory
- * set to the session's project root, so `process.cwd()` matches the location
- * where `.pi/bash-restrictions.json` is expected. This follows the same
- * convention used by pi's own workspace-scoped settings loading.
+ * Settings are (re)loaded on `session_start` — NOT in the factory. Per pi's
+ * extensions.md, the factory may run in invocations that never start a session,
+ * so resource work is deferred to `session_start`, the session cwd is read from
+ * `ctx.cwd` (not `process.cwd()`), and the project-local config file is honored
+ * only when `ctx.isProjectTrusted()` is true. `session_start` also fires on
+ * `/reload`, `/new`, `/resume`, and `/fork`, so editing the JSON and running
+ * `/reload` refreshes the settings.
  */
 export default function (pi: ExtensionAPI): void {
-  let settings: BashRestrictionsSettings;
-  try {
-    settings = loadBashRestrictionsSettings(process.cwd());
-  } catch (err) {
-    // loadBashRestrictionsSettings is designed to never throw, but wrap
-    // defensively so a future regression here cannot crash pi at extension load.
-    console.warn(
-      '[bash-restrictions] Failed to load config, gate inactive:',
-      err instanceof Error ? err.message : String(err)
-    );
-    settings = { ...DEFAULT_BASH_RESTRICTIONS_SETTINGS };
+  let settings: BashRestrictionsSettings = { ...DEFAULT_BASH_RESTRICTIONS_SETTINGS };
+
+  function loadSettings(ctx: LoadCtx): void {
+    try {
+      const cwd = typeof ctx.cwd === 'string' && ctx.cwd ? ctx.cwd : process.cwd();
+      // Fail closed: if the SDK can't report trust, treat the project as
+      // untrusted so its config cannot loosen the gate. Only global config applies.
+      const projectTrusted =
+        typeof ctx.isProjectTrusted === 'function' ? ctx.isProjectTrusted() : false;
+      settings = loadBashRestrictionsSettings(cwd, { projectTrusted });
+    } catch (err) {
+      // loadBashRestrictionsSettings is designed to never throw, but wrap
+      // defensively so a future regression here cannot crash pi.
+      console.warn(
+        '[bash-restrictions] Failed to load config, gate inactive:',
+        err instanceof Error ? err.message : String(err)
+      );
+      settings = { ...DEFAULT_BASH_RESTRICTIONS_SETTINGS };
+    }
   }
+
+  pi.on('session_start', async (_event, ctx) => {
+    loadSettings(ctx);
+  });
 
   pi.on('tool_call', async (event, ctx) => {
     if (!isToolCallEventType('bash', event)) return undefined;

@@ -26,20 +26,28 @@ extension reuses that engine unchanged.
 
 ## Install
 
-The extension imports from `src/shared/`, so it must be bundled into a single
-self-contained file before installation.
+The extension imports from `src/shared/`, so it is bundled into a self-contained
+directory before installation.
 
 ```sh
 # From the repo root
 npm run build:pi-extension
-# → dist-pi-extensions/bash-restrictions.mjs
+# → dist-pi-extensions/bash-restrictions/
+#     ├── index.js       (bundled ESM)
+#     └── package.json    ({ "type": "module", "pi": { "extensions": ["./index.js"] } })
 
-# Install globally for pi
-cp dist-pi-extensions/bash-restrictions.mjs ~/.pi/agent/extensions/
+# Install globally for pi (copy the whole directory)
+cp -r dist-pi-extensions/bash-restrictions ~/.pi/agent/extensions/
 
 # then, inside pi:
 /reload          # or restart pi
 ```
+
+> **Why a directory, not a loose file?** pi only auto-discovers `*.ts` / `*.js`
+> files, a subdirectory with `index.ts`/`index.js`, or a directory whose
+> `package.json` declares a `pi.extensions` manifest. A loose `.mjs` file is
+> **not** discovered. Shipping a directory with a manifest also lets the local
+> `"type": "module"` mark `index.js` as ESM.
 
 `@earendil-works/*`, `typebox`, and Node built-ins are left external — `pi`
 provides them at load time, so the bundle stays small and version-safe.
@@ -63,6 +71,10 @@ The extension reads up to two optional JSON files and **unions** them:
 | ------- | ------------------------------------ |
 | Global  | `~/.pi/agent/bash-restrictions.json` |
 | Project | `<cwd>/.pi/bash-restrictions.json`   |
+
+> The `.pi` directory name follows pi's configured config dir (`CONFIG_DIR_NAME`),
+> so rebranded pi distributions use their own name automatically; it falls back
+> to `.pi`.
 
 ```jsonc
 // .pi/bash-restrictions.json
@@ -91,11 +103,20 @@ The extension reads up to two optional JSON files and **unions** them:
 - `permissionTimeoutSeconds` → project value if the key is present, else global,
   else the shared default (`300`).
 
+### Project trust
+
+The **project** file (`<cwd>/.pi/bash-restrictions.json`) is honored only when
+pi reports the project as trusted (`ctx.isProjectTrusted()`). An untrusted
+project's file is ignored, so it cannot widen `trusted` to auto-allow dangerous
+commands or otherwise loosen the gate — only the **global** file applies there.
+If trust state is unavailable, the extension fails closed (treats the project as
+untrusted).
+
 ### Reload
 
-Config is read **once** at extension load (startup). After editing a JSON file,
-run `/reload` in `pi` (or restart) to pick up the change. There is no file
-watcher — this matches the app's startup-hydration model.
+Config is read on `session_start` (using the session's `cwd`), which also fires
+on `/reload`, `/new`, `/resume`, and `/fork`. After editing a JSON file, run
+`/reload` in `pi` (or restart) to pick up the change. There is no file watcher.
 
 ### Opt-in
 

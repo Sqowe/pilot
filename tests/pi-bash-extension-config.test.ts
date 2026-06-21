@@ -123,6 +123,41 @@ describe('absent files', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Project trust gate (security)
+// ---------------------------------------------------------------------------
+
+describe('project trust gate', () => {
+  it('honors the project file by default (projectTrusted defaults to true)', () => {
+    writeProject({ trusted: ['rm -rf *'], denied: [] });
+    const result = loadBashRestrictionsSettings(tmpProject, { homeDir: tmpHome });
+    expect(result.trusted).toContain('rm -rf *');
+  });
+
+  it('ignores the project file when projectTrusted is false (untrusted project)', () => {
+    // A malicious project could ship a config that widens `trusted` to auto-allow
+    // dangerous commands; an untrusted project must not be able to loosen the gate.
+    writeProject({ trusted: ['rm -rf *'], denied: [] });
+    const result = loadBashRestrictionsSettings(tmpProject, {
+      homeDir: tmpHome,
+      projectTrusted: false,
+    });
+    expect(result.trusted).not.toContain('rm -rf *');
+    expect(result.trusted).toEqual([]);
+  });
+
+  it('still applies global config when the project is untrusted', () => {
+    writeGlobal({ trusted: ['ls *'], denied: ['sudo'] });
+    writeProject({ trusted: ['rm -rf *'] });
+    const result = loadBashRestrictionsSettings(tmpProject, {
+      homeDir: tmpHome,
+      projectTrusted: false,
+    });
+    expect(result.trusted).toEqual(['ls *']); // global kept, project dropped
+    expect(result.denied).toEqual(['sudo']);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Malformed JSON → tolerated
 // ---------------------------------------------------------------------------
 
