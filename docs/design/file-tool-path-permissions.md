@@ -39,27 +39,28 @@ in the bash work (Phases 1–2 there).
 
 ## 2. Locked decisions
 
-| # | Decision | Resolution |
-|---|---|---|
-| 1 | Gated tools | **All path-bearing file tools.** Extension: `read, write, edit, grep, find, ls`. App: same **+ `glob`** (app-only tool — `pi` folds globbing into `find`). |
-| 2 | Zones | `inside` = workspace root **∪ OS temp dir** (both `realpath`-resolved) **∪** user `extraAllowedRoots`; `outside` = everything else. |
-| 3 | Outside action | **Ask** — routed through the universal deny-and-suggest + timeout dialog (decision #4). `deny` is available per config but defaults to `ask`. |
-| 4 | Dialog | **Universal / tool-agnostic.** One `presentAsk(toolName, summary, ctx, settings)` shared by the bash engine *and* this path engine. Matches the app's `PermissionDialog`, which is already tool-agnostic. |
-| 5 | Trigger | **Opt-in.** Disabled → today's behavior is untouched (read=allow, write/edit=ask, search family=allow). |
-| 6 | Precedence | When enabled, the path-zone decision is **authoritative for file tools** — consulted before session "allow always" memory and the generic `PermissionRule[]`, exactly like the bash engine. |
-| 7 | Module | New sibling shared module **`src/shared/path-permissions/`** (engine + settings); `isPathWithinRoot` relocates here and is re-exported from its old home. |
+| #   | Decision              | Resolution                                                                                                                                                                                                                                                                                            |
+| --- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Gated tools           | **All path-bearing file tools.** Extension: `read, write, edit, grep, find, ls`. App: same **+ `glob`** (app-only tool — `pi` folds globbing into `find`).                                                                                                                                            |
+| 2   | Zones                 | `inside` = workspace root **∪ OS temp dir** (both `realpath`-resolved) **∪** user `extraAllowedRoots`; `outside` = everything else.                                                                                                                                                                   |
+| 3   | Outside action        | **Ask** — routed through the universal deny-and-suggest + timeout dialog (decision #4). `deny` is available per config but defaults to `ask`.                                                                                                                                                         |
+| 4   | Dialog                | **Universal / tool-agnostic.** One `presentAsk(toolName, summary, ctx, settings)` shared by the bash engine _and_ this path engine. Matches the app's `PermissionDialog`, which is already tool-agnostic.                                                                                             |
+| 5   | Trigger               | **Opt-in.** Disabled → today's behavior is untouched (read=allow, write/edit=ask, search family=allow).                                                                                                                                                                                               |
+| 6   | Precedence            | When enabled, the path-zone decision is **authoritative for file tools** — consulted before session "allow always" memory and the generic `PermissionRule[]`, exactly like the bash engine.                                                                                                           |
+| 7   | Module                | New sibling shared module **`src/shared/path-permissions/`** (engine + settings); `isPathWithinRoot` relocates here and is re-exported from its old home.                                                                                                                                             |
+| 8   | Extension cwd + trust | Extension reads workspace root from **`ctx.cwd`** (on `session_start`), not `process.cwd()`. The project-local `path-permissions.json` is honored **only when `ctx.isProjectTrusted()`** (fail closed). Config-dir name comes from the SDK's **`CONFIG_DIR_NAME`** (fallback `.pi`), never hardcoded. |
 
 ---
 
 ## 3. Why this is tractable (existing infrastructure)
 
-| Need | Already exists |
-|---|---|
-| Path containment primitive | `isPathWithinRoot(path, root, isWindows?)` — [path-containment.ts:13](../../src/main/tools/path-containment.ts) (pure; used by sandbox, path-guard, workspace prompt). |
-| Symlink-safe re-check pattern | [workspace-system-prompt.ts:93-103](../../src/main/utils/workspace-system-prompt.ts) (`realpath` + re-test containment). |
-| Workspace root at decision time | App: `sessionCwdMap` via `setSessionCwd` ([permission-rules-store.ts](../../src/main/config/permission-rules-store.ts)); the hook also carries a live `cwdRef`. Extension: `process.cwd()`. |
-| Path extraction | Uniform `input.path` across all pi file tools; app already has `extractReadFilePath`. |
-| Tool input shapes (verified) | `read.path`/`write.path`/`edit.path` required; `grep.path`/`find.path`/`ls.path` optional (default cwd); `grep.glob`, `find.pattern` are glob filters under `path`. |
+| Need                            | Already exists                                                                                                                                                                                                                                   |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Path containment primitive      | `isPathWithinRoot(path, root, isWindows?)` — [path-containment.ts:13](../../src/main/tools/path-containment.ts) (pure; used by sandbox, path-guard, workspace prompt).                                                                           |
+| Symlink-safe re-check pattern   | [workspace-system-prompt.ts:93-103](../../src/main/utils/workspace-system-prompt.ts) (`realpath` + re-test containment).                                                                                                                         |
+| Workspace root at decision time | App: `sessionCwdMap` via `setSessionCwd` ([permission-rules-store.ts](../../src/main/config/permission-rules-store.ts)); the hook also carries a live `cwdRef`. Extension: `ctx.cwd` captured on `session_start` (NOT `process.cwd()` — see §8). |
+| Path extraction                 | Uniform `input.path` across all pi file tools; app already has `extractReadFilePath`.                                                                                                                                                            |
+| Tool input shapes (verified)    | `read.path`/`write.path`/`edit.path` required; `grep.path`/`find.path`/`ls.path` optional (default cwd); **both** `find` and `grep` expose `pattern` **and** `glob` filters under `path`.                                                        |
 
 What's missing is only the **decision wiring** and the **settings**.
 
@@ -112,6 +113,7 @@ Split into a **pure** classifier (trivially unit-testable) and an **fs-aware** r
 ```ts
 export function isPathWithinRoot(path: string, root: string, isWindows?: boolean): boolean;
 ```
+
 Moved verbatim from [path-containment.ts](../../src/main/tools/path-containment.ts). The old
 file becomes `export { isPathWithinRoot } from '../../shared/path-permissions/containment'` so
 every existing importer (sandbox-tool-executor, tool-executor, path-guard, workspace-system-prompt,
@@ -125,16 +127,20 @@ export type PathZone = 'inside' | 'outside';
 export type PathDecision = 'allow' | 'ask' | 'deny' | null;
 
 export interface PathPolicy {
-  outsideAction: 'ask' | 'deny';   // inside is always 'allow'
+  outsideAction: 'ask' | 'deny'; // inside is always 'allow'
 }
 export interface ResolveContext {
-  cwd: string | undefined;          // workspace root
-  allowedRoots: string[];           // already includes temp dir when enabled
+  cwd: string | undefined; // workspace root
+  allowedRoots: string[]; // already includes temp dir when enabled
   isWindows: boolean;
 }
 
 /** PURE: classify an already-resolved absolute realpath against resolved roots. */
-export function classifyZone(resolvedPath: string, resolvedRoots: string[], isWindows: boolean): PathZone;
+export function classifyZone(
+  resolvedPath: string,
+  resolvedRoots: string[],
+  isWindows: boolean
+): PathZone;
 
 /** PURE: map a zone to a decision. inside → allow; outside → policy.outsideAction. */
 export function decideForZone(zone: PathZone, policy: PathPolicy): PathDecision;
@@ -149,25 +155,25 @@ export function decidePathPermission(
   toolName: string,
   input: Record<string, unknown>,
   ctx: ResolveContext,
-  policy: PathPolicy,
+  policy: PathPolicy
 ): PathDecision;
 
 export const FILE_TOOLS_EXTENSION: ReadonlySet<string>; // read, write, edit, grep, find, ls
-export const FILE_TOOLS_APP: ReadonlySet<string>;        // + glob
+export const FILE_TOOLS_APP: ReadonlySet<string>; // + glob
 ```
 
 ### `settings.ts` (canonical — parity mechanism)
 
 ```ts
 export interface PathPermissionsSettings {
-  enabled: boolean;             // default false (opt-in)
-  outsideAction: 'ask' | 'deny';// default 'ask'
-  includeTempDir: boolean;      // default true
-  extraAllowedRoots: string[];  // default []  (absolute paths)
+  enabled: boolean; // default false (opt-in)
+  outsideAction: 'ask' | 'deny'; // default 'ask'
+  includeTempDir: boolean; // default true
+  extraAllowedRoots: string[]; // default []  (absolute paths)
 }
 export const DEFAULT_PATH_PERMISSIONS_SETTINGS: Readonly<PathPermissionsSettings>;
 
-export function sanitizeExtraRoots(input: unknown): string[];           // abs paths only, trimmed, deduped
+export function sanitizeExtraRoots(input: unknown): string[]; // abs paths only, trimmed, deduped
 export function sanitizePathPermissionsSettings(raw: unknown): PathPermissionsSettings;
 ```
 
@@ -177,17 +183,17 @@ export function sanitizePathPermissionsSettings(raw: unknown): PathPermissionsSe
 
 ### Per-tool extraction (`extractToolPaths`)
 
-| Tool | Path(s) classified |
-|---|---|
-| `read`, `write`, `edit` | `input.path` (required) |
-| `ls` | `input.path ?? cwd` (omitted → cwd → inside → allow) |
-| `grep`, `find` | `input.path ?? cwd`, **plus** the static root of an absolute `find.pattern` / `grep.glob` if present (hardening) |
-| `glob` (app) | the static root of `input.pattern` (and `input.path`/`input.cwd` if present) — **verify exact field names in [tool-executor.ts:703](../../src/main/tools/tool-executor.ts) during Phase 2** |
+| Tool                    | Path(s) classified                                                                                                                                                                                                            |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read`, `write`, `edit` | `input.path` (required)                                                                                                                                                                                                       |
+| `ls`                    | `input.path ?? cwd` (omitted → cwd → inside → allow)                                                                                                                                                                          |
+| `grep`, `find`          | `input.path ?? cwd`, **plus** the static root of any absolute pattern. Verified: **both** `find` and `grep` expose **both** `pattern` and `glob` fields, so check both on both tools (not just `find.pattern` / `grep.glob`). |
+| `glob` (app)            | the static root of `input.pattern` (and `input.path`/`input.cwd` if present) — **verify exact field names in [tool-executor.ts:703](../../src/main/tools/tool-executor.ts) during Phase 2**                                   |
 
 **Absolute-pattern hardening:** a search rooted at cwd can still escape via an absolute glob
 (`find pattern="/etc/**"`). `extractToolPaths` therefore also yields the literal prefix of any
-**absolute** pattern (the dirname up to the first wildcard). If *any* extracted path is
-`outside`, the whole call is `outside`.
+**absolute** `pattern` **or** `glob` value (the dirname up to the first wildcard), for both
+`find` and `grep`. If _any_ extracted path is `outside`, the whole call is `outside`.
 
 ### Resolution order (in `decidePathPermission`)
 
@@ -197,8 +203,8 @@ export function sanitizePathPermissionsSettings(raw: unknown): PathPermissionsSe
    (i.e., everything asks) rather than auto-allowing the world. (Configurable: could instead
    disable; default is fail-safe = ask.)
 3. **Build allowed roots:** `[realpath(cwd)]` + (`includeTempDir` ? `[realpath(os.tmpdir())]` : `[]`)
-   + `extraAllowedRoots.map(realpath)`. **macOS note:** `os.tmpdir()` is `/var/folders/…` which
-   symlinks to `/private/var/…`; resolving both sides is mandatory or temp writes read as outside.
+   - `extraAllowedRoots.map(realpath)`. **macOS note:** `os.tmpdir()` is `/var/folders/…` which
+     symlinks to `/private/var/…`; resolving both sides is mandatory or temp writes read as outside.
 4. **For each extracted raw path:**
    - `abs = path.resolve(cwd, raw)` (handles relative + `..`).
    - `real = realpathExistingPortion(abs)` — resolve symlinks on the longest existing ancestor
@@ -224,11 +230,16 @@ rules:
 ```ts
 if (FILE_TOOLS_APP.has(lowered) && pathPermissionsSettings.enabled) {
   const cwd = sessionCwdMap.get(sessionId);
-  const decision = decidePathPermission(lowered, input, {
-    cwd,
-    allowedRoots: buildAllowedRoots(cwd, pathPermissionsSettings),
-    isWindows: process.platform === 'win32',
-  }, { outsideAction: pathPermissionsSettings.outsideAction });
+  const decision = decidePathPermission(
+    lowered,
+    input,
+    {
+      cwd,
+      allowedRoots: buildAllowedRoots(cwd, pathPermissionsSettings),
+      isWindows: process.platform === 'win32',
+    },
+    { outsideAction: pathPermissionsSettings.outsideAction }
+  );
   if (decision) return decision; // allow/ask/deny authoritative; null falls through
 }
 ```
@@ -266,11 +277,17 @@ export async function resolveToolCall(event, ctx, settings) {
   if (tool === 'bash') {
     decision = decideBashPermission(event.input.command ?? '', settings.bash);
   } else if (FILE_TOOLS_EXTENSION.has(tool)) {
-    decision = decidePathPermission(tool, event.input, {
-      cwd: process.cwd(),
-      allowedRoots: buildAllowedRoots(process.cwd(), settings.path),
-      isWindows: process.platform === 'win32',
-    }, { outsideAction: settings.path.outsideAction });
+    const cwd = ctx.cwd ?? process.cwd(); // session cwd, NOT raw process.cwd()
+    decision = decidePathPermission(
+      tool,
+      event.input,
+      {
+        cwd,
+        allowedRoots: buildAllowedRoots(cwd, settings.path),
+        isWindows: process.platform === 'win32',
+      },
+      { outsideAction: settings.path.outsideAction }
+    );
   }
 
   if (decision === 'allow' || decision === null) return undefined;
@@ -281,9 +298,16 @@ export async function resolveToolCall(event, ctx, settings) {
 // Tool-agnostic dialog: Allow once / Deny / Deny & suggest + timeout (same as app's PermissionDialog)
 export async function presentAsk(toolName, summary, ctx, settings) {
   if (!ctx.hasUI) return { block: true, reason: `Blocked by permissions (no UI): ${toolName}` };
-  const opts = settings.permissionTimeoutSeconds > 0 ? { timeout: settings.permissionTimeoutSeconds * 1000 } : {};
+  const opts =
+    settings.permissionTimeoutSeconds > 0
+      ? { timeout: settings.permissionTimeoutSeconds * 1000 }
+      : {};
   const [ALLOW, DENY, SUGGEST] = ['Allow once', 'Deny', 'Deny & suggest alternative'];
-  const choice = await ctx.ui.select(`Permission: ${toolName}\n\n  ${summary}`, [ALLOW, DENY, SUGGEST], opts);
+  const choice = await ctx.ui.select(
+    `Permission: ${toolName}\n\n  ${summary}`,
+    [ALLOW, DENY, SUGGEST],
+    opts
+  );
   if (choice === ALLOW) return undefined;
   if (choice === SUGGEST) {
     const s = ((await ctx.ui.input('Suggest an alternative approach')) ?? '').trim();
@@ -297,10 +321,18 @@ export async function presentAsk(toolName, summary, ctx, settings) {
 - `summarize(tool, input)` → command for bash, resolved path for file tools, compact JSON otherwise.
 - `denyReason(tool, suggestion)` → the app's verbatim "denied THIS SPECIFIC invocation of
   '<tool>' … User's suggestion: <s>" wording, generalized from `'bash'` to `tool`.
-- **Extension config:** `~/.pi/agent/path-permissions.json` + `.pi/path-permissions.json`
-  (project overrides; `extraAllowedRoots` union), normalized via the shared sanitizer. Kept
-  separate from `bash-restrictions.json` for modularity (option to unify later).
-- **Reload:** startup-only, refresh via `/reload` (same as bash).
+- **Extension config:** `<CONFIG_DIR>/agent/path-permissions.json` +
+  `<cwd>/<CONFIG_DIR>/path-permissions.json` where `CONFIG_DIR` comes from the SDK's
+  `CONFIG_DIR_NAME` (fallback `.pi`), **not** a hardcoded `.pi`. Project overrides
+  (`extraAllowedRoots` union) normalized via the shared sanitizer. Kept separate from
+  `bash-restrictions.json` for modularity (option to unify later).
+- **Project trust (security):** the project-local `path-permissions.json` is honored **only
+  when `ctx.isProjectTrusted()`** (fail closed). This matters more here than for bash: an
+  untrusted project could otherwise ship `{"enabled": false}` to **disable the gate** or
+  `extraAllowedRoots: ["/"]` to mark the whole filesystem "inside". pi trust-gates _extensions_,
+  not the JSON files we read ourselves, so the extension must check trust before reading it.
+- **Load timing:** settings load on `session_start` using `ctx.cwd` (also fires on `/reload`,
+  `/new`, `/resume`, `/fork`); the factory does no I/O. Refresh via `/reload` (same as bash).
 
 ---
 
@@ -320,6 +352,7 @@ export async function presentAsk(toolName, summary, ctx, settings) {
 ## 10. Implementation phases — unit tests in every phase; integration + e2e last only
 
 ### Phase 1 — Shared `path-permissions` module
+
 - **Code:** `containment.ts` (relocate `isPathWithinRoot` + re-export from old home), `engine.ts`
   (pure classifier, resolver, `extractToolPaths`), `settings.ts`, `index.ts`.
 - **Unit tests:**
@@ -333,6 +366,7 @@ export async function presentAsk(toolName, summary, ctx, settings) {
 - **Gate:** `npm test` green; `npm run typecheck`.
 
 ### Phase 2 — App: store + `decidePermission`
+
 - **Code:** path-settings cache + hydration in the store; file-tool branch in `decidePermission`;
   config-store fields + shared normalizers; IPC wiring; **verify app `glob` input shape**.
 - **Unit tests:** `path-permissions-decide.test.ts` — for each gated tool: inside→allow,
@@ -342,12 +376,14 @@ export async function presentAsk(toolName, summary, ctx, settings) {
 - **Gate:** full `npm test` + typecheck + lint.
 
 ### Phase 3 — App settings UI
+
 - **Code:** `SettingsFilePermissions.tsx` + store/IPC wiring + i18n.
 - **Tests:** renderer store/component tests for load/save + dirty-state; sanitization of extra
   roots on commit.
 - **Gate:** typecheck + lint + tests.
 
 ### Phase 4 — Extension: universal dialog + path engine
+
 - **Code:** generalize to `resolveToolCall` + tool-agnostic `presentAsk` (also rewires the bash
   path to use `presentAsk`); `path-config.ts` loader; wire `tool_call` for the file tools.
   **Update [bash plan §6](pi-bash-restrictions-extension.md) to reference `presentAsk`.**
@@ -361,13 +397,17 @@ export async function presentAsk(toolName, summary, ctx, settings) {
 - **Gate:** tests + typecheck.
 
 ### Phase 5 — Build / bundle
+
 - **Code:** ensure the esbuild bundle (`scripts/build-pi-extension.mjs` from the bash plan) pulls
-  in `src/shared/path-permissions/`; externals unchanged.
-- **Tests:** build-verification — bundle builds; default export is a function; `resolveToolCall` +
-  `presentAsk` exported.
+  in `src/shared/path-permissions/`; externals unchanged. The bundle emits a **directory**
+  (`dist-pi-extensions/bash-restrictions/{index.js,package.json}`), not a loose `.mjs` — pi only
+  discovers `.ts`/`.js`/index/manifest dirs (see bash plan §8).
+- **Tests:** build-verification — `index.js` builds + manifest present; default export is a
+  function; `resolveToolCall` + `presentAsk` exported.
 - **Gate:** `npm run build:pi-extension` succeeds; test green.
 
 ### Phase 6 (LAST) — Integration + e2e + docs
+
 - **Integration:** `path-permissions.e2e.test.ts` — full chain (config → engine → presentAsk) and
   app `decidePermission` against a **real temp workspace + temp dir + a symlink escaping it**, per
   gated tool: inside allow, outside ask, temp allow, symlink-escape ask, absolute-pattern ask.
@@ -391,9 +431,13 @@ export async function presentAsk(toolName, summary, ctx, settings) {
 - **Degenerate / symlinked workspace root** — realpath the root; a project legitimately under the
   home dir would be treated as all-outside by the guard (documented trade-off; `extraAllowedRoots`
   is the escape hatch).
-- **SDK coupling** — file-tool input field names (`path`, `find.pattern`, `grep.glob`) and the
+- **SDK coupling** — file-tool input field names (`path`, `pattern`, `glob`) and the
   `isToolCallEventType` names are pre-1.0; re-verify on `pi` bumps. The app's `glob` input shape
-  must be confirmed in Phase 2.
+  must be confirmed in Phase 2. `CONFIG_DIR_NAME` is read defensively (namespace import +
+  `.pi` fallback) because it only exists in pi SDK ≥ 0.79.
+- **Project trust is load-bearing for security** — because the zone model and `extraAllowedRoots`
+  live in config, the project file MUST be read behind `ctx.isProjectTrusted()` (decision #8).
+  Skipping the check lets an untrusted repo disable or widen the gate.
 - **Bash-tool reads remain out of scope** — `bash: cat /etc/shadow` is governed only by the bash
   denylist, not this engine. Documented in §1.
 
@@ -402,6 +446,7 @@ export async function presentAsk(toolName, summary, ctx, settings) {
 ## 12. Open items
 
 None blocking. Two confirmations deferred to implementation:
+
 1. App `glob` tool input field names (Phase 2 — read [tool-executor.ts:703](../../src/main/tools/tool-executor.ts)).
 2. Whether to keep `path-permissions.json` separate from `bash-restrictions.json` or unify into a
    single `pi` permissions config (default: separate; trivially unifiable later).

@@ -58,15 +58,15 @@ shipped `examples/extensions/permission-gate.ts` is a simpler version of this ex
 
 ## 3. Decision summary
 
-| Decision               | Choice                                                                          | Rationale                                                                                                                                                          |
-| ---------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Repo topology          | **Same repo**                                                                   | One PR + one test suite cover both hosts; minimizes drift.                                                                                                         |
-| Engine ownership       | **`src/shared/bash-restrictions/engine.ts`** — pure, stateless                  | Single source of truth; both hosts import it.                                                                                                                      |
-| **Settings ownership** | **`src/shared/bash-restrictions/settings.ts`** — canonical schema + normalizers | Parity + future-proofing: a new setting is added once; both hosts consume the same sanitizer/normalizer.                                                           |
-| Extension location     | **`pi-extensions/bash-restrictions/`** (top-level, NOT under `src/main/`)       | Different runtime; must never enter the Electron main bundle.                                                                                                      |
-| Distribution           | **esbuild → one self-contained file**                                           | The installed file runs where `src/shared/` does not exist.                                                                                                        |
-| Plan doc location      | **`docs/design/`**                                                              | Established convention (17 design docs incl. `skill-features-implementation-plan.md`). Only the _plan_ lives here; code lands in `src/shared/` + `pi-extensions/`. |
-| Testing cadence        | **Unit tests in every phase; e2e + integration only in the final phase**        | Each phase ships verified; broad cross-process tests come once the parts exist.                                                                                    |
+| Decision               | Choice                                                                            | Rationale                                                                                                                                                          |
+| ---------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Repo topology          | **Same repo**                                                                     | One PR + one test suite cover both hosts; minimizes drift.                                                                                                         |
+| Engine ownership       | **`src/shared/bash-restrictions/engine.ts`** — pure, stateless                    | Single source of truth; both hosts import it.                                                                                                                      |
+| **Settings ownership** | **`src/shared/bash-restrictions/settings.ts`** — canonical schema + normalizers   | Parity + future-proofing: a new setting is added once; both hosts consume the same sanitizer/normalizer.                                                           |
+| Extension location     | **`pi-extensions/bash-restrictions/`** (top-level, NOT under `src/main/`)         | Different runtime; must never enter the Electron main bundle.                                                                                                      |
+| Distribution           | **esbuild → one self-contained directory** (`index.js` + `package.json` manifest) | The bundle runs where `src/shared/` does not exist; a directory+manifest is what pi auto-discovers (a loose `.mjs` is not — see §8).                               |
+| Plan doc location      | **`docs/design/`**                                                                | Established convention (17 design docs incl. `skill-features-implementation-plan.md`). Only the _plan_ lives here; code lands in `src/shared/` + `pi-extensions/`. |
+| Testing cadence        | **Unit tests in every phase; e2e + integration only in the final phase**          | Each phase ships verified; broad cross-process tests come once the parts exist.                                                                                    |
 
 ---
 
@@ -89,8 +89,8 @@ open-cowork/
 │       ├── config.ts              # loads + merges .pi/bash-restrictions.json via shared sanitizer
 │       └── README.md              # install + config-file documentation
 ├── scripts/
-│   └── build-pi-extension.mjs     # esbuild bundle → dist-pi-extensions/bash-restrictions.mjs
-├── dist-pi-extensions/            # build output (gitignored)
+│   └── build-pi-extension.mjs     # esbuild → dist-pi-extensions/bash-restrictions/{index.js,package.json}
+├── dist-pi-extensions/            # build output dir (gitignored)
 └── tests/
     ├── bash-command-control.test.ts        # unchanged (store re-export keeps 1-arg API)
     ├── denylist-word-boundary.test.ts      # unchanged
@@ -196,6 +196,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import { isToolCallEventType } from '@earendil-works/pi-coding-agent';
 import {
   decideBashPermission,
+  DEFAULT_BASH_RESTRICTIONS_SETTINGS,
   type BashRestrictionsSettings,
 } from '../../src/shared/bash-restrictions';
 import { loadBashRestrictionsSettings } from './config';
@@ -241,7 +242,17 @@ export async function resolveBashToolCall(
 }
 
 export default function (pi: ExtensionAPI) {
-  const settings = loadBashRestrictionsSettings(process.cwd());
+  let settings = { ...DEFAULT_BASH_RESTRICTIONS_SETTINGS };
+  // Load on session_start (NOT in the factory): per pi extensions.md, the factory
+  // may run without a session, so resource work is deferred; the session cwd comes
+  // from ctx.cwd (not process.cwd()); and the project-local config is honored only
+  // when ctx.isProjectTrusted() is true (fail closed otherwise). session_start also
+  // fires on /reload, /new, /resume, /fork — so it doubles as the reload hook.
+  pi.on('session_start', async (_event, ctx) => {
+    const projectTrusted =
+      typeof ctx.isProjectTrusted === 'function' ? ctx.isProjectTrusted() : false;
+    settings = loadBashRestrictionsSettings(ctx.cwd ?? process.cwd(), { projectTrusted });
+  });
   pi.on('tool_call', async (event, ctx) => {
     if (!isToolCallEventType('bash', event)) return undefined;
     return resolveBashToolCall(event.input.command ?? '', ctx, settings);
@@ -261,7 +272,8 @@ The extension reads its own JSON (the app reads encrypted electron-store). It ca
 so a future field added to the schema is honored automatically once both hosts read it.
 
 ```jsonc
-// ~/.pi/agent/bash-restrictions.json (global)  and/or  .pi/bash-restrictions.json (project)
+// <CONFIG_DIR>/agent/bash-restrictions.json (global)  and/or  <cwd>/<CONFIG_DIR>/bash-restrictions.json (project)
+// CONFIG_DIR defaults to ".pi" but follows pi's CONFIG_DIR_NAME (rebranded distros differ).
 {
   "trusted": ["ls *", "cat *", "npm run *", "git status*"],
   "denied": ["rm", "--force", "sudo", "git push"],
@@ -271,10 +283,16 @@ so a future field added to the schema is honored automatically once both hosts r
 
 `config.ts` responsibilities:
 
-1. Read global + project files; tolerate missing/malformed (fall back to defaults).
-2. Merge: **`trusted` and `denied` = union** (`global ∪ project`, deduped);
+1. Resolve the config dir from the SDK's `CONFIG_DIR_NAME` (default `.pi`), **not** a
+   hardcoded `.pi`. Read it off a namespace import with a `.pi` fallback so older SDKs
+   that don't export it (< 0.79) still work. Global lives under `<CONFIG_DIR>/agent/`.
+2. Read global + project files; tolerate missing/malformed (fall back to defaults).
+   **The project file is read only when the caller reports the project as trusted**
+   (`projectTrusted`, wired to `ctx.isProjectTrusted()`); an untrusted project must not
+   be able to widen `trusted` (or otherwise loosen the gate). Global config always applies.
+3. Merge: **`trusted` and `denied` = union** (`global ∪ project`, deduped);
    `permissionTimeoutSeconds` = project value if present, else global, else default.
-3. Pass the merged raw object through `sanitizeBashRestrictionsSettings` → canonical shape.
+4. Pass the merged raw object through `sanitizeBashRestrictionsSettings` → canonical shape.
 
 > **Future setting parity (the mechanism):** add the field + its normalizer to
 > `src/shared/bash-restrictions/settings.ts` once. The app wires UI + store; the extension reads
@@ -284,24 +302,45 @@ so a future field added to the schema is honored automatically once both hosts r
 
 ## 8. Build / bundling
 
+> **pi only auto-discovers `*.ts` / `*.js`, a subdir with `index.ts`/`index.js`, or a
+> directory whose `package.json` declares a `pi.extensions` manifest** — a loose `.mjs`
+> is NOT discovered (`dist/core/extensions/loader.js`: `name.endsWith(".ts")||".js"`).
+> So we emit a **directory with `index.js` + a manifest**, not a single `.mjs`.
+
 ```js
 // scripts/build-pi-extension.mjs
 import { build } from 'esbuild';
+import { mkdirSync, writeFileSync } from 'node:fs';
+const OUT_DIR = 'dist-pi-extensions/bash-restrictions';
 await build({
   entryPoints: ['pi-extensions/bash-restrictions/extension.ts'],
-  outfile: 'dist-pi-extensions/bash-restrictions.mjs',
+  outfile: `${OUT_DIR}/index.js`,
   bundle: true,
   format: 'esm',
   platform: 'node',
   target: 'node22',
   external: ['@earendil-works/*', 'typebox', 'node:*'],
 });
+// Manifest so pi discovers the directory AND Node loads index.js as ESM:
+writeFileSync(
+  `${OUT_DIR}/package.json`,
+  JSON.stringify(
+    {
+      name: 'bash-restrictions',
+      private: true,
+      type: 'module',
+      pi: { extensions: ['./index.js'] },
+    },
+    null,
+    2
+  )
+);
 ```
 
-- `"build:pi-extension": "node scripts/build-pi-extension.mjs"` in `package.json`; esbuild is
-  available transitively via Vite (add as devDependency if not).
+- `"build:pi-extension": "node scripts/build-pi-extension.mjs"` in `package.json`; `esbuild`
+  is a direct devDependency.
 - `dist-pi-extensions/` → `.gitignore`.
-- **Install (documented in extension README):** `cp dist-pi-extensions/bash-restrictions.mjs ~/.pi/agent/extensions/`
+- **Install (documented in extension README):** `cp -r dist-pi-extensions/bash-restrictions ~/.pi/agent/extensions/`
   then `/reload` (or restart). Quick test: `pi -e ./pi-extensions/bash-restrictions/extension.ts`.
 
 ---
@@ -400,14 +439,15 @@ await build({
 
 ## 11. Resolved decisions (locked — no open questions)
 
-| #   | Decision                           | Resolution                                   | Implication                                                                                                                                                                         |
-| --- | ---------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Headless `'ask'` policy            | **Block (fail-closed)**                      | When `!ctx.hasUI`, an `'ask'` decision returns `{ block: true }`. No allow-on-no-UI path.                                                                                           |
-| 2   | Global + project list merge        | **Union both** (`global ∪ project`, deduped) | `trusted` and `denied` are each concatenated + deduped. Per-project tightening is done by adding denials; denylist beats trust.                                                     |
-| 3   | Gate `user_bash`?                  | **No — agent bash tool only**                | Only the LLM's `bash` tool is gated via `tool_call`. The human's `!`/`!!` commands are not intercepted.                                                                             |
-| 4   | Config reload                      | **Startup only**                             | `loadBashRestrictionsSettings` runs once in the extension factory. Refresh by editing the JSON and running `/reload` (pi re-runs auto-discovered extensions). No file watcher.      |
-| 5   | Permission outcomes (interactive)  | **Allow once / Deny / Deny & suggest**       | `'ask'` uses `ctx.ui.select` + `ctx.ui.input`; the free-text suggestion is appended to the block `reason` fed to the model, wording verbatim from the app.                          |
-| 6   | `allow_always` (app's 4th outcome) | **Skipped (intentional)**                    | Inert for bash in authoritative mode in the app too — the list engine runs before session "always allow" memory. Permanent trust = add the command to the trusted list + `/reload`. |
+| #   | Decision                           | Resolution                                   | Implication                                                                                                                                                                                                                                                                             |
+| --- | ---------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Headless `'ask'` policy            | **Block (fail-closed)**                      | When `!ctx.hasUI`, an `'ask'` decision returns `{ block: true }`. No allow-on-no-UI path.                                                                                                                                                                                               |
+| 2   | Global + project list merge        | **Union both** (`global ∪ project`, deduped) | `trusted` and `denied` are each concatenated + deduped. Per-project tightening is done by adding denials; denylist beats trust.                                                                                                                                                         |
+| 3   | Gate `user_bash`?                  | **No — agent bash tool only**                | Only the LLM's `bash` tool is gated via `tool_call`. The human's `!`/`!!` commands are not intercepted.                                                                                                                                                                                 |
+| 4   | Config reload                      | **On `session_start`**                       | `loadBashRestrictionsSettings` runs in the `session_start` handler (using `ctx.cwd`), which also fires on `/reload`, `/new`, `/resume`, `/fork`. Edit the JSON + `/reload` to refresh. No file watcher.                                                                                 |
+| 7   | Project config trust               | **Gated on `ctx.isProjectTrusted()`**        | The project-local file is honored only for trusted projects (fail closed otherwise); an untrusted project cannot widen `trusted`/loosen the gate. Global config always applies. pi only trust-gates _extensions_, not JSON we read ourselves, so the extension must check trust itself. |
+| 5   | Permission outcomes (interactive)  | **Allow once / Deny / Deny & suggest**       | `'ask'` uses `ctx.ui.select` + `ctx.ui.input`; the free-text suggestion is appended to the block `reason` fed to the model, wording verbatim from the app.                                                                                                                              |
+| 6   | `allow_always` (app's 4th outcome) | **Skipped (intentional)**                    | Inert for bash in authoritative mode in the app too — the list engine runs before session "always allow" memory. Permanent trust = add the command to the trusted list + `/reload`.                                                                                                     |
 
 > Mandated (not a decision): timeout-on-no-response = **deny** — fixed by parity with the app's
 > "auto-deny" semantics and the fail-closed posture.
