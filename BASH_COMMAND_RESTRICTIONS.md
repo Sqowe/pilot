@@ -1,6 +1,6 @@
 # Bash Command Restrictions
 
-Open Cowork gates every bash command the agent tries to run through a
+Sqowe Pilot gates every bash command the agent tries to run through a
 small decision engine so you can decide which commands auto-run and
 which require explicit approval. This document describes exactly how
 that engine works, how to configure it, and the edge cases that caused
