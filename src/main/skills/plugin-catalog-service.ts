@@ -7,7 +7,7 @@ interface CachedCatalog {
 
 const CLAUDE_PLUGINS_URL = 'https://claude.com/plugins';
 const CACHE_TTL_MS = 60_000;
-const DEFAULT_USER_AGENT = 'open-cowork-plugin-catalog/3.0';
+const DEFAULT_USER_AGENT = 'sqowe-pilot-plugin-catalog/3.0';
 const DETAIL_FETCH_CONCURRENCY = 8;
 
 const EMPTY_COUNTS: PluginComponentCounts = {
@@ -37,7 +37,10 @@ export class PluginCatalogService {
     this.fetchFn = fetchFn;
   }
 
-  async listAnthropicPlugins(forceRefresh = false, installableOnly = false): Promise<PluginCatalogItem[]> {
+  async listAnthropicPlugins(
+    forceRefresh = false,
+    installableOnly = false
+  ): Promise<PluginCatalogItem[]> {
     if (!forceRefresh && this.cache && this.cache.expiresAt > Date.now()) {
       return installableOnly
         ? this.cache.data.filter((plugin) => plugin.installable)
@@ -48,15 +51,19 @@ export class PluginCatalogService {
       const homeHtml = await this.fetchText(CLAUDE_PLUGINS_URL);
       const slugs = this.extractPluginSlugs(homeHtml);
       const detailErrors: string[] = [];
-      const pluginCandidates = await this.mapWithConcurrency(slugs, DETAIL_FETCH_CONCURRENCY, async (slug) => {
-        try {
-          return await this.readMarketplacePlugin(slug);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          detailErrors.push(`${slug}: ${message}`);
-          return null;
+      const pluginCandidates = await this.mapWithConcurrency(
+        slugs,
+        DETAIL_FETCH_CONCURRENCY,
+        async (slug) => {
+          try {
+            return await this.readMarketplacePlugin(slug);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            detailErrors.push(`${slug}: ${message}`);
+            return null;
+          }
         }
-      });
+      );
 
       const data = pluginCandidates
         .filter((plugin): plugin is PluginCatalogItem => plugin !== null)
@@ -76,7 +83,9 @@ export class PluginCatalogService {
   }
 
   async downloadPlugin(_pluginName: string, _targetRootPath: string): Promise<string> {
-    throw new Error('Direct plugin download is no longer supported. Install via Claude CLI instead.');
+    throw new Error(
+      'Direct plugin download is no longer supported. Install via Claude CLI instead.'
+    );
   }
 
   private async readMarketplacePlugin(slug: string): Promise<PluginCatalogItem | null> {
@@ -128,7 +137,9 @@ export class PluginCatalogService {
   private extractInstallCommand(html: string): string | undefined {
     const match = html.match(/\bdata-copy\s*=\s*(?:"([^"]+)"|'([^']+)')/i);
     if (!match) {
-      const fallbackMatch = this.decodeHtml(html).match(/claude plugin (?:install|add)\s+[^\s"'`<]+/i);
+      const fallbackMatch = this.decodeHtml(html).match(
+        /claude plugin (?:install|add)\s+[^\s"'`<]+/i
+      );
       return fallbackMatch?.[0];
     }
     const value = this.decodeHtml((match[1] || match[2] || '').trim());
@@ -218,7 +229,10 @@ export class PluginCatalogService {
     return output;
   }
 
-  private setAndFilterCache(data: PluginCatalogItem[], installableOnly: boolean): PluginCatalogItem[] {
+  private setAndFilterCache(
+    data: PluginCatalogItem[],
+    installableOnly: boolean
+  ): PluginCatalogItem[] {
     this.cache = {
       expiresAt: Date.now() + CACHE_TTL_MS,
       data,

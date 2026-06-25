@@ -1,6 +1,6 @@
-appId: com.opencowork.app
-productName: Open Cowork
-copyright: Copyright © 2026 Open Cowork Team
+appId: com.sqowe.pilot
+productName: Sqowe Pilot
+copyright: Copyright © 2026 Sqowe Pilot
 
 directories:
   output: release
@@ -92,8 +92,8 @@ mac:
   entitlementsInherit: resources/entitlements.mac.plist
   extendInfo:
     LSApplicationCategoryType: public.app-category.developer-tools
-    NSScreenCaptureUsageDescription: 'Open Cowork needs screen recording access for GUI automation.'
-    NSAccessibilityUsageDescription: 'Open Cowork needs accessibility access for GUI automation.'
+    NSScreenCaptureUsageDescription: 'Sqowe Pilot needs screen recording access for GUI automation.'
+    NSAccessibilityUsageDescription: 'Sqowe Pilot needs accessibility access for GUI automation.'
   extraResources:
     - from: .bundle-resources/mcp
       to: mcp
@@ -147,7 +147,7 @@ dmg:
   contents:
     - x: 150
       y: 220
-      name: 'Open Cowork.app'
+      name: 'Sqowe Pilot.app'
     - x: 450
       y: 220
       type: link
@@ -159,5 +159,5 @@ extraMetadata:
 
 publish:
   provider: github
-  owner: OpenCoworkAI
-  repo: open-cowork
+  owner: sqowe
+  repo: pilot

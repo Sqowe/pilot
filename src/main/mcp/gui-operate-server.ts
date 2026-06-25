@@ -41,14 +41,14 @@ const execFileAsync = promisify(execFile);
 const PLATFORM = os.platform(); // 'darwin' for macOS, 'win32' for Windows
 writeMCPLog(`Platform detected: ${PLATFORM}`, 'Bootstrap');
 
-// Get Open Cowork data directory for persistent storage
+// Get Sqowe Pilot data directory for persistent storage
 // Use platform-appropriate paths:
-// - macOS: ~/Library/Application Support/open-cowork
-// - Windows: %APPDATA%/open-cowork
+// - macOS: ~/Library/Application Support/sqowe-pilot
+// - Windows: %APPDATA%/sqowe-pilot
 const OPEN_COWORK_DATA_DIR =
   PLATFORM === 'win32'
-    ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'open-cowork')
-    : path.join(os.homedir(), 'Library', 'Application Support', 'open-cowork');
+    ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'sqowe-pilot')
+    : path.join(os.homedir(), 'Library', 'Application Support', 'sqowe-pilot');
 
 // Directory for storing GUI operate files (screenshots, etc.)
 const GUI_OPERATE_DIR = path.join(OPEN_COWORK_DATA_DIR, 'gui_operate');
@@ -1782,9 +1782,9 @@ async function executeCliclick(command: string): Promise<{ stdout: string; stder
     if (/Accessibility privileges not enabled/i.test(result.stderr || '')) {
       const hint =
         '\n\nmacOS 权限提示 / Permissions:\n' +
-        '- System Settings → Privacy & Security → Accessibility：允许 Open Cowork\n' +
+        '- System Settings → Privacy & Security → Accessibility：允许 Sqowe Pilot\n' +
         '- 如果是终端运行：允许 Terminal/iTerm\n' +
-        '- 授权后请重启 Open Cowork 再重试\n';
+        '- 授权后请重启 Sqowe Pilot 再重试\n';
       throw new Error(
         `cliclick cannot control UI because Accessibility permission is not enabled.${hint}`
       );
@@ -1795,8 +1795,8 @@ async function executeCliclick(command: string): Promise<{ stdout: string; stder
     const baseMessage = error instanceof Error ? error.message : String(error);
     const hint =
       '\n\nmacOS 权限提示 / Permissions:\n' +
-      '- System Settings → Privacy & Security → Accessibility：允许 Open Cowork\n' +
-      '- System Settings → Privacy & Security → Automation：允许 Open Cowork 控制 “System Events”\n';
+      '- System Settings → Privacy & Security → Accessibility：允许 Sqowe Pilot\n' +
+      '- System Settings → Privacy & Security → Automation：允许 Sqowe Pilot 控制 “System Events”\n';
     throw new Error(`${baseMessage}${hint}`);
   }
 }
@@ -3819,7 +3819,7 @@ async function takeScreenshot(
     const baseMessage = error instanceof Error ? error.message : String(error);
     const hint =
       '\n\nmacOS 权限提示 / Permissions:\n' +
-      '- System Settings → Privacy & Security → Screen Recording：允许 Open Cowork\n' +
+      '- System Settings → Privacy & Security → Screen Recording：允许 Sqowe Pilot\n' +
       '- 重新启动应用后再试 / Restart the app and try again\n';
     throw new Error(`${baseMessage}${hint}`);
   }
@@ -4397,8 +4397,8 @@ async function callVisionAPIWithTimeout(
     };
 
     if (isOpenRouter) {
-      headers['HTTP-Referer'] = 'https://github.com/OpenCoworkAI/open-cowork';
-      headers['X-Title'] = 'Open Cowork';
+      headers['HTTP-Referer'] = 'https://github.com/sqowe/pilot';
+      headers['X-Title'] = 'Sqowe Pilot';
     }
 
     return new Promise<string>((resolve, reject) => {

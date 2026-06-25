@@ -23,7 +23,7 @@ import { parseArgs } from 'node:util';
 function decryptConfig() {
   const configPath = path.join(
     os.homedir(),
-    'Library/Application Support/open-cowork/config.json',
+    'Library/Application Support/sqowe-pilot/config.json',
   );
   if (!fs.existsSync(configPath)) {
     throw new Error(`Config not found at ${configPath}. Is the app installed?`);

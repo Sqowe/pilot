@@ -6,14 +6,20 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link2, X } from 'lucide-react';
 
-const DISMISS_KEY = 'open-cowork-pairing-guide-dismissed';
+const DISMISS_KEY = 'sqowe-pilot-pairing-guide-dismissed';
+// Read the legacy key too so users who dismissed the guide before the rebrand
+// don't see it reappear. Writes always go to the new key.
+const LEGACY_DISMISS_KEY = 'open-cowork-pairing-guide-dismissed';
 
 const supportsStorage = typeof window !== 'undefined' && window.localStorage;
 
 export function PairingGuideCard() {
   const { t } = useTranslation();
   const [dismissed, setDismissed] = useState(() =>
-    supportsStorage ? localStorage.getItem(DISMISS_KEY) === 'true' : false
+    supportsStorage
+      ? localStorage.getItem(DISMISS_KEY) === 'true' ||
+        localStorage.getItem(LEGACY_DISMISS_KEY) === 'true'
+      : false
   );
 
   if (dismissed) return null;

@@ -14,7 +14,7 @@ describe('ChatView Claude-style layout', () => {
     expect(source).toContain('max-w-[920px]');
   });
 
-  it('uses a quieter header treatment with Open Cowork eyebrow and compact connector badge', () => {
+  it('uses a quieter header treatment with Sqowe Pilot eyebrow and compact connector badge', () => {
     const source = readChatView();
     // Branding text moved to i18n; verify the layout structure remains
     expect(source).toContain('bg-background/88');

@@ -83,7 +83,7 @@ module.exports = async function afterPack(context) {
   // Determine the app resources path
   let resourcesDir;
   if (platform === 'darwin') {
-    // macOS: Open Cowork.app/Contents/Resources/app.asar.unpacked/...
+    // macOS: Sqowe Pilot.app/Contents/Resources/app.asar.unpacked/...
     const appName = `${context.packager.appInfo.productFilename}.app`;
     resourcesDir = path.join(appOutDir, appName, 'Contents', 'Resources');
   } else {
