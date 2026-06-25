@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const completeSimpleMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@earendil-works/pi-ai', () => ({
+// `completeSimple` moved to the `/compat` entrypoint in pi-ai 0.80.0.
+vi.mock('@earendil-works/pi-ai/compat', () => ({
   completeSimple: completeSimpleMock,
 }));
 

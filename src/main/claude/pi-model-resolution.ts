@@ -1,4 +1,6 @@
-import { getModel, type Api, type Model } from '@earendil-works/pi-ai';
+import type { Api, Model } from '@earendil-works/pi-ai';
+// `getModel` moved off the pi-ai root entrypoint to `/compat` in 0.80.0.
+import { getModel } from '@earendil-works/pi-ai/compat';
 import { isOfficialOpenAIBaseUrl } from '../config/auth-utils';
 
 const COMMON_FALLBACK_PROVIDERS = ['openai', 'anthropic', 'google'] as const;
