@@ -24,19 +24,40 @@ extension reuses that engine unchanged.
 
 ---
 
-## Install
+## Build
 
 The extension imports from `src/shared/`, so it is bundled into a self-contained
 directory before installation.
 
+**Prerequisites:** Node ≥ 22 with dependencies installed (`npm install` from the
+repo root).
+
 ```sh
 # From the repo root
 npm run build:pi-extension
-# → dist-pi-extensions/bash-restrictions/
-#     ├── index.js       (bundled ESM)
-#     └── package.json    ({ "type": "module", "pi": { "extensions": ["./index.js"] } })
+```
 
-# Install globally for pi (copy the whole directory)
+Defined in `package.json`; runs [`scripts/build-pi-extension.mjs`](../../scripts/build-pi-extension.mjs),
+which uses esbuild to bundle the extension — inlining `src/shared/bash-restrictions/`
+— into:
+
+```
+dist-pi-extensions/bash-restrictions/
+├── index.js      (bundled ESM)
+└── package.json  ({ "type": "module", "pi": { "extensions": ["./index.js"] } })
+```
+
+`@earendil-works/*`, `typebox`, and Node built-ins are left external — `pi`
+provides them at load time, so the bundle stays small and version-safe. The
+output directory is gitignored.
+
+---
+
+## Install
+
+Build first (above), then copy the whole directory into pi's extensions folder:
+
+```sh
 cp -r dist-pi-extensions/bash-restrictions ~/.pi/agent/extensions/
 
 # then, inside pi:
@@ -49,10 +70,7 @@ cp -r dist-pi-extensions/bash-restrictions ~/.pi/agent/extensions/
 > **not** discovered. Shipping a directory with a manifest also lets the local
 > `"type": "module"` mark `index.js` as ESM.
 
-`@earendil-works/*`, `typebox`, and Node built-ins are left external — `pi`
-provides them at load time, so the bundle stays small and version-safe.
-
-### Quick try without installing
+### Quick try without installing (no build needed)
 
 ```sh
 pi -e ./pi-extensions/bash-restrictions/extension.ts
@@ -65,7 +83,7 @@ needed for a one-off trial.
 
 ## Configure
 
-The extension reads up to two optional JSON files and **unions** them:
+The extension reads up to two optional config files and **unions** them:
 
 | Scope   | Path                                 |
 | ------- | ------------------------------------ |
@@ -75,6 +93,11 @@ The extension reads up to two optional JSON files and **unions** them:
 > The `.pi` directory name follows pi's configured config dir (`CONFIG_DIR_NAME`),
 > so rebranded pi distributions use their own name automatically; it falls back
 > to `.pi`.
+
+> **JSONC is supported.** Like pi's own configs, these files may contain `//` and
+> `/* */` comments and trailing commas — so the commented example below can be
+> copied verbatim. Files that fail to parse are silently ignored (treated as
+> absent), so a stray syntax error leaves the gate inactive rather than erroring.
 
 ```jsonc
 // .pi/bash-restrictions.json

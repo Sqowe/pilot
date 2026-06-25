@@ -158,6 +158,57 @@ describe('project trust gate', () => {
 });
 
 // ---------------------------------------------------------------------------
+// JSONC tolerance (comments + trailing commas) — matches pi's config convention
+// ---------------------------------------------------------------------------
+
+describe('JSONC config files', () => {
+  it('parses the documented commented example verbatim (line comments + trailing comma)', () => {
+    // This is the exact shape shown in the extension README's jsonc example.
+    writeGlobalRaw(`// .pi/bash-restrictions.json
+{
+  // Prefix patterns, * = wildcard, case-insensitive.
+  "trusted": ["ls *", "cat *", "npm run *", "git status*"],
+
+  // Substring patterns, word-boundary, case-insensitive. Denylist beats trust.
+  "denied": ["rm", "--force", "sudo", "git push"],
+
+  // Permission-dialog timeout in seconds.
+  "permissionTimeoutSeconds": 300,
+}
+`);
+    const result = load();
+    expect(result.trusted).toEqual(['ls *', 'cat *', 'npm run *', 'git status*']);
+    expect(result.denied).toEqual(['rm', '--force', 'sudo', 'git push']);
+    expect(result.permissionTimeoutSeconds).toBe(300);
+  });
+
+  it('tolerates block comments and trailing commas inside arrays', () => {
+    writeProjectRaw(`{
+  /* block comment */
+  "trusted": [
+    "ls *",
+    "cat *",
+  ],
+  "denied": [],
+}`);
+    const result = load();
+    expect(result.trusted).toEqual(['ls *', 'cat *']);
+  });
+
+  it('preserves // and commas that appear inside string values', () => {
+    // A trusted pattern containing "//" (URL) and a denied pattern containing a
+    // comma must NOT be corrupted by comment/trailing-comma stripping.
+    writeGlobalRaw(`{
+  "trusted": ["curl https://example.com *"],
+  "denied": ["a,b"]
+}`);
+    const result = load();
+    expect(result.trusted).toEqual(['curl https://example.com *']);
+    expect(result.denied).toEqual(['a,b']);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Malformed JSON → tolerated
 // ---------------------------------------------------------------------------
 
