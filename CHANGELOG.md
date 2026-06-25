@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-06-25
+
+> Fresh product identity after the **Open Cowork → Sqowe Pilot** rebrand — a deliberate
+> version reset and clean break from the `3.3.0-sqowe.N` fork series. Entries below this
+> point document the prior Open Cowork lineage under its original versioning.
+
+### Changed
+
+- Rebranded the product to **Sqowe Pilot**: application identity (`appId com.sqowe.pilot`),
+  packaging (`productName`, DMG, copyright), runtime strings, documentation, and the
+  repository home (`github.com/sqowe/pilot`).
+
+### Added
+
+- First-launch data migration: existing users' data is copied losslessly from the legacy
+  `<appData>/open-cowork` directory to `<appData>/sqowe-pilot`, including the encrypted
+  config (decrypts transparently — encryption seeds are unchanged). The migration is
+  fork-fingerprint gated, copy-not-move, and idempotent via a `.brand` marker.
+
+### Removed
+
+- Dead upstream GitHub automation (Codex PR/issue bots, Homebrew tap workflow), the
+  bundled marketing website, and the Chinese README.
+
 ## [3.3.0-sqowe.8] - 2026-06-04
 
 ### Changed
@@ -199,13 +223,14 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Major architecture overhaul: Electron-based desktop app with React UI, sandbox isolation, and Skills system
 
-## [1.0.0] - 2025-12-01
+## [1.0.0 — Open Cowork] - 2025-12-01
 
 ### Added
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/sqowe/pilot/compare/v3.3.0-sqowe.8...HEAD
+[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/sqowe/pilot/releases/tag/v1.0.0
 [3.3.0-sqowe.8]: https://github.com/sqowe/pilot/compare/v3.3.0-sqowe.7...v3.3.0-sqowe.8
 [3.3.0-sqowe.7]: https://github.com/sqowe/pilot/compare/v3.3.0-sqowe.6...v3.3.0-sqowe.7
 [3.3.0-sqowe.6]: https://github.com/sqowe/pilot/compare/v3.3.0-sqowe.5...v3.3.0-sqowe.6
@@ -219,4 +244,4 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 [3.1.0]: https://github.com/sqowe/pilot/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/sqowe/pilot/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/sqowe/pilot/compare/v1.0...v2.0.0
-[1.0.0]: https://github.com/sqowe/pilot/releases/tag/v1.0
+[1.0.0 — Open Cowork]: https://github.com/OpenCoworkAI/open-cowork/releases/tag/v1.0

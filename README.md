@@ -225,10 +225,10 @@ If you've modified a built-in skill and want to prevent it from being overwritte
 
 ```bash
 # macOS
-touch ~/Library/Application\ Support/open-cowork/.claude/skills/docx/.user-modified
+touch ~/Library/Application\ Support/sqowe-pilot/.claude/skills/docx/.user-modified
 
 # Windows
-type nul > "%APPDATA%\open-cowork\.claude\skills\docx\.user-modified"
+type nul > "%APPDATA%\sqowe-pilot\.claude\skills\docx\.user-modified"
 ```
 
 When the marker is present, the auto-update will skip that skill and log a warning instead. To resume receiving updates, simply delete the `.user-modified` file.
@@ -493,7 +493,7 @@ This avoids injecting too much irrelevant context while ensuring important detai
 
 ### Storage
 
-Memory data lives at `~/Library/Application Support/open-cowork/memory/` (macOS):
+Memory data lives at `~/Library/Application Support/sqowe-pilot/memory/` (macOS):
 
 | File                     | Contents                                             |
 | ------------------------ | ---------------------------------------------------- |

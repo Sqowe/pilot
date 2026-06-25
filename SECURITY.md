@@ -2,16 +2,16 @@
 
 ## Supported Versions
 
-| Version | Supported |
-|---------|-----------|
-| 3.x (latest) | Yes |
-| < 3.0 | No |
+| Version      | Supported |
+| ------------ | --------- |
+| 3.x (latest) | Yes       |
+| < 3.0        | No        |
 
 ## Reporting a Vulnerability
 
 **Please do not open a public GitHub issue for security vulnerabilities.**
 
-Report security issues by emailing **security@opencowork.ai** (or the maintainer contact listed in the repository). Include:
+Report security issues by emailing **security@sqowe.com** (or the maintainer contact listed in the repository). Include:
 
 - A clear description of the vulnerability
 - Steps to reproduce or a proof-of-concept
@@ -29,12 +29,14 @@ We will coordinate disclosure timing with you and credit reporters in the releas
 ## Scope
 
 In scope:
+
 - Electron main process privilege escalation
 - Arbitrary code execution via crafted input
 - Credential / API key leakage
 - Sandbox escape (Lima / WSL2 isolation)
 
 Out of scope:
+
 - Issues requiring physical access to a running machine
 - Self-XSS or issues requiring the attacker to already have local code execution
 - Vulnerabilities in third-party dependencies (report those upstream)
