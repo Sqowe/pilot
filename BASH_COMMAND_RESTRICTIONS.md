@@ -72,15 +72,19 @@ Same `*` glyph, different meanings in the two lists:
 - Other regex metacharacters are treated literally (`.`, `(`, `)`,
   `[`, `]`, `+`, `?`, `^`, `$`, `{`, `}`, `|`, `\`).
 - Case-insensitive.
+- A literal space in the pattern must be present in the command. `ls *`
+  compiles to `^ls .*`, so it matches `ls -la` but **not** bare `ls` — the
+  space after `ls` is required. To also auto-allow the argument-less form, add
+  `ls` as its own pattern.
 
 Examples:
 
-| Pattern       | Matches                                    | Does NOT match                    |
-| ------------- | ------------------------------------------ | --------------------------------- |
-| `ls *`        | `ls`, `ls -la`, `ls /tmp`, `LS`            | `xls`, `my-ls`                    |
-| `npm run *`   | `npm run build`, `npm run test --watch`    | `npm install`, `yarn run build`   |
-| `git status`  | `git status`, `git status --short`         | `git statu`, `cd && git status`\* |
-| `./configure` | `./configure`, `./configure --prefix=/opt` | `a/configure` (literal `.`)       |
+| Pattern       | Matches                                    | Does NOT match                      |
+| ------------- | ------------------------------------------ | ----------------------------------- |
+| `ls *`        | `ls -la`, `ls /tmp`, `LS -la`              | `ls` (bare, no arg), `xls`, `my-ls` |
+| `npm run *`   | `npm run build`, `npm run test --watch`    | `npm install`, `yarn run build`     |
+| `git status`  | `git status`, `git status --short`         | `git statu`, `cd && git status`\*   |
+| `./configure` | `./configure`, `./configure --prefix=/opt` | `a/configure` (literal `.`)         |
 
 \*`cd && git status` is a chain — each piece is checked separately. The
 `git status` piece matches, but `cd` must also match a trusted pattern.
@@ -496,18 +500,47 @@ rm
 
 ---
 
+## Standalone pi CLI
+
+The same engine is available outside the Electron app as a drop-in extension
+for the standalone [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+coding CLI. It gates the agent's `bash` tool through the identical
+`decideBashPermission` engine and settings schema (shared from
+`src/shared/bash-restrictions/`), so trust/denylist/timeout behaviour matches
+the app exactly. Configuration is a JSON file (`~/.pi/agent/bash-restrictions.json`
+globally and/or `.pi/bash-restrictions.json` per project) instead of the
+Settings UI.
+
+See [pi-extensions/bash-restrictions/README.md](pi-extensions/bash-restrictions/README.md)
+for install, config format, and the interactive/headless behaviour table.
+
+---
+
 ## Where the code lives
 
-- Engine: `src/main/config/permission-rules-store.ts`
+- Decision engine (pure): `src/shared/bash-restrictions/engine.ts`
   (`decideBashPermission`, `splitBashSubCommands`,
   `containsUnsupportedShellSyntax`, `matchesTrustedPrefix`,
   `matchesDenylistPattern`)
+- Settings schema & normalizers: `src/shared/bash-restrictions/settings.ts`
+  (`sanitizeBashCommandList`, `normalizePermissionTimeout`,
+  `sanitizeBashRestrictionsSettings`)
+- Main-process state & 1-arg wrapper: `src/main/config/permission-rules-store.ts`
+  (`decideBashPermission`, `setBashCommandLists`, `getBashCommandLists`)
 - Main-process installation of the permission gate:
   `src/main/claude/agent-runner.ts#installPermissionHook`
 - Hook installer (SDK shape detection): `src/main/claude/before-tool-call-hook.ts`
 - Settings UI: `src/renderer/components/settings/SettingsBashCommands.tsx`
 - Persistence: `src/main/config/config-store.ts`
   (`bashTrustedCommands`, `bashDenylist` fields)
+- Standalone pi CLI extension: `pi-extensions/bash-restrictions/`
+  (`extension.ts` mapper, `config.ts` loader, `README.md`)
 - Tests: `tests/bash-command-control.test.ts`,
   `tests/denylist-word-boundary.test.ts`,
-  `tests/before-tool-call-hook.test.ts`
+  `tests/before-tool-call-hook.test.ts`,
+  `tests/bash-restrictions-engine.test.ts`,
+  `tests/bash-restrictions-settings.test.ts`,
+  `tests/pi-bash-extension-config.test.ts`,
+  `tests/pi-bash-extension-mapping.test.ts`,
+  `tests/pi-bash-extension-build.test.ts`,
+  `tests/pi-bash-extension.e2e.test.ts`

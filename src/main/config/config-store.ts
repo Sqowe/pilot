@@ -35,6 +35,13 @@ import {
   type SystemPromptFileChoice,
 } from '../../shared/system-prompt-file-choices';
 import { sanitizeBashCommandList } from './permission-rules-store';
+// Import normalizePermissionTimeout and DEFAULT_BASH_RESTRICTIONS_SETTINGS from the shared module.
+// defaultConfig.permissionTimeoutSeconds is set to DEFAULT_BASH_RESTRICTIONS_SETTINGS.permissionTimeoutSeconds
+// below so the two values are guaranteed to stay in sync — there is no separate copy to drift.
+import {
+  normalizePermissionTimeout,
+  DEFAULT_BASH_RESTRICTIONS_SETTINGS,
+} from '../../shared/bash-restrictions';
 import { isValidCatchUpPolicy, isValidConflictPolicy } from '../../shared/schedule/types';
 import {
   createDefaultSkillConflictConfig,
@@ -359,7 +366,7 @@ const defaultConfig: AppConfig = {
   schedulerCatchUpPolicy: 'ask',
   schedulerConflictPolicy: 'queue',
   schedulerRunHistoryDepth: 10,
-  permissionTimeoutSeconds: 300,
+  permissionTimeoutSeconds: DEFAULT_BASH_RESTRICTIONS_SETTINGS.permissionTimeoutSeconds,
   mcpToolTimeoutSeconds: 240,
   notificationsEnabled: true,
   skillConflictConfig: createDefaultSkillConflictConfig(),
@@ -461,22 +468,6 @@ function normalizeRunHistoryDepth(value: unknown): number {
   if (clamped < 1) return 1;
   if (clamped > 100) return 100;
   return clamped;
-}
-
-/**
- * Normalize permission timeout. 0 means infinite (no timeout).
- * Any positive integer is the timeout in seconds (min 10s to avoid accidental
- * instant-deny, max 3600s = 1 hour).
- */
-function normalizePermissionTimeout(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return defaultConfig.permissionTimeoutSeconds;
-  }
-  const rounded = Math.floor(value);
-  if (rounded <= 0) return 0; // infinite
-  if (rounded < 10) return 10; // minimum 10 seconds
-  if (rounded > 3600) return 3600; // maximum 1 hour
-  return rounded;
 }
 
 /**

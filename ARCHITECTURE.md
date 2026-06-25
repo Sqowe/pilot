@@ -10,7 +10,12 @@ structure, boundaries, and where to find authoritative coding rules. This docume
 does NOT define coding rules — it points to them (see Section 8).
 
 Target audience: AI coding assistants and new human contributors.
-Last updated: 2026-05-27.
+Last updated: 2026-06-20.
+
+> **Rebrand in progress:** the product is being renamed **Open Cowork → "Sqowe Pilot"**.
+> User-facing surfaces (renderer UI, i18n, default system prompts, icons) already say
+> "Sqowe Pilot"; packaging identity, on-disk data paths, and the repo name still use
+> `open-cowork` (version `3.3.0-sqowe.8`). See `docs/design/rebrand-to-sqowe-pilot-implementation-plan.md`.
 
 ---
 
@@ -59,6 +64,12 @@ isolation, skills, permission gating, and remote-channel integrations.
     Ollama, etc.)
 ```
 
+**Second host (shared engine):** the bash trust/denylist permission logic is no longer
+app-only. It lives as a pure, stateless module in `src/shared/bash-restrictions/` and is
+consumed by **two hosts** — this Electron app _and_ a standalone `pi` CLI extension
+(`pi-extensions/bash-restrictions/`, built to `dist-pi-extensions/`). Same engine, same
+settings schema, no fork of `pi`. See Section 4.7.
+
 ---
 
 ## 3. Repository Structure
@@ -79,6 +90,7 @@ open-cowork/
 │   │   ├── session/           # Session lifecycle management
 │   │   ├── skills/            # Skill loader + hot-reload
 │   │   ├── tools/             # Tool executor, path containment
+│   │   ├── workspace/         # Orphaned .cowork config detection
 │   │   └── utils/             # Shared main-process utilities
 │   ├── preload/                # IPC bridge (contextBridge)
 │   ├── renderer/               # React UI
@@ -88,7 +100,10 @@ open-cowork/
 │   │   ├── store/             # Zustand state stores
 │   │   └── styles/            # Tailwind + custom CSS
 │   ├── shared/                 # Types/utils shared across processes
+│   │   └── bash-restrictions/ # Pure bash engine + settings (app + pi ext)
 │   └── tests/                  # Vitest unit tests
+├── pi-extensions/              # Standalone `pi` CLI extensions (NOT in main bundle)
+│   └── bash-restrictions/     # Drop-in add-on; consumes src/shared engine
 ├── scripts/                    # Build, download, deploy scripts
 ├── resources/                  # Bundled runtimes (Node, Python, skills)
 ├── docs/                       # Documentation + chat history
@@ -98,6 +113,7 @@ open-cowork/
 ├── website/                    # Landing page source
 ├── dist-electron/              # Compiled main process output
 ├── dist-mcp/                   # Bundled MCP servers
+├── dist-pi-extensions/         # esbuild output: self-contained pi extensions
 ├── dist-wsl-agent/             # Compiled WSL agent
 ├── dist-lima-agent/            # Compiled Lima agent
 ├── AI_ELECTRON.md              # ⚡ AI rules: Electron/packaging
@@ -345,6 +361,38 @@ Key files: `memory-extension.ts` (extension hook), `memory-chat-search-tool.ts`
 (active retrieval tools), `memory-service.ts` (core logic), `memory-tools.ts`
 (legacy search/read tools for Settings UI).
 
+### 4.7 Shared Bash Engine & Pi Extension (`src/shared/bash-restrictions/`, `pi-extensions/`)
+
+The bash trust/denylist permission engine is a **pure, stateless** module — the single
+source of truth for both engine logic _and_ the settings schema — consumed by two hosts:
+
+1. **Electron app** — the main process imports it inside `before-tool-call-hook.ts`.
+2. **Standalone `pi` CLI** — a drop-in extension (`pi-extensions/bash-restrictions/`)
+   subscribes to `pi`'s public `tool_call` event and returns `{ block, reason }`. No fork
+   or modification of `@earendil-works/pi-coding-agent`; it is a pure consumer.
+
+Adding a future bash/permission setting is a **one-place change** in the shared module;
+both hosts pick it up. The extension is bundled separately via `npm run build:pi-extension`
+(esbuild → `dist-pi-extensions/bash-restrictions.mjs`, self-contained because `src/shared/`
+does not exist where the installed file runs) and **must never enter the Electron main
+bundle**. Engine internals and trust/denylist semantics remain documented in
+`BASH_COMMAND_RESTRICTIONS.md` (Section 8).
+
+Key files: `src/shared/bash-restrictions/{engine,settings,index}.ts`,
+`pi-extensions/bash-restrictions/{extension,config}.ts`, `scripts/build-pi-extension.mjs`.
+
+### 4.8 Workspace Orphan Cleanup (`src/main/workspace/`)
+
+When a user uninstalls a skill or removes an MCP server, references can be left behind in
+committed workspace config files (`.cowork/skills-profile.json`, `.cowork/mcp-servers.json`).
+On workspace activation the detector scans for these **orphaned entries** (IDs pointing to
+nothing — harmless at runtime, but confusing and team-visible) and surfaces a non-blocking
+cleanup modal offering one-click removal or review. Follows the `detect → inform → fix →
+dismiss` pattern.
+
+Key files: `workspace-orphan-detector.ts` (engine), `src/shared/workspace-orphan-types.ts`
+(shared types), `WorkspaceOrphanCleanupModal.tsx` (renderer UI).
+
 ---
 
 ## 5. Data Flow & Runtime Model
@@ -410,22 +458,26 @@ Environment variables (`.env.example`): `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_
 
 ## 7. Stability Zones
 
-| Zone                | Components                                                                                                                | Notes                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| ✅ **Stable**       | Renderer UI, Config Store, IPC bridge, Session management, i18n, electron-updater, Skills loader, MCP Manager (stdio/SSE) | Production-ready, low risk                                             |
-| ✅ **Stable**       | Skill conflict resolution, Skill workspace profiles, Skill pinning                                                        | Phase 0–5 complete; policy engine, session disable, profile save/load  |
-| ✅ **Stable**       | Bash permission engine (trust/denylist), Path containment                                                                 | Security-critical, well-tested                                         |
-| ✅ **Stable**       | System prompt loader (editable sections, workspace overrides, template variables)                                         | 46 tests, file-based, no external deps                                 |
-| 🔄 **Semi-Stable**  | `ClaudeAgentRunner` + pi-coding-agent integration                                                                         | Functional but coupled to pre-1.0 SDK; breaks on Pi upgrades           |
-| 🔄 **Semi-Stable**  | Remote channels (Feishu/Slack), GUI-operate server                                                                        | Working but APIs evolve; Feishu SDK updates frequently                 |
-| 🔄 **Semi-Stable**  | SQLite persistence layer                                                                                                  | Schema may evolve with memory system                                   |
-| ⚠️ **Experimental** | Sandbox (WSL2/Lima)                                                                                                       | Code-complete, UI-gated, not user-facing yet                           |
-| ⚠️ **Experimental** | Memory system (`src/main/memory/`)                                                                                        | Active retrieval via tools + passive core injection                    |
-| 🔄 **Semi-Stable**  | Schedule system (`src/main/schedule/`)                                                                                    | v2 complete: time windows, catch-up, budgets, run history              |
-| 🔄 **Semi-Stable**  | Plugin system (`src/main/skills/plugin-runtime-service.ts`)                                                               | Archive install, orchestrator detection, session-scoped plugin pinning |
-| 🔮 **Planned**      | Multi-agent orchestration                                                                                                 | See `ROADMAP.md`                                                       |
-| 🔮 **Planned**      | Linux first-class support                                                                                                 | Build-from-source only today                                           |
-| 🔮 **Planned**      | Web version (server mode)                                                                                                 | Architecture supports it (clean IPC boundary)                          |
+| Zone                | Components                                                                                                                | Notes                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| ✅ **Stable**       | Renderer UI, Config Store, IPC bridge, Session management, i18n, electron-updater, Skills loader, MCP Manager (stdio/SSE) | Production-ready, low risk                                                                |
+| ✅ **Stable**       | Skill conflict resolution, Skill workspace profiles, Skill pinning                                                        | Phase 0–5 complete; policy engine, session disable, profile save/load                     |
+| ✅ **Stable**       | Bash permission engine (trust/denylist), Path containment                                                                 | Security-critical, well-tested                                                            |
+| ✅ **Stable**       | System prompt loader (editable sections, workspace overrides, template variables)                                         | 46 tests, file-based, no external deps                                                    |
+| 🔄 **Semi-Stable**  | `ClaudeAgentRunner` + pi-coding-agent integration                                                                         | Functional but coupled to pre-1.0 SDK; breaks on Pi upgrades                              |
+| 🔄 **Semi-Stable**  | Remote channels (Feishu/Slack), GUI-operate server                                                                        | Working but APIs evolve; Feishu SDK updates frequently                                    |
+| 🔄 **Semi-Stable**  | SQLite persistence layer                                                                                                  | Schema may evolve with memory system                                                      |
+| ⚠️ **Experimental** | Sandbox (WSL2/Lima)                                                                                                       | Code-complete, UI-gated, not user-facing yet                                              |
+| ⚠️ **Experimental** | Memory system (`src/main/memory/`)                                                                                        | Active retrieval via tools + passive core injection                                       |
+| 🔄 **Semi-Stable**  | Schedule system (`src/main/schedule/`)                                                                                    | v2 complete: time windows, catch-up, budgets, run history                                 |
+| 🔄 **Semi-Stable**  | Plugin system (`src/main/skills/plugin-runtime-service.ts`)                                                               | Archive install, orchestrator detection, session-scoped plugin pinning                    |
+| 🔄 **Semi-Stable**  | Bash-restrictions shared engine + `pi` CLI extension (`src/shared/bash-restrictions/`, `pi-extensions/`)                  | Phases 1–6 complete; single source of truth, dual-host; manual `pi -e` smoke-test pending |
+| 🔄 **Semi-Stable**  | Workspace orphan config cleanup (`src/main/workspace/`)                                                                   | Phase 1–4 complete; detect/notify/one-click-fix for `.cowork/*.json`                      |
+| 🔮 **Planned**      | Multi-agent orchestration (incl. Plugin-as-Agent)                                                                         | See `ROADMAP.md`, `docs/design/plugin-as-agent-future.md`                                 |
+| 🔮 **Planned**      | Code Assistant tab (project-centric coding view on existing runner)                                                       | Design only — `docs/design/code-assistant-tab.md`                                         |
+| 🔮 **Planned**      | File-tool path permissions (inside/outside-workspace ask policy)                                                          | Design only — shared `path-permissions` engine, mirrors §4.7                              |
+| 🔮 **Planned**      | Linux first-class support                                                                                                 | Build-from-source only today                                                              |
+| 🔮 **Planned**      | Web version (server mode)                                                                                                 | Architecture supports it (clean IPC boundary)                                             |
 
 ---
 
@@ -460,6 +512,7 @@ the dedicated rule files listed below.
 - **Never access Pi private fields** (`_beforeToolCall`, etc.) without documenting the risk
 - **Version-lock `pi-ai` and `pi-coding-agent`** — always upgrade together
 - **MCP servers run on host only** — never route MCP spawns through sandbox bridges
+- **Bash engine is one source of truth** — engine + settings live in `src/shared/bash-restrictions/`; the app and the `pi-extensions/` add-on both consume it. Edit once, never fork; the extension must never enter the Electron main bundle
 - **Renderer must never import Node/Electron directly** — all access via `window.electronAPI`
 - **Security changes require explicit confirmation** — path containment, permission hooks, sandbox boundaries
 - **Builtin skill scripts use `uv run`** — all `.claude/skills/*/scripts/*.py` with third-party imports must have PEP 723 inline metadata; after upstream sync run `scripts/reapply-skill-deps.py`

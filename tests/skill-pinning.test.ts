@@ -178,9 +178,10 @@ describe('skill pinning: renderer WelcomeView', () => {
   });
 
   it('passes initialPinnedSkills to startSession', () => {
-    expect(welcomeViewSource).toContain(
-      'pinnedSkillIds.size > 0 ? Array.from(pinnedSkillIds) : undefined'
-    );
+    // Pinned IDs are normalized (filtered against available + removed) and
+    // capped at the max before being passed to startSession.
+    expect(welcomeViewSource).toContain('Array.from(pinnedSkillIds).filter(');
+    expect(welcomeViewSource).toContain('normalizedPinned.slice(0, MAX_PINNED_SKILLS_PER_SESSION)');
   });
 
   it('renders skill pinning section', () => {
@@ -189,11 +190,11 @@ describe('skill pinning: renderer WelcomeView', () => {
 
   it('enforces MAX_PINNED_SKILLS_PER_SESSION limit client-side', () => {
     expect(welcomeViewSource).toContain('MAX_PINNED_SKILLS_PER_SESSION');
-    // Disables buttons when at limit
-    expect(welcomeViewSource).toContain('pinnedSkillIds.size >= MAX_PINNED_SKILLS_PER_SESSION');
+    // Disables buttons when at limit (effective count excludes removed/unavailable)
+    expect(welcomeViewSource).toContain('effectivePinnedCount >=');
     // Prevents adding in state updater
     expect(welcomeViewSource).toContain(
-      'if (next.size >= MAX_PINNED_SKILLS_PER_SESSION) return prev'
+      'if (effectiveCount >= MAX_PINNED_SKILLS_PER_SESSION) return prev'
     );
   });
 
@@ -204,9 +205,7 @@ describe('skill pinning: renderer WelcomeView', () => {
 
 describe('skill pinning: renderer ContextPanel', () => {
   it('loads pinned skills for active session', () => {
-    expect(contextPanelSource).toContain(
-      'window.electronAPI?.skills?.getSessionPinnedSkills(activeSessionId)'
-    );
+    expect(contextPanelSource).toContain('skillsApi.getSessionPinnedSkills(sessionId)');
   });
 
   it('renders unavailable pinned skills with fallback', () => {
@@ -215,15 +214,16 @@ describe('skill pinning: renderer ContextPanel', () => {
   });
 
   it('shows section when pinned skills exist even if no available skills', () => {
-    expect(contextPanelSource).toContain(
-      'availableSkills.length > 0 || sessionPinnedSkills.size > 0'
-    );
+    // Section visibility OR-condition includes pinned skills (now also disabled).
+    expect(contextPanelSource).toContain('availableSkills.length > 0 ||');
+    expect(contextPanelSource).toContain('sessionPinnedSkills.size > 0');
   });
 
   it('enforces MAX_PINNED_SKILLS_PER_SESSION limit on add buttons', () => {
     expect(contextPanelSource).toContain('MAX_PINNED_SKILLS_PER_SESSION');
+    // Add button disabled via effective pinned count (excludes disabled).
     expect(contextPanelSource).toContain(
-      'sessionPinnedSkills.size < MAX_PINNED_SKILLS_PER_SESSION'
+      'skillCounts.pinnedCount >= MAX_PINNED_SKILLS_PER_SESSION'
     );
   });
 });

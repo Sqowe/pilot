@@ -398,12 +398,18 @@ export function useIPC() {
 
             // Ignore stale events for a different workspace or when no workspace is set
             const currentCwd = useAppStore.getState().workingDir;
-            if (!currentCwd || payload.cwd !== currentCwd) {
+            const activeSessionId = useAppStore.getState().activeSessionId;
+            const sessions = useAppStore.getState().sessions;
+            const activeSession = activeSessionId
+              ? sessions.find((s) => s.id === activeSessionId)
+              : null;
+            const effectiveCwd = activeSession?.cwd || currentCwd;
+            if (!effectiveCwd || payload.cwd !== effectiveCwd) {
               console.log(
                 '[useIPC] workspace.orphans_detected: ignoring event for',
                 payload.cwd,
-                '(current:',
-                currentCwd || 'null',
+                '(effective cwd:',
+                effectiveCwd || 'null',
                 ')'
               );
               break;
