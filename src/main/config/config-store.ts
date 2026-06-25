@@ -388,7 +388,8 @@ export async function getPiAiModelPresets(): Promise<typeof PROVIDER_PRESETS> {
   if (cachedDynamicPresets) return cachedDynamicPresets;
 
   try {
-    const { getModels } = (await import('@earendil-works/pi-ai')) as {
+    // `getModels` moved off the pi-ai root entrypoint to `/compat` in 0.80.0.
+    const { getModels } = (await import('@earendil-works/pi-ai/compat')) as {
       getModels: (provider: string) => Array<{ id: string; name: string }> | undefined;
     };
 

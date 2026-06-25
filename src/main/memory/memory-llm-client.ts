@@ -1,5 +1,7 @@
 import OpenAI from 'openai';
-import { completeSimple, type UserMessage as PiUserMessage } from '@earendil-works/pi-ai';
+import type { UserMessage as PiUserMessage } from '@earendil-works/pi-ai';
+// `completeSimple` moved off the pi-ai root entrypoint to `/compat` in 0.80.0.
+import { completeSimple } from '@earendil-works/pi-ai/compat';
 import type { AppConfig, CustomProtocolType, ProviderType } from '../config/config-store';
 import { configStore } from '../config/config-store';
 import {

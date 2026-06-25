@@ -44,7 +44,8 @@ vi.mock('electron-store', () => {
   };
 });
 
-vi.mock('@earendil-works/pi-ai', () => ({
+// `completeSimple` moved to the `/compat` entrypoint in pi-ai 0.80.0.
+vi.mock('@earendil-works/pi-ai/compat', () => ({
   completeSimple: mocks.completeSimple,
 }));
 
