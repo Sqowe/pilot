@@ -3,7 +3,7 @@
 ## 1. Purpose of This Document
 
 This is the architectural source of truth for Open Cowork, an Electron desktop AI agent
-application. It describes the system as it exists today (v3.3.0-sqowe.8), not as imagined.
+application. It describes the system as it exists today (v3.3.0-sqowe.10), not as imagined.
 
 Any AI coder working on this repository MUST read this document first to understand
 structure, boundaries, and where to find authoritative coding rules. This document
@@ -15,7 +15,7 @@ Last updated: 2026-06-20.
 > **Rebrand in progress:** the product is being renamed **Open Cowork → "Sqowe Pilot"**.
 > User-facing surfaces (renderer UI, i18n, default system prompts, icons) already say
 > "Sqowe Pilot"; packaging identity, on-disk data paths, and the repo name still use
-> `open-cowork` (version `3.3.0-sqowe.8`). See `docs/design/rebrand-to-sqowe-pilot-implementation-plan.md`.
+> `open-cowork` (version `3.3.0-sqowe.10`). See `docs/design/rebrand-to-sqowe-pilot-implementation-plan.md`.
 
 ---
 
