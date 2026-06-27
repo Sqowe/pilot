@@ -1,8 +1,8 @@
-# Architecture Overview — Open Cowork
+# Architecture Overview — Sqowe Pilot
 
 ## 1. Purpose of This Document
 
-This is the architectural source of truth for Open Cowork, an Electron desktop AI agent
+This is the architectural source of truth for Sqowe Pilot, an Electron desktop AI agent
 application. It describes the system as it exists today (v3.3.0-sqowe.10), not as imagined.
 
 Any AI coder working on this repository MUST read this document first to understand
@@ -12,16 +12,17 @@ does NOT define coding rules — it points to them (see Section 8).
 Target audience: AI coding assistants and new human contributors.
 Last updated: 2026-06-20.
 
-> **Rebrand in progress:** the product is being renamed **Open Cowork → "Sqowe Pilot"**.
-> User-facing surfaces (renderer UI, i18n, default system prompts, icons) already say
-> "Sqowe Pilot"; packaging identity, on-disk data paths, and the repo name still use
-> `open-cowork` (version `3.3.0-sqowe.10`). See `docs/design/rebrand-to-sqowe-pilot-implementation-plan.md`.
+> **Rebrand in progress:** the product has been renamed **Open Cowork → "Sqowe Pilot"**.
+> User-facing surfaces (renderer UI, i18n, default system prompts, icons) and documentation
+> already say "Sqowe Pilot"; the packaging identity (`appId`, `package.json` name) and the
+> on-disk data directory still use `open-cowork` (version `3.3.0-sqowe.10`) pending the
+> first-launch migration. See `docs/design/rebrand-to-sqowe-pilot-implementation-plan.md`.
 
 ---
 
 ## 2. High-Level System Overview
 
-Open Cowork is a desktop app that wraps the `@earendil-works/pi-coding-agent` SDK
+Sqowe Pilot is a desktop app that wraps the `@earendil-works/pi-coding-agent` SDK
 (the "Pi" engine) inside an Electron shell, adding GUI, MCP tool bridging, sandbox
 isolation, skills, permission gating, and remote-channel integrations.
 
@@ -75,7 +76,7 @@ settings schema, no fork of `pi`. See Section 4.7.
 ## 3. Repository Structure
 
 ```
-open-cowork/
+sqowe-pilot/
 ├── src/
 │   ├── main/                    # Electron main process
 │   │   ├── claude/              # Agent runner, SDK integration, hooks
@@ -110,7 +111,6 @@ open-cowork/
 │   └── chats/                 # Exported conversation logs (context)
 ├── .claude/skills/             # Dev-time skills (docx, pdf, pptx, etc.)
 ├── adaptations/                # Issue tracking + patch notes
-├── website/                    # Landing page source
 ├── dist-electron/              # Compiled main process output
 ├── dist-mcp/                   # Bundled MCP servers
 ├── dist-pi-extensions/         # esbuild output: self-contained pi extensions

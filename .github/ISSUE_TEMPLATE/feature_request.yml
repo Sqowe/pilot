@@ -1,11 +1,11 @@
 name: Feature Request
-description: Suggest a new feature or improvement for Open Cowork
+description: Suggest a new feature or improvement for Sqowe Pilot
 labels: ['enhancement']
 body:
   - type: markdown
     attributes:
       value: |
-        Have an idea that would make Open Cowork better? We'd love to hear it.
+        Have an idea that would make Sqowe Pilot better? We'd love to hear it.
 
   - type: textarea
     id: problem

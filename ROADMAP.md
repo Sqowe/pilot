@@ -1,6 +1,6 @@
-# 🗺️ Open Cowork Roadmap
+# 🗺️ Sqowe Pilot Roadmap
 
-> This document outlines the development direction for Open Cowork. For feature requests and discussion, see [GitHub Issues](https://github.com/OpenCoworkAI/open-cowork/issues).
+> This document outlines the development direction for Sqowe Pilot. For feature requests and discussion, see [GitHub Issues](https://github.com/sqowe/pilot/issues).
 
 ## ✅ Completed
 

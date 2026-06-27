@@ -178,7 +178,7 @@ export class ToolExecutor {
     let response: Response;
     try {
       response = await fetch(parsed.toString(), {
-        headers: { 'User-Agent': 'open-cowork' },
+        headers: { 'User-Agent': 'sqowe-pilot' },
         signal: AbortSignal.timeout(15000),
       });
     } catch (error) {
@@ -225,7 +225,7 @@ export class ToolExecutor {
     let response: Response;
     try {
       response = await fetch(searchUrl.toString(), {
-        headers: { 'User-Agent': 'open-cowork' },
+        headers: { 'User-Agent': 'sqowe-pilot' },
         signal: AbortSignal.timeout(10000),
       });
     } catch (error) {

@@ -1,7 +1,7 @@
 /**
  * @module main/utils/native-notifications
  *
- * Cross-platform native desktop notifications for Open Cowork.
+ * Cross-platform native desktop notifications for Sqowe Pilot.
  *
  * Fires OS-level notifications (macOS UNNotification, Windows Toast, Linux libnotify)
  * only when the main window is NOT focused. Clicking a notification brings the

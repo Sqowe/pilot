@@ -12,6 +12,10 @@
  * Dependencies: session-manager, config-store, mcp-manager, sandbox-adapter,
  *               skills-manager, scheduled-task-manager, nav-server, remote-manager
  */
+// MUST be the first import: sets the app name (and thus the userData directory)
+// and runs the legacy-data migration before any electron-store-backed module is
+// imported, since those resolve userData in their constructors at import time.
+import './migration/bootstrap';
 import {
   app,
   BrowserWindow,
@@ -405,7 +409,7 @@ function setupTray() {
   }
 
   tray = new Tray(resolvedIconPath);
-  tray.setToolTip('Open Cowork');
+  tray.setToolTip('Sqowe Pilot');
 
   const contextMenu = Menu.buildFromTemplate([
     {
@@ -971,7 +975,7 @@ app
     setBashCommandLists(configStore.get('bashTrustedCommands'), configStore.get('bashDenylist'));
 
     // Log environment variables for debugging
-    log('=== Open Cowork Starting ===');
+    log('=== Sqowe Pilot Starting ===');
     log('Config file:', configStore.getPath());
     log('Is configured:', configStore.isConfigured());
     log('[Runtime] Using pi-coding-agent SDK for all providers');
@@ -1266,7 +1270,7 @@ app
   .catch((error) => {
     logError('[App] Startup failed:', error);
     const message = error instanceof Error ? error.message : 'Unknown startup error';
-    dialog.showErrorBox('Open Cowork 启动失败', `${message}\n\n请查看日志获取更多信息。`);
+    dialog.showErrorBox('Sqowe Pilot 启动失败', `${message}\n\n请查看日志获取更多信息。`);
     app.quit();
   });
 
@@ -3799,7 +3803,7 @@ ipcMain.handle('logs.export', async () => {
     // Show save dialog
     const result = await dialog.showSaveDialog(mainWindow!, {
       title: 'Export Logs',
-      defaultPath: `opencowork-logs-${new Date().toISOString().split('T')[0]}.zip`,
+      defaultPath: `sqowe-pilot-logs-${new Date().toISOString().split('T')[0]}.zip`,
       filters: [
         { name: 'ZIP Archive', extensions: ['zip'] },
         { name: 'All Files', extensions: ['*'] },
@@ -3876,7 +3880,7 @@ ipcMain.handle('logs.export', async () => {
       });
       archive.append(
         [
-          'Open Cowork diagnostic bundle',
+          'Sqowe Pilot diagnostic bundle',
           `Exported at: ${diagnosticsSummary.exportedAt}`,
           '',
           'Included files:',

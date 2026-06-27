@@ -1,6 +1,6 @@
 /**
  * MCP Logger Utility
- * 
+ *
  * Provides logging functionality for MCP servers with both console output
  * and file logging capabilities. Logs are written to the main application's log directory.
  */
@@ -21,25 +21,28 @@ let logInitialized = false;
  */
 function getLogsDirectory(): string {
   if (logsDir) return logsDir;
-  
+
   // Determine the app data directory based on platform
   // This should match app.getPath('userData') in Electron
   const platform = os.platform();
   let appDataDir: string;
-  
+
   if (platform === 'darwin') {
-    // macOS: ~/Library/Application Support/open-cowork
-    appDataDir = path.join(os.homedir(), 'Library', 'Application Support', 'open-cowork');
+    // macOS: ~/Library/Application Support/sqowe-pilot
+    appDataDir = path.join(os.homedir(), 'Library', 'Application Support', 'sqowe-pilot');
   } else if (platform === 'win32') {
-    // Windows: %APPDATA%/open-cowork
-    appDataDir = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'open-cowork');
+    // Windows: %APPDATA%/sqowe-pilot
+    appDataDir = path.join(
+      process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
+      'sqowe-pilot'
+    );
   } else {
-    // Linux: ~/.config/open-cowork
-    appDataDir = path.join(os.homedir(), '.config', 'open-cowork');
+    // Linux: ~/.config/sqowe-pilot
+    appDataDir = path.join(os.homedir(), '.config', 'sqowe-pilot');
   }
-  
+
   logsDir = path.join(appDataDir, 'logs');
-  
+
   // Ensure logs directory exists (sync for initialization)
   try {
     if (!fsSync.existsSync(logsDir)) {
@@ -50,7 +53,7 @@ function getLogsDirectory(): string {
     // Fallback to current directory
     logsDir = process.cwd();
   }
-  
+
   return logsDir;
 }
 
@@ -59,15 +62,15 @@ function getLogsDirectory(): string {
  */
 function initializeLogFile(): void {
   if (logInitialized) return;
-  
+
   try {
     const timestamp = new Date().toISOString();
     const fileTimestamp = timestamp.replace(/[:.]/g, '-').replace('T', '_').split('Z')[0];
     mcpLogFilename = `mcp-server-${fileTimestamp}.log`;
-    
+
     const logDir = getLogsDirectory();
     const logPath = path.join(logDir, mcpLogFilename);
-    
+
     // Write header synchronously to ensure it's captured
     const header = `
 ================================================================================
@@ -76,13 +79,13 @@ Platform: ${os.platform()}
 Node: ${process.version}
 Working Directory: ${process.cwd()}
 Process ID: ${process.pid}
-Arguments: ${JSON.stringify(process.argv.map(arg => /^(sk-|key-|token-|secret-)/i.test(arg) || (arg.length > 40 && /^[A-Za-z0-9+/=_-]+$/.test(arg)) ? '[REDACTED]' : arg))}
+Arguments: ${JSON.stringify(process.argv.map((arg) => (/^(sk-|key-|token-|secret-)/i.test(arg) || (arg.length > 40 && /^[A-Za-z0-9+/=_-]+$/.test(arg)) ? '[REDACTED]' : arg)))}
 ================================================================================
 `;
-    
+
     fsSync.writeFileSync(logPath, header);
     logInitialized = true;
-    
+
     console.error(`[MCP Logger] Log initialized: ${logPath}`);
   } catch (error) {
     console.error(`[MCP Logger] Failed to initialize log: ${error}`);
@@ -91,7 +94,7 @@ Arguments: ${JSON.stringify(process.argv.map(arg => /^(sk-|key-|token-|secret-)/
 
 /**
  * Write log message to both stderr and a log file in the application's log directory
- * 
+ *
  * @param content - The log content to write
  * @param label - Optional label for the log entry
  */
@@ -134,7 +137,13 @@ export function writeMCPLog(content: string, label?: string): void {
 
   try {
     // Use sync write for critical logs (Bootstrap, Error, Fatal, Initialization)
-    if (label && (label.includes('Bootstrap') || label.includes('Error') || label.includes('Fatal') || label.includes('Initialization'))) {
+    if (
+      label &&
+      (label.includes('Bootstrap') ||
+        label.includes('Error') ||
+        label.includes('Fatal') ||
+        label.includes('Initialization'))
+    ) {
       fsSync.appendFileSync(logPath, logEntry);
     } else {
       // Async write for normal logs
@@ -181,7 +190,10 @@ process.on('unhandledRejection', (reason) => {
 try {
   initializeLogFile();
   writeMCPLog(`mcp-logger.ts module loaded`, 'Module Init');
-  writeMCPLog(`Process: ${process.argv.map(arg => /^(sk-|key-|token-|secret-)/i.test(arg) || (arg.length > 40 && /^[A-Za-z0-9+/=_-]+$/.test(arg)) ? '[REDACTED]' : arg).join(' ')}`, 'Module Init');
+  writeMCPLog(
+    `Process: ${process.argv.map((arg) => (/^(sk-|key-|token-|secret-)/i.test(arg) || (arg.length > 40 && /^[A-Za-z0-9+/=_-]+$/.test(arg)) ? '[REDACTED]' : arg)).join(' ')}`,
+    'Module Init'
+  );
   writeMCPLog(`CWD: ${process.cwd()}`, 'Module Init');
 } catch (error) {
   console.error('[MCP Logger] Failed to initialize at module load:', error);

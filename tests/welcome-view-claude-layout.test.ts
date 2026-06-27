@@ -5,7 +5,7 @@ import path from 'node:path';
 const welcomeViewPath = path.resolve(process.cwd(), 'src/renderer/components/WelcomeView.tsx');
 
 describe('WelcomeView Claude-style layout', () => {
-  it('uses a narrower editorial landing column with Open Cowork eyebrow', () => {
+  it('uses a narrower editorial landing column with Sqowe Pilot eyebrow', () => {
     const source = fs.readFileSync(welcomeViewPath, 'utf8');
     expect(source).toContain('max-w-[840px]');
     // Branding text moved to i18n; verify the layout structure remains
@@ -20,7 +20,7 @@ describe('WelcomeView Claude-style layout', () => {
 
   it('shows an inline API setup hint on the welcome screen when config is missing', () => {
     const source = fs.readFileSync(welcomeViewPath, 'utf8');
-    expect(source).toContain("!isConfigured && (");
+    expect(source).toContain('!isConfigured && (');
     expect(source).toContain("t('welcome.apiNotConfigured')");
     expect(source).toContain("setSettingsTab('api');");
     expect(source).toContain('setShowSettings(true);');

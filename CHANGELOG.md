@@ -1,11 +1,35 @@
 # Changelog
 
-All notable changes to the Open Cowork AI agent desktop app will be documented in this file.
+All notable changes to the Sqowe Pilot AI agent desktop app will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-06-25
+
+> Fresh product identity after the **Open Cowork → Sqowe Pilot** rebrand — a deliberate
+> version reset and clean break from the `3.3.0-sqowe.N` fork series. Entries below this
+> point document the prior Open Cowork lineage under its original versioning.
+
+### Changed
+
+- Rebranded the product to **Sqowe Pilot**: application identity (`appId com.sqowe.pilot`),
+  packaging (`productName`, DMG, copyright), runtime strings, documentation, and the
+  repository home (`github.com/sqowe/pilot`).
+
+### Added
+
+- First-launch data migration: existing users' data is copied losslessly from the legacy
+  `<appData>/open-cowork` directory to `<appData>/sqowe-pilot`, including the encrypted
+  config (decrypts transparently — encryption seeds are unchanged). The migration is
+  fork-fingerprint gated, copy-not-move, and idempotent via a `.brand` marker.
+
+### Removed
+
+- Dead upstream GitHub automation (Codex PR/issue bots, Homebrew tap workflow), the
+  bundled marketing website, and the Chinese README.
 
 ## [3.3.0-sqowe.8] - 2026-06-04
 
@@ -199,24 +223,25 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Major architecture overhaul: Electron-based desktop app with React UI, sandbox isolation, and Skills system
 
-## [1.0.0] - 2025-12-01
+## [1.0.0 — Open Cowork] - 2025-12-01
 
 ### Added
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.8...HEAD
-[3.3.0-sqowe.8]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.7...v3.3.0-sqowe.8
-[3.3.0-sqowe.7]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.6...v3.3.0-sqowe.7
-[3.3.0-sqowe.6]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.5...v3.3.0-sqowe.6
-[3.3.0-sqowe.5]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.4...v3.3.0-sqowe.5
-[3.3.0-sqowe.4]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.3...v3.3.0-sqowe.4
-[3.3.0-sqowe.3]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.2...v3.3.0-sqowe.3
-[3.3.0-sqowe.2]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0-sqowe.1...v3.3.0-sqowe.2
-[3.3.0-sqowe.1]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.3.0...v3.3.0-sqowe.1
-[3.3.0-beta.8]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.2.0...v3.3.0-beta.8
-[3.2.0]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.1.0...v3.2.0
-[3.1.0]: https://github.com/OpenCoworkAI/open-cowork/compare/v3.0.0...v3.1.0
-[3.0.0]: https://github.com/OpenCoworkAI/open-cowork/compare/v2.0.0...v3.0.0
-[2.0.0]: https://github.com/OpenCoworkAI/open-cowork/compare/v1.0...v2.0.0
-[1.0.0]: https://github.com/OpenCoworkAI/open-cowork/releases/tag/v1.0
+[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/sqowe/pilot/releases/tag/v1.0.0
+[3.3.0-sqowe.8]: https://github.com/sqowe/pilot/compare/v3.3.0-sqowe.7...v3.3.0-sqowe.8
+[3.3.0-sqowe.7]: https://github.com/sqowe/pilot/compare/v3.3.0-sqowe.6...v3.3.0-sqowe.7
+[3.3.0-sqowe.6]: https://github.com/sqowe/pilot/compare/v3.3.0-sqowe.5...v3.3.0-sqowe.6
+[3.3.0-sqowe.5]: https://github.com/sqowe/pilot/compare/v3.3.0-sqowe.4...v3.3.0-sqowe.5
+[3.3.0-sqowe.4]: https://github.com/sqowe/pilot/compare/v3.3.0-sqowe.3...v3.3.0-sqowe.4
+[3.3.0-sqowe.3]: https://github.com/sqowe/pilot/compare/v3.3.0-sqowe.2...v3.3.0-sqowe.3
+[3.3.0-sqowe.2]: https://github.com/sqowe/pilot/compare/v3.3.0-sqowe.1...v3.3.0-sqowe.2
+[3.3.0-sqowe.1]: https://github.com/sqowe/pilot/compare/v3.3.0...v3.3.0-sqowe.1
+[3.3.0-beta.8]: https://github.com/sqowe/pilot/compare/v3.2.0...v3.3.0-beta.8
+[3.2.0]: https://github.com/sqowe/pilot/compare/v3.1.0...v3.2.0
+[3.1.0]: https://github.com/sqowe/pilot/compare/v3.0.0...v3.1.0
+[3.0.0]: https://github.com/sqowe/pilot/compare/v2.0.0...v3.0.0
+[2.0.0]: https://github.com/sqowe/pilot/compare/v1.0...v2.0.0
+[1.0.0 — Open Cowork]: https://github.com/OpenCoworkAI/open-cowork/releases/tag/v1.0

@@ -1,8 +1,8 @@
-# Open Cowork - Startup Script
+# Sqowe Pilot - Startup Script
 # This script starts the application.
 # Environment variables should be set in .env file or system environment.
 
-Write-Host "Starting Open Cowork..." -ForegroundColor Cyan
+Write-Host "Starting Sqowe Pilot..." -ForegroundColor Cyan
 Write-Host ""
 
 # Check if .env file exists
