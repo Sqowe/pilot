@@ -222,9 +222,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Chat export
   chat: {
+    // Primary: multi-format export (format chosen via the native save dialog)
+    export: (request: {
+      sessionId: string;
+      messageIds?: string[];
+      format?: 'md' | 'docx' | 'pdf';
+      options?: Partial<{
+        includeToolCalls: boolean;
+        includeThinking: boolean;
+        includeTimestamps: boolean;
+        includeTokenUsage: boolean;
+        imageHandling: 'skip' | 'placeholder' | 'inline';
+      }>;
+    }): Promise<{ success: boolean; path?: string; error?: string }> =>
+      ipcRenderer.invoke('chat.export', request),
+    // Backward-compat alias — invokes 'chat.exportMarkdown' on the main process,
+    // which routes through the same multi-format router as 'chat.export'.
+    // Both show the full save dialog with .md/.docx/.pdf filters.
     exportMarkdown: (request: {
       sessionId: string;
       messageIds?: string[];
+      format?: 'md' | 'docx' | 'pdf';
       options?: Partial<{
         includeToolCalls: boolean;
         includeThinking: boolean;
@@ -685,9 +703,23 @@ declare global {
         writeText: (text: string) => Promise<void>;
       };
       chat: {
+        export: (request: {
+          sessionId: string;
+          messageIds?: string[];
+          format?: 'md' | 'docx' | 'pdf';
+          options?: Partial<{
+            includeToolCalls: boolean;
+            includeThinking: boolean;
+            includeTimestamps: boolean;
+            includeTokenUsage: boolean;
+            imageHandling: 'skip' | 'placeholder' | 'inline';
+          }>;
+        }) => Promise<{ success: boolean; path?: string; error?: string }>;
+        // Backward-compat alias — forwards to chat.export
         exportMarkdown: (request: {
           sessionId: string;
           messageIds?: string[];
+          format?: 'md' | 'docx' | 'pdf';
           options?: Partial<{
             includeToolCalls: boolean;
             includeThinking: boolean;

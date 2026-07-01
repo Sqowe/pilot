@@ -857,7 +857,7 @@
     "configSetRestored": "Переключено на набор «{{name}}»",
     "connectorCount_one": "{{count}} коннектор",
     "connectorCount_other": "{{count}} коннекторов",
-    "exportMarkdown": "Экспорт в Markdown",
+    "exportChat": "Экспортировать чат…",
     "exportSuccess": "Чат экспортирован успешно",
     "exportFailed": "Ошибка экспорта: {{error}}",
     "nothingToExport": "Нечего экспортировать"

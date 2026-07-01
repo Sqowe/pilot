@@ -805,7 +805,7 @@ export function ChatView() {
   const handleExportFull = async () => {
     if (!activeSessionId) return;
     try {
-      const result = await window.electronAPI.chat.exportMarkdown({
+      const result = await window.electronAPI.chat.export({
         sessionId: activeSessionId,
       });
       if (result.success && result.path) {
@@ -856,7 +856,7 @@ export function ChatView() {
         });
         return;
       }
-      const result = await window.electronAPI.chat.exportMarkdown({
+      const result = await window.electronAPI.chat.export({
         sessionId: activeSessionId,
         messageIds: uniqueMessageIds,
         options,
@@ -991,7 +991,7 @@ export function ChatView() {
               <button
                 onClick={() => setShowExportDropdown((prev) => !prev)}
                 className="w-6 h-6 rounded-md flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
-                title={t('chat.exportMarkdown')}
+                title={t('chat.exportChat')}
               >
                 <Download className="w-3.5 h-3.5" />
               </button>

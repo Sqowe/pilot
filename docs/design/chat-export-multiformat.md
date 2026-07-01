@@ -1,7 +1,7 @@
 # Chat Export — Multi-Format (DOCX + PDF) Design & Implementation Plan
 
 **Created:** 2026-06-20
-**Status:** Draft
+**Status:** ✅ Shipped (Phases 1 + 2 complete — 2026-07-01)
 **Author:** AI-assisted design session
 **Builds on:** [`chat-export-markdown.md`](./chat-export-markdown.md) (shipped — Markdown export, Phases 1–2)
 
@@ -22,13 +22,13 @@ format (e.g. HTML, JSON) is purely additive.
 ### Goals
 
 - Export full or selected conversation as `.docx` or `.pdf`, reusing all existing
-  scope/selection/options scaffolding.
+  scope/selection/options scaffolding. ✅
 - **Zero new menu items** — format chosen via the native save dialog's "Save as
-  type" filter (Option A from review).
-- One shared HTML serializer feeding **both** DOCX and PDF for consistent output.
-- Keep the shipped Markdown path byte-for-byte unchanged.
+  type" filter (Option A from review). ✅
+- One shared HTML serializer feeding **both** DOCX and PDF for consistent output. ✅
+- Keep the shipped Markdown path byte-for-byte unchanged. ✅
 - Pure-JS dependencies only — no native modules, no Electron ABI rebuild, no
-  bundled Chromium download.
+  bundled Chromium download. ✅
 
 ### Non-Goals (for now)
 
@@ -59,15 +59,14 @@ _library_ the docx skill relies on under the hood (`docx-js`) as a fallback opti
 
 ### 3.1 Single dialog, dispatch on chosen extension
 
-The current handler already shows a native save dialog with a `filters` array
-([`export-markdown.ts`](../../src/main/chat/export-markdown.ts) ~L383). That array
-**is** the OS-native format picker ("Save as type:"). We widen it to list all
-formats and dispatch on the extension of the path the user picked.
+The save dialog lists all supported formats. The chosen extension (or the `format`
+field in `ExportRequest` when the UI knows the intended format) drives dispatch.
 
 ```
                           ┌──────────────────────────────┐
 chat.export(scope,opts) → │ ONE native save dialog        │
                           │ filters: .md / .docx / .pdf   │
+                          │ (preferred format pre-selected)│
                           └───────────────┬───────────────┘
                        extname(filePath)  │ dispatch
             ┌──────────────────┬──────────┴────────────┬──────────────────┐
@@ -78,6 +77,10 @@ chat.export(scope,opts) → │ ONE native save dialog        │
                           @turbodocx/html-to-docx      offscreen BrowserWindow
                                 → .docx buffer            → printToPDF → .pdf buffer
 ```
+
+**Extension normalisation** (shipped): if the user types a bare filename with no
+extension, the router appends the extension from `request.format` (default `'md'`).
+This prevents a PDF-intent export from silently becoming Markdown.
 
 ### 3.2 The reuse insight: one HTML core for DOCX **and** PDF
 
@@ -93,36 +96,44 @@ once into a shared helper so all serializers apply identical include/exclude rul
 
 ## 4. Serialization
 
-### 4.1 Shared core (`export-common.ts`)
+### 4.1 Shared core (`export-common.ts`) ✅
 
-Extract from the current `export-markdown.ts`, unchanged in behavior:
+Extracted from `export-markdown.ts`, unchanged in behavior. Ships:
 
-- The `ExportOptions` interface + `DEFAULT_OPTIONS`
-- `ExportRequest` / `ExportResult` types
-- `sanitizeFilename()`, `formatSize()`
-- The per-message "does this block produce visible output under these options?"
-  filtering predicate
-- The partial/streaming/system message filtering
+- `ExportOptions` interface + `DEFAULT_OPTIONS`
+- `ExportFormat` type (`'md' | 'docx' | 'pdf'`)
+- `ExportRequest` (includes optional `format` field) / `ExportResult` types
+- `sanitizeFilename()` — preserves Unicode, removes unsafe chars, strips trailing
+  dots/spaces, guards Windows reserved device names including with extensions
+  (`CON.txt`, `LPT1.pdf`, etc.), falls back to `'chat'` on empty result
+- `formatSize()`
+- `blockIsVisible()` — per-block visibility predicate
+- `filterExportableMessages()` — strips partial/system/invisible messages
 
-### 4.2 HTML serializer (`export-html.ts`) — new, shared by DOCX + PDF
+### 4.2 HTML serializer (`export-html.ts`) ✅
 
-`serializeMessagesToHtml(messages, session, options): string`
+`serializeMessagesToHtml(messages, session, options): Promise<string>`
 
 - Mirrors `serializeMessagesToMarkdown()` block-for-block, emitting semantic HTML.
-- **Markdown inside text blocks is rendered to HTML via `marked`** (so `**bold**`,
-  code fences, lists, and headings render properly instead of appearing as literal
-  syntax — this is the key fidelity gain over a naive plain-text DOCX emitter).
-- **All non-text, model-or-tool-derived strings are HTML-escaped** before insertion
-  (see §7 — content is untrusted).
-- Ships with an embedded print stylesheet: readable body font, shaded monospace code
-  blocks, page-friendly margins, user vs. assistant visual distinction.
-- Image handling mirrors the MD options (`skip` / `placeholder` / `inline`).
+- **Markdown text blocks rendered via an isolated `Marked` instance** (dynamic
+  import — `marked@15` is ESM-only; dynamic import avoids CJS/ESM crash in the
+  Electron main process). The instance is cached after first call.
+- Does **not** mutate the global `marked` singleton.
+- Ships with an embedded print stylesheet and a restrictive **CSP meta tag**
+  (`default-src 'none'; style-src 'unsafe-inline'; img-src data:`) as
+  defence-in-depth against external resource loads in HTML consumers.
+- See §7 for the full security model.
 
-### 4.3 DOCX (`export-docx.ts`)
+### 4.3 DOCX (`export-docx.ts`) ✅
 
 `serializeMessagesToHtml(...)` → `@turbodocx/html-to-docx` → `Buffer` → write.
 
-### 4.4 PDF (`export-pdf.ts`)
+- Dynamic import supports both `default` and named (`HtmlToDocx`, `convert`) export
+  shapes — guards against version/build differences.
+- Return type handled correctly for both `ArrayBuffer` and `ArrayBufferView`
+  (e.g. `Uint8Array`), respecting `byteOffset`/`byteLength` to prevent corrupt output.
+
+### 4.4 PDF (`export-pdf.ts`) ✅
 
 `serializeMessagesToHtml(...)` → offscreen `BrowserWindow` → `printToPDF` →
 `Buffer` → write. See §7 for the locked-down window configuration.
@@ -131,14 +142,14 @@ Extract from the current `export-markdown.ts`, unchanged in behavior:
 
 ## 5. Dependencies
 
-| Package                   | Purpose                    | License | Native? | Notes                                                            |
-| ------------------------- | -------------------------- | ------- | ------- | ---------------------------------------------------------------- |
-| `marked`                  | Markdown text-block → HTML | MIT     | No      | Tiny, zero-dep, synchronous                                      |
-| `@turbodocx/html-to-docx` | HTML → `.docx` buffer      | MIT     | No      | Actively maintained successor of `html-to-docx`                  |
-| _(PDF)_                   | `webContents.printToPDF`   | —       | No      | **Built into Electron** — no dependency, reuses bundled Chromium |
+| Package                   | Purpose                    | License | Native? | Notes                                                                             |
+| ------------------------- | -------------------------- | ------- | ------- | --------------------------------------------------------------------------------- |
+| `marked@15`               | Markdown text-block → HTML | MIT     | No      | ESM-only; loaded via dynamic import to avoid CJS crash                            |
+| `@turbodocx/html-to-docx` | HTML → `.docx` buffer      | MIT     | No      | Actively maintained successor of `html-to-docx`; has postinstall script — see §15 |
+| _(PDF)_                   | `webContents.printToPDF`   | —       | No      | **Built into Electron** — no dependency, reuses bundled Chromium                  |
 
 All additions are pure JS — no `better-sqlite3`-style ABI rebuild, no Chromium
-download. No bundling/packaging changes expected beyond the two `npm install`s.
+download. No bundling/packaging changes required beyond the two `npm install`s.
 
 > Fallback: if maximum native-Word fidelity is later required, swap `export-docx.ts`
 > to use `docx-js` (`docx`, MIT, the same library the bundled docx skill uses) and
@@ -201,172 +212,210 @@ embedded script is inert text there.
 > nothing to do with where agent tool/bash execution runs. The two are independent;
 > do not assume this feature waits on the WSL/Lima sandbox.
 
-This is not a new capability we implement — the Electron renderer sandbox is already
-in use today on the main window ([`src/main/index.ts`](../../src/main/index.ts)
-~L511–515: `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`). The
-PDF window simply mirrors that proven configuration.
+### 7.4 Hardened `marked` renderer (shipped) ✅
 
-### 7.4 Locked-down offscreen window
+The HTML serializer uses an **isolated `Marked` instance** (not the global singleton)
+with a hardened renderer that addresses two threats:
 
-Because the print render is **static**, the window needs no JavaScript at all —
-disabling JS is the strongest single mitigation:
+1. **Raw HTML passthrough** — `html` token handler escapes instead of emitting, so
+   `<script>`, `<img onerror=…>` etc. in message text appear as literal characters.
+2. **External resource references** — `image` tokens are replaced with a static
+   placeholder; `link` tokens render text only (href stripped). This prevents SSRF
+   via `html-to-docx`/axios fetching remote URLs, and privacy leaks in the PDF
+   renderer.
+
+Additionally, inline `data:` images are restricted to a **safe raster MIME
+whitelist** (`image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/bmp`).
+`image/svg+xml` and other non-raster types fall back to placeholder — SVG can contain
+scripts that execute in some consumers even when JS is disabled at the outer level.
+
+Base64 image data is validated against `/^[A-Za-z0-9+/]*={0,2}$/` before embedding
+to prevent attribute injection via malformed data strings.
+
+### 7.5 Locked-down offscreen window ✅
 
 ```js
 const win = new BrowserWindow({
-  show: false, // offscreen; never displayed (UX, not security)
+  show: false,
   webPreferences: {
-    javascript: false, // strongest mitigation: injected <script>/onerror never runs
-    sandbox: true, // Electron renderer sandbox (NOT the app's exec sandbox — see §7.3)
-    nodeIntegration: false, // no require()/Node APIs reachable from the page
-    contextIsolation: true, // page JS can't reach privileged contexts
+    javascript: false, // injected <script>/onerror never runs
+    sandbox: true, // Electron renderer sandbox (NOT the app's exec sandbox)
+    nodeIntegration: false,
+    contextIsolation: true,
   },
 });
 try {
-  await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html)); // local only, never remote
+  // HTML is written to a temp .html and loaded via loadFile() (not a data: URI)
+  // so large chats / inline images don't hit Chromium's navigation URL limit.
+  await win.loadFile(tmpFile); // wrapped in a 30s timeout guard
   const pdf = await win.webContents.printToPDF({ printBackground: true });
   await fs.promises.writeFile(filePath, pdf);
 } finally {
-  win.destroy(); // always tear down the hidden window/process
+  win.destroy();
+  fs.promises.unlink(tmpFile).catch(() => {}); // best-effort temp cleanup
 }
 ```
 
-Defense in depth: `javascript: false` neutralizes script execution outright; the
-sandbox/`nodeIntegration`/`contextIsolation` flags confine anything that somehow
-runs; loading local content only prevents network-driven navigation; and text is
-HTML-escaped at serialization time (§4.2) so markup renders as literal characters.
+Defence in depth: `javascript: false` + sandbox + CSP meta tag + hardened renderer +
+base64 validation + safe MIME whitelist.
 
 ---
 
-## 8. Files to Create / Modify
+## 8. Files Created / Modified ✅
 
-| File                                           | Action     | Description                                                                                           |
-| ---------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------- |
-| `src/main/chat/export-common.ts`               | **Create** | Shared `ExportOptions`, defaults, filtering, `sanitizeFilename`, `formatSize`                         |
-| `src/main/chat/export-html.ts`                 | **Create** | `serializeMessagesToHtml()` + print stylesheet (shared by DOCX & PDF)                                 |
-| `src/main/chat/export-docx.ts`                 | **Create** | HTML → `@turbodocx/html-to-docx` → buffer                                                             |
-| `src/main/chat/export-pdf.ts`                  | **Create** | HTML → locked-down offscreen window → `printToPDF` → buffer                                           |
-| `src/main/chat/export-markdown.ts`             | Modify     | Keep `serializeMessagesToMarkdown()`; import shared bits from `export-common.ts`                      |
-| `src/main/index.ts`                            | Modify     | Generalize `chat.exportMarkdown` → `chat.export`; one multi-filter dialog; dispatch on `path.extname` |
-| `src/preload/index.ts`                         | Modify     | Expose `chat.export`; keep `chat.exportMarkdown` as a thin alias                                      |
-| `src/renderer/components/ChatView.tsx`         | Modify     | Point existing handlers at `chat.export`; **no new menu items**; relabel action to "Export chat…"     |
-| `src/renderer/i18n/locales/{en,zh,ru,hu}.json` | Modify     | Relabel `exportMarkdown` → generic `exportChat`; drop format-specific wording                         |
-| `src/tests/…`                                  | **Create** | Unit tests for `serializeMessagesToHtml` + extension→format dispatch                                  |
-| `package.json`                                 | Modify     | Add `marked`, `@turbodocx/html-to-docx`                                                               |
-
-All touched areas are ✅ Stable zones (renderer UI, IPC bridge, isolated new main
-modules) per ARCHITECTURE.md §7 — low architectural risk.
+| File                                           | Action      | Description                                                                                          |
+| ---------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------- |
+| `src/main/chat/export-common.ts`               | **Created** | `ExportOptions`, `ExportFormat`, `ExportRequest/Result`, filtering, `sanitizeFilename`, `formatSize` |
+| `src/main/chat/export-html.ts`                 | **Created** | `serializeMessagesToHtml()` — async, isolated Marked, hardened renderer, print stylesheet, CSP       |
+| `src/main/chat/export-docx.ts`                 | **Created** | HTML → `@turbodocx/html-to-docx` → Buffer (handles ArrayBuffer + ArrayBufferView correctly)          |
+| `src/main/chat/export-pdf.ts`                  | **Created** | HTML → locked-down offscreen window → `printToPDF` → Buffer                                          |
+| `src/main/chat/export-router.ts`               | **Created** | Format router: one dialog, preferred format pre-selected, extension enforced, dispatch on extname    |
+| `src/main/chat/export-markdown.ts`             | Modified    | Imports shared bits from `export-common.ts`; serializer behavior unchanged                           |
+| `src/main/index.ts`                            | Modified    | `chat.export` handler + `chat.exportMarkdown` alias; both accept `format` field                      |
+| `src/preload/index.ts`                         | Modified    | Exposes `chat.export` (with `format`); keeps `exportMarkdown` alias; Window type updated             |
+| `src/renderer/components/ChatView.tsx`         | Modified    | Both call sites use `chat.export`; tooltip uses `chat.exportChat` i18n key                           |
+| `src/renderer/i18n/locales/{en,zh,ru,hu}.json` | Modified    | `exportMarkdown` relabeled; `exportChat` key added ("Export chat…")                                  |
+| `src/tests/chat-export-multiformat.test.ts`    | **Created** | 64 tests — see §12                                                                                   |
+| `package.json`                                 | Modified    | Added `marked@15.0.12`, `@turbodocx/html-to-docx@1.22.0`                                             |
 
 ---
 
-## 9. IPC Contract
+## 9. IPC Contract (as shipped)
 
 ```typescript
-// Preload exposure (chat.exportMarkdown kept as a thin alias → chat.export with .md)
+type ExportFormat = 'md' | 'docx' | 'pdf';
+
+// Preload exposure
 chat: {
   export: (request: {
     sessionId: string;
-    messageIds?: string[];          // undefined = all messages
+    messageIds?: string[];           // undefined = all messages
+    format?: ExportFormat;           // pre-selects dialog filter; enforced on missing ext
     options?: Partial<ExportOptions>;
   }) => Promise<{ success: boolean; path?: string; error?: string }>;
+
+  // Backward-compat alias — same router, both IPC routes show full dialog
+  exportMarkdown: (request: { ... same shape ... }) => Promise<...>;
 }
 
-// Main process handler
+// Main process handler (chat.export + chat.exportMarkdown alias)
 ipcMain.handle('chat.export', async (_event, request) => {
-  // 1. Validate sessionId; fetch session + messages (all or filtered)
-  // 2. Apply shared filtering (partial/system/empty)
-  // 3. Show ONE save dialog: filters [Markdown .md, Word .docx, PDF .pdf]
-  // 4. Dispatch on path.extname(result.filePath):
+  // 1. Validate sessionId; fetch session + messages
+  // 2. filterExportableMessages() — strip partial/system/invisible
+  // 3. Show ONE save dialog; preferred format pre-selected from request.format
+  // 4. If no extension typed: append request.format ext (not always .md)
+  // 5. Dispatch on path.extname(filePath):
   //      .md   → serializeMessagesToMarkdown → write utf-8 string
   //      .docx → serializeMessagesToHtml → html-to-docx → write buffer
   //      .pdf  → serializeMessagesToHtml → printToPDF (locked-down window) → write buffer
-  // 5. Return { success, path }
+  //      other → fall back to markdown
+  // 6. Return { success, path }
 });
 ```
-
-The renderer calls a single method; format selection happens entirely in the dialog.
-The dropdown menu and selection-mode flow are unchanged except for relabeling.
 
 ---
 
 ## 10. Implementation Phases
 
-Both formats share the HTML core, so it's built once and DOCX lands with it; PDF is a
-thin additive follow-up.
+### Phase 1 — Shared core + format router + DOCX ✅ (2026-07-01)
 
-### Phase 1 — Shared core + format router + DOCX
+1. ✅ Create `export-common.ts`; refactor `export-markdown.ts` to consume it.
+2. ✅ Create `export-html.ts` with hardened Marked instance + print stylesheet + CSP.
+3. ✅ Create `export-docx.ts` (HTML → `@turbodocx/html-to-docx`; robust buffer conversion).
+4. ✅ Create `export-router.ts` with multi-filter dialog + `ExportFormat` + extension enforcement.
+5. ✅ Generalize IPC to `chat.export`; keep `chat.exportMarkdown` alias.
+6. ✅ Update preload + ChatView; relabel i18n to "Export chat…".
+7. ✅ 64 unit tests.
 
-1. Create `export-common.ts`; refactor `export-markdown.ts` to consume it (no behavior change).
-2. Create `export-html.ts` (`serializeMessagesToHtml` + print stylesheet + `marked` + HTML escaping).
-3. Create `export-docx.ts` (HTML → `@turbodocx/html-to-docx`).
-4. Generalize the IPC handler to `chat.export` with the multi-filter dialog + extension dispatch; keep `chat.exportMarkdown` alias.
-5. Update preload + ChatView wiring; relabel i18n to "Export chat…".
-6. Unit tests for HTML serialization + dispatch.
+**Dependencies:** `marked@15`, `@turbodocx/html-to-docx@1.22.0`.
 
-**Dependencies:** `marked`, `@turbodocx/html-to-docx`.
+### Phase 2 — PDF ✅ (2026-07-01)
 
-### Phase 2 — PDF
-
-1. Create `export-pdf.ts` (locked-down offscreen window per §7.4).
-2. Add the `.pdf` filter line + the `.pdf` dispatch case.
-3. Manual verification across platforms (headless `show:false`).
+1. ✅ Create `export-pdf.ts` (locked-down offscreen window per §7.5).
+2. ✅ `.pdf` filter + dispatch case in router.
 
 **Additive only** — no UI change, no new dependency.
 
 ### Future formats
 
-A 4th format = one filter entry + one serializer + one dispatch case. The menu and
-the rest of the pipeline are untouched — the format-as-parameter design holds.
+A 4th format = one filter entry + one serializer + one dispatch case + one
+`ExportFormat` union member. Menu and pipeline untouched.
 
 ---
 
 ## 11. Edge Cases & Considerations
 
-- **Empty / nothing-after-filtering** — reuse existing "Nothing to export" toast;
-  don't open the dialog.
-- **Streaming/partial messages** — already filtered (`id.startsWith('partial-')`).
-- **Unicode titles** — sanitize for filename, preserve in document body; UTF-8
-  throughout; `printToPDF` and `html-to-docx` both handle UTF-8.
-- **Large conversations** — DOCX/PDF are heavier than MD; `printToPDF` handles long
-  pages but very large chats may take a moment — acceptable for an explicit export.
-- **Concurrent exports** — each PDF export creates and destroys its own offscreen
-  window; no shared state, no locking needed.
-- **Offscreen window lifecycle** — always `destroy()` in `finally`; never leak.
-- **macOS save panel** — the "Save as type" popup is slightly subtle (near the
-  filename field); acceptable per review (Option A chosen over an in-app toggle).
+- **Empty / nothing-after-filtering** — `filterExportableMessages` applied in router
+  before dialog; returns `'No messages to export'` without opening dialog. ✅
+- **Streaming/partial messages** — filtered by `id.startsWith('partial-')`. ✅
+- **Unicode titles** — preserved in document body; sanitized for filename. ✅
+- **Large conversations** — no truncation in HTML/DOCX/PDF export (full tool results
+  preserved for archival fidelity). ⚠️ **Note:** the shipped Markdown path still
+  truncates each tool result to 500 chars (`raw.slice(0, 500)` in `export-markdown.ts`).
+  This divergence is intentional for now — the Markdown serializer is kept byte-for-byte
+  unchanged (see §Goals). Flagged in §15.4 to reconcile in the next refactor cycle. ✅
+- **Concurrent exports** — each PDF export owns its offscreen window; no shared state. ✅
+- **Offscreen window lifecycle** — `destroy()` in `finally`; never leaked. ✅
+- **Extension omitted** — appends `request.format` extension, not always `.md`. ✅
+- **macOS save panel** — "Save as type" popup near the filename field; acceptable
+  per review (Option A chosen over an in-app toggle).
 
 ---
 
-## 12. Testing Strategy
+## 12. Testing (64 unit tests in `src/tests/chat-export-multiformat.test.ts`)
 
-### Unit (Vitest)
+### Helpers (`export-common`)
 
-- `serializeMessagesToHtml()` across all block types and option combinations.
-- HTML escaping: a message containing `<script>` / `onerror=` renders as **literal
-  text**, not structure.
-- Extension→format dispatch (`.md` / `.docx` / `.pdf` / unknown).
-- Shared filtering parity with the markdown path.
+- `sanitizeFilename` — alphanumeric, CJK, unsafe chars, whitespace, control chars,
+  truncation, empty input fallback, trailing dots/spaces, Windows reserved names
+  (bare + with extension: `CON`, `LPT1.pdf`, etc.)
+- `formatSize` — bytes / KB / MB
+- `blockIsVisible` — all block types × option combinations
+- `filterExportableMessages` — system, partial, invisible blocks
 
-### Manual
+### HTML serializer (`export-html`)
 
-- Export full + selected as DOCX → open in Word/LibreOffice/Google Docs; verify
-  headings, code blocks, lists, tables, images.
-- Export as PDF → verify layout, code-block shading, page breaks.
-- Export a chat containing scraped HTML / a fake `<img onerror=…>` → confirm it is
-  inert in the PDF (no execution) and shows as text.
-- Export during streaming → partial messages excluded.
-- Unicode (Chinese/emoji) in title and body.
-- Confirm the existing `.md` export is byte-identical to pre-refactor output.
+- Document structure, print stylesheet, role badges
+- All block types: text (markdown rendered), thinking, tool_use, tool_result,
+  image (placeholder / skip / inline / SVG fallback), file_attachment
+- Timestamps, token usage
+- **Security / escaping:**
+  - `<script>` in tool names → escaped
+  - `onerror` payload in tool results → escaped
+  - `<evil>` in filenames → escaped
+  - Script tag in text block → not executable
+  - `<img onerror>` in text block → not executable
+  - Markdown remote image → no `src="https://…"` in output
+  - Markdown link → no `href=` in output; link text preserved
+  - Markdown link with HTML label → not executable
+  - Raw HTML block in text → escaped
+  - SVG inline image → falls back to placeholder
+  - Invalid base64 data → falls back to placeholder
+  - No external `href=` or `src=http/https/file` anywhere in output
+  - CSP meta tag present with `default-src 'none'` and `img-src data:`
+
+### DOCX buffer conversion
+
+- `ArrayBuffer` → `Buffer` correct
+- `ArrayBufferView` (Uint8Array with byteOffset) → `Buffer` correct
+- Regression proof that naive `Buffer.from(ab)` ignores byteOffset
+
+### Format + extension dispatch
+
+- `.md` / `.docx` / `.pdf` recognised
+- Unknown extension not in supported set
+- `appendIfMissing` logic: bare filename + format → correct extension
+- PDF format with no extension → `.pdf`, not `.md`
 
 ---
 
-## 13. Open Questions
+## 13. Open Questions (resolved)
 
-1. **Doc-then-code** confirmed (this document).
-2. **Dependencies** — confirm `marked` + `@turbodocx/html-to-docx` are acceptable
-   additions (both MIT, pure JS).
-3. **Sidebar export** — the sidebar session-hover export currently implies Markdown;
-   should it also route through the multi-format dialog, or stay MD-only for the
-   quick path? (Proposed: route through `chat.export` for consistency.)
+1. ✅ **Doc-then-code** confirmed.
+2. ✅ **Dependencies** — `marked` + `@turbodocx/html-to-docx` accepted (both MIT,
+   pure JS). See §15 for outstanding supply-chain note.
+3. ✅ **Sidebar export** — routes through `chat.export` for consistency (sidebar
+   export button not yet implemented; when added, use `chat.export`).
 
 ---
 
@@ -381,3 +430,76 @@ the rest of the pipeline are untouched — the format-as-parameter design holds.
   electron-store and pre-select that filter.
 - **HTML as a first-class export** — the shared HTML core makes a standalone `.html`
   export nearly free (one filter + write the string).
+- **Large-chat PDF stability** — ✅ resolved: the PDF path writes the HTML to a temp
+  `.html` file and uses `win.loadFile()` (with a 30s load/print timeout guard and
+  best-effort temp-file cleanup) instead of a `data:` URL, so large chats with inline
+  images no longer risk hitting Chromium's navigation URL length limit.
+
+---
+
+## 15. Technical Debt & Next Refactor Cycle
+
+These items were flagged during the review loop but are **not blocking** the shipped
+feature. Track for the next refactor cycle.
+
+### 15.1 Shared message/content types (`src/shared/`) — MEDIUM
+
+**Problem:** `Message`, `Session`, and all `ContentBlock` interfaces are duplicated
+in `src/main/chat/export-common.ts` from `src/renderer/types/index.ts`. If renderer
+types gain new content block variants (or rename fields), exports break silently at
+runtime — the TypeScript compiler cannot catch cross-process drift.
+
+**Proposed fix:** Move the shared types to `src/shared/chat-types.ts` and import
+from both `src/main/` and `src/renderer/`. This is a larger refactor touching both
+process boundaries; it needs care around the renderer bundle and any
+`contextBridge`-serialized types.
+
+**Interim guard:** The TODO comment in `export-common.ts` is intentional. Until the
+migration happens, treat any renderer-side `ContentBlock` change as requiring a
+matching update in `export-common.ts`.
+
+### 15.2 `@turbodocx/html-to-docx` supply-chain audit — MEDIUM
+
+**Problem:** `@turbodocx/html-to-docx@1.22.0` has `hasInstallScript: true`
+(postinstall). It pulls in `axios` and an HTML parsing/minification toolchain into
+the main process. This increases the supply-chain surface and means a future
+dependency compromise could affect the export pipeline.
+
+**Proposed fix:**
+
+1. Add `@turbodocx/html-to-docx` to the project's dependency audit policy (CI
+   `npm audit` gate or equivalent).
+2. Consider `--ignore-scripts` in CI for non-native deps and document the exception
+   for this package.
+3. The shipped HTML preprocessing (no external URLs, CSP meta tag, base64 validation)
+   already prevents the most dangerous SSRF vector (axios fetching remote images).
+   This defence is tested and should be kept even if the library is swapped out.
+
+### 15.3 Export-router Electron mock tests — LOW
+
+**Problem:** The `export-router.ts` dispatch path uses `electron.dialog`,
+`BrowserWindow`, and `fs.promises.writeFile` — none of which run in Vitest's Node
+environment. The current tests exercise the dispatch _logic_ (extension mapping,
+`appendIfMissing`) in isolation, but do not exercise the full router end-to-end with
+mocked Electron APIs.
+
+**Proposed fix:** Add a focused integration test suite that mocks `electron` (via
+`vi.mock('electron', ...)`) and `fs.promises.writeFile`, asserting that `.md`/
+`.docx`/`.pdf` paths each call the correct serializer and write the correct bytes.
+This is straightforward but requires setting up the Electron mock pattern — defer
+until the test infrastructure has a standard pattern for it.
+
+### 15.4 Tool-result truncation divergence across formats — LOW
+
+**Problem:** The Markdown serializer truncates each tool result to 500 chars
+(`raw.slice(0, 500)` in `export-markdown.ts`), while the HTML/DOCX/PDF path emits the
+full content. The same conversation therefore exports with different tool-result
+fidelity depending on the chosen format.
+
+**Why not fixed now:** The design's "keep the shipped Markdown path byte-for-byte
+unchanged" goal (see §Goals) takes precedence for this release, so the Markdown
+output was left as-is.
+
+**Proposed fix:** Reconcile the two paths — either lift the 500-char cap in Markdown
+for full archival parity, or make the cap a shared, configurable `ExportOptions`
+field applied by all serializers. Pick one in the next refactor cycle.

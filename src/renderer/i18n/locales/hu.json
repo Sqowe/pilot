@@ -857,7 +857,7 @@
     "configSetRestored": "Váltva a «{{name}}» készletre",
     "connectorCount_one": "{{count}} csatlakozó",
     "connectorCount_other": "{{count}} csatlakozó",
-    "exportMarkdown": "Exportálás Markdownba",
+    "exportChat": "Chat exportálása…",
     "exportSuccess": "Csevegés sikeresen exportálva",
     "exportFailed": "Exportálás sikertelen: {{error}}",
     "nothingToExport": "Nincs mit exportálni"

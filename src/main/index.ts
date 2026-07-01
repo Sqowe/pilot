@@ -3965,6 +3965,37 @@ ipcMain.handle('logs.isEnabled', () => {
 // Chat Export IPC
 // ============================================================================
 
+// Shared session/message accessors used by both handlers below
+function _exportGetSession(sessionId: string) {
+  if (!sessionManager) return undefined;
+  const sessions = sessionManager.listSessions();
+  return sessions.find((s) => s.id === sessionId);
+}
+
+function _exportGetMessages(sessionId: string) {
+  if (!sessionManager) return [];
+  return sessionManager.getMessages(sessionId);
+}
+
+// Primary handler: multi-format export (format chosen via the save dialog)
+ipcMain.handle(
+  'chat.export',
+  async (
+    _event,
+    request: {
+      sessionId: string;
+      messageIds?: string[];
+      format?: import('./chat/export-common').ExportFormat;
+      options?: Partial<import('./chat/export-common').ExportOptions>;
+    }
+  ) => {
+    const { exportChat } = await import('./chat/export-router');
+    return exportChat(request, _exportGetSession, _exportGetMessages);
+  }
+);
+
+// Backward-compat alias: callers that still invoke 'chat.exportMarkdown'
+// are forwarded to the new router (which defaults the dialog to .md).
 ipcMain.handle(
   'chat.exportMarkdown',
   async (
@@ -3972,23 +4003,12 @@ ipcMain.handle(
     request: {
       sessionId: string;
       messageIds?: string[];
-      options?: Partial<import('./chat/export-markdown').ExportOptions>;
+      format?: import('./chat/export-common').ExportFormat;
+      options?: Partial<import('./chat/export-common').ExportOptions>;
     }
   ) => {
-    const { exportChatToMarkdown } = await import('./chat/export-markdown');
-
-    const getSession = (sessionId: string) => {
-      if (!sessionManager) return undefined;
-      const sessions = sessionManager.listSessions();
-      return sessions.find((s) => s.id === sessionId);
-    };
-
-    const getMessages = (sessionId: string) => {
-      if (!sessionManager) return [];
-      return sessionManager.getMessages(sessionId);
-    };
-
-    return exportChatToMarkdown(request, getSession, getMessages);
+    const { exportChat } = await import('./chat/export-router');
+    return exportChat(request, _exportGetSession, _exportGetMessages);
   }
 );
 
