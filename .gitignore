@@ -119,3 +119,6 @@ website/.vitepress/cache/
 
 # Kiro
 .kiro/
+
+#Firecrawl
+.firecrawl/
