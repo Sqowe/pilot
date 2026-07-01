@@ -76,7 +76,10 @@ import { normalizeSkillConflictConfig } from '../../shared/skill-conflict-types'
 import { AgentRuntimeExtensionManager } from '../extensions/agent-runtime-extension-manager';
 import { configStore } from '../config/config-store';
 import { setBasePath, applyLocalDevPath } from '../utils/path-env';
-import { loadWorkspaceSystemPrompt } from '../utils/workspace-system-prompt';
+import {
+  loadWorkspaceSystemPrompt,
+  resolveWorkspaceInstructionsConfig,
+} from '../utils/workspace-system-prompt';
 import { assembleUserPrompt } from '../prompts/prompt-loader';
 import { enrichToolErrorWithThinking, selectThinkingSource } from './tool-error-enrichment';
 import { normalizeOpenAICompatibleBaseUrl } from '../config/auth-utils';
@@ -2786,9 +2789,12 @@ RULES:
       // available to the runtime signature below. Reused cached sessions get
       // invalidated automatically when the file content / chosen filename
       // changes, which is the whole point of including the fingerprint here.
+      const { enabled: wsEnabled, priority: wsPriority } =
+        resolveWorkspaceInstructionsConfig(configStore);
       const workspaceInstructions = await loadWorkspaceSystemPrompt(
         effectiveCwd,
-        configStore.get('systemPromptFile')
+        wsPriority,
+        wsEnabled
       );
 
       const sessionRuntimeSignature = buildPiSessionRuntimeSignature({
@@ -3249,7 +3255,7 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
           appendSystemPrompt = `${coworkAppendPrompt}\n\n<workspace_instructions>\n${workspaceInstructions.text}\n</workspace_instructions>`;
           log(
             '[ClaudeAgentRunner] Appended workspace instructions to system prompt (file:',
-            configStore.get('systemPromptFile'),
+            workspaceInstructions.resolvedFile,
             ')'
           );
         }

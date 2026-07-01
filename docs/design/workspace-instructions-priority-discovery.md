@@ -1,6 +1,6 @@
 # Workspace Instructions — Priority-Based Auto-Discovery — Implementation Plan
 
-**Status:** In Progress (Phase 1 ✓, Phase 4/7 ✓)
+**Status:** In Progress (Phase 1 ✓, Phase 2 ✓, Phase 4/7 ✓)
 **Date:** 2026-07-01
 **Owner:** @obodnikov
 **Related:** [workspace-system-prompt.ts](../../src/main/utils/workspace-system-prompt.ts), [system-prompt-file-choices.ts](../../src/shared/system-prompt-file-choices.ts), [agent-runner.ts](../../src/main/claude/agent-runner.ts), [config-store.ts](../../src/main/config/config-store.ts), [SettingsPrompt.tsx](../../src/renderer/components/settings/SettingsPrompt.tsx), [WorkspaceInstructionsBadge.tsx](../../src/renderer/components/WorkspaceInstructionsBadge.tsx), `node_modules/@earendil-works/pi-coding-agent/docs/usage.md`
@@ -405,7 +405,7 @@ runs (or left inert and ignored). Recommend leaving it untouched for one release
 ## 11. File-change checklist
 
 - [x] `src/shared/system-prompt-file-choices.ts` — priority constants + validators (Phase 1)
-- [ ] `src/main/utils/workspace-system-prompt.ts` — list resolver + `resolvedFile` (Phase 2)
+- [x] `src/main/utils/workspace-system-prompt.ts` — list resolver + `resolvedFile` (Phase 2)
 - [ ] `src/main/claude/agent-runner.ts` — `noContextFiles: true`, new loader args (Phase 3)
 - [x] `src/main/config/config-store.ts` — fields, defaults, keys, normalizer+migration, update (Phase 4, 7)
 - [ ] `src/main/index.ts` — `getStatus` + `settings.update` handlers (Phase 5)

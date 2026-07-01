@@ -2021,20 +2021,23 @@ ipcMain.handle('config.isConfigured', () => {
 
 ipcMain.handle('workspace-instructions.getStatus', async (_event, requestedCwd?: string) => {
   try {
-    const { loadWorkspaceSystemPrompt, MAX_BYTES } =
+    const { loadWorkspaceSystemPrompt, MAX_BYTES, resolveWorkspaceInstructionsConfig } =
       await import('./utils/workspace-system-prompt');
-    const choice = configStore.get('systemPromptFile') || '';
-    if (!choice) {
+    const { enabled, priority } = resolveWorkspaceInstructionsConfig({
+      get: (key: 'systemPromptFileEnabled' | 'systemPromptFilePriority' | 'systemPromptFile') =>
+        configStore.get(key),
+    });
+    if (!enabled) {
       return { configuredFile: '', loaded: false };
     }
     // Use the renderer-provided cwd (session workspace) if given,
     // falling back to the global default only as a last resort.
     const cwd = requestedCwd || currentWorkingDir || undefined;
-    const result = await loadWorkspaceSystemPrompt(cwd, choice);
+    const result = await loadWorkspaceSystemPrompt(cwd, priority, true);
     if (result) {
       const sizeBytes = Buffer.byteLength(result.text, 'utf8');
       return {
-        configuredFile: choice,
+        configuredFile: result.resolvedFile,
         loaded: true,
         sizeBytes,
         truncated: sizeBytes >= MAX_BYTES,
@@ -2042,9 +2045,11 @@ ipcMain.handle('workspace-instructions.getStatus', async (_event, requestedCwd?:
       };
     }
     return {
-      configuredFile: choice,
+      configuredFile: '',
       loaded: false,
-      error: 'File not found or unreadable at workspace root',
+      error: `No workspace instructions file found (searched: ${
+        priority.length ? priority.join(', ') : '(none)'
+      })`,
     };
   } catch (error) {
     logError('[WorkspaceInstructions] getStatus failed:', error);
