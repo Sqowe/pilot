@@ -1676,6 +1676,14 @@ export class ConfigStore {
         updates.notificationsEnabled !== undefined
           ? toBoolean(updates.notificationsEnabled, current.notificationsEnabled)
           : current.notificationsEnabled,
+      skillConflictConfig:
+        updates.skillConflictConfig !== undefined
+          ? normalizeSkillConflictConfig(updates.skillConflictConfig)
+          : current.skillConflictConfig,
+      orphanDismissals:
+        updates.orphanDismissals !== undefined
+          ? normalizeOrphanDismissals(updates.orphanDismissals)
+          : current.orphanDismissals,
     });
   }
 
