@@ -983,6 +983,11 @@
     "showMore": "Több megjelenítése",
     "showLess": "Kevesebb megjelenítése"
   },
+  "selectionMenu": {
+    "title": "Kijelölés beállítások",
+    "copy": "Másolás",
+    "copied": "Másolva!"
+  },
   "linkMenu": {
     "title": "Link beállítások",
     "copyLink": "Link másolása",

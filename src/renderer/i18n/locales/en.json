@@ -986,6 +986,11 @@
     "showMore": "Show more",
     "showLess": "Show less"
   },
+  "selectionMenu": {
+    "title": "Selection options",
+    "copy": "Copy",
+    "copied": "Copied!"
+  },
   "linkMenu": {
     "title": "Link options",
     "copyLink": "Copy Link",

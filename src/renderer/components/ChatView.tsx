@@ -13,6 +13,7 @@ import {
 import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
 import { GroupedMessages } from './message/GroupedMessages';
+import { SelectionContextMenu } from './message/SelectionContextMenu';
 import { ExportSelectionBar } from './ExportSelectionBar';
 import { ExportOptionsDialog } from './ExportOptionsDialog';
 import type { ExportOptions } from './ExportOptionsDialog';
@@ -60,6 +61,9 @@ export function ChatView() {
   const [exportSelectedIds, setExportSelectedIds] = useState<Set<string>>(new Set());
   const [showExportOptions, setShowExportOptions] = useState(false);
   const [showExportDropdown, setShowExportDropdown] = useState(false);
+  const [selectionMenu, setSelectionMenu] = useState<{ text: string; x: number; y: number } | null>(
+    null
+  );
 
   // Reset export selection state when switching sessions
   useEffect(() => {
@@ -886,6 +890,25 @@ export function ChatView() {
     }
   };
 
+  const handleSelectionContextMenu = useCallback((e: React.MouseEvent) => {
+    const selection = window.getSelection();
+    const raw = selection?.toString() ?? '';
+    // Only open when there is visible (non-whitespace) selected text
+    if (!raw.trim()) return;
+    // Scope to the scroll container — ignore selections made elsewhere in the app
+    if (
+      selection &&
+      selection.rangeCount > 0 &&
+      scrollContainerRef.current &&
+      !scrollContainerRef.current.contains(selection.getRangeAt(0).commonAncestorContainer)
+    ) {
+      return;
+    }
+    e.preventDefault();
+    // Preserve exact selection (leading/trailing whitespace intentional)
+    setSelectionMenu({ text: raw, x: e.clientX, y: e.clientY });
+  }, []);
+
   const handleEnterSelectMode = () => {
     setIsExportSelectMode(true);
     setExportSelectedIds(new Set());
@@ -1035,7 +1058,11 @@ export function ChatView() {
       )}
 
       {/* Messages */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto"
+        onContextMenu={handleSelectionContextMenu}
+      >
         <div
           ref={messagesContainerRef}
           className="w-full max-w-[920px] mx-auto py-8 px-5 lg:px-8 space-y-5"
@@ -1085,6 +1112,16 @@ export function ChatView() {
           <div ref={messagesEndRef} />
         </div>
       </div>
+
+      {/* Selection copy context menu */}
+      {selectionMenu && (
+        <SelectionContextMenu
+          text={selectionMenu.text}
+          x={selectionMenu.x}
+          y={selectionMenu.y}
+          onClose={() => setSelectionMenu(null)}
+        />
+      )}
 
       {/* Export Selection Bar */}
       {isExportSelectMode && (

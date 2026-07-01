@@ -924,6 +924,11 @@
     "showMore": "展开更多",
     "showLess": "收起"
   },
+  "selectionMenu": {
+    "title": "选择选项",
+    "copy": "复制",
+    "copied": "已复制！"
+  },
   "linkMenu": {
     "title": "链接选项",
     "copyLink": "复制链接",
