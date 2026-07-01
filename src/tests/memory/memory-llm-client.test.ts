@@ -110,6 +110,15 @@ function makeConfig(timeoutMs: number): AppConfig {
       acknowledgedConflicts: [],
     },
     orphanDismissals: [],
+    systemPromptFileEnabled: true,
+    systemPromptFilePriority: [
+      'CLAUDE.md',
+      'AGENTS.md',
+      '.cowork/instructions.md',
+      'memory.md',
+      'instructions.md',
+    ],
+    configSchemaVersion: 1,
   };
 }
 

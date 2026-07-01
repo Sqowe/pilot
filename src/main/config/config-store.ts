@@ -11,6 +11,7 @@
  *
  * Dependencies: electron-store, auth-utils, api-model-presets
  */
+import * as fs from 'fs';
 import Store, { type Options as StoreOptions } from 'electron-store';
 import { log, logWarn } from '../utils/logger';
 import {
@@ -32,7 +33,10 @@ import {
 import { API_PROVIDER_PRESETS, PI_AI_CURATED_PRESETS } from '../../shared/api-model-presets';
 import {
   isValidSystemPromptFileChoice,
+  normalizeSystemPromptPriority,
+  DEFAULT_SYSTEM_PROMPT_PRIORITY,
   type SystemPromptFileChoice,
+  type SystemPromptFileName,
 } from '../../shared/system-prompt-file-choices';
 import { sanitizeBashCommandList } from './permission-rules-store';
 // Import normalizePermissionTimeout and DEFAULT_BASH_RESTRICTIONS_SETTINGS from the shared module.
@@ -127,10 +131,20 @@ export interface AppConfig {
   // Colon-separated (macOS/Linux) or semicolon-separated (Windows) list of directories.
   localDevPath?: string;
 
-  // Optional: workspace-level instructions file injected as system prompt tail.
-  // Empty string (default) preserves today's behavior. See
-  // `loadWorkspaceSystemPrompt` for the valid choices and safety model.
+  /**
+   * @deprecated Use `systemPromptFileEnabled` + `systemPromptFilePriority`.
+   * Kept only for migration reading; not written after Phase 4.
+   */
   systemPromptFile?: SystemPromptFileChoice;
+
+  // Master on/off toggle for workspace-instructions auto-discovery.
+  // Replaces the old '' = None sentinel in systemPromptFile.
+  systemPromptFileEnabled: boolean;
+
+  // Ordered list of candidate filenames; the first existing file wins.
+  // Always a full permutation of DEFAULT_SYSTEM_PROMPT_PRIORITY after
+  // normalisation. User may reorder but not add/remove entries.
+  systemPromptFilePriority: SystemPromptFileName[];
 
   // Bash command trust list (prefix patterns with `*` wildcard).
   // Persisted here so the main process has them at startup, before the
@@ -161,6 +175,16 @@ export interface AppConfig {
 
   // First run flag
   isConfigured: boolean;
+
+  /**
+   * Config schema version — used to distinguish a truly fresh install from an
+   * existing install that was upgraded before this field existed.
+   *
+   * 0 = default (field absent from disk, or written before schema versioning).
+   *     Treated as an existing install during migration.
+   * 1 = migrated to systemPromptFileEnabled / systemPromptFilePriority.
+   */
+  configSchemaVersion: number;
 
   // Scheduler settings (v2)
   schedulerCatchUpPolicy: 'skip' | 'run-once' | 'run-all' | 'ask';
@@ -320,7 +344,10 @@ const defaultConfig: AppConfig = {
   globalSkillsPath: '',
   localDevPath: '',
   systemPromptFile: '',
+  systemPromptFileEnabled: true,
+  systemPromptFilePriority: [...DEFAULT_SYSTEM_PROMPT_PRIORITY],
   bashTrustedCommands: [],
+
   bashDenylist: [],
   enableDevLogs: false,
   theme: 'light',
@@ -363,6 +390,7 @@ const defaultConfig: AppConfig = {
   },
   enableThinking: false,
   isConfigured: false,
+  configSchemaVersion: 0,
   schedulerCatchUpPolicy: 'ask',
   schedulerConflictPolicy: 'queue',
   schedulerRunHistoryDepth: 10,
@@ -760,9 +788,156 @@ export class ConfigStore {
     this.ensureNormalized();
   }
 
+  /**
+   * Top-level keys that are safe to read from a persisted config file.
+   * Used to filter out unknown / prototype-pollution keys before applying
+   * persisted data to the in-memory store during ensureNormalized().
+   */
+  private static readonly SAFE_CONFIG_KEYS = new Set<string>([
+    'provider',
+    'apiKey',
+    'baseUrl',
+    'customProtocol',
+    'model',
+    'contextWindow',
+    'maxTokens',
+    'activeProfileKey',
+    'profiles',
+    'activeConfigSetId',
+    'configSets',
+    'claudeCodePath',
+    'defaultWorkdir',
+    'globalSkillsPath',
+    'localDevPath',
+    'systemPromptFile',
+    'systemPromptFileEnabled',
+    'systemPromptFilePriority',
+    'bashTrustedCommands',
+    'bashDenylist',
+    'enableDevLogs',
+    'theme',
+    'sandboxEnabled',
+    'memoryEnabled',
+    'memoryRuntime',
+    'enableThinking',
+    'isConfigured',
+    'configSchemaVersion',
+    'schedulerCatchUpPolicy',
+    'schedulerConflictPolicy',
+    'schedulerRunHistoryDepth',
+    'permissionTimeoutSeconds',
+    'mcpToolTimeoutSeconds',
+    'notificationsEnabled',
+    'skillConflictConfig',
+    'orphanDismissals',
+  ]);
+
+  /**
+   * Return a copy of `parsed` containing only known AppConfig top-level keys.
+   * Drops unknown keys (config bloat, stale fields) and prevents prototype
+   * pollution from tampered config files.
+   */
+  private sanitizeParsed(parsed: Record<string, unknown>): Record<string, unknown> {
+    const safe: Record<string, unknown> = {};
+    for (const key of ConfigStore.SAFE_CONFIG_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(parsed, key)) {
+        safe[key] = parsed[key];
+      }
+    }
+    return safe;
+  }
+
   private ensureNormalized(): void {
+    // Read the on-disk JSON directly to get the authoritative persisted state.
+    // electron-store merges defaults into its in-memory store, so
+    // `this.store.store` cannot distinguish a persisted key from a defaulted
+    // one. Parsing the file gives us only what was actually written to disk.
+    let persisted: Record<string, unknown> = {};
+    const configFileExists = fs.existsSync(this.store.path);
+    if (configFileExists) {
+      try {
+        const raw = fs.readFileSync(this.store.path, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          // Allowlist known keys to prevent prototype pollution and drop unknown
+          // keys (stale fields, tampered config files).
+          persisted = this.sanitizeParsed(parsed as Record<string, unknown>);
+        }
+      } catch {
+        // Corrupt or unreadable file — treat as empty (schema version 0).
+        persisted = {};
+      }
+    } else {
+      // No file on disk — truly fresh install. Stamp schema version 1 so the
+      // migration path treats this as a new install (D4 default: enabled).
+      persisted = { configSchemaVersion: 1 };
+    }
+
+    // Always apply the persisted JSON over the in-memory store so that
+    // electron-store defaults don't shadow explicitly-stored values.
+    // This is idempotent and safe — we'll normalize everything below anyway.
+    this.store.set(persisted as unknown as AppConfig);
+
+    // If migration hasn't happened yet (version 0 or absent), run it now
+    // using the persisted data as source of truth, then stamp version 1 so
+    // subsequent runs take the normal path.
+    const persistedVersion =
+      typeof persisted.configSchemaVersion === 'number' && persisted.configSchemaVersion >= 1
+        ? 1
+        : 0;
+    if (persistedVersion === 0) {
+      const migrated = this.migrateFromLegacy(persisted);
+      // Write migrated values + version stamp directly so normalizeConfig sees
+      // authoritative new-field values in the in-memory store.
+      this.store.set({
+        ...migrated,
+        configSchemaVersion: 1,
+      } as unknown as AppConfig);
+    }
+
     const normalized = this.normalizeConfig(this.store.store as Partial<AppConfig>);
+    // Write the normalized config back. The normalizer only produces known
+    // AppConfig keys, so any unknown keys from the raw file are orphaned in
+    // the backing store but never read (normalizeConfig ignores them). They
+    // pose no security risk because sanitizeParsed() already stripped unknown
+    // keys before they were loaded. A future enhancement could clear-then-set
+    // once all mock implementations expose a writable `store` property.
     this.store.set(normalized);
+  }
+
+  /**
+   * Derive `systemPromptFileEnabled` and `systemPromptFilePriority` from
+   * persisted-on-disk data for a pre-migration config (configSchemaVersion 0).
+   * Called once during `ensureNormalized`; result is written back to disk
+   * alongside `configSchemaVersion: 1` so this path never runs again.
+   */
+  private migrateFromLegacy(persisted: Record<string, unknown>): {
+    systemPromptFileEnabled: boolean;
+    systemPromptFilePriority: SystemPromptFileName[];
+  } {
+    const legacy = persisted.systemPromptFile;
+    const legacyPresent = Object.prototype.hasOwnProperty.call(persisted, 'systemPromptFile');
+
+    if (typeof legacy === 'string' && legacy !== '' && isValidSystemPromptFileChoice(legacy)) {
+      // User had a specific file selected → enable and hoist to position 0.
+      return {
+        systemPromptFileEnabled: true,
+        systemPromptFilePriority: normalizeSystemPromptPriority([legacy]),
+      };
+    }
+    if (legacyPresent && legacy === '') {
+      // User explicitly chose "None" → keep disabled.
+      return {
+        systemPromptFileEnabled: false,
+        systemPromptFilePriority: [...DEFAULT_SYSTEM_PROMPT_PRIORITY],
+      };
+    }
+    // Existing install, key never set → preserve legacy behavior (disabled).
+    // (Fresh installs never reach here — they get configSchemaVersion: 1 above.)
+    return {
+      systemPromptFileEnabled: false,
+      systemPromptFilePriority: [...DEFAULT_SYSTEM_PROMPT_PRIORITY],
+    };
   }
 
   /**
@@ -1200,6 +1375,16 @@ export class ConfigStore {
       systemPromptFile: isValidSystemPromptFileChoice(raw.systemPromptFile)
         ? raw.systemPromptFile
         : defaultConfig.systemPromptFile,
+      // By the time normalizeConfig runs, ensureNormalized has already:
+      //   - parsed the on-disk JSON for authoritative key presence
+      //   - run migrateFromLegacy (for version-0 installs)
+      //   - stamped configSchemaVersion: 1 and written the migrated values
+      // So we can read the new fields directly without migration logic here.
+      systemPromptFileEnabled: toBoolean(
+        raw.systemPromptFileEnabled,
+        defaultConfig.systemPromptFileEnabled
+      ),
+      systemPromptFilePriority: normalizeSystemPromptPriority(raw.systemPromptFilePriority),
       bashTrustedCommands: toStringArray(raw.bashTrustedCommands),
       bashDenylist: toStringArray(raw.bashDenylist),
       enableDevLogs: toBoolean(raw.enableDevLogs, defaultConfig.enableDevLogs),
@@ -1209,6 +1394,8 @@ export class ConfigStore {
       memoryRuntime: normalizeMemoryRuntimeConfig(raw.memoryRuntime),
       enableThinking: projected.enableThinking,
       isConfigured: toBoolean(raw.isConfigured, defaultConfig.isConfigured),
+      configSchemaVersion:
+        typeof raw.configSchemaVersion === 'number' && raw.configSchemaVersion >= 1 ? 1 : 0,
       schedulerCatchUpPolicy: normalizeCatchUpPolicy(raw.schedulerCatchUpPolicy),
       schedulerConflictPolicy: isValidConflictPolicy(raw.schedulerConflictPolicy)
         ? raw.schedulerConflictPolicy
@@ -1631,6 +1818,43 @@ export class ConfigStore {
         updates.systemPromptFile !== undefined
           ? updates.systemPromptFile
           : current.systemPromptFile,
+      // When the legacy field is updated with a valid value, keep new fields
+      // in sync. Invalid legacy values (off-whitelist) are ignored for new-field
+      // sync — they normalize the legacy field to '' but leave enabled/priority
+      // unchanged, so a bad IPC payload cannot toggle discovery state.
+      systemPromptFileEnabled: (() => {
+        if (updates.systemPromptFileEnabled !== undefined) {
+          return toBoolean(updates.systemPromptFileEnabled, current.systemPromptFileEnabled);
+        }
+        if (
+          updates.systemPromptFile !== undefined &&
+          updates.systemPromptFilePriority === undefined
+        ) {
+          if (!isValidSystemPromptFileChoice(updates.systemPromptFile)) {
+            // Invalid legacy value — leave enabled state unchanged.
+            return current.systemPromptFileEnabled;
+          }
+          // '' → disabled; whitelisted filename → enabled.
+          return updates.systemPromptFile !== '';
+        }
+        return current.systemPromptFileEnabled;
+      })(),
+      systemPromptFilePriority: (() => {
+        if (updates.systemPromptFilePriority !== undefined) {
+          return normalizeSystemPromptPriority(updates.systemPromptFilePriority);
+        }
+        if (updates.systemPromptFile !== undefined) {
+          if (!isValidSystemPromptFileChoice(updates.systemPromptFile)) {
+            // Invalid legacy value — leave priority unchanged.
+            return current.systemPromptFilePriority;
+          }
+          if (updates.systemPromptFile !== '') {
+            // Hoist the newly-selected valid legacy file to position 0.
+            return normalizeSystemPromptPriority([updates.systemPromptFile]);
+          }
+        }
+        return current.systemPromptFilePriority;
+      })(),
       bashTrustedCommands:
         updates.bashTrustedCommands !== undefined
           ? toStringArray(updates.bashTrustedCommands)
@@ -1652,6 +1876,10 @@ export class ConfigStore {
           : current.memoryRuntime,
       isConfigured:
         updates.isConfigured !== undefined ? updates.isConfigured : current.isConfigured,
+      // configSchemaVersion is internal — only settable by ensureNormalized().
+      // Ignore any incoming update to prevent external callers from downgrading
+      // the schema version and triggering unwanted re-migration.
+      configSchemaVersion: current.configSchemaVersion,
       schedulerCatchUpPolicy:
         updates.schedulerCatchUpPolicy !== undefined
           ? updates.schedulerCatchUpPolicy
