@@ -1247,7 +1247,8 @@
     "size": "大小",
     "truncated": "裁剪至64 KB",
     "openFile": "打开指令文件",
-    "notFound": "工作目录根未找到文件"
+    "notFound": "工作目录根未找到文件",
+    "noneFound": "未找到指令文件"
   },
   "workspace": {
     "orphansDetected": "工作区配置中有 {{total}} 个已失效的技能/服务器引用",

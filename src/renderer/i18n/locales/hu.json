@@ -1306,7 +1306,8 @@
     "size": "Méret",
     "truncated": "levágva 64 KB-ra",
     "openFile": "Utasításfájl megnyitása",
-    "notFound": "A fájl nem található a munkamappa gyökerében"
+    "notFound": "A fájl nem található a munkamappa gyökerében",
+    "noneFound": "Nem található utasításfájl"
   },
   "workspace": {
     "orphansDetected": "A munkaterület profil {{total}} elavult hivatkozást tartalmaz eltávolított képességekre/szerverekre",

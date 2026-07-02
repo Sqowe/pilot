@@ -1309,7 +1309,8 @@
     "size": "Size",
     "truncated": "truncated to 64 KB",
     "openFile": "Open instructions file",
-    "notFound": "File not found at workspace root"
+    "notFound": "File not found at workspace root",
+    "noneFound": "No instructions found"
   },
   "workspace": {
     "orphansDetected": "Workspace profile has {{total}} stale reference(s) to removed skills/servers",

@@ -84,7 +84,9 @@ export const WorkspaceInstructionsBadge = memo(function WorkspaceInstructionsBad
   }
 
   const isLoaded = status.loaded;
-  const displayFile = status.resolvedFile || status.configuredFile;
+  const displayFile = isLoaded
+    ? status.resolvedFile
+    : t('workspaceInstructions.noneFound', 'No instructions found');
   const matchedFrom =
     isLoaded && status.resolvedFile && status.resolvedFile !== status.configuredFile
       ? status.configuredFile
