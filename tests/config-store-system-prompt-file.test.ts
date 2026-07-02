@@ -6,11 +6,17 @@ import { DEFAULT_SYSTEM_PROMPT_PRIORITY } from '../src/shared/system-prompt-file
 // the factory and the test body without TDZ issues.
 // Use process.env instead of require('os')/require('path') to stay
 // ESLint-clean (no-var-requires) while computing the path before imports.
-const { MOCK_STORE_PATH } = vi.hoisted(() => {
+const { MOCK_STORE_PATH, seed } = vi.hoisted(() => {
   const tmpdir = process.env.TMPDIR ?? process.env.TEMP ?? '/tmp';
   const rand = Math.random().toString(36).slice(2, 8);
   return {
     MOCK_STORE_PATH: `${tmpdir}/mock-config-store-spf-${process.pid}-${rand}.json`,
+    // Mutable holder for the DECRYPTED persisted config a test wants the store
+    // to start from. This models electron-store: the on-disk file is encrypted,
+    // and the store exposes the decrypted values in memory. Tests seed values
+    // here — never by relying on the mock parsing the on-disk file — so this
+    // faithfully guards that production reads the decrypted store, not the file.
+    seed: { value: null as Record<string, unknown> | null },
   };
 });
 
@@ -20,7 +26,8 @@ vi.mock('electron-store', () => {
     public path = MOCK_STORE_PATH;
 
     constructor(options: { defaults?: Record<string, unknown> }) {
-      this.store = { ...(options?.defaults || {}) };
+      // defaults overlaid with the seeded persisted (decrypted) values.
+      this.store = { ...(options?.defaults || {}), ...(seed.value || {}) };
     }
 
     get<K extends keyof T>(key: K): T[K] {
@@ -45,8 +52,9 @@ vi.mock('electron-store', () => {
 
 import { ConfigStore } from '../src/main/config/config-store';
 
-// Clean up the mock store file after each test so the next test starts fresh.
+// Clean up the mock store file + seed after each test so the next starts fresh.
 afterEach(() => {
+  seed.value = null;
   try {
     fs.rmSync(MOCK_STORE_PATH, { force: true });
   } catch {
@@ -160,15 +168,32 @@ describe('ConfigStore systemPromptFileEnabled / systemPromptFilePriority (new fi
 
 describe('ConfigStore migration: legacy systemPromptFile → new fields', () => {
   /**
-   * Helper: write a "pre-existing" config file to disk before constructing
-   * ConfigStore, so ensureNormalized() reads it as an existing install.
-   * This accurately reflects real electron-store behavior: the file is parsed
-   * during construction, migration runs once, and new values are written back.
+   * Helper: simulate a "pre-existing" install. `raw` is the DECRYPTED persisted
+   * config as electron-store would hold it in memory — it is seeded into the
+   * store, NOT parsed from the on-disk file. We also create the on-disk file so
+   * ensureNormalized()'s fresh-vs-existing check (fs.existsSync) sees an
+   * existing install. The file *contents* are intentionally irrelevant:
+   * production reads the decrypted store, never the encrypted file.
    */
   function storeWithPersistedRaw(raw: Record<string, unknown>) {
+    seed.value = raw;
     fs.writeFileSync(MOCK_STORE_PATH, JSON.stringify(raw));
     return new ConfigStore();
   }
+
+  it('reads the decrypted store, never JSON-parses the encrypted config file (regression)', () => {
+    // Production regression guard: the on-disk file is AES-encrypted bytes (not
+    // JSON), while the decrypted in-memory store holds the real values. A legacy
+    // systemPromptFile of "CLAUDE.md" must still migrate to enabled=true. This
+    // only works if ensureNormalized reads this.store.get(...) — the previous
+    // implementation JSON-parsed the file, which throws on encrypted data and
+    // silently disabled the feature on every launch.
+    seed.value = { systemPromptFile: 'CLAUDE.md' };
+    fs.writeFileSync(MOCK_STORE_PATH, 'not-valid-json:\x00\x89encrypted-bytes');
+    const store = new ConfigStore();
+    expect(store.getAll().systemPromptFileEnabled).toBe(true);
+    expect(store.getAll().systemPromptFilePriority[0]).toBe('CLAUDE.md');
+  });
 
   it('fresh install (no legacy key) → enabled=true, default priority order', () => {
     // No file on disk (afterEach cleans up) → ensureNormalized stamps

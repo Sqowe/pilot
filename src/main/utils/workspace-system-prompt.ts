@@ -53,6 +53,13 @@ export interface WorkspaceInstructions {
    * the legacy single-choice path.
    */
   resolvedFile: string;
+  /**
+   * Whether the file exceeded MAX_BYTES and was truncated. Computed exactly
+   * from the raw byte count (before trim), so callers don't have to re-derive
+   * it from the returned text length — which is unreliable because trimming
+   * can shrink a genuinely-truncated payload back below MAX_BYTES.
+   */
+  truncated: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -202,7 +209,7 @@ async function tryLoadOne(
         choice,
         `(${bytesRead} bytes${truncated ? ', truncated' : ''})`
       );
-      return { text: finalText, fingerprint };
+      return { text: finalText, fingerprint, truncated };
     } finally {
       await handle.close();
     }
@@ -319,7 +326,7 @@ export async function computeWorkspaceInstructionsStatus(
       resolvedFile: result.resolvedFile,
       loaded: true,
       sizeBytes,
-      truncated: sizeBytes >= MAX_BYTES,
+      truncated: result.truncated,
       fingerprintShort: result.fingerprint.slice(0, 8),
     };
   }

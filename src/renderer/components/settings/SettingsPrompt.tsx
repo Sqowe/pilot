@@ -433,7 +433,7 @@ export function SettingsPrompt() {
         <p className="text-xs leading-5 text-text-muted">
           {t(
             'prompt.workspaceInstructionsDesc',
-            'The first file that exists in the working directory is used. Drag items to change priority order.'
+            'The first file that exists in the working directory is used. Use the arrows to change priority order.'
           )}
         </p>
 

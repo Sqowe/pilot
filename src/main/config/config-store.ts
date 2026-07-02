@@ -788,107 +788,32 @@ export class ConfigStore {
     this.ensureNormalized();
   }
 
-  /**
-   * Top-level keys that are safe to read from a persisted config file.
-   * Used to filter out unknown / prototype-pollution keys before applying
-   * persisted data to the in-memory store during ensureNormalized().
-   */
-  private static readonly SAFE_CONFIG_KEYS = new Set<string>([
-    'provider',
-    'apiKey',
-    'baseUrl',
-    'customProtocol',
-    'model',
-    'contextWindow',
-    'maxTokens',
-    'activeProfileKey',
-    'profiles',
-    'activeConfigSetId',
-    'configSets',
-    'claudeCodePath',
-    'defaultWorkdir',
-    'globalSkillsPath',
-    'localDevPath',
-    'systemPromptFile',
-    'systemPromptFileEnabled',
-    'systemPromptFilePriority',
-    'bashTrustedCommands',
-    'bashDenylist',
-    'enableDevLogs',
-    'theme',
-    'sandboxEnabled',
-    'memoryEnabled',
-    'memoryRuntime',
-    'enableThinking',
-    'isConfigured',
-    'configSchemaVersion',
-    'schedulerCatchUpPolicy',
-    'schedulerConflictPolicy',
-    'schedulerRunHistoryDepth',
-    'permissionTimeoutSeconds',
-    'mcpToolTimeoutSeconds',
-    'notificationsEnabled',
-    'skillConflictConfig',
-    'orphanDismissals',
-  ]);
-
-  /**
-   * Return a copy of `parsed` containing only known AppConfig top-level keys.
-   * Drops unknown keys (config bloat, stale fields) and prevents prototype
-   * pollution from tampered config files.
-   */
-  private sanitizeParsed(parsed: Record<string, unknown>): Record<string, unknown> {
-    const safe: Record<string, unknown> = {};
-    for (const key of ConfigStore.SAFE_CONFIG_KEYS) {
-      if (Object.prototype.hasOwnProperty.call(parsed, key)) {
-        safe[key] = parsed[key];
-      }
-    }
-    return safe;
-  }
-
   private ensureNormalized(): void {
-    // Read the on-disk JSON directly to get the authoritative persisted state.
-    // electron-store merges defaults into its in-memory store, so
-    // `this.store.store` cannot distinguish a persisted key from a defaulted
-    // one. Parsing the file gives us only what was actually written to disk.
-    let persisted: Record<string, unknown> = {};
+    // Detect a truly fresh install *before* any write below can create the
+    // file. electron-store keeps `defaults` in memory only and does not write
+    // the config file until the first `set`, so an absent file here means a
+    // brand-new install. (Key rotation writes only when migrating an existing
+    // legacy-key file, so it never fires on a fresh install.)
     const configFileExists = fs.existsSync(this.store.path);
-    if (configFileExists) {
-      try {
-        const raw = fs.readFileSync(this.store.path, 'utf8');
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          // Allowlist known keys to prevent prototype pollution and drop unknown
-          // keys (stale fields, tampered config files).
-          persisted = this.sanitizeParsed(parsed as Record<string, unknown>);
-        }
-      } catch {
-        // Corrupt or unreadable file — treat as empty (schema version 0).
-        persisted = {};
-      }
-    } else {
-      // No file on disk — truly fresh install. Stamp schema version 1 so the
-      // migration path treats this as a new install (D4 default: enabled).
-      persisted = { configSchemaVersion: 1 };
-    }
 
-    // Always apply the persisted JSON over the in-memory store so that
-    // electron-store defaults don't shadow explicitly-stored values.
-    // This is idempotent and safe — we'll normalize everything below anyway.
-    this.store.set(persisted as unknown as AppConfig);
+    // Source of truth is the *decrypted* in-memory store, never the on-disk
+    // file: the config file is AES-encrypted and cannot be JSON-parsed. The
+    // store returns each persisted value, or the schema default when a key was
+    // never written. `configSchemaVersion` defaults to 0, so a pre-versioning
+    // install reads 0 and triggers migration; once we stamp 1 it persists in
+    // the encrypted store and migration never re-runs.
+    const rawVersion = this.store.get('configSchemaVersion');
+    const currentVersion = typeof rawVersion === 'number' && rawVersion >= 1 ? 1 : 0;
 
-    // If migration hasn't happened yet (version 0 or absent), run it now
-    // using the persisted data as source of truth, then stamp version 1 so
-    // subsequent runs take the normal path.
-    const persistedVersion =
-      typeof persisted.configSchemaVersion === 'number' && persisted.configSchemaVersion >= 1
-        ? 1
-        : 0;
-    if (persistedVersion === 0) {
-      const migrated = this.migrateFromLegacy(persisted);
-      // Write migrated values + version stamp directly so normalizeConfig sees
-      // authoritative new-field values in the in-memory store.
+    if (!configFileExists) {
+      // Truly fresh install → keep D4 defaults (enabled) and just stamp the
+      // schema version so migration is skipped now and on every future launch.
+      this.store.set({ configSchemaVersion: 1 } as unknown as AppConfig);
+    } else if (currentVersion === 0) {
+      // Existing pre-migration install → derive the new workspace-instructions
+      // fields from the decrypted legacy value, then stamp version 1 so this
+      // path runs exactly once.
+      const migrated = this.migrateFromLegacy(this.store.get('systemPromptFile'));
       this.store.set({
         ...migrated,
         configSchemaVersion: 1,
@@ -896,44 +821,29 @@ export class ConfigStore {
     }
 
     const normalized = this.normalizeConfig(this.store.store as Partial<AppConfig>);
-    // Write the normalized config back. The normalizer only produces known
-    // AppConfig keys, so any unknown keys from the raw file are orphaned in
-    // the backing store but never read (normalizeConfig ignores them). They
-    // pose no security risk because sanitizeParsed() already stripped unknown
-    // keys before they were loaded. A future enhancement could clear-then-set
-    // once all mock implementations expose a writable `store` property.
     this.store.set(normalized);
   }
 
   /**
-   * Derive `systemPromptFileEnabled` and `systemPromptFilePriority` from
-   * persisted-on-disk data for a pre-migration config (configSchemaVersion 0).
-   * Called once during `ensureNormalized`; result is written back to disk
-   * alongside `configSchemaVersion: 1` so this path never runs again.
+   * Derive `systemPromptFileEnabled` / `systemPromptFilePriority` from the
+   * decrypted legacy `systemPromptFile` value for a pre-migration config
+   * (configSchemaVersion 0). Called once from `ensureNormalized`; the result is
+   * written back alongside `configSchemaVersion: 1` so it never runs again.
+   *
+   * A specific whitelisted file → enable it and hoist it to position 0.
+   * '' (None), a value defaulted to '' (key never set), or an invalid value →
+   * disabled with the default order, preserving pre-feature behavior.
    */
-  private migrateFromLegacy(persisted: Record<string, unknown>): {
+  private migrateFromLegacy(legacy: unknown): {
     systemPromptFileEnabled: boolean;
     systemPromptFilePriority: SystemPromptFileName[];
   } {
-    const legacy = persisted.systemPromptFile;
-    const legacyPresent = Object.prototype.hasOwnProperty.call(persisted, 'systemPromptFile');
-
     if (typeof legacy === 'string' && legacy !== '' && isValidSystemPromptFileChoice(legacy)) {
-      // User had a specific file selected → enable and hoist to position 0.
       return {
         systemPromptFileEnabled: true,
         systemPromptFilePriority: normalizeSystemPromptPriority([legacy]),
       };
     }
-    if (legacyPresent && legacy === '') {
-      // User explicitly chose "None" → keep disabled.
-      return {
-        systemPromptFileEnabled: false,
-        systemPromptFilePriority: [...DEFAULT_SYSTEM_PROMPT_PRIORITY],
-      };
-    }
-    // Existing install, key never set → preserve legacy behavior (disabled).
-    // (Fresh installs never reach here — they get configSchemaVersion: 1 above.)
     return {
       systemPromptFileEnabled: false,
       systemPromptFilePriority: [...DEFAULT_SYSTEM_PROMPT_PRIORITY],

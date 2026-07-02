@@ -3262,7 +3262,7 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
           // Invariant check: noContextFiles=true means pi won't inject any
           // context files either — log a warning if instructions were enabled
           // but nothing resolved, so zero-injection runs are visible in logs.
-          const { enabled: wsEnabled } = resolveWorkspaceInstructionsConfig(configStore);
+          // Reuses `wsEnabled` resolved earlier for the fingerprint signature.
           if (wsEnabled) {
             logWarn(
               '[ClaudeAgentRunner] noContextFiles=true but workspace instructions resolved to null.',
