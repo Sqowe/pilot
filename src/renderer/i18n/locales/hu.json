@@ -855,6 +855,7 @@
     "stop": "Leállítás",
     "processing": "Feldolgozás...",
     "typeMessage": "Írjon üzenetet...",
+    "agentWorking": "Az MI dolgozik...",
     "loadingConversation": "Beszélgetés betöltése...",
     "startConversation": "Beszélgetés indítása",
     "startFailed": "Nem sikerült elindítani a munkamenetet. Próbálja újra.",

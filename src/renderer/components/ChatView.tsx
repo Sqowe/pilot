@@ -96,6 +96,9 @@ export function ChatView() {
   const pendingCount = pendingTurns.length;
   const isSessionRunning = activeSession?.status === 'running';
   const canStop = isSessionRunning || hasActiveTurn || pendingCount > 0;
+  // Shown in place of the placeholder while the agent is busy; hides as soon
+  // as the user starts typing a follow-up (which will be queued, same as today).
+  const showAgentWorking = canStop && !prompt.trim();
 
   // Track last memory retrieval timestamp for the "memory contributed" badge
   const [lastRetrievalTimestamp, setLastRetrievalTimestamp] = useState<number | undefined>();
@@ -1212,32 +1215,56 @@ export function ChatView() {
                 <Plus className="w-5 h-5" />
               </button>
 
-              <textarea
-                ref={textareaRef}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onCompositionStart={() => {
-                  isComposingRef.current = true;
-                }}
-                onCompositionEnd={() => {
-                  isComposingRef.current = false;
-                }}
-                onPaste={handlePaste}
-                onKeyDown={(e) => {
-                  // Enter to send, Shift+Enter for new line
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    if (e.nativeEvent.isComposing || isComposingRef.current || e.keyCode === 229) {
-                      return;
+              <div className="relative flex-1">
+                <textarea
+                  ref={textareaRef}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onCompositionStart={() => {
+                    isComposingRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    isComposingRef.current = false;
+                  }}
+                  onPaste={handlePaste}
+                  onKeyDown={(e) => {
+                    // Enter to send, Shift+Enter for new line
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      if (
+                        e.nativeEvent.isComposing ||
+                        isComposingRef.current ||
+                        e.keyCode === 229
+                      ) {
+                        return;
+                      }
+                      e.preventDefault();
+                      handleSubmit();
                     }
-                    e.preventDefault();
-                    handleSubmit();
-                  }
-                }}
-                placeholder={t('chat.typeMessage')}
-                disabled={isSubmitting}
-                rows={1}
-                className="flex-1 resize-none bg-transparent border-none outline-none text-text-primary placeholder:text-text-muted text-[15px] py-2 min-h-[40px] max-h-[200px] overflow-y-auto leading-6"
-              />
+                  }}
+                  placeholder={canStop ? '' : t('chat.typeMessage')}
+                  disabled={isSubmitting}
+                  rows={1}
+                  className="block w-full resize-none bg-transparent border-none outline-none text-text-primary placeholder:text-text-muted text-[15px] py-2 min-h-[40px] max-h-[200px] overflow-y-auto leading-6"
+                />
+                {showAgentWorking && (
+                  <div
+                    className="absolute inset-0 flex items-center gap-2 py-2 pointer-events-none"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <span
+                      className="inline-flex items-end gap-[3px] h-3.5 shrink-0"
+                      aria-hidden="true"
+                    >
+                      <span className="w-[3px] h-full rounded-full bg-text-muted animate-eq-bounce" />
+                      <span className="w-[3px] h-full rounded-full bg-text-muted animate-eq-bounce [animation-delay:150ms]" />
+                      <span className="w-[3px] h-full rounded-full bg-text-muted animate-eq-bounce [animation-delay:300ms]" />
+                      <span className="w-[3px] h-full rounded-full bg-text-muted animate-eq-bounce [animation-delay:450ms]" />
+                    </span>
+                    <span className="text-text-muted text-[15px]">{t('chat.agentWorking')}</span>
+                  </div>
+                )}
+              </div>
 
               <div className="flex items-center gap-2">
                 {/* Config Set Selector */}

@@ -855,6 +855,7 @@
     "stop": "Стоп",
     "processing": "Обработка...",
     "typeMessage": "Введите сообщение...",
+    "agentWorking": "ИИ работает...",
     "loadingConversation": "Загрузка беседы...",
     "startConversation": "Начать беседу",
     "startFailed": "Не удалось запустить сессию. Попробуйте ещё раз.",

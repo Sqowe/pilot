@@ -833,6 +833,7 @@
     "stop": "停止",
     "processing": "处理中...",
     "typeMessage": "输入消息...",
+    "agentWorking": "AI 正在处理...",
     "loadingConversation": "加载对话中...",
     "startConversation": "开始对话",
     "startFailed": "启动会话失败，请稍后重试。",

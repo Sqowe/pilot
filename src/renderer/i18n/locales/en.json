@@ -858,6 +858,7 @@
     "stop": "Stop",
     "processing": "Processing...",
     "typeMessage": "Type a message...",
+    "agentWorking": "Agent is working...",
     "loadingConversation": "Loading conversation...",
     "startConversation": "Start the conversation",
     "startFailed": "Failed to start session. Please try again.",
