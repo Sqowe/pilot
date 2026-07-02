@@ -1,10 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../../store';
-import {
-  SYSTEM_PROMPT_FILE_CHOICES,
-  type SystemPromptFileChoice,
-} from '../../../shared/system-prompt-file-choices';
+import { DEFAULT_SYSTEM_PROMPT_PRIORITY } from '../../../shared/system-prompt-file-choices';
 import {
   RotateCcw,
   FolderOpen,
@@ -13,6 +10,8 @@ import {
   ChevronDown,
   ChevronRight,
   AlertTriangle,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { Tooltip } from '../Tooltip';
 
@@ -184,12 +183,27 @@ export function SettingsPrompt() {
     }
   }, []);
 
-  const systemPromptFile: SystemPromptFileChoice = settings.systemPromptFile ?? '';
-  const onSystemPromptFileChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    const next = event.target.value as SystemPromptFileChoice;
-    if ((SYSTEM_PROMPT_FILE_CHOICES as readonly string[]).includes(next)) {
-      updateSettings({ systemPromptFile: next });
-    }
+  const systemPromptFileEnabled: boolean = settings.systemPromptFileEnabled ?? true;
+  const systemPromptFilePriority: string[] = settings.systemPromptFilePriority ?? [
+    ...DEFAULT_SYSTEM_PROMPT_PRIORITY,
+  ];
+
+  const onToggleEnabled = () => {
+    updateSettings({ systemPromptFileEnabled: !systemPromptFileEnabled });
+  };
+
+  const onMoveUp = (index: number) => {
+    if (index === 0) return;
+    const next = [...systemPromptFilePriority];
+    [next[index - 1], next[index]] = [next[index], next[index - 1]];
+    updateSettings({ systemPromptFilePriority: next });
+  };
+
+  const onMoveDown = (index: number) => {
+    if (index === systemPromptFilePriority.length - 1) return;
+    const next = [...systemPromptFilePriority];
+    [next[index], next[index + 1]] = [next[index + 1], next[index]];
+    updateSettings({ systemPromptFilePriority: next });
   };
 
   const sectionLabels: Record<string, string> = {
@@ -392,27 +406,70 @@ export function SettingsPrompt() {
 
       {/* Workspace instructions file */}
       <div className="space-y-2">
-        <h4 className="text-sm font-medium text-text-primary">
-          {t('prompt.workspaceInstructionsTitle', 'Workspace instructions file')}
-        </h4>
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-medium text-text-primary">
+            {t('prompt.workspaceInstructionsTitle', 'Workspace instructions file')}
+          </h4>
+          {/* Master on/off toggle */}
+          <button
+            onClick={onToggleEnabled}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-accent ${
+              systemPromptFileEnabled ? 'bg-accent' : 'bg-border'
+            }`}
+            role="switch"
+            aria-checked={systemPromptFileEnabled}
+            aria-label={t(
+              'prompt.workspaceInstructionsEnabled',
+              'Auto-load workspace instructions'
+            )}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                systemPromptFileEnabled ? 'translate-x-4' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </div>
         <p className="text-xs leading-5 text-text-muted">
           {t(
             'prompt.workspaceInstructionsDesc',
-            'When this file exists at the session working directory, its contents are appended to the system prompt as project-level instructions. Missing file falls back to the default.'
+            'The first file that exists in the working directory is used. Drag items to change priority order.'
           )}
         </p>
-        <select
-          value={systemPromptFile}
-          onChange={onSystemPromptFileChange}
-          className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-          aria-label={t('prompt.workspaceInstructionsTitle', 'Workspace instructions file')}
+
+        {/* Priority list */}
+        <div
+          className={`space-y-1 mt-1 transition-opacity ${
+            systemPromptFileEnabled ? 'opacity-100' : 'opacity-40 pointer-events-none'
+          }`}
+          aria-label={t('prompt.workspaceInstructionsPriorityTitle', 'Priority order')}
         >
-          {SYSTEM_PROMPT_FILE_CHOICES.map((opt) => (
-            <option key={opt || 'none'} value={opt}>
-              {opt === '' ? t('prompt.workspaceInstructionsNone', 'None (use default)') : opt}
-            </option>
+          {systemPromptFilePriority.map((filename, index) => (
+            <div
+              key={filename}
+              className="flex items-center gap-2 px-2 py-1.5 rounded-md border border-border bg-surface text-xs text-text-primary"
+            >
+              <span className="flex-1 font-mono truncate">{filename}</span>
+              <span className="text-[10px] text-text-muted w-4 text-right">{index + 1}</span>
+              <button
+                onClick={() => onMoveUp(index)}
+                disabled={index === 0}
+                className="p-0.5 rounded text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                aria-label={t('prompt.workspaceInstructionsMoveUp', 'Move up')}
+              >
+                <ArrowUp className="w-3 h-3" />
+              </button>
+              <button
+                onClick={() => onMoveDown(index)}
+                disabled={index === systemPromptFilePriority.length - 1}
+                className="p-0.5 rounded text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                aria-label={t('prompt.workspaceInstructionsMoveDown', 'Move down')}
+              >
+                <ArrowDown className="w-3 h-3" />
+              </button>
+            </div>
           ))}
-        </select>
+        </div>
       </div>
     </div>
   );

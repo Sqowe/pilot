@@ -781,7 +781,8 @@ export interface Settings {
    */
   bashDenylist: string[];
   globalSkillsPath: string;
-  systemPromptFile: SystemPromptFileChoice;
+  systemPromptFileEnabled: boolean;
+  systemPromptFilePriority: string[];
   memoryStrategy: 'auto' | 'manual' | 'rolling';
   maxContextTokens: number;
   // Scheduler settings (v2)
@@ -910,7 +911,8 @@ export interface AppConfig {
   defaultWorkdir?: string;
   globalSkillsPath?: string;
   localDevPath?: string;
-  systemPromptFile?: SystemPromptFileChoice;
+  systemPromptFileEnabled?: boolean;
+  systemPromptFilePriority?: string[];
   // Bash command trust list and denylist. Optional on the renderer side
   // because the Settings bootstrap hydrates them defensively via `?? []`.
   // Main's `AppConfig` keeps these required and always non-null.

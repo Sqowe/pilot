@@ -128,7 +128,14 @@ export function useIPC() {
       // previously-persisted values.
       store.setSettings({
         theme: config.theme || 'light',
-        systemPromptFile: config.systemPromptFile ?? '',
+        systemPromptFileEnabled: config.systemPromptFileEnabled ?? true,
+        systemPromptFilePriority: config.systemPromptFilePriority ?? [
+          'CLAUDE.md',
+          'AGENTS.md',
+          '.cowork/instructions.md',
+          'memory.md',
+          'instructions.md',
+        ],
         globalSkillsPath: config.globalSkillsPath ?? '',
         bashTrustedCommands: config.bashTrustedCommands ?? [],
         bashDenylist: config.bashDenylist ?? [],

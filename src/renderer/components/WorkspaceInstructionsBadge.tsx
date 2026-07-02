@@ -72,18 +72,23 @@ export const WorkspaceInstructionsBadge = memo(function WorkspaceInstructionsBad
   const handleOpenFile = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      if (!status?.loaded || !status.configuredFile || !cwd) return;
-      window.electronAPI?.showItemInFolder(status.configuredFile, cwd);
+      if (!status?.loaded || !status.resolvedFile || !cwd) return;
+      window.electronAPI?.showItemInFolder(status.resolvedFile, cwd);
     },
     [status, cwd]
   );
 
   // Nothing to show if no file is configured
-  if (loading || !status || !status.configuredFile) {
+  if (loading || !status || (!status.configuredFile && !status.resolvedFile)) {
     return null;
   }
 
   const isLoaded = status.loaded;
+  const displayFile = status.resolvedFile || status.configuredFile;
+  const matchedFrom =
+    isLoaded && status.resolvedFile && status.resolvedFile !== status.configuredFile
+      ? status.configuredFile
+      : null;
   const canOpen = isLoaded && !!cwd && !!window.electronAPI?.showItemInFolder;
 
   return (
@@ -96,7 +101,7 @@ export const WorkspaceInstructionsBadge = memo(function WorkspaceInstructionsBad
           className={`w-3.5 h-3.5 flex-shrink-0 ${isLoaded ? 'text-emerald-400' : 'text-warning'}`}
         />
         <span className="flex-1 min-w-0 truncate text-text-secondary group-hover:text-text-primary">
-          {status.configuredFile}
+          {displayFile}
         </span>
         {isLoaded ? (
           <CheckCircle2 className="w-3 h-3 text-emerald-400 flex-shrink-0" />
@@ -119,6 +124,15 @@ export const WorkspaceInstructionsBadge = memo(function WorkspaceInstructionsBad
                   {t('workspaceInstructions.active', 'Active — injected into system prompt')}
                 </span>
               </div>
+              {matchedFrom && (
+                <div className="text-text-muted/70">
+                  {t(
+                    'workspaceInstructions.matchedFrom',
+                    'Matched from priority list (configured: {{file}})',
+                    { file: matchedFrom }
+                  )}
+                </div>
+              )}
               {status.sizeBytes != null && (
                 <div>
                   {t('workspaceInstructions.size', 'Size')}: {formatSize(status.sizeBytes)}

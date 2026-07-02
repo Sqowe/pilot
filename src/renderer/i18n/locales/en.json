@@ -95,6 +95,12 @@
     "systemPromptFile": "Workspace instructions file",
     "systemPromptFileDesc": "When this file exists at the session working directory, its contents are appended to the system prompt as project-level instructions. Missing file falls back to the default.",
     "systemPromptFileNone": "None (use default)",
+    "workspaceInstructionsTitle": "Workspace instructions file",
+    "workspaceInstructionsEnabled": "Auto-load workspace instructions",
+    "workspaceInstructionsDesc": "The first file that exists in the working directory is used. Use the arrows to change priority order.",
+    "workspaceInstructionsPriorityTitle": "Priority order",
+    "workspaceInstructionsMoveUp": "Move up",
+    "workspaceInstructionsMoveDown": "Move down",
     "notifications": "Desktop Notifications",
     "notificationsEnabled": "Enable notifications",
     "notificationsHint": "Show native OS notifications when the app is not focused (permission requests, task completion)."
@@ -1295,6 +1301,14 @@
     "description": "An unexpected error occurred in the application. You can try to recover by clicking the button below.",
     "details": "Error details",
     "retry": "Try again"
+  },
+  "workspaceInstructions": {
+    "active": "Active — injected into system prompt",
+    "matchedFrom": "Matched from priority list (configured: {{file}})",
+    "size": "Size",
+    "truncated": "truncated to 64 KB",
+    "openFile": "Open instructions file",
+    "notFound": "File not found at workspace root"
   },
   "workspace": {
     "orphansDetected": "Workspace profile has {{total}} stale reference(s) to removed skills/servers",

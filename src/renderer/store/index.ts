@@ -245,7 +245,14 @@ const defaultSettings: Settings = {
   bashTrustedCommands: [],
   bashDenylist: [],
   globalSkillsPath: '',
-  systemPromptFile: '',
+  systemPromptFileEnabled: true,
+  systemPromptFilePriority: [
+    'CLAUDE.md',
+    'AGENTS.md',
+    '.cowork/instructions.md',
+    'memory.md',
+    'instructions.md',
+  ],
   memoryStrategy: 'auto',
   maxContextTokens: 180000,
 };

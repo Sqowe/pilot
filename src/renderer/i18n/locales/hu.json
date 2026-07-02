@@ -95,6 +95,12 @@
     "systemPromptFile": "Munkaterület utasítások fájl",
     "systemPromptFileDesc": "Ha ez a fájl létezik a munkamappában, tartalma hozzáadódik a rendszer prompthoz projekt szintű utasításként. Hiányzó fájl esetén az alapértelmezés érvényesül.",
     "systemPromptFileNone": "Nincs (alapértelmezés használata)",
+    "workspaceInstructionsTitle": "Munkaterület utasítások fájl",
+    "workspaceInstructionsEnabled": "Munkaterület utasítások automatikus betöltése",
+    "workspaceInstructionsDesc": "A munkamappában elsőként létező fájl kerül felhasználásra. A prioritási sorrendet a nyilakkal módosíthatod.",
+    "workspaceInstructionsPriorityTitle": "Prioritási sorrend",
+    "workspaceInstructionsMoveUp": "Feljebb",
+    "workspaceInstructionsMoveDown": "Lejjebb",
     "notifications": "Asztali értesítések",
     "notificationsEnabled": "Értesítések engedélyezése",
     "notificationsHint": "Natív OS értesítések megjelenítése, ha az alkalmazás nincs fókuszban (engedélykérések, feladatok befejezése)."
@@ -1292,6 +1298,14 @@
     "description": "Váratlan hiba történt az alkalmazásban. Az alábbi gombra kattintva próbálhatja meg a helyreállítást.",
     "details": "Hiba részletei",
     "retry": "Újrapróbálás"
+  },
+  "workspaceInstructions": {
+    "active": "Aktív — beillesztődik a rendszer promptba",
+    "matchedFrom": "Prioritási listából egyeztetett (beállított: {{file}})",
+    "size": "Méret",
+    "truncated": "levágva 64 KB-ra",
+    "openFile": "Utasításfájl megnyitása",
+    "notFound": "A fájl nem található a munkamappa gyökerében"
   },
   "workspace": {
     "orphansDetected": "A munkaterület profil {{total}} elavult hivatkozást tartalmaz eltávolított képességekre/szerverekre",
