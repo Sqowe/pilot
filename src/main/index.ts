@@ -127,7 +127,10 @@ import {
 } from './utils/logger';
 import { listRecentWorkspaceFiles } from './utils/recent-workspace-files';
 import { buildDiagnosticsSummary } from './utils/diagnostics-summary';
-import { isValidSystemPromptFileChoice } from '../shared/system-prompt-file-choices';
+import {
+  isValidSystemPromptFileChoice,
+  isValidSystemPromptPriority,
+} from '../shared/system-prompt-file-choices';
 import {
   ensurePromptFiles,
   loadPromptSections,
@@ -2021,40 +2024,27 @@ ipcMain.handle('config.isConfigured', () => {
 
 ipcMain.handle('workspace-instructions.getStatus', async (_event, requestedCwd?: string) => {
   try {
-    const { loadWorkspaceSystemPrompt, MAX_BYTES, resolveWorkspaceInstructionsConfig } =
-      await import('./utils/workspace-system-prompt');
-    const { enabled, priority } = resolveWorkspaceInstructionsConfig({
-      get: (key: 'systemPromptFileEnabled' | 'systemPromptFilePriority' | 'systemPromptFile') =>
-        configStore.get(key),
-    });
-    if (!enabled) {
-      return { configuredFile: '', loaded: false };
-    }
+    const { computeWorkspaceInstructionsStatus } = await import('./utils/workspace-system-prompt');
     // Use the renderer-provided cwd (session workspace) if given,
     // falling back to the global default only as a last resort.
     const cwd = requestedCwd || currentWorkingDir || undefined;
-    const result = await loadWorkspaceSystemPrompt(cwd, priority, true);
-    if (result) {
-      const sizeBytes = Buffer.byteLength(result.text, 'utf8');
-      return {
-        configuredFile: result.resolvedFile,
-        loaded: true,
-        sizeBytes,
-        truncated: sizeBytes >= MAX_BYTES,
-        fingerprintShort: result.fingerprint.slice(0, 8),
-      };
-    }
-    return {
-      configuredFile: '',
-      loaded: false,
-      error: `No workspace instructions file found (searched: ${
-        priority.length ? priority.join(', ') : '(none)'
-      })`,
-    };
+    return await computeWorkspaceInstructionsStatus(
+      {
+        get: (key: 'systemPromptFileEnabled' | 'systemPromptFilePriority' | 'systemPromptFile') =>
+          configStore.get(key),
+      },
+      cwd
+    );
   } catch (error) {
     logError('[WorkspaceInstructions] getStatus failed:', error);
+    // Derive best-effort configuredFile from the new fields; avoid reading the
+    // deprecated systemPromptFile key so the error path stays consistent.
+    const rawPriority = configStore.get('systemPromptFilePriority');
+    const firstCandidate =
+      Array.isArray(rawPriority) && typeof rawPriority[0] === 'string' ? rawPriority[0] : '';
     return {
-      configuredFile: configStore.get('systemPromptFile') || '',
+      configuredFile: firstCandidate,
+      resolvedFile: '',
       loaded: false,
       error: error instanceof Error ? error.message : 'Unknown error',
     };
@@ -4821,10 +4811,82 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
         });
       }
 
-      if ('systemPromptFile' in event.payload) {
-        const raw = (event.payload as { systemPromptFile?: unknown }).systemPromptFile;
-        if (isValidSystemPromptFileChoice(raw)) {
-          configStore.update({ systemPromptFile: raw });
+      // Workspace-instructions settings: batch all three keys (legacy + new)
+      // into a single configStore.update + one config.status broadcast to
+      // avoid redundant renderer updates when multiple keys arrive together.
+      // Guard: only import + process when the payload actually contains one of
+      // the workspace-instruction keys (legacy or new) to avoid async overhead
+      // on every unrelated settings.update call.
+      if (
+        'systemPromptFile' in event.payload ||
+        'systemPromptFileEnabled' in event.payload ||
+        'systemPromptFilePriority' in event.payload
+      ) {
+        const { normalizeSystemPromptPriority } =
+          await import('../shared/system-prompt-file-choices');
+        type SystemPromptFileName =
+          import('../shared/system-prompt-file-choices').SystemPromptFileName;
+        const p = event.payload as Record<string, unknown>;
+        const wsUpdates: Partial<{
+          systemPromptFileEnabled: boolean;
+          systemPromptFilePriority: SystemPromptFileName[];
+        }> = {};
+        const wsWarns: string[] = [];
+
+        // Legacy key — translate to new fields (migration window compat).
+        // Only applies when the payload does NOT also contain the new
+        // systemPromptFilePriority key, to avoid clobbering an explicit update.
+        if ('systemPromptFile' in p && !('systemPromptFilePriority' in p)) {
+          const raw = p.systemPromptFile;
+          if (raw === '') {
+            wsUpdates.systemPromptFileEnabled = false;
+          } else if (isValidSystemPromptFileChoice(raw)) {
+            // Merge with the existing stored priority list: prepend the legacy
+            // choice so it wins, then normalize+dedup to preserve the rest.
+            // This prevents a legacy renderer from silently destroying a
+            // richer priority list the user configured in the new UI.
+            const existingPriority = configStore.get('systemPromptFilePriority');
+            const base = Array.isArray(existingPriority)
+              ? [raw as string, ...existingPriority.filter((x: unknown) => typeof x === 'string')]
+              : [raw as string];
+            wsUpdates.systemPromptFileEnabled = true;
+            wsUpdates.systemPromptFilePriority = normalizeSystemPromptPriority(base);
+          } else {
+            wsWarns.push(
+              `[settings.update] Ignored invalid legacy systemPromptFile value: ${String(raw)}`
+            );
+          }
+        }
+
+        // New enabled flag — overrides legacy translation when both arrive.
+        if ('systemPromptFileEnabled' in p) {
+          const raw = p.systemPromptFileEnabled;
+          if (typeof raw === 'boolean') {
+            wsUpdates.systemPromptFileEnabled = raw;
+          } else {
+            wsWarns.push(
+              `[settings.update] Ignored invalid systemPromptFileEnabled value: ${String(raw)}`
+            );
+          }
+        }
+
+        // New priority list — normalize before persisting to ensure
+        // deduplication and canonical ordering are always enforced.
+        if ('systemPromptFilePriority' in p) {
+          const raw = p.systemPromptFilePriority;
+          if (isValidSystemPromptPriority(raw)) {
+            wsUpdates.systemPromptFilePriority = normalizeSystemPromptPriority(raw);
+          } else {
+            wsWarns.push(
+              `[settings.update] Ignored invalid systemPromptFilePriority value: ${String(raw)}`
+            );
+          }
+        }
+
+        for (const w of wsWarns) logWarn(w);
+
+        if (Object.keys(wsUpdates).length > 0) {
+          configStore.update(wsUpdates);
           sendToRenderer({
             type: 'config.status',
             payload: {
@@ -4832,8 +4894,6 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
               config: configStore.getAll(),
             },
           });
-        } else {
-          logWarn('[settings.update] Ignored invalid systemPromptFile value:', raw);
         }
       }
 

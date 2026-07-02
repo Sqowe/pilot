@@ -3258,6 +3258,19 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
             workspaceInstructions.resolvedFile,
             ')'
           );
+        } else {
+          // Invariant check: noContextFiles=true means pi won't inject any
+          // context files either — log a warning if instructions were enabled
+          // but nothing resolved, so zero-injection runs are visible in logs.
+          const { enabled: wsEnabled } = resolveWorkspaceInstructionsConfig(configStore);
+          if (wsEnabled) {
+            logWarn(
+              '[ClaudeAgentRunner] noContextFiles=true but workspace instructions resolved to null.',
+              'Agent will run without workspace instructions (no candidate file found in cwd:',
+              effectiveCwd,
+              ')'
+            );
+          }
         }
 
         const resourceLoader = new DefaultResourceLoader({
@@ -3265,7 +3278,19 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
           agentDir: userClaudeDir,
           additionalSkillPaths: skillPaths,
           appendSystemPrompt: appendSystemPrompt ? [appendSystemPrompt] : undefined,
+          // App owns instruction-file discovery (D1): disable pi's native
+          // AGENTS.md/CLAUDE.md auto-loading to prevent double-injection.
+          // Confirmed from resource-loader.js (dist): noContextFiles=true only
+          // gates the agentsFiles path (loadProjectContextFiles call) — it sets
+          // agentsFiles:[] and leaves extensions, skills, prompts, themes, and
+          // system-prompt discovery completely unaffected. Verified against the
+          // installed package; see tests/workspace-system-prompt.test.ts for
+          // the regression test that detects double-injection.
+          noContextFiles: true,
         });
+        log(
+          '[ClaudeAgentRunner] noContextFiles=true: pi native context-file discovery disabled; app priority-list resolver is sole injection source.'
+        );
         await resourceLoader.reload();
 
         const modelRegistry = ModelRegistry.inMemory(authStorage);

@@ -284,3 +284,51 @@ export async function loadWorkspaceSystemPrompt(
   const result = await tryLoadOne(absoluteCwd, rawChoice as string);
   return result ? { ...result, resolvedFile: '' } : null;
 }
+
+// ---------------------------------------------------------------------------
+// Pure status helper — shared by IPC handler and tests
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the full WorkspaceInstructionsStatus for the given config store and
+ * working directory. Extracted from the IPC handler so tests can exercise the
+ * real logic without duplicating it.
+ *
+ * Contract:
+ * - `configuredFile` = first entry in the resolved priority list.
+ *   Populated even when disabled so the UI can show what would be used.
+ *   Empty string only when no priority list exists (fresh install, no config).
+ * - `resolvedFile`   = the candidate that actually won; empty string when not loaded.
+ */
+export async function computeWorkspaceInstructionsStatus(
+  store: Parameters<typeof resolveWorkspaceInstructionsConfig>[0],
+  cwd: string | undefined
+): Promise<import('../../shared/workspace-instructions-status').WorkspaceInstructionsStatus> {
+  const { enabled, priority } = resolveWorkspaceInstructionsConfig(store);
+  const configuredFile = priority.length > 0 ? priority[0] : '';
+
+  if (!enabled) {
+    return { configuredFile, resolvedFile: '', loaded: false };
+  }
+
+  const result = await loadWorkspaceSystemPrompt(cwd, priority, true);
+  if (result) {
+    const sizeBytes = Buffer.byteLength(result.text, 'utf8');
+    return {
+      configuredFile,
+      resolvedFile: result.resolvedFile,
+      loaded: true,
+      sizeBytes,
+      truncated: sizeBytes >= MAX_BYTES,
+      fingerprintShort: result.fingerprint.slice(0, 8),
+    };
+  }
+  return {
+    configuredFile,
+    resolvedFile: '',
+    loaded: false,
+    error: `No workspace instructions file found (searched: ${
+      priority.length ? priority.join(', ') : '(none)'
+    })`,
+  };
+}
