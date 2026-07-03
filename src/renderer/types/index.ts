@@ -824,6 +824,11 @@ export interface ExecutionContext {
 
 // App Config types
 export type ProviderType = 'openrouter' | 'anthropic' | 'custom' | 'openai' | 'gemini' | 'ollama';
+/**
+ * Superset of ProviderType that additionally allows 'local' for the embedding sub-config only.
+ * The 'local' value must never appear on the main LLM config or any ApiConfigSet provider field.
+ */
+export type EmbeddingProviderType = ProviderType | 'local';
 export type CustomProtocolType = 'anthropic' | 'openai' | 'gemini';
 export type AppTheme = 'dark' | 'light' | 'system';
 export type ProviderProfileKey =
@@ -863,9 +868,9 @@ export interface CreateSetPayload {
   fromSetId?: string;
 }
 
-export interface MemoryModelRuntimeConfig {
+/** Shared fields for both LLM and embedding memory runtime sub-configs. */
+export interface MemoryModelRuntimeConfigBase {
   inheritFromActive: boolean;
-  provider?: ProviderType;
   customProtocol?: CustomProtocolType;
   apiKey?: string;
   baseUrl?: string;
@@ -873,9 +878,26 @@ export interface MemoryModelRuntimeConfig {
   timeoutMs: number;
 }
 
+/** LLM sub-config: provider is always a ProviderType (never 'local'). */
+export interface MemoryLLMRuntimeConfig extends MemoryModelRuntimeConfigBase {
+  provider?: ProviderType;
+}
+
+/** Embedding sub-config: provider may be 'local' for in-process ONNX inference. */
+export interface MemoryEmbeddingRuntimeConfig extends MemoryModelRuntimeConfigBase {
+  provider?: EmbeddingProviderType;
+}
+
+/**
+ * @deprecated Use MemoryLLMRuntimeConfig or MemoryEmbeddingRuntimeConfig directly.
+ * Kept as a union alias so existing consumers that reference MemoryModelRuntimeConfig
+ * continue to compile during the transition.
+ */
+export type MemoryModelRuntimeConfig = MemoryLLMRuntimeConfig | MemoryEmbeddingRuntimeConfig;
+
 export interface MemoryRuntimeConfig {
-  llm: MemoryModelRuntimeConfig;
-  embedding: MemoryModelRuntimeConfig;
+  llm: MemoryLLMRuntimeConfig;
+  embedding: MemoryEmbeddingRuntimeConfig;
   useEmbedding: boolean;
   maxNavSteps: number;
   ingestionConcurrency: number;

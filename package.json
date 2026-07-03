@@ -73,6 +73,7 @@
     "@earendil-works/pi-ai": "0.80.2",
     "@earendil-works/pi-coding-agent": "0.80.2",
     "@google/genai": "^1.52.0",
+    "@huggingface/transformers": "4.2.0",
     "@larksuiteoapi/node-sdk": "^1.66.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@slack/bolt": "4.7.0",

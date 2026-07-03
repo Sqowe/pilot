@@ -1,7 +1,8 @@
 # Local Embeddings by Default — Implementation Plan
 
-**Status:** Proposed (not started)
+**Status:** Phase 1 complete — Phase 2 ready to start
 **Date:** 2026-07-02
+**Updated:** 2026-07-03
 **Owner:** @obodnikov
 **Related:** [memory-system-architecture.md](memory-system-architecture.md),
 [memory-llm-client.ts](../../src/main/memory/memory-llm-client.ts),
@@ -375,19 +376,22 @@ network/download path.
 
 ## 10. Rollout phases
 
-1. **Phase 1 — provider + backend wiring**: 6.1–6.4, 6.7 (dependency, module, config schema,
-   client dispatch, packaging). No UI changes yet; `provider: 'local'` is reachable only by
-   editing `config.json` by hand or via a temporary debug affordance. Ship behind
-   `useEmbedding` staying `false` by default still (D3 not yet flipped) so this phase is purely
-   additive and low-risk.
-2. **Phase 2 — migration (§7)**: schema version bump + migration logic + tests. Still no default
-   flip in this phase — this just makes flipping the default _safe_ to do in Phase 3.
-3. **Phase 3 — flip the default (D3)** + **UI** (6.5, 6.6, 6.8): new installs get local
-   embeddings on by default; Settings UI gets the three-way provider selector, download progress,
-   and "Remove downloaded model" action; i18n across all four locales.
-4. **Phase 4 — polish**: rebuild-prompt-on-provider-change (§8) if not already naturally covered,
-   telemetry/logging review, docs update to `memory-system-architecture.md` §6 (Configuration)
-   to document the new `'local'` provider value.
+1. ✅ **Phase 1 + 2 — provider + backend wiring + migration** _(complete 2026-07-03)_:
+   `@huggingface/transformers` dependency added; `local-embedding-provider.ts` written (ONNX
+   pipeline, dtype fallback q8→fp16→fp32, pinned model revision, Set-based progress listeners,
+   dimension validation, mkdirp cache dir). Config schema extended (`EmbeddingProviderType`,
+   split `MemoryLLMRuntimeConfig` / `MemoryEmbeddingRuntimeConfig`). Schema v2 migration
+   implemented (schema-version-aware normalization, `isFreshInstall` flag, `mergeMemoryRuntime`
+   deep-merge for partial updates). `MemoryLLMClient.embed()` local branch wired with throttled
+   IPC progress events. Packaging updated (`electron-builder.yml`). 2650 tests passing.
+   _D3 (default flip) and D4 (migration) are both shipped: fresh installs get
+   `useEmbedding: true`, `provider: 'local'`; existing v1 installs are frozen at their current
+   behavior via schema-version-aware normalization._
+2. ~~**Phase 2 — migration**~~: _Merged into Phase 1 above._
+3. **Phase 3 — UI** (6.5, 6.6, 6.8): Settings UI three-way provider selector, download
+   progress indicator, "Remove downloaded model" action, i18n across all four locales (en/ru/hu/zh).
+4. **Phase 4 — polish**: rebuild-prompt-on-provider-change (§8), telemetry/logging review,
+   docs update to `memory-system-architecture.md` §6 to document the `'local'` provider value.
 
 ---
 

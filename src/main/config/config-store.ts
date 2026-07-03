@@ -56,6 +56,11 @@ import {
  * Application configuration schema
  */
 export type ProviderType = 'openrouter' | 'anthropic' | 'custom' | 'openai' | 'gemini' | 'ollama';
+/**
+ * Superset of ProviderType that additionally allows 'local' for the embedding sub-config only.
+ * The 'local' value must never appear on the main LLM config or any ApiConfigSet provider field.
+ */
+export type EmbeddingProviderType = ProviderType | 'local';
 export type CustomProtocolType = 'anthropic' | 'openai' | 'gemini';
 export type AppTheme = 'dark' | 'light' | 'system';
 export type ProviderProfileKey =
@@ -216,9 +221,9 @@ export interface AppConfig {
   orphanDismissals: import('../../shared/workspace-orphan-types').WorkspaceOrphanDismissal[];
 }
 
-export interface MemoryModelRuntimeConfig {
+/** Shared fields for both LLM and embedding memory runtime sub-configs. */
+export interface MemoryModelRuntimeConfigBase {
   inheritFromActive: boolean;
-  provider?: ProviderType;
   customProtocol?: CustomProtocolType;
   apiKey?: string;
   baseUrl?: string;
@@ -226,9 +231,26 @@ export interface MemoryModelRuntimeConfig {
   timeoutMs: number;
 }
 
+/** LLM sub-config: provider is always a ProviderType (never 'local'). */
+export interface MemoryLLMRuntimeConfig extends MemoryModelRuntimeConfigBase {
+  provider?: ProviderType;
+}
+
+/** Embedding sub-config: provider may be 'local' for in-process ONNX inference. */
+export interface MemoryEmbeddingRuntimeConfig extends MemoryModelRuntimeConfigBase {
+  provider?: EmbeddingProviderType;
+}
+
+/**
+ * @deprecated Use MemoryLLMRuntimeConfig or MemoryEmbeddingRuntimeConfig directly.
+ * Kept as a union alias so existing consumers that reference MemoryModelRuntimeConfig
+ * continue to compile during the transition.
+ */
+export type MemoryModelRuntimeConfig = MemoryLLMRuntimeConfig | MemoryEmbeddingRuntimeConfig;
+
 export interface MemoryRuntimeConfig {
-  llm: MemoryModelRuntimeConfig;
-  embedding: MemoryModelRuntimeConfig;
+  llm: MemoryLLMRuntimeConfig;
+  embedding: MemoryEmbeddingRuntimeConfig;
   useEmbedding: boolean;
   maxNavSteps: number;
   ingestionConcurrency: number;
@@ -364,15 +386,17 @@ const defaultConfig: AppConfig = {
       timeoutMs: 180000,
     },
     embedding: {
-      inheritFromActive: true,
-      provider: undefined,
+      inheritFromActive: false,
+      provider: 'local' as const,
       customProtocol: undefined,
       apiKey: '',
       baseUrl: '',
+      // Safe fallback model for non-local providers. Ignored when provider === 'local'
+      // since the model ID is hardcoded in local-embedding-provider.ts (design D1).
       model: 'text-embedding-3-small',
       timeoutMs: 180000,
     },
-    useEmbedding: false,
+    useEmbedding: true,
     maxNavSteps: 2,
     ingestionConcurrency: 4,
     storageRoot: '',
@@ -531,18 +555,23 @@ function normalizeCatchUpPolicy(value: unknown): AppConfig['schedulerCatchUpPoli
   return value;
 }
 
-function isMemoryModelRuntimeConfig(value: unknown): value is Partial<MemoryModelRuntimeConfig> {
+function isEmbeddingProviderType(value: unknown): value is EmbeddingProviderType {
+  return isProviderType(value) || value === 'local';
+}
+
+function isMemoryModelRuntimeConfig(
+  value: unknown
+): value is Partial<MemoryModelRuntimeConfigBase> {
   return typeof value === 'object' && value !== null;
 }
 
-function normalizeMemoryModelRuntimeConfig(
+function normalizeMemoryModelRuntimeConfigBase(
   raw: unknown,
-  fallback: MemoryModelRuntimeConfig
-): MemoryModelRuntimeConfig {
+  fallback: MemoryModelRuntimeConfigBase
+): MemoryModelRuntimeConfigBase {
   const value = isMemoryModelRuntimeConfig(raw) ? raw : {};
   return {
     inheritFromActive: toBoolean(value.inheritFromActive, fallback.inheritFromActive),
-    provider: isProviderType(value.provider) ? value.provider : fallback.provider,
     customProtocol: isCustomProtocol(value.customProtocol)
       ? value.customProtocol
       : fallback.customProtocol,
@@ -556,16 +585,65 @@ function normalizeMemoryModelRuntimeConfig(
   };
 }
 
-function normalizeMemoryRuntimeConfig(raw: unknown): MemoryRuntimeConfig {
+function normalizeMemoryLLMRuntimeConfig(
+  raw: unknown,
+  fallback: MemoryLLMRuntimeConfig
+): MemoryLLMRuntimeConfig {
+  const base = normalizeMemoryModelRuntimeConfigBase(raw, fallback);
+  const rawProvider = isMemoryModelRuntimeConfig(raw)
+    ? (raw as Partial<MemoryLLMRuntimeConfig>).provider
+    : undefined;
+  return {
+    ...base,
+    provider: isProviderType(rawProvider) ? rawProvider : fallback.provider,
+  };
+}
+
+function normalizeMemoryEmbeddingRuntimeConfig(
+  raw: unknown,
+  fallback: MemoryEmbeddingRuntimeConfig
+): MemoryEmbeddingRuntimeConfig {
+  const base = normalizeMemoryModelRuntimeConfigBase(raw, fallback);
+  const rawProvider = isMemoryModelRuntimeConfig(raw)
+    ? (raw as Partial<MemoryEmbeddingRuntimeConfig>).provider
+    : undefined;
+  return {
+    ...base,
+    provider: isEmbeddingProviderType(rawProvider) ? rawProvider : fallback.provider,
+  };
+}
+
+function normalizeMemoryRuntimeConfig(
+  raw: unknown,
+  schemaVersion?: number,
+  isFreshInstall?: boolean
+): MemoryRuntimeConfig {
   const value =
     typeof raw === 'object' && raw !== null ? (raw as Partial<MemoryRuntimeConfig>) : {};
+
+  // Embedding defaults are schema-version and install-type aware:
+  // - Pre-v2 (existing installs before this feature): old defaults — no local embedding.
+  // - v2+ fresh install: new defaults — useEmbedding: true, provider: 'local'.
+  // - v2+ upgrade (was v0 or v1): preserve old behavior — provider: undefined, useEmbedding
+  //   is frozen via migrateToV2(). We must NOT fall back to 'local' for upgraded users who
+  //   never explicitly set a provider, otherwise they'd silently get local embeddings.
+  const isPreV2 = typeof schemaVersion === 'number' && schemaVersion < 2;
+  const isTrulyFreshV2 = !isPreV2 && isFreshInstall === true;
+
+  const embeddingFallback: MemoryEmbeddingRuntimeConfig =
+    isPreV2 || !isTrulyFreshV2
+      ? {
+          ...defaultConfig.memoryRuntime.embedding,
+          provider: undefined,
+          model: 'text-embedding-3-small',
+        }
+      : defaultConfig.memoryRuntime.embedding;
+  const useEmbeddingFallback = isTrulyFreshV2 ? defaultConfig.memoryRuntime.useEmbedding : false;
+
   const result: MemoryRuntimeConfig = {
-    llm: normalizeMemoryModelRuntimeConfig(value.llm, defaultConfig.memoryRuntime.llm),
-    embedding: normalizeMemoryModelRuntimeConfig(
-      value.embedding,
-      defaultConfig.memoryRuntime.embedding
-    ),
-    useEmbedding: toBoolean(value.useEmbedding, defaultConfig.memoryRuntime.useEmbedding),
+    llm: normalizeMemoryLLMRuntimeConfig(value.llm, defaultConfig.memoryRuntime.llm),
+    embedding: normalizeMemoryEmbeddingRuntimeConfig(value.embedding, embeddingFallback),
+    useEmbedding: toBoolean(value.useEmbedding, useEmbeddingFallback),
     maxNavSteps:
       typeof value.maxNavSteps === 'number' && Number.isFinite(value.maxNavSteps)
         ? Math.max(0, Math.min(4, Math.round(value.maxNavSteps)))
@@ -756,6 +834,29 @@ function defaultProtocolForProvider(provider: ProviderType): CustomProtocolType 
   return 'anthropic';
 }
 
+/**
+ * Deep-merge a partial memoryRuntime update with the current persisted value.
+ * Only top-level scalar fields and the llm/embedding sub-objects are merged
+ * field-by-field; all other fields fall through to the incoming update or current.
+ * This prevents partial UI saves from resetting unrelated nested keys.
+ */
+function mergeMemoryRuntime(
+  current: MemoryRuntimeConfig,
+  incoming: Partial<MemoryRuntimeConfig>
+): Partial<MemoryRuntimeConfig> {
+  return {
+    ...current,
+    ...incoming,
+    // Merge llm sub-object field-by-field so partial updates don't wipe e.g. apiKey.
+    llm: incoming.llm !== undefined ? { ...current.llm, ...incoming.llm } : current.llm,
+    // Merge embedding sub-object field-by-field for the same reason.
+    embedding:
+      incoming.embedding !== undefined
+        ? { ...current.embedding, ...incoming.embedding }
+        : current.embedding,
+  };
+}
+
 export class ConfigStore {
   private store: Store<AppConfig>;
 
@@ -803,24 +904,36 @@ export class ConfigStore {
     // install reads 0 and triggers migration; once we stamp 1 it persists in
     // the encrypted store and migration never re-runs.
     const rawVersion = this.store.get('configSchemaVersion');
-    const currentVersion = typeof rawVersion === 'number' && rawVersion >= 1 ? 1 : 0;
+    const currentVersion =
+      typeof rawVersion === 'number' && rawVersion >= 1 ? (rawVersion >= 2 ? 2 : 1) : 0;
 
     if (!configFileExists) {
-      // Truly fresh install → keep D4 defaults (enabled) and just stamp the
-      // schema version so migration is skipped now and on every future launch.
-      this.store.set({ configSchemaVersion: 1 } as unknown as AppConfig);
+      // Truly fresh install → new defaults (useEmbedding: true, provider: 'local') apply
+      // naturally from defaultConfig. Just stamp the current schema version.
+      this.store.set({ configSchemaVersion: 2 } as unknown as AppConfig);
     } else if (currentVersion === 0) {
-      // Existing pre-migration install → derive the new workspace-instructions
-      // fields from the decrypted legacy value, then stamp version 1 so this
-      // path runs exactly once.
+      // Existing pre-v1 install → run legacy migration then fall through to v1→v2 below.
       const migrated = this.migrateFromLegacy(this.store.get('systemPromptFile'));
       this.store.set({
         ...migrated,
         configSchemaVersion: 1,
       } as unknown as AppConfig);
+      // Fall through to v1→v2 migration — use dot-path sets to preserve all
+      // other memoryRuntime fields (llm, ingestionConcurrency, storageRoot, etc.).
+      this.migrateToV2();
+      this.store.set({ configSchemaVersion: 2 } as unknown as AppConfig);
+    } else if (currentVersion === 1) {
+      // Existing v1 install → freeze current embedding behavior so the new
+      // defaults (useEmbedding: true, provider: 'local') never apply to them.
+      // Use dot-path sets to preserve all other memoryRuntime fields.
+      this.migrateToV2();
+      this.store.set({ configSchemaVersion: 2 } as unknown as AppConfig);
     }
 
-    const normalized = this.normalizeConfig(this.store.store as Partial<AppConfig>);
+    const normalized = this.normalizeConfig(
+      this.store.store as Partial<AppConfig>,
+      !configFileExists
+    );
     this.store.set(normalized);
   }
 
@@ -851,9 +964,25 @@ export class ConfigStore {
   }
 
   /**
-   * Auto-fix model IDs that don't match pi-ai registry format.
-   * Non-destructive: only applies known safe transformations at read time.
+   * Freeze useEmbedding for existing (v1) installs so the new default (true)
+   * doesn't silently enable embeddings for users who never opted in.
+   *
+   * embedding.provider is intentionally NOT touched here — normalization is now
+   * schema-version-aware (see normalizeMemoryRuntimeConfig). For pre-v2 configs,
+   * the old defaults (provider: undefined, useEmbedding: false) are used as
+   * fallbacks regardless of what defaultConfig says. So writing provider is
+   * unnecessary and could clobber an existing custom provider value.
+   *
+   * Only sets memoryRuntime.useEmbedding (dot-path, non-destructive) and stamps
+   * configSchemaVersion: 2 in the caller.
    */
+  private migrateToV2(): void {
+    const rawMemory = this.store.get('memoryRuntime');
+    const { useEmbedding } = computeV2Migration(rawMemory);
+    // Dot-path write: only useEmbedding is frozen; all other fields are untouched.
+    this.store.set('memoryRuntime.useEmbedding' as unknown as keyof AppConfig, useEmbedding);
+  }
+
   private normalizeModelIds(config: AppConfig): void {
     // Fix legacy "gemini/gemini-*" → "gemini-*" for gemini profiles
     // (pi-ai google provider uses bare model IDs, not prefixed)
@@ -1242,7 +1371,10 @@ export class ConfigStore {
     );
   }
 
-  private normalizeConfig(rawConfig: Partial<AppConfig> | undefined): AppConfig {
+  private normalizeConfig(
+    rawConfig: Partial<AppConfig> | undefined,
+    isFreshInstall?: boolean
+  ): AppConfig {
     const raw = rawConfig || {};
     const legacy = this.normalizeLegacyProjection(raw);
     const normalizedFromRaw = this.normalizeConfigSets(raw.configSets, legacy);
@@ -1301,11 +1433,19 @@ export class ConfigStore {
       theme: isAppTheme(raw.theme) ? raw.theme : defaultConfig.theme,
       sandboxEnabled: toBoolean(raw.sandboxEnabled, defaultConfig.sandboxEnabled),
       memoryEnabled: toBoolean(raw.memoryEnabled, defaultConfig.memoryEnabled),
-      memoryRuntime: normalizeMemoryRuntimeConfig(raw.memoryRuntime),
+      memoryRuntime: normalizeMemoryRuntimeConfig(
+        raw.memoryRuntime,
+        typeof raw.configSchemaVersion === 'number' ? raw.configSchemaVersion : 0,
+        isFreshInstall
+      ),
       enableThinking: projected.enableThinking,
       isConfigured: toBoolean(raw.isConfigured, defaultConfig.isConfigured),
       configSchemaVersion:
-        typeof raw.configSchemaVersion === 'number' && raw.configSchemaVersion >= 1 ? 1 : 0,
+        typeof raw.configSchemaVersion === 'number' && raw.configSchemaVersion >= 2
+          ? 2
+          : raw.configSchemaVersion === 1
+            ? 1
+            : 0,
       schedulerCatchUpPolicy: normalizeCatchUpPolicy(raw.schedulerCatchUpPolicy),
       schedulerConflictPolicy: isValidConflictPolicy(raw.schedulerConflictPolicy)
         ? raw.schedulerConflictPolicy
@@ -1782,7 +1922,12 @@ export class ConfigStore {
         updates.memoryEnabled !== undefined ? updates.memoryEnabled : current.memoryEnabled,
       memoryRuntime:
         updates.memoryRuntime !== undefined
-          ? normalizeMemoryRuntimeConfig(updates.memoryRuntime)
+          ? normalizeMemoryRuntimeConfig(
+              // Deep-merge with current so partial UI updates (e.g., only embedding fields)
+              // never reset unrelated keys (llm config, storageRoot, ingestionConcurrency, etc.).
+              mergeMemoryRuntime(current.memoryRuntime, updates.memoryRuntime),
+              current.configSchemaVersion
+            )
           : current.memoryRuntime,
       isConfigured:
         updates.isConfigured !== undefined ? updates.isConfigured : current.isConfigured,
@@ -2096,3 +2241,23 @@ export class ConfigStore {
 
 // Singleton instance
 export const configStore = new ConfigStore();
+
+/**
+ * Pure function extracted from ConfigStore.migrateToV2 for testability.
+ * Given the raw persisted memoryRuntime value from a v1 config, returns the
+ * useEmbedding value to freeze for existing installs.
+ *
+ * Note: embedding.provider is intentionally NOT part of the migration output.
+ * Schema-version-aware normalization in normalizeMemoryRuntimeConfig handles
+ * provider fallback correctly based on configSchemaVersion, so persisting
+ * 'undefined' here is both unnecessary and risky (it would delete the key).
+ */
+export function computeV2Migration(rawMemory: unknown): { useEmbedding: boolean } {
+  const mem =
+    typeof rawMemory === 'object' && rawMemory !== null
+      ? (rawMemory as Partial<{ useEmbedding: boolean }>)
+      : {};
+  return {
+    useEmbedding: typeof mem.useEmbedding === 'boolean' ? mem.useEmbedding : false,
+  };
+}

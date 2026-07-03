@@ -1,8 +1,15 @@
 import OpenAI from 'openai';
+import * as os from 'os';
+import * as path from 'path';
 import type { UserMessage as PiUserMessage } from '@earendil-works/pi-ai';
 // `completeSimple` moved off the pi-ai root entrypoint to `/compat` in 0.80.0.
 import { completeSimple } from '@earendil-works/pi-ai/compat';
-import type { AppConfig, CustomProtocolType, ProviderType } from '../config/config-store';
+import type {
+  AppConfig,
+  CustomProtocolType,
+  ProviderType,
+  EmbeddingProviderType,
+} from '../config/config-store';
 import { configStore } from '../config/config-store';
 import {
   normalizeOpenAICompatibleBaseUrl,
@@ -19,6 +26,11 @@ import {
   inferPiApi,
 } from '../claude/pi-model-resolution';
 import { log, logWarn } from '../utils/logger';
+import {
+  configureLocalEmbeddingCacheDir,
+  embedLocal,
+  type LocalEmbeddingProgress,
+} from './local-embedding-provider';
 
 export interface MemoryCompletionRequest {
   systemPrompt: string;
@@ -38,7 +50,8 @@ export interface MemoryLLMClientLike {
 
 interface MemoryModelConfig {
   inheritFromActive?: boolean;
-  provider?: ProviderType;
+  /** Accepts EmbeddingProviderType so callers can pass embedding config directly; 'local' is handled before this reaches normalizeModelConfig. */
+  provider?: EmbeddingProviderType;
   customProtocol?: CustomProtocolType;
   apiKey?: string;
   baseUrl?: string;
@@ -47,6 +60,7 @@ interface MemoryModelConfig {
 }
 
 interface ResolvedMemoryModelConfig {
+  /** Always a ProviderType — 'local' is handled before normalizeModelConfig is called. */
   provider: ProviderType;
   customProtocol?: CustomProtocolType;
   apiKey: string;
@@ -67,7 +81,11 @@ function normalizeModelConfig(
   const activeApiKey = appConfig.apiKey;
   const activeModel = appConfig.model;
 
-  const provider = inherit ? activeProvider : input?.provider || activeProvider;
+  const rawProvider = inherit ? activeProvider : input?.provider || activeProvider;
+  // 'local' is always handled before normalizeModelConfig is called (in embed());
+  // if it somehow arrives here, fall back to the active provider.
+  const provider: ProviderType =
+    rawProvider === 'local' ? activeProvider : (rawProvider as ProviderType);
   const customProtocol = inherit ? activeProtocol : input?.customProtocol || activeProtocol;
   const apiKey = inherit ? activeApiKey : input?.apiKey || '';
   const baseUrl = inherit ? activeBaseUrl : input?.baseUrl || activeBaseUrl;
@@ -87,6 +105,7 @@ function normalizeModelConfig(
 function buildAppConfig(base: AppConfig, resolved: ResolvedMemoryModelConfig): AppConfig {
   return {
     ...base,
+    // resolved.provider is ProviderType — 'local' never reaches this function.
     provider: resolved.provider,
     customProtocol: resolved.customProtocol,
     apiKey: resolved.apiKey,
@@ -95,8 +114,30 @@ function buildAppConfig(base: AppConfig, resolved: ResolvedMemoryModelConfig): A
   };
 }
 
+export interface MemoryLLMClientOptions {
+  /** Called during first-use local model download — wire to IPC from index.ts. */
+  onLocalEmbeddingProgress?: (p: LocalEmbeddingProgress) => void;
+  /** Returns the storage root path for the local model cache. Injected to keep this module Electron-free. */
+  getStorageRoot?: () => string;
+}
+
 export class MemoryLLMClient implements MemoryLLMClientLike {
-  constructor(private readonly getConfig: () => AppConfig = () => configStore.getAll()) {}
+  private readonly onLocalEmbeddingProgress?: (p: LocalEmbeddingProgress) => void;
+  private readonly getStorageRoot: () => string;
+  /** Cache dir is configured once — subsequent calls are no-ops unless it changes. */
+  private configuredCacheDir = '';
+
+  constructor(
+    private readonly getConfig: () => AppConfig = () => configStore.getAll(),
+    options?: MemoryLLMClientOptions
+  ) {
+    this.onLocalEmbeddingProgress = options?.onLocalEmbeddingProgress;
+    // Default storage root uses os.homedir() so non-Electron contexts (tests, CLI)
+    // never throw on construction. Callers should inject app.getPath('userData')
+    // via options.getStorageRoot for the canonical production path.
+    this.getStorageRoot =
+      options?.getStorageRoot ?? (() => path.join(os.homedir(), '.open-cowork', 'memory'));
+  }
 
   async complete(request: MemoryCompletionRequest): Promise<MemoryCompletionResponse> {
     const appConfig = this.getConfig();
@@ -227,6 +268,27 @@ export class MemoryLLMClient implements MemoryLLMClientLike {
     if (!appConfig.memoryRuntime?.useEmbedding) {
       return [];
     }
+
+    // Check for local provider before normalizeModelConfig — the local branch
+    // bypasses all remote credential resolution and uses the in-process ONNX pipeline.
+    const rawEmbeddingProvider = appConfig.memoryRuntime.embedding?.provider;
+    if (rawEmbeddingProvider === 'local') {
+      const configuredRoot = appConfig.memoryRuntime.storageRoot?.trim();
+      const storageRoot = configuredRoot || this.getStorageRoot();
+      // Configure cache dir only on first call or when storageRoot changes.
+      if (storageRoot !== this.configuredCacheDir) {
+        if (this.configuredCacheDir) {
+          logWarn(
+            '[MemoryLLMClient] storageRoot changed after pipeline init — cache dir updated:',
+            storageRoot
+          );
+        }
+        configureLocalEmbeddingCacheDir(storageRoot);
+        this.configuredCacheDir = storageRoot;
+      }
+      return embedLocal(trimmed, this.onLocalEmbeddingProgress);
+    }
+
     const embedConfig = normalizeModelConfig(
       appConfig,
       appConfig.memoryRuntime.embedding,

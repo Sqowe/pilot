@@ -11,7 +11,7 @@ import { ExperienceMemoryExtractor } from './experience-memory-extractor';
 import { ExperienceMemoryStore } from './experience-memory-store';
 import { MemoryIngestionQueue } from './memory-ingestion-queue';
 import type { MemoryLLMClientLike } from './memory-llm-client';
-import { MemoryLLMClient } from './memory-llm-client';
+import { MemoryLLMClient, type MemoryLLMClientOptions } from './memory-llm-client';
 import { MemoryNavigator } from './memory-navigator';
 import { DEFAULT_MEMORY_PROMPTS, type MemoryPromptSet } from './memory-prompts';
 import { MemoryRetriever } from './memory-retriever';
@@ -164,10 +164,12 @@ export class MemoryService {
     private readonly db: DatabaseInstance,
     options?: {
       llmClient?: MemoryLLMClientLike;
+      llmClientOptions?: MemoryLLMClientOptions;
       prompts?: Partial<MemoryPromptSet>;
     }
   ) {
-    this.llmClient = options?.llmClient || new MemoryLLMClient();
+    this.llmClient =
+      options?.llmClient || new MemoryLLMClient(undefined, options?.llmClientOptions);
     const promptSet: MemoryPromptSet = {
       ...DEFAULT_MEMORY_PROMPTS,
       ...options?.prompts,

@@ -1006,7 +1006,29 @@ app
     pluginRuntimeService = new PluginRuntimeService(new PluginCatalogService());
     // Defer orchestrator backfill to avoid blocking startup with synchronous disk I/O
     setImmediate(() => pluginRuntimeService?.backfillOrchestrators());
-    memoryService = new MemoryService(db);
+    memoryService = new MemoryService(db, {
+      llmClientOptions: {
+        getStorageRoot: () => join(app.getPath('userData'), 'memory'),
+        onLocalEmbeddingProgress: (() => {
+          // Throttle IPC emissions to ~10 Hz to avoid flooding the renderer
+          // with chatty transformers.js progress callbacks during model download.
+          let lastEmitMs = 0;
+          const THROTTLE_MS = 100;
+          return (p: import('./memory/local-embedding-provider').LocalEmbeddingProgress) => {
+            const now = Date.now();
+            // Always send terminal events (ready/error) immediately; throttle 'downloading'.
+            if (p.status !== 'downloading' || now - lastEmitMs >= THROTTLE_MS) {
+              lastEmitMs = now;
+              for (const win of BrowserWindow.getAllWindows()) {
+                if (!win.isDestroyed()) {
+                  win.webContents.send('memory.localEmbeddingProgress', p);
+                }
+              }
+            }
+          };
+        })(),
+      },
+    });
     const extensionManager = new AgentRuntimeExtensionManager([new MemoryExtension(memoryService)]);
 
     // Initialize session manager before creating an interactive window.
