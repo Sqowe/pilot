@@ -314,7 +314,10 @@ The injected block includes safety instructions:
 
 ## 5. Storage Layout
 
-All memory files live under a configurable `storageRoot` (typically `~/.open-cowork/memory/`):
+All memory files live under a configurable `storageRoot`. By default this is
+`app.getPath('userData')/memory` — on macOS `~/Library/Application Support/sqowe-pilot/memory/`
+(Windows `%APPDATA%\sqowe-pilot\memory\`, Linux `~/.config/sqowe-pilot/memory/`), resolved by
+`getPaths()` in `memory-service.ts`:
 
 ```
 storageRoot/
@@ -323,7 +326,7 @@ storageRoot/
 ├── session_state.json        # Tracks which sessions have been ingested
 ├── prompts/                  # Custom prompt overrides (optional)
 │   └── core-extraction.md    # Custom extraction prompt (if created by user)
-└── eval/                     # Eval harness artifacts (optional)
+└── eval-artifacts/           # Eval harness artifacts (optional)
 ```
 
 ---
