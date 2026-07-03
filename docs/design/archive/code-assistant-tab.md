@@ -1,6 +1,6 @@
 # Code Assistant Tab — Implementation Plan
 
-**Status:** Proposed (not yet implemented)
+**Status:** ❌ Abandoned — implemented instead as a VS Code extension: **sqowe-wingman**
 **Date:** 2026-06-19
 **Owner:** @obodnikov
 **Related:** [agent-runner.ts](../../src/main/claude/agent-runner.ts), [App.tsx](../../src/renderer/App.tsx), [pi-bash-restrictions-extension.md](pi-bash-restrictions-extension.md), [file-tool-path-permissions.md](file-tool-path-permissions.md), `node_modules/@earendil-works/pi-coding-agent/docs/{sdk,rpc}.md`
@@ -19,14 +19,14 @@ The app **already embeds the `pi` coding agent**. [agent-runner.ts](../../src/ma
 runs `createAgentSession(...)` with `createCodingTools(effectiveCwd)` (read/write/edit/bash/grep/find/ls),
 **bridges MCP servers as `customTools`** (~line 3114), loads skills, resolves providers/models, and
 installs the permission gate. The current "chat" tab and a "code assistant" tab are the **same
-engine** — they differ in *persona* (system prompt), *UX* (chat vs. code-centric), and *workspace
-model*. So this feature is built by **adding a mode on top of the runner we already have**, not by
+engine** — they differ in _persona_ (system prompt), _UX_ (chat vs. code-centric), and _workspace
+model_. So this feature is built by **adding a mode on top of the runner we already have**, not by
 embedding or re-implementing anything.
 
 ### Non-goals
 
 - Embedding the standalone `pi` CLI binary in a terminal (xterm/PTY). See §3 (rejected alternative)
-  — it *reduces* reuse and adds a native dep.
+  — it _reduces_ reuse and adds a native dep.
 - A full IDE (no editing surface, debugger, LSP). This is an agent view with code-aware rendering.
 - Changing the chat tab's behavior.
 
@@ -36,18 +36,18 @@ embedding or re-implementing anything.
 
 ### Reused as-is (zero or near-zero work)
 
-| Capability | Where it already lives |
-|---|---|
-| Agent engine + coding tools | `createAgentSession` + `createCodingTools` — [agent-runner.ts](../../src/main/claude/agent-runner.ts) |
-| MCP servers (bridged as customTools) | `agent-runner.ts` (~3114), `mcp-manager.ts` |
-| Skills (load, pin, workspace profiles) | skills loader, `skills-workspace-profile.ts` |
-| **Permissions** (bash trust/deny + the new workspace path-lock) | `decidePermission` — [permission-rules-store.ts](../../src/main/config/permission-rules-store.ts) |
-| Providers / models | `pi-model-resolution.ts` |
-| Session lifecycle + persistence | `SessionManager` + SQLite |
-| cwd / workspace model | sessions are already cwd-bound; `cwd`-keyed MCP/skills/workspace profiles |
-| Message / tool-call / tool-result / code rendering | [MessageCard](../../src/renderer/components/MessageCard.tsx), [ToolUseBlock](../../src/renderer/components/message/ToolUseBlock.tsx), [ToolResultBlock](../../src/renderer/components/message/ToolResultBlock.tsx), [CodeBlock](../../src/renderer/components/message/CodeBlock.tsx) |
-| IPC streaming | `session.start`, `server-event`/`client-event` |
-| System-prompt section system | `prompt-loader.ts` (editable sections + workspace overrides) |
+| Capability                                                      | Where it already lives                                                                                                                                                                                                                                                               |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Agent engine + coding tools                                     | `createAgentSession` + `createCodingTools` — [agent-runner.ts](../../src/main/claude/agent-runner.ts)                                                                                                                                                                                |
+| MCP servers (bridged as customTools)                            | `agent-runner.ts` (~3114), `mcp-manager.ts`                                                                                                                                                                                                                                          |
+| Skills (load, pin, workspace profiles)                          | skills loader, `skills-workspace-profile.ts`                                                                                                                                                                                                                                         |
+| **Permissions** (bash trust/deny + the new workspace path-lock) | `decidePermission` — [permission-rules-store.ts](../../src/main/config/permission-rules-store.ts)                                                                                                                                                                                    |
+| Providers / models                                              | `pi-model-resolution.ts`                                                                                                                                                                                                                                                             |
+| Session lifecycle + persistence                                 | `SessionManager` + SQLite                                                                                                                                                                                                                                                            |
+| cwd / workspace model                                           | sessions are already cwd-bound; `cwd`-keyed MCP/skills/workspace profiles                                                                                                                                                                                                            |
+| Message / tool-call / tool-result / code rendering              | [MessageCard](../../src/renderer/components/MessageCard.tsx), [ToolUseBlock](../../src/renderer/components/message/ToolUseBlock.tsx), [ToolResultBlock](../../src/renderer/components/message/ToolResultBlock.tsx), [CodeBlock](../../src/renderer/components/message/CodeBlock.tsx) |
+| IPC streaming                                                   | `session.start`, `server-event`/`client-event`                                                                                                                                                                                                                                       |
+| System-prompt section system                                    | `prompt-loader.ts` (editable sections + workspace overrides)                                                                                                                                                                                                                         |
 
 ### Net-new (the actual work)
 
@@ -62,15 +62,15 @@ embedding or re-implementing anything.
 
 ## 3. Decision: reuse the runner (Approach B), not embed the CLI (Approach A)
 
-| | A. Embed `pi` CLI in a terminal tab | **B. Code view on the existing runner (chosen)** |
-|---|---|---|
-| Engine | spawn `pi` binary | already in-process |
-| Config / providers | **manual sync** electron-store → `~/.pi/` | **automatic** (same store) |
-| Skills | sync to `~/.pi/agent/skills/` | automatic |
-| **MCP** | **hard** — standalone CLI has no MCP-server config (no `mcp` doc; settings.json has no MCP section); would need a bridging extension | automatic (already bridged) |
-| Permissions | `pi`'s own / bypasses app gate | **inherits app gate** incl. bash + path-lock features |
-| Native deps | node-pty (ABI rebuild pain) | none |
-| Net-new | PTY + config/skill/provider sync + MCP bridge + dual config/permission worlds | a view + coding session + code UI |
+|                    | A. Embed `pi` CLI in a terminal tab                                                                                                  | **B. Code view on the existing runner (chosen)**      |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| Engine             | spawn `pi` binary                                                                                                                    | already in-process                                    |
+| Config / providers | **manual sync** electron-store → `~/.pi/`                                                                                            | **automatic** (same store)                            |
+| Skills             | sync to `~/.pi/agent/skills/`                                                                                                        | automatic                                             |
+| **MCP**            | **hard** — standalone CLI has no MCP-server config (no `mcp` doc; settings.json has no MCP section); would need a bridging extension | automatic (already bridged)                           |
+| Permissions        | `pi`'s own / bypasses app gate                                                                                                       | **inherits app gate** incl. bash + path-lock features |
+| Native deps        | node-pty (ABI rebuild pain)                                                                                                          | none                                                  |
+| Net-new            | PTY + config/skill/provider sync + MCP bridge + dual config/permission worlds                                                        | a view + coding session + code UI                     |
 
 **A wins only if** the literal `pi` terminal TUI (its slash commands, interactive rendering,
 extension ecosystem running verbatim) is the explicit goal and config reuse is acceptable as a sync
@@ -146,6 +146,7 @@ same message stream + the existing composer.
 > final phase.
 
 ### Phase 1 — Coding session backend (mode + persona)
+
 - **Code:** `mode: 'code'` on `SessionManager` sessions; `prompt-loader` `coding` section selected
   for code sessions; bind session `cwd` to a project dir; runner path unchanged otherwise.
 - **Tests:** session created with `mode:'code'` uses coding tools + coding persona + project cwd;
@@ -154,25 +155,29 @@ same message stream + the existing composer.
 - **Gate:** `npm test` + typecheck.
 
 ### Phase 2 — Top-level "Code" view + nav
+
 - **Code:** extend renderer top-level state from `showSettings` boolean to a `view: 'chat' | 'code'
-  | 'settings'` enum (or add a parallel flag); `<CodeView>` reusing the message/tool/code rendering;
+| 'settings'` enum (or add a parallel flag); `<CodeView>` reusing the message/tool/code rendering;
   route `mode:'code'` sessions to it.
 - **Tests:** store/selector tests for view switching; `<CodeView>` renders a code session's stream.
 - **Gate:** typecheck + lint + renderer tests.
 
 ### Phase 3 — Project model (picker + project-bound sessions)
+
 - **Code:** project directory picker (reuse the existing folder-selection / local-dev-path
   mechanism); project-scoped Code session list; persist last project(s).
 - **Tests:** session-list scoping by project; persistence; `session.start { mode:'code', cwd }` IPC.
 - **Gate:** typecheck + lint + tests.
 
 ### Phase 4 — Code-centric rendering (diffs)
+
 - **Code:** `DiffBlock` (or enhanced `ToolResultBlock`) rendering edit/write patches as colored
   diffs; wire into `<CodeView>`.
 - **Tests:** diff component snapshot/parse tests over sample unified patches (add/modify/delete).
 - **Gate:** typecheck + lint + tests.
 
 ### Phase 5 (LAST) — Integration + e2e + docs
+
 - **Integration:** start a Code session in a real temp project; confirm reuse — MCP tools available,
   skills load, providers/models resolve, and **the bash + workspace path-lock permissions apply** to
   the file tools in the project.
@@ -189,7 +194,7 @@ same message stream + the existing composer.
   active chat means two live sessions. `SessionManager` already manages multiple sessions, but verify
   no shared mutable state assumes a single active session (e.g., `cwdRef` is per-session — good).
 - **View-state refactor.** Moving from a `showSettings` boolean to a tri-state view touches `App.tsx`
-  + store + any code reading `showSettings`. Mechanical but broad; do it as its own (Phase 2) step.
+  - store + any code reading `showSettings`. Mechanical but broad; do it as its own (Phase 2) step.
 - **Diff rendering scope creep.** Keep v1 to read-only colored diffs of tool output; defer staging /
   partial-apply / file tree.
 - **Persona drift.** A separate coding system prompt is another prompt surface to maintain; reuse the
@@ -200,15 +205,15 @@ same message stream + the existing composer.
 
 ## 9. Open decisions (recommendations inline — to confirm before/early in build)
 
-1. **Navigation model:** separate top-level **view** ("Code" beside Chat/Settings) *(recommended)*
+1. **Navigation model:** separate top-level **view** ("Code" beside Chat/Settings) _(recommended)_
    vs. a per-session mode toggle inside the chat view.
-2. **Session/project model:** Code tab has its **own project-bound session list** *(recommended)*
+2. **Session/project model:** Code tab has its **own project-bound session list** _(recommended)_
    vs. reusing the chat session list with a coding flag.
-3. **v1 UI scope:** **MVP = reused chat rendering + diff view + project switcher** *(recommended)*;
+3. **v1 UI scope:** **MVP = reused chat rendering + diff view + project switcher** _(recommended)_;
    defer file tree + change-review/staging.
-4. **Persona source:** a **new `coding` prompt-loader section** *(recommended)* vs. a workspace
+4. **Persona source:** a **new `coding` prompt-loader section** _(recommended)_ vs. a workspace
    prompt override only.
-5. **Concurrency:** **single active Code session (one project at a time)** for v1 *(recommended)*;
+5. **Concurrency:** **single active Code session (one project at a time)** for v1 _(recommended)_;
    multiple project tabs later.
 
 ---
