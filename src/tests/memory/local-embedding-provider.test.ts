@@ -105,7 +105,7 @@ describe('local-embedding-provider', () => {
       mockPipelineFn.mockResolvedValue(fakeExtractor);
 
       // Register a listener via embedLocal
-      const embed = embedLocal('test', (p) => events.push(p.status));
+      const embed = embedLocal('test', 'document', (p) => events.push(p.status));
 
       // The embed will fail because configureLocalEmbeddingCacheDir throws
       // (called from memory-llm-client, not directly here — so just test the function directly)
@@ -135,9 +135,34 @@ describe('local-embedding-provider', () => {
       const fakeExtractor = makeFakeExtractor(new Array(LOCAL_EMBEDDING_DIMENSIONS).fill(0.5));
       mockPipelineFn.mockResolvedValue(fakeExtractor);
 
-      await embedLocal('test text');
+      await embedLocal('test text', 'document');
 
-      expect(fakeExtractor).toHaveBeenCalledWith('test text', {
+      // Input is prefixed with the EmbeddingGemma document task prefix.
+      expect(fakeExtractor).toHaveBeenCalledWith('title: none | text: test text', {
+        pooling: 'mean',
+        normalize: true,
+      });
+    });
+
+    it('prepends the query prefix for query embeddings', async () => {
+      const fakeExtractor = makeFakeExtractor(new Array(LOCAL_EMBEDDING_DIMENSIONS).fill(0.5));
+      mockPipelineFn.mockResolvedValue(fakeExtractor);
+
+      await embedLocal('how do I log in', 'query');
+
+      expect(fakeExtractor).toHaveBeenCalledWith('task: search result | query: how do I log in', {
+        pooling: 'mean',
+        normalize: true,
+      });
+    });
+
+    it('defaults to the document prefix when kind is omitted', async () => {
+      const fakeExtractor = makeFakeExtractor(new Array(LOCAL_EMBEDDING_DIMENSIONS).fill(0.5));
+      mockPipelineFn.mockResolvedValue(fakeExtractor);
+
+      await embedLocal('some stored text');
+
+      expect(fakeExtractor).toHaveBeenCalledWith('title: none | text: some stored text', {
         pooling: 'mean',
         normalize: true,
       });
@@ -226,7 +251,7 @@ describe('local-embedding-provider', () => {
         .mockRejectedValue(new Error('other dtypes failed'));
 
       const events: string[] = [];
-      await expect(embedLocal('text', (p) => events.push(p.status))).rejects.toThrow();
+      await expect(embedLocal('text', 'document', (p) => events.push(p.status))).rejects.toThrow();
 
       // After rejection, listener should be deregistered — fire an event and assert no delivery.
       const countBefore = events.length;
@@ -280,7 +305,7 @@ describe('local-embedding-provider', () => {
 
       const progressEvents: Array<{ status: string; progress?: number }> = [];
       // Start the call but don't await yet
-      const embedPromise = embedLocal('text', (p) => progressEvents.push(p));
+      const embedPromise = embedLocal('text', 'document', (p) => progressEvents.push(p));
 
       // Yield to let pipeline init complete
       await Promise.resolve();
@@ -323,8 +348,8 @@ describe('local-embedding-provider', () => {
       const events2: string[] = [];
 
       // Start two concurrent calls — both should receive progress
-      const p1 = embedLocal('text1', (p) => events1.push(p.status));
-      const p2 = embedLocal('text2', (p) => events2.push(p.status));
+      const p1 = embedLocal('text1', 'document', (p) => events1.push(p.status));
+      const p2 = embedLocal('text2', 'document', (p) => events2.push(p.status));
 
       // Yield to let pipeline init complete
       await Promise.resolve();
@@ -357,7 +382,7 @@ describe('local-embedding-provider', () => {
       );
 
       const events: string[] = [];
-      await embedLocal('text', (p) => events.push(p.status));
+      await embedLocal('text', 'document', (p) => events.push(p.status));
 
       const lengthAfterCall = events.length;
       // Fire after call completed — listener should be deregistered, no new events

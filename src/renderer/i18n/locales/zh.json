@@ -196,6 +196,8 @@
     "checkLlmLabel": "记忆 LLM",
     "checkEmbeddingLabel": "嵌入",
     "checkSkipped": "已禁用",
+    "embeddingFormatStaleWarning": "您存储的记忆使用了旧版模型格式生成的嵌入向量。重建之前搜索质量会下降。",
+    "rebuildNow": "立即重建",
     "rebuildAll": "重建全部记忆",
     "rebuildAllConfirm": "这会清空并重建全部记忆，是否继续？",
     "rebuildAllSuccess": "全部记忆已重建（处理了 {{sessions}} 个会话）",

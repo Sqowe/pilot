@@ -15,10 +15,13 @@ import {
   normalizeWorkspaceKey,
   saveJsonFile,
 } from './memory-utils';
+import { EMBEDDING_FORMAT_VERSION } from '../../shared/local-embedding-types';
 
 interface ExperienceMemoryFile {
   sessions: Array<Record<string, unknown>>;
   chunks: Array<Record<string, unknown>>;
+  /** How the stored embeddings were computed. Absent → pre-stamp (treat as 1). */
+  embeddingFormatVersion?: number;
 }
 
 function toStringArray(value: unknown): string[] {
@@ -204,12 +207,16 @@ export class ExperienceMemoryStore {
   readonly chunks: ChunkMemoryItem[];
   private readonly chunkIndex = new Map<string, ChunkMemoryItem>();
   private readonly sessionIndex = new Map<string, SessionMemoryItem>();
+  /** Embedding format the persisted vectors were written with (1 = pre-stamp). */
+  private readonly embeddingFormatVersion: number;
 
   constructor(private readonly filePath: string) {
     const raw = loadJsonFile<ExperienceMemoryFile>(filePath, {
       sessions: [],
       chunks: [],
     });
+    this.embeddingFormatVersion =
+      typeof raw.embeddingFormatVersion === 'number' ? raw.embeddingFormatVersion : 1;
     this.sessions = (raw.sessions || [])
       .map((item) => normalizeSession(item))
       .filter((item): item is SessionMemoryItem => Boolean(item));
@@ -341,7 +348,24 @@ export class ExperienceMemoryStore {
     saveJsonFile(this.filePath, {
       sessions: this.sessions.map(sessionToFileRecord),
       chunks: this.chunks.map(chunkToFileRecord),
+      // Stamp the current format. A rebuild re-saves with EMBEDDING_FORMAT_VERSION,
+      // clearing any stale flag. Note: this is the in-memory value being persisted,
+      // not this.embeddingFormatVersion (which reflects what was loaded).
+      embeddingFormatVersion: EMBEDDING_FORMAT_VERSION,
     });
+  }
+
+  /** Embedding format version the currently-loaded vectors were written with. */
+  getEmbeddingFormatVersion(): number {
+    return this.embeddingFormatVersion;
+  }
+
+  /** True if any stored session/chunk actually carries an embedding vector. */
+  hasEmbeddings(): boolean {
+    return (
+      this.chunks.some((c) => c.embedding.length > 0) ||
+      this.sessions.some((s) => s.embedding.length > 0)
+    );
   }
 
   retrieveProgressive(

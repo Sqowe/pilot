@@ -4339,6 +4339,13 @@ ipcMain.handle('memory.isLocalModelDownloaded', () => {
   return { downloaded: isLocalModelDownloaded(getMemoryStorageRoot()) };
 });
 
+// True when stored local embeddings predate a format change (e.g. the prefix fix)
+// and need a rebuild for good search quality. Gated to the local provider in the
+// service so remote users aren't prompted to re-embed (which costs API calls).
+ipcMain.handle('memory.isEmbeddingFormatStale', () => {
+  return { stale: memoryService?.isEmbeddingFormatStale() ?? false };
+});
+
 // Combined status: on-disk cache presence (dependency-free) + in-process runtime
 // state (idle/loading/ready/error + backoff). Reads the runtime status from the
 // dependency-free state module, so opening Settings never loads transformers.js.

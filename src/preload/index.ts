@@ -656,6 +656,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('memory.removeLocalModel'),
     isLocalModelDownloaded: (): Promise<{ downloaded: boolean }> =>
       ipcRenderer.invoke('memory.isLocalModelDownloaded'),
+    isEmbeddingFormatStale: (): Promise<{ stale: boolean }> =>
+      ipcRenderer.invoke('memory.isEmbeddingFormatStale'),
     getLocalModelStatus: (): Promise<LocalModelStatus> =>
       ipcRenderer.invoke('memory.getLocalModelStatus'),
     warmUpLocalModel: (force?: boolean): Promise<LocalModelStatus> =>
@@ -1056,6 +1058,7 @@ declare global {
         openFileInEditor: () => Promise<void>;
         removeLocalModel: () => Promise<{ success: boolean; removed: boolean; error?: string }>;
         isLocalModelDownloaded: () => Promise<{ downloaded: boolean }>;
+        isEmbeddingFormatStale: () => Promise<{ stale: boolean }>;
         getLocalModelStatus: () => Promise<LocalModelStatus>;
         warmUpLocalModel: (force?: boolean) => Promise<LocalModelStatus>;
         checkModelAvailability: (draft: MemoryRuntimeConfig) => Promise<MemoryModelCheckResult>;

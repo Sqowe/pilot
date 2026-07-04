@@ -215,7 +215,7 @@ describe('MemoryLLMClient', () => {
       const client = new MemoryLLMClient(() => makeLocalConfig());
       const result = await client.embed('hello world');
 
-      expect(embedLocalMock).toHaveBeenCalledWith('hello world', undefined);
+      expect(embedLocalMock).toHaveBeenCalledWith('hello world', 'document', undefined);
       expect(result).toEqual(fakeVec);
     });
 
@@ -248,7 +248,16 @@ describe('MemoryLLMClient', () => {
       });
       await client.embed('test');
 
-      expect(embedLocalMock).toHaveBeenCalledWith('test', progressCb);
+      expect(embedLocalMock).toHaveBeenCalledWith('test', 'document', progressCb);
+    });
+
+    it('passes the embedding kind through to embedLocal', async () => {
+      embedLocalMock.mockResolvedValue([]);
+
+      const client = new MemoryLLMClient(() => makeLocalConfig());
+      await client.embed('a search', 'query');
+
+      expect(embedLocalMock).toHaveBeenCalledWith('a search', 'query', undefined);
     });
 
     it('returns [] when useEmbedding is false even with provider: local', async () => {

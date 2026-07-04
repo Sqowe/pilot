@@ -4,6 +4,26 @@
  * to prevent drift across process boundaries.
  */
 
+/**
+ * Whether a piece of text is being embedded as a search *query* or as a stored
+ * *document*. Provider-neutral (mirrors sentence-transformers encode_query /
+ * encode_document). Only the local EmbeddingGemma provider currently maps this to
+ * a model-specific prefix; remote providers ignore it.
+ */
+export type EmbeddingKind = 'query' | 'document';
+
+/**
+ * Version of *how* embeddings are computed. Bump whenever a change makes new
+ * vectors incomparable with previously-stored ones at the same dimension (e.g. a
+ * prompt/prefix, pooling, or normalization change) so stale indexes can be
+ * detected and a rebuild offered.
+ *
+ * History:
+ *   1 — initial local provider: raw text, no task prefix.
+ *   2 — EmbeddingGemma query/document task prefixes applied.
+ */
+export const EMBEDDING_FORMAT_VERSION = 2;
+
 export interface LocalEmbeddingProgress {
   status: 'downloading' | 'ready' | 'error';
   /** File being downloaded (present during 'downloading'). */

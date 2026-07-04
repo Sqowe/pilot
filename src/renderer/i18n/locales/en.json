@@ -196,6 +196,8 @@
     "checkLlmLabel": "Memory LLM",
     "checkEmbeddingLabel": "Embedding",
     "checkSkipped": "disabled",
+    "embeddingFormatStaleWarning": "Your stored memory was embedded with an older model format. Search quality is reduced until you rebuild.",
+    "rebuildNow": "Rebuild now",
     "rebuildAll": "Rebuild all memory",
     "rebuildAllConfirm": "This will clear and rebuild all memory. Continue?",
     "rebuildAllSuccess": "All memory rebuilt ({{sessions}} sessions processed)",

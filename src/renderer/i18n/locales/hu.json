@@ -196,6 +196,8 @@
     "checkLlmLabel": "Memória LLM",
     "checkEmbeddingLabel": "Beágyazás",
     "checkSkipped": "letiltva",
+    "embeddingFormatStaleWarning": "A tárolt memória egy régebbi modellformátummal készült beágyazásokat használ. A keresés minősége csökkent, amíg újra nem építi.",
+    "rebuildNow": "Újraépítés most",
     "rebuildAll": "Teljes memória újraépítése",
     "rebuildAllConfirm": "Ez törli és újraépíti az összes memóriát. Folytatja?",
     "rebuildAllSuccess": "Teljes memória újraépítve ({{sessions}} munkamenet feldolgozva)",

@@ -182,6 +182,21 @@ export function SettingsMemory() {
   const [isChecking, setIsChecking] = useState(false);
   const [checkedSignature, setCheckedSignature] = useState<string | null>(null);
   const [checkResult, setCheckResult] = useState<MemoryModelCheckResult | null>(null);
+  // True when stored local embeddings predate a format change (e.g. the prefix fix).
+  const [embeddingFormatStale, setEmbeddingFormatStale] = useState(false);
+
+  const refreshEmbeddingFormatStale = useCallback(async () => {
+    try {
+      const { stale } = await window.electronAPI.memory.isEmbeddingFormatStale();
+      setEmbeddingFormatStale(stale);
+    } catch {
+      setEmbeddingFormatStale(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshEmbeddingFormatStale();
+  }, [refreshEmbeddingFormatStale]);
 
   const enabled = overview?.enabled ?? appConfig?.memoryEnabled ?? true;
 
@@ -421,7 +436,7 @@ export function SettingsMemory() {
       await window.electronAPI.config.save({
         memoryRuntime: runtimeDraft,
       });
-      await refreshOverview();
+      await Promise.all([refreshOverview(), refreshEmbeddingFormatStale()]);
       setStatus(t('memory.runtimeSaved'));
 
       // Prompt for rebuild after saving so the new config is already persisted.
@@ -431,7 +446,7 @@ export function SettingsMemory() {
           setStatus(null);
           try {
             const result = await window.electronAPI.memory.rebuildAll();
-            await Promise.all([refreshOverview()]);
+            await Promise.all([refreshOverview(), refreshEmbeddingFormatStale()]);
             setStatus(t('memory.rebuildAllSuccess', { sessions: result.sessionCount }));
           } catch (rebuildError) {
             setStatus(rebuildError instanceof Error ? rebuildError.message : String(rebuildError));
@@ -475,7 +490,7 @@ export function SettingsMemory() {
     setStatus(null);
     try {
       const result = await window.electronAPI.memory.rebuildAll();
-      await Promise.all([refreshOverview(), refreshFiles()]);
+      await Promise.all([refreshOverview(), refreshFiles(), refreshEmbeddingFormatStale()]);
       setStatus(
         t('memory.rebuildAllSuccess', {
           sessions: result.sessionCount,
@@ -811,6 +826,21 @@ export function SettingsMemory() {
                 />
               </LabeledField>
             </div>
+            {embeddingFormatStale && (
+              <div className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-900/60 dark:bg-amber-950/30 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  {t('memory.embeddingFormatStaleWarning')}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleRebuildAll()}
+                  disabled={isBusy}
+                  className="shrink-0 rounded-lg border border-amber-400 bg-background px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-60 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                >
+                  {t('memory.rebuildNow')}
+                </button>
+              </div>
+            )}
             <EmbeddingConfigBlock
               runtimeDraft={runtimeDraft}
               setRuntimeDraft={setRuntimeDraft}

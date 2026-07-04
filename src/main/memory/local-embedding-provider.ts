@@ -22,6 +22,7 @@ import { env, pipeline } from '@huggingface/transformers';
 import type { FeatureExtractionPipeline } from '@huggingface/transformers';
 import { log, logWarn } from '../utils/logger';
 import type {
+  EmbeddingKind,
   LocalEmbeddingProgress,
   LocalModelRuntimeStatus,
 } from '../../shared/local-embedding-types';
@@ -38,9 +39,23 @@ import {
   retryAllowedAt,
 } from './local-embedding-state';
 
-export type { LocalEmbeddingProgress };
+export type { LocalEmbeddingProgress, EmbeddingKind };
 export { LOCAL_EMBEDDING_MODEL_ID };
 export { getLocalModelRuntimeStatus };
+
+/**
+ * EmbeddingGemma requires a task prefix on the input — it is NOT applied by the
+ * feature-extraction pipeline, so we prepend it here. Memory retrieval is an
+ * asymmetric retrieval task (short query vs stored documents), so we use the
+ * retrieval prefixes from the model card (verbatim):
+ *   query    → "task: search result | query: "
+ *   document → "title: none | text: "
+ * These are model-specific — they must NOT be applied to remote providers.
+ */
+const EMBEDDING_PREFIX: Record<EmbeddingKind, string> = {
+  query: 'task: search result | query: ',
+  document: 'title: none | text: ',
+};
 
 // Locked per design decision D1.
 // Revision pinned to a known-good commit for supply-chain safety.
@@ -192,6 +207,9 @@ function getPipeline(): Promise<FeatureExtractionPipeline> {
  * First call downloads the model (~180MB on q8); subsequent calls are fast (< 100ms).
  *
  * @param text - Input text to embed (should already be trimmed by the caller).
+ * @param kind - Whether this is a search 'query' or a stored 'document'. Selects
+ *   the EmbeddingGemma task prefix (see EMBEDDING_PREFIX). Must be symmetric with
+ *   ingestion: documents embedded as 'document', queries as 'query'.
  * @param onProgress - Optional callback called during first-use model download.
  *   All concurrent callers receive progress events — not just the first one.
  * @returns Float32 embedding vector of length LOCAL_EMBEDDING_DIMENSIONS.
@@ -200,6 +218,7 @@ function getPipeline(): Promise<FeatureExtractionPipeline> {
  */
 export async function embedLocal(
   text: string,
+  kind: EmbeddingKind = 'document',
   onProgress?: (p: LocalEmbeddingProgress) => void
 ): Promise<number[]> {
   // Register listener before awaiting so concurrent callers all receive events,
@@ -214,8 +233,11 @@ export async function embedLocal(
     const extractor = await getPipeline();
 
     try {
+      // Prepend the EmbeddingGemma task prefix — required by the model, not applied
+      // by the pipeline. Symmetric with the ingestion path (documents vs queries).
+      const input = EMBEDDING_PREFIX[kind] + text;
       // mean pooling + L2 normalisation — standard for retrieval / cosine-similarity scoring.
-      const output = await extractor(text, { pooling: 'mean', normalize: true });
+      const output = await extractor(input, { pooling: 'mean', normalize: true });
 
       // Robustly extract a flat number[] from whatever transformers.js returns.
       // Versions/backends vary: output may be a Tensor with .data (Float32Array/number[]),

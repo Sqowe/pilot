@@ -29,6 +29,7 @@ import { log, logWarn } from '../utils/logger';
 import {
   configureLocalEmbeddingCacheDir,
   embedLocal,
+  type EmbeddingKind,
   type LocalEmbeddingProgress,
 } from './local-embedding-provider';
 
@@ -52,7 +53,8 @@ export interface MemoryModelCheckResult {
 
 export interface MemoryLLMClientLike {
   complete(request: MemoryCompletionRequest): Promise<MemoryCompletionResponse>;
-  embed(text: string): Promise<number[]>;
+  /** `kind` selects the local model's query/document prefix; ignored by remote providers. */
+  embed(text: string, kind?: EmbeddingKind): Promise<number[]>;
 }
 
 interface MemoryModelConfig {
@@ -265,7 +267,7 @@ export class MemoryLLMClient implements MemoryLLMClientLike {
     }
   }
 
-  async embed(text: string): Promise<number[]> {
+  async embed(text: string, kind: EmbeddingKind = 'document'): Promise<number[]> {
     const trimmed = text.trim();
     if (!trimmed) {
       return [];
@@ -293,7 +295,7 @@ export class MemoryLLMClient implements MemoryLLMClientLike {
         configureLocalEmbeddingCacheDir(storageRoot);
         this.configuredCacheDir = storageRoot;
       }
-      return embedLocal(trimmed, this.onLocalEmbeddingProgress);
+      return embedLocal(trimmed, kind, this.onLocalEmbeddingProgress);
     }
 
     const embedConfig = normalizeModelConfig(
@@ -379,7 +381,7 @@ export class MemoryLLMClient implements MemoryLLMClientLike {
       return { ok: true, skipped: true };
     }
     try {
-      const vector = await this.embed('ping');
+      const vector = await this.embed('ping', 'query');
       if (!vector.length) {
         // embed() returns [] (rather than throwing) for unsupported providers.
         return {

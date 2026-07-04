@@ -196,6 +196,8 @@
     "checkLlmLabel": "LLM памяти",
     "checkEmbeddingLabel": "Эмбеддинги",
     "checkSkipped": "отключено",
+    "embeddingFormatStaleWarning": "Ваша память была векторизована моделью в старом формате. Качество поиска снижено до перестроения индекса.",
+    "rebuildNow": "Перестроить сейчас",
     "rebuildAll": "Перестроить всю память",
     "rebuildAllConfirm": "Это очистит и перестроит всю память. Продолжить?",
     "rebuildAllSuccess": "Вся память перестроена (обработано {{sessions}} сессий)",
