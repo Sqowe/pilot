@@ -47,9 +47,11 @@ vi.mock('../../main/utils/logger', () => ({
 import {
   configureLocalEmbeddingCacheDir,
   embedLocal,
+  getLocalModelRuntimeStatus,
   isLocalModelDownloaded,
   removeLocalModelCache,
   resetLocalEmbeddingPipeline,
+  warmUpLocalModel,
   LOCAL_EMBEDDING_MODEL_ID,
   LOCAL_EMBEDDING_DIMENSIONS,
   LOCAL_EMBEDDING_MODEL_REVISION,
@@ -232,15 +234,25 @@ describe('local-embedding-provider', () => {
       expect(events.length).toBe(countBefore);
     });
 
-    it('clears the singleton and allows retry after pipeline init failure', async () => {
+    it('backs off after a failure, then retries on a forced warm-up', async () => {
       mockPipelineFn.mockRejectedValue(new Error('network error'));
 
       await expect(embedLocal('text')).rejects.toThrow();
+      expect(getLocalModelRuntimeStatus().state).toBe('error');
 
-      // Second call should attempt pipeline creation again
+      // An immediate retry is refused by the backoff window — no new pipeline() attempt.
+      mockPipelineFn.mockClear();
+      await expect(embedLocal('text again')).rejects.toThrow();
+      expect(mockPipelineFn).not.toHaveBeenCalled();
+
+      // A forced warm-up (manual "Retry download") clears the backoff and re-attempts.
       mockPipelineFn.mockReset();
       const fakeExtractor = makeFakeExtractor(new Array(LOCAL_EMBEDDING_DIMENSIONS).fill(0.1));
       mockPipelineFn.mockResolvedValue(fakeExtractor);
+
+      const status = await warmUpLocalModel('/app/data/memory', { force: true });
+      expect(status.state).toBe('ready');
+      expect(mockPipelineFn).toHaveBeenCalledTimes(1);
 
       const result = await embedLocal('text after retry');
       expect(result).toHaveLength(LOCAL_EMBEDDING_DIMENSIONS);

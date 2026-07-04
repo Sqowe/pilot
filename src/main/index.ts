@@ -40,6 +40,7 @@ import { PluginCatalogService } from './skills/plugin-catalog-service';
 import { PluginRuntimeService } from './skills/plugin-runtime-service';
 import { MemoryService } from './memory/memory-service';
 import { isLocalModelDownloaded } from './memory/local-embedding-cache';
+import { getLocalModelRuntimeStatus } from './memory/local-embedding-state';
 import { MemoryExtension } from './memory/memory-extension';
 import { CORE_MEMORY_UPDATE_SYSTEM_PROMPT } from './memory/memory-prompts';
 import { AgentRuntimeExtensionManager } from './extensions/agent-runtime-extension-manager';
@@ -4328,6 +4329,29 @@ ipcMain.handle('memory.getPanelState', (_event, cwd?: string, sessionId?: string
 
 ipcMain.handle('memory.isLocalModelDownloaded', () => {
   return { downloaded: isLocalModelDownloaded(getMemoryStorageRoot()) };
+});
+
+// Combined status: on-disk cache presence (dependency-free) + in-process runtime
+// state (idle/loading/ready/error + backoff). Reads the runtime status from the
+// dependency-free state module, so opening Settings never loads transformers.js.
+ipcMain.handle('memory.getLocalModelStatus', () => {
+  return {
+    downloaded: isLocalModelDownloaded(getMemoryStorageRoot()),
+    ...getLocalModelRuntimeStatus(),
+  };
+});
+
+// Proactively download/load the local model (warm-up on select, or manual retry
+// with { force }). Loads the provider lazily so startup stays light. Never throws —
+// the outcome is reflected in the returned status.
+ipcMain.handle('memory.warmUpLocalModel', async (_event, force?: boolean) => {
+  const storageRoot = getMemoryStorageRoot();
+  const { warmUpLocalModel } = await import('./memory/local-embedding-provider');
+  const status = await warmUpLocalModel(storageRoot, { force: force === true });
+  return {
+    downloaded: isLocalModelDownloaded(storageRoot),
+    ...status,
+  };
 });
 
 ipcMain.handle('memory.removeLocalModel', async () => {

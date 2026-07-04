@@ -21,11 +21,26 @@ import * as path from 'path';
 import { env, pipeline } from '@huggingface/transformers';
 import type { FeatureExtractionPipeline } from '@huggingface/transformers';
 import { log, logWarn } from '../utils/logger';
-import type { LocalEmbeddingProgress } from '../../shared/local-embedding-types';
+import type {
+  LocalEmbeddingProgress,
+  LocalModelRuntimeStatus,
+} from '../../shared/local-embedding-types';
 import { LOCAL_EMBEDDING_MODEL_ID } from './local-embedding-cache';
+import {
+  LocalModelBackoffError,
+  getLocalModelRuntimeStatus,
+  isInBackoff,
+  markFailure,
+  markLoading,
+  markReady,
+  resetBackoff,
+  resetRuntimeState,
+  retryAllowedAt,
+} from './local-embedding-state';
 
 export type { LocalEmbeddingProgress };
 export { LOCAL_EMBEDDING_MODEL_ID };
+export { getLocalModelRuntimeStatus };
 
 // Locked per design decision D1.
 // Revision pinned to a known-good commit for supply-chain safety.
@@ -130,21 +145,42 @@ async function tryLoadPipeline(dtype: DType): Promise<FeatureExtractionPipeline 
 
 function getPipeline(): Promise<FeatureExtractionPipeline> {
   if (!pipelinePromise) {
+    // Respect exponential backoff: after repeated failures, refuse fresh attempts
+    // for a growing window so a failing download doesn't storm the network on every
+    // chunk. embedText degrades to lexical-only instantly during the cooldown.
+    if (isInBackoff()) {
+      const waitS = Math.max(0, Math.ceil((retryAllowedAt() - Date.now()) / 1000));
+      const status = getLocalModelRuntimeStatus();
+      return Promise.reject(
+        new LocalModelBackoffError(
+          `[LocalEmbedding] In backoff after download failure; next retry in ~${waitS}s. Last error: ${status.error ?? 'unknown'}`
+        )
+      );
+    }
+
     log('[LocalEmbedding] Initialising pipeline, model:', LOCAL_EMBEDDING_MODEL_ID);
+    markLoading();
     pipelinePromise = (async () => {
       for (const dtype of DTYPE_FALLBACK_ORDER) {
         const pipe = await tryLoadPipeline(dtype);
-        if (pipe) return pipe;
+        if (pipe) {
+          // Mark ready for status polling. The 'ready' progress *event* is emitted by
+          // the transformers.js progress_callback ('done'/'loaded' → mapProgress), so we
+          // don't fire a duplicate here.
+          markReady();
+          return pipe;
+        }
       }
-      const err = new Error(
+      throw new Error(
         `[LocalEmbedding] Failed to load pipeline with all dtypes: ${DTYPE_FALLBACK_ORDER.join(', ')}`
       );
-      notifyListeners({ status: 'error', message: err.message });
-      throw err;
     })();
 
     pipelinePromise.catch((err) => {
-      logWarn('[LocalEmbedding] Pipeline init failed, will retry on next call:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      logWarn('[LocalEmbedding] Pipeline init failed, will retry after backoff:', err);
+      markFailure(message);
+      notifyListeners({ status: 'error', message });
       pipelinePromise = null;
     });
   }
@@ -172,49 +208,58 @@ export async function embedLocal(
     progressListeners.add(onProgress);
   }
   try {
+    // getPipeline() owns its own progress/error notifications (load failure, backoff,
+    // ready). A LocalModelBackoffError or load failure propagates out un-re-notified so
+    // we don't flood the renderer with a duplicate 'error' event per blocked chunk.
     const extractor = await getPipeline();
-    // mean pooling + L2 normalisation — standard for retrieval / cosine-similarity scoring.
-    const output = await extractor(text, { pooling: 'mean', normalize: true });
 
-    // Robustly extract a flat number[] from whatever transformers.js returns.
-    // Versions/backends vary: output may be a Tensor with .data (Float32Array/number[]),
-    // a plain number[], or a nested number[][]. Handle all known shapes.
-    let embedding: number[];
-    const rawData: unknown = output?.data ?? output;
-    if (rawData instanceof Float32Array || rawData instanceof Float64Array) {
-      embedding = Array.from(rawData);
-    } else if (Array.isArray(rawData)) {
-      // Flatten one level of nesting (e.g., [[...]] from some pooling outputs)
-      const first = rawData[0];
-      if (Array.isArray(first) || first instanceof Float32Array || first instanceof Float64Array) {
-        embedding = Array.from(first as number[] | Float32Array | Float64Array);
+    try {
+      // mean pooling + L2 normalisation — standard for retrieval / cosine-similarity scoring.
+      const output = await extractor(text, { pooling: 'mean', normalize: true });
+
+      // Robustly extract a flat number[] from whatever transformers.js returns.
+      // Versions/backends vary: output may be a Tensor with .data (Float32Array/number[]),
+      // a plain number[], or a nested number[][]. Handle all known shapes.
+      let embedding: number[];
+      const rawData: unknown = output?.data ?? output;
+      if (rawData instanceof Float32Array || rawData instanceof Float64Array) {
+        embedding = Array.from(rawData);
+      } else if (Array.isArray(rawData)) {
+        // Flatten one level of nesting (e.g., [[...]] from some pooling outputs)
+        const first = rawData[0];
+        if (
+          Array.isArray(first) ||
+          first instanceof Float32Array ||
+          first instanceof Float64Array
+        ) {
+          embedding = Array.from(first as number[] | Float32Array | Float64Array);
+        } else {
+          embedding = rawData as number[];
+        }
       } else {
-        embedding = rawData as number[];
+        throw new Error(
+          `[LocalEmbedding] Unrecognized output shape from pipeline. ` +
+            `type=${typeof rawData}, keys=${rawData !== null && typeof rawData === 'object' ? Object.keys(rawData as object).join(',') : 'n/a'}`
+        );
       }
-    } else {
-      const msg =
-        `[LocalEmbedding] Unrecognized output shape from pipeline. ` +
-        `type=${typeof rawData}, keys=${rawData !== null && typeof rawData === 'object' ? Object.keys(rawData as object).join(',') : 'n/a'}`;
-      notifyListeners({ status: 'error', message: msg });
-      throw new Error(msg);
-    }
 
-    // Validate dimension — catches model updates or config drift before they
-    // silently corrupt downstream similarity calculations.
-    if (embedding.length !== LOCAL_EMBEDDING_DIMENSIONS) {
-      const msg =
-        `[LocalEmbedding] Unexpected embedding dimension: got ${embedding.length}, ` +
-        `expected ${LOCAL_EMBEDDING_DIMENSIONS}. Check model card for EmbeddingGemma-300M.`;
-      notifyListeners({ status: 'error', message: msg });
-      throw new Error(msg);
-    }
+      // Validate dimension — catches model updates or config drift before they
+      // silently corrupt downstream similarity calculations.
+      if (embedding.length !== LOCAL_EMBEDDING_DIMENSIONS) {
+        throw new Error(
+          `[LocalEmbedding] Unexpected embedding dimension: got ${embedding.length}, ` +
+            `expected ${LOCAL_EMBEDDING_DIMENSIONS}. Check model card for EmbeddingGemma-300M.`
+        );
+      }
 
-    return embedding;
-  } catch (err) {
-    // Emit error to all listeners so UI can reflect failure state.
-    const message = err instanceof Error ? err.message : String(err);
-    notifyListeners({ status: 'error', message });
-    throw err;
+      return embedding;
+    } catch (inferErr) {
+      // Inference-stage failure (bad output shape / dimension) — notify once here.
+      // Distinct from getPipeline() failures, which notify themselves.
+      const message = inferErr instanceof Error ? inferErr.message : String(inferErr);
+      notifyListeners({ status: 'error', message });
+      throw inferErr;
+    }
   } finally {
     // Deregister after call completes (success or failure).
     if (onProgress) {
@@ -224,12 +269,42 @@ export async function embedLocal(
 }
 
 /**
+ * Proactively load the pipeline (download the model if needed) without embedding
+ * anything. Used by the Settings UI to start the download the moment the user
+ * selects local mode — so download errors surface while they're looking at the
+ * panel, rather than silently on the next ingestion.
+ *
+ * Never rejects: the outcome is reflected in the returned runtime status (and via
+ * progress events). Pass `force` for a manual "Retry download" so a prior backoff
+ * window is cleared and the attempt fires immediately.
+ */
+export async function warmUpLocalModel(
+  storageRoot: string,
+  opts?: { force?: boolean }
+): Promise<LocalModelRuntimeStatus> {
+  if (opts?.force) {
+    resetBackoff();
+  }
+  try {
+    configureLocalEmbeddingCacheDir(storageRoot);
+    await getPipeline();
+  } catch (err) {
+    // Swallow — status already reflects the failure; caller reads it below.
+    logWarn('[LocalEmbedding] Warm-up failed:', err);
+  }
+  return getLocalModelRuntimeStatus();
+}
+
+/**
  * Reset the singleton pipeline — primarily for testing.
  * Also called by local-embedding-cache when the model cache is deleted.
  */
 export function resetLocalEmbeddingPipeline(): void {
   pipelinePromise = null;
   progressListeners.clear();
+  // Drop 'ready' and backoff state so the next call re-downloads from a clean slate
+  // (e.g., after the model cache was deleted).
+  resetRuntimeState();
 }
 
 // Re-export lightweight cache helpers from the dependency-free module.

@@ -256,6 +256,8 @@
     "localModelDownloading": "Загрузка модели… {{progress}}%",
     "localModelReady": "Готово · EmbeddingGemma-300M · ~180МБ",
     "localModelNotDownloaded": "Ещё не загружена · ~180МБ при первом использовании",
+    "localModelErrorLexicalFallback": "Пока модель не загружена, память работает только по ключевым словам.",
+    "localModelRetryDownload": "Повторить загрузку",
     "localModelDescription": "Работает локально, без API-ключа. ~180МБ загружается один раз с HuggingFace и кешируется. После этого работает без интернета.",
     "removeDownloadedModel": "Удалить загруженную модель",
     "removeDownloadedModelConfirm": "Удалить кеш локальной модели (~180МБ)? При следующей обработке памяти она будет загружена заново.",

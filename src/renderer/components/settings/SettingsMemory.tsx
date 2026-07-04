@@ -1118,15 +1118,20 @@ function EmbeddingConfigBlock({
 
   // Local model download progress
   const [downloadProgress, setDownloadProgress] = useState<LocalEmbeddingProgress | null>(null);
-  // Whether the model is already cached — seeded from panel state, updated by progress events
+  // Whether the model is already cached — seeded from status, updated by progress events
   const [localModelDownloaded, setLocalModelDownloaded] = useState<boolean | null>(null);
+  // Persistent error message when the model failed to download (survives missed events).
+  const [modelError, setModelError] = useState<string | null>(null);
+  // True while a manual retry download is in flight.
+  const [isRetrying, setIsRetrying] = useState(false);
 
-  // Fetch initial panel state to seed localModelDownloaded
+  // Fetch initial status to seed downloaded + any persistent error state.
   useEffect(() => {
     window.electronAPI.memory
-      .isLocalModelDownloaded()
-      .then((result) => {
-        setLocalModelDownloaded(result.downloaded);
+      .getLocalModelStatus()
+      .then((status) => {
+        setLocalModelDownloaded(status.downloaded);
+        setModelError(status.state === 'error' ? (status.error ?? '') : null);
       })
       .catch(() => setLocalModelDownloaded(false));
   }, []);
@@ -1137,13 +1142,16 @@ function EmbeddingConfigBlock({
       setDownloadProgress(p);
       if (p.status === 'ready') {
         setLocalModelDownloaded(true);
+        setModelError(null);
         setDownloadProgress(null);
       } else if (p.status === 'error') {
-        // Transient error — re-check actual cache state rather than forcing false,
-        // so a network blip doesn't incorrectly mark an already-downloaded model as absent.
+        // Persist the error for a stable banner, and re-check actual cache state rather
+        // than forcing false so a network blip doesn't mark an already-downloaded model
+        // as absent.
+        setModelError(p.message ?? '');
         window.electronAPI.memory
-          .isLocalModelDownloaded()
-          .then((result) => setLocalModelDownloaded(result.downloaded))
+          .getLocalModelStatus()
+          .then((status) => setLocalModelDownloaded(status.downloaded))
           .catch(() => {
             /* keep current state on IPC failure */
           });
@@ -1152,7 +1160,38 @@ function EmbeddingConfigBlock({
     return () => unsub();
   }, []);
 
+  const handleRetryDownload = async () => {
+    setIsRetrying(true);
+    setModelError(null);
+    setDownloadProgress(null);
+    try {
+      // force=true clears any backoff window so the attempt fires immediately.
+      const status = await window.electronAPI.memory.warmUpLocalModel(true);
+      setLocalModelDownloaded(status.downloaded);
+      setModelError(status.state === 'error' ? (status.error ?? '') : null);
+    } catch (err) {
+      setModelError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
   const handleModeChange = (next: EmbeddingMode) => {
+    if (next === 'local') {
+      // Warm-up on select: start the download immediately (fire-and-forget) so any
+      // failure surfaces while the user is looking at this panel, not silently on the
+      // next ingestion. Progress/errors arrive via the onLocalEmbeddingProgress
+      // subscription and the status refetch below. force=false respects any backoff.
+      void window.electronAPI.memory
+        .warmUpLocalModel(false)
+        .then((status) => {
+          setLocalModelDownloaded(status.downloaded);
+          setModelError(status.state === 'error' ? (status.error ?? '') : null);
+        })
+        .catch(() => {
+          /* status subscription still reflects outcome */
+        });
+    }
     setRuntimeDraft((prev) => {
       const base = { ...prev.embedding };
       if (next === 'local') {
@@ -1250,15 +1289,15 @@ function EmbeddingConfigBlock({
           <p className="text-xs text-text-muted">{t('memory.localModelDescription')}</p>
 
           {/* Download progress */}
-          {downloadProgress?.status === 'downloading' ? (
+          {downloadProgress?.status === 'downloading' || isRetrying ? (
             <div className="space-y-1">
               <div className="flex items-center justify-between text-xs text-text-secondary">
                 <span>
                   {t('memory.localModelDownloading', {
-                    progress: Math.round(downloadProgress.progress ?? 0),
+                    progress: Math.round(downloadProgress?.progress ?? 0),
                   })}
                 </span>
-                {downloadProgress.file && (
+                {downloadProgress?.file && (
                   <span className="max-w-[200px] truncate text-text-muted">
                     {downloadProgress.file.split(/[/\\]/).pop()}
                   </span>
@@ -1267,14 +1306,27 @@ function EmbeddingConfigBlock({
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
                 <div
                   className="h-full rounded-full bg-accent transition-all duration-200"
-                  style={{ width: `${downloadProgress.progress ?? 0}%` }}
+                  style={{ width: `${downloadProgress?.progress ?? 0}%` }}
                 />
               </div>
             </div>
-          ) : downloadProgress?.status === 'error' ? (
-            <p className="text-xs text-rose-600 dark:text-rose-400">
-              {t('memory.embeddingModelDownloadFailed')}
-            </p>
+          ) : modelError !== null ? (
+            <div className="space-y-1.5 rounded border border-rose-300 bg-rose-50 p-2 dark:border-rose-900/60 dark:bg-rose-950/30">
+              <p className="text-xs text-rose-600 dark:text-rose-400">
+                {t('memory.embeddingModelDownloadFailed')}
+              </p>
+              <p className="text-xs text-text-muted">
+                {t('memory.localModelErrorLexicalFallback')}
+              </p>
+              <button
+                type="button"
+                onClick={() => void handleRetryDownload()}
+                disabled={isBusy || isRetrying}
+                className="rounded border border-border bg-background px-2 py-1 text-xs text-text-secondary hover:text-accent disabled:opacity-60"
+              >
+                {t('memory.localModelRetryDownload')}
+              </button>
+            </div>
           ) : localModelDownloaded === true ? (
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs text-green-700 dark:text-green-400">

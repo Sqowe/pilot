@@ -449,7 +449,11 @@ export interface MemoryInspectSessionResult {
 }
 
 // Re-export from shared — single source of truth across main/preload/renderer.
-export type { LocalEmbeddingProgress } from '../../shared/local-embedding-types';
+export type {
+  LocalEmbeddingProgress,
+  LocalModelRuntimeStatus,
+  LocalModelStatus,
+} from '../../shared/local-embedding-types';
 
 export interface MemoryPanelState {
   enabled: boolean;

@@ -256,6 +256,8 @@
     "localModelDownloading": "Downloading model… {{progress}}%",
     "localModelReady": "Ready · EmbeddingGemma-300M · ~180MB",
     "localModelNotDownloaded": "Not yet downloaded · ~180MB on first use",
+    "localModelErrorLexicalFallback": "Memory is running in keyword-only mode until the model downloads.",
+    "localModelRetryDownload": "Retry download",
     "localModelDescription": "Runs on-device, no API key needed. About 180MB is downloaded once from HuggingFace and cached locally. Works offline after that.",
     "removeDownloadedModel": "Remove downloaded model",
     "removeDownloadedModelConfirm": "Delete the local model cache (~180MB)? It will be re-downloaded on the next memory ingestion.",

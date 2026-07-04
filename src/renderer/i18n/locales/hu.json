@@ -256,6 +256,8 @@
     "localModelDownloading": "Modell letöltése… {{progress}}%",
     "localModelReady": "Kész · EmbeddingGemma-300M · ~180MB",
     "localModelNotDownloaded": "Még nincs letöltve · ~180MB az első használatkor",
+    "localModelErrorLexicalFallback": "A modell letöltéséig a memória csak kulcsszavas módban működik.",
+    "localModelRetryDownload": "Letöltés újra",
     "localModelDescription": "Helyben fut, API-kulcs nélkül. Kb. 180MB töltődik le egyszer a HuggingFace-ről, és helyben gyorsítótárazódik. Ezután offline is működik.",
     "removeDownloadedModel": "Letöltött modell eltávolítása",
     "removeDownloadedModelConfirm": "Törli a helyi modell gyorsítótárát (~180MB)? A következő memória-feldolgozáskor újra letöltődik.",

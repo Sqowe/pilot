@@ -256,6 +256,8 @@
     "localModelDownloading": "正在下载模型… {{progress}}%",
     "localModelReady": "就绪 · EmbeddingGemma-300M · 约180MB",
     "localModelNotDownloaded": "尚未下载 · 首次使用时约需下载180MB",
+    "localModelErrorLexicalFallback": "模型下载完成前，记忆将仅使用关键词模式。",
+    "localModelRetryDownload": "重试下载",
     "localModelDescription": "本地运行，无需 API 密钥。首次从 HuggingFace 下载约 180MB 并缓存至本地，之后可离线使用。",
     "removeDownloadedModel": "移除已下载模型",
     "removeDownloadedModelConfirm": "删除本地模型缓存（约180MB）？下次内存摄取时将重新下载。",
