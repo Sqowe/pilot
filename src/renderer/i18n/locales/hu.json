@@ -260,7 +260,8 @@
     "removeDownloadedModel": "Letöltött modell eltávolítása",
     "removeDownloadedModelConfirm": "Törli a helyi modell gyorsítótárát (~180MB)? A következő memória-feldolgozáskor újra letöltődik.",
     "removeDownloadedModelSuccess": "A helyi modell gyorsítótára eltávolítva",
-    "embeddingModelDownloadFailed": "A helyi beágyazási modell letöltése sikertelen. Ellenőrizze a kapcsolatot, vagy váltson egyéni API-szolgáltatóra."
+    "embeddingModelDownloadFailed": "A helyi beágyazási modell letöltése sikertelen. Ellenőrizze a kapcsolatot, vagy váltson egyéni API-szolgáltatóra.",
+    "rebuildOnProviderChange": "Az embedding-szolgáltató vagy modell megváltozott. A meglévő memóriavektorok eltérő formátumot használnak, és rossz keresési eredményeket adnak az újraépítésig. Újraépíti a memóriaindexet most?"
   },
   "language": {
     "english": "Angol",

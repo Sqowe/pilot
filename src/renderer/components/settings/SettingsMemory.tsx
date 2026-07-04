@@ -319,11 +319,43 @@ export function SettingsMemory() {
     setIsBusy(true);
     setStatus(null);
     try {
+      // Detect embedding provider or model change before saving.
+      // Switching provider/model changes vector dimensions (768 vs 1536+), making
+      // existing stored vectors incompatible with new ones (§8 of local-embeddings-default.md).
+      const savedEmbedding = appConfig?.memoryRuntime?.embedding;
+      const draftEmbedding = runtimeDraft.embedding;
+      const providerChanged = draftEmbedding.provider !== savedEmbedding?.provider;
+      const modelChanged =
+        (draftEmbedding.model ?? '') !== (savedEmbedding?.model ?? '') &&
+        // Only flag a model change when not using local (local's model ID is hardcoded,
+        // not stored in config, so the model field is irrelevant for local mode).
+        draftEmbedding.provider !== 'local' &&
+        savedEmbedding?.provider !== 'local';
+      const willUseEmbedding = runtimeDraft.useEmbedding;
+      const embeddingIndexAffected = willUseEmbedding && (providerChanged || modelChanged);
+
       await window.electronAPI.config.save({
         memoryRuntime: runtimeDraft,
       });
       await refreshOverview();
       setStatus(t('memory.runtimeSaved'));
+
+      // Prompt for rebuild after saving so the new config is already persisted.
+      if (embeddingIndexAffected) {
+        if (window.confirm(t('memory.rebuildOnProviderChange'))) {
+          setIsBusy(true);
+          setStatus(null);
+          try {
+            const result = await window.electronAPI.memory.rebuildAll();
+            await Promise.all([refreshOverview()]);
+            setStatus(t('memory.rebuildAllSuccess', { sessions: result.sessionCount }));
+          } catch (rebuildError) {
+            setStatus(rebuildError instanceof Error ? rebuildError.message : String(rebuildError));
+          } finally {
+            setIsBusy(false);
+          }
+        }
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {

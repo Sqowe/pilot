@@ -260,7 +260,8 @@
     "removeDownloadedModel": "移除已下载模型",
     "removeDownloadedModelConfirm": "删除本地模型缓存（约180MB）？下次内存摄取时将重新下载。",
     "removeDownloadedModelSuccess": "本地模型缓存已移除",
-    "embeddingModelDownloadFailed": "无法下载本地嵌入模型，请检查网络连接后重试，或切换到自定义 API 提供商。"
+    "embeddingModelDownloadFailed": "无法下载本地嵌入模型，请检查网络连接后重试，或切换到自定义 API 提供商。",
+    "rebuildOnProviderChange": "嵌入提供商或模型已更改。现有记忆向量使用不同的格式，重建前搜索结果质量会下降。现在重建记忆索引？"
   },
   "language": {
     "english": "English",

@@ -260,7 +260,8 @@
     "removeDownloadedModel": "Remove downloaded model",
     "removeDownloadedModelConfirm": "Delete the local model cache (~180MB)? It will be re-downloaded on the next memory ingestion.",
     "removeDownloadedModelSuccess": "Local model cache removed",
-    "embeddingModelDownloadFailed": "Could not download the local embedding model. Check your connection and try again, or switch to a custom API provider."
+    "embeddingModelDownloadFailed": "Could not download the local embedding model. Check your connection and try again, or switch to a custom API provider.",
+    "rebuildOnProviderChange": "Embedding provider or model changed. Existing memory vectors use a different format and will give poor search results until rebuilt. Rebuild memory index now?"
   },
   "language": {
     "english": "English",
