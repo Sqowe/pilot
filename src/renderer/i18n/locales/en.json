@@ -189,6 +189,13 @@
     "baseUrlOverride": "Base URL override",
     "apiKeyOverride": "API Key override",
     "saveRuntime": "Save Runtime Config",
+    "checkModelsAvailability": "Check models availability",
+    "checkingModels": "Checking models…",
+    "modelCheckPassed": "Models available — you can save now.",
+    "modelCheckFailed": "Model check failed.",
+    "checkLlmLabel": "Memory LLM",
+    "checkEmbeddingLabel": "Embedding",
+    "checkSkipped": "disabled",
     "rebuildAll": "Rebuild all memory",
     "rebuildAllConfirm": "This will clear and rebuild all memory. Continue?",
     "rebuildAllSuccess": "All memory rebuilt ({{sessions}} sessions processed)",
@@ -263,6 +270,8 @@
     "removeDownloadedModelConfirm": "Delete the local model cache (~180MB)? It will be re-downloaded on the next memory ingestion.",
     "removeDownloadedModelSuccess": "Local model cache removed",
     "embeddingModelDownloadFailed": "Could not download the local embedding model. Check your connection and try again, or switch to a custom API provider.",
+    "embeddingModelChatError": "This looks like a chat model, not an embedding model — it won't produce embeddings. Use an embedding model such as text-embedding-3-small or BAAI/bge-m3. Saving is disabled until this is fixed.",
+    "embeddingModelPrefixWarning": "This embedding model expects query/document prefixes that aren't applied here, so results may be weaker. For the remote provider, prefer OpenAI text-embedding-* or BAAI/bge-m3.",
     "rebuildOnProviderChange": "Embedding provider or model changed. Existing memory vectors use a different format and will give poor search results until rebuilt. Rebuild memory index now?"
   },
   "language": {

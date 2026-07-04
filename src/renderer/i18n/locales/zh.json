@@ -189,6 +189,13 @@
     "baseUrlOverride": "Base URL 覆盖",
     "apiKeyOverride": "API Key 覆盖",
     "saveRuntime": "保存运行时配置",
+    "checkModelsAvailability": "检查模型可用性",
+    "checkingModels": "正在检查模型…",
+    "modelCheckPassed": "模型可用 — 现在可以保存。",
+    "modelCheckFailed": "模型检查失败。",
+    "checkLlmLabel": "记忆 LLM",
+    "checkEmbeddingLabel": "嵌入",
+    "checkSkipped": "已禁用",
     "rebuildAll": "重建全部记忆",
     "rebuildAllConfirm": "这会清空并重建全部记忆，是否继续？",
     "rebuildAllSuccess": "全部记忆已重建（处理了 {{sessions}} 个会话）",
@@ -263,6 +270,8 @@
     "removeDownloadedModelConfirm": "删除本地模型缓存（约180MB）？下次内存摄取时将重新下载。",
     "removeDownloadedModelSuccess": "本地模型缓存已移除",
     "embeddingModelDownloadFailed": "无法下载本地嵌入模型，请检查网络连接后重试，或切换到自定义 API 提供商。",
+    "embeddingModelChatError": "这看起来是聊天模型，而非嵌入模型，无法生成嵌入向量。请使用嵌入模型，例如 text-embedding-3-small 或 BAAI/bge-m3。修正前将禁用保存。",
+    "embeddingModelPrefixWarning": "该嵌入模型需要查询/文档前缀，而此处并未添加，因此结果可能较差。远程提供商建议使用 OpenAI text-embedding-* 或 BAAI/bge-m3。",
     "rebuildOnProviderChange": "嵌入提供商或模型已更改。现有记忆向量使用不同的格式，重建前搜索结果质量会下降。现在重建记忆索引？"
   },
   "language": {

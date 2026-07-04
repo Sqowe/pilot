@@ -455,6 +455,13 @@ export type {
   LocalModelStatus,
 } from '../../shared/local-embedding-types';
 
+/** Result of the "Check models availability" probe (memory LLM + embedding). */
+export interface MemoryModelCheckResult {
+  llm: { ok: boolean; error?: string };
+  /** `skipped` is true when embeddings are disabled (nothing to check). */
+  embedding: { ok: boolean; error?: string; skipped?: boolean };
+}
+
 export interface MemoryPanelState {
   enabled: boolean;
   skillFallbackEnabled: boolean;

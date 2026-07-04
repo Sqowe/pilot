@@ -340,4 +340,63 @@ describe('MemoryLLMClient', () => {
       expect(embedLocalMock).not.toHaveBeenCalled();
     });
   });
+
+  describe('checkAvailability()', () => {
+    function makeConfigWithEmbedding(useEmbedding: boolean): AppConfig {
+      const config = makeConfig(180000);
+      config.memoryRuntime.useEmbedding = useEmbedding;
+      return config;
+    }
+
+    it('reports llm ok and embedding skipped when embeddings are disabled', async () => {
+      const client = new MemoryLLMClient(() => makeConfigWithEmbedding(false));
+      const completeSpy = vi.spyOn(client, 'complete').mockResolvedValue({ text: 'ok' });
+      const embedSpy = vi.spyOn(client, 'embed');
+
+      const result = await client.checkAvailability();
+
+      expect(result.llm).toEqual({ ok: true });
+      expect(result.embedding).toEqual({ ok: true, skipped: true });
+      expect(completeSpy).toHaveBeenCalledTimes(1);
+      // Embedding disabled → embed() is never called.
+      expect(embedSpy).not.toHaveBeenCalled();
+    });
+
+    it('reports llm failure with its error, still probing embedding', async () => {
+      const client = new MemoryLLMClient(() => makeConfigWithEmbedding(true));
+      vi.spyOn(client, 'complete').mockRejectedValue(new Error('401 unauthorized'));
+      const embedSpy = vi.spyOn(client, 'embed').mockResolvedValue(new Array(768).fill(0.1));
+
+      const result = await client.checkAvailability();
+
+      expect(result.llm.ok).toBe(false);
+      expect(result.llm.error).toContain('401');
+      expect(result.embedding).toEqual({ ok: true });
+      expect(embedSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats an empty embedding vector as a failure (unsupported provider)', async () => {
+      const client = new MemoryLLMClient(() => makeConfigWithEmbedding(true));
+      vi.spyOn(client, 'complete').mockResolvedValue({ text: 'ok' });
+      vi.spyOn(client, 'embed').mockResolvedValue([]);
+
+      const result = await client.checkAvailability();
+
+      expect(result.llm).toEqual({ ok: true });
+      expect(result.embedding.ok).toBe(false);
+      expect(result.embedding.error).toBeTruthy();
+    });
+
+    it('reports embedding failure with its thrown error', async () => {
+      const client = new MemoryLLMClient(() => makeConfigWithEmbedding(true));
+      vi.spyOn(client, 'complete').mockResolvedValue({ text: 'ok' });
+      vi.spyOn(client, 'embed').mockRejectedValue(new Error('model download failed'));
+
+      const result = await client.checkAvailability();
+
+      expect(result.llm).toEqual({ ok: true });
+      expect(result.embedding.ok).toBe(false);
+      expect(result.embedding.error).toContain('download failed');
+    });
+  });
 });

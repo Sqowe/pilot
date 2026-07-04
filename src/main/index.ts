@@ -39,8 +39,10 @@ import { SkillsManager } from './skills/skills-manager';
 import { PluginCatalogService } from './skills/plugin-catalog-service';
 import { PluginRuntimeService } from './skills/plugin-runtime-service';
 import { MemoryService } from './memory/memory-service';
+import { MemoryLLMClient } from './memory/memory-llm-client';
 import { isLocalModelDownloaded } from './memory/local-embedding-cache';
 import { getLocalModelRuntimeStatus } from './memory/local-embedding-state';
+import type { LocalEmbeddingProgress } from '../shared/local-embedding-types';
 import { MemoryExtension } from './memory/memory-extension';
 import { CORE_MEMORY_UPDATE_SYSTEM_PROMPT } from './memory/memory-prompts';
 import { AgentRuntimeExtensionManager } from './extensions/agent-runtime-extension-manager';
@@ -50,6 +52,7 @@ import {
   type AppConfig,
   type AppTheme,
   type CreateConfigSetPayload,
+  type MemoryRuntimeConfig,
 } from './config/config-store';
 import { runConfigApiTest } from './config/config-test-routing';
 import { listOllamaModels } from './config/ollama-api';
@@ -170,6 +173,28 @@ let mainWindow: BrowserWindow | null = null;
 let sessionManager: SessionManager | null = null;
 let skillsManager: SkillsManager | null = null;
 let pluginRuntimeService: PluginRuntimeService | null = null;
+
+/**
+ * Broadcast local-embedding download progress to all renderer windows.
+ * Throttled to ~10 Hz to avoid flooding the renderer with chatty transformers.js
+ * callbacks; terminal events (ready/error) are always sent immediately. Shared by
+ * the MemoryService ingestion path and the "Check models availability" probe.
+ */
+const emitLocalEmbeddingProgress = (() => {
+  let lastEmitMs = 0;
+  const THROTTLE_MS = 100;
+  return (p: LocalEmbeddingProgress) => {
+    const now = Date.now();
+    if (p.status !== 'downloading' || now - lastEmitMs >= THROTTLE_MS) {
+      lastEmitMs = now;
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('memory.localEmbeddingProgress', p);
+        }
+      }
+    }
+  };
+})();
 let memoryService: MemoryService | null = null;
 let scheduledTaskManager: ScheduledTaskManager | null = null;
 
@@ -1011,24 +1036,7 @@ app
     memoryService = new MemoryService(db, {
       llmClientOptions: {
         getStorageRoot: () => join(app.getPath('userData'), 'memory'),
-        onLocalEmbeddingProgress: (() => {
-          // Throttle IPC emissions to ~10 Hz to avoid flooding the renderer
-          // with chatty transformers.js progress callbacks during model download.
-          let lastEmitMs = 0;
-          const THROTTLE_MS = 100;
-          return (p: import('./memory/local-embedding-provider').LocalEmbeddingProgress) => {
-            const now = Date.now();
-            // Always send terminal events (ready/error) immediately; throttle 'downloading'.
-            if (p.status !== 'downloading' || now - lastEmitMs >= THROTTLE_MS) {
-              lastEmitMs = now;
-              for (const win of BrowserWindow.getAllWindows()) {
-                if (!win.isDestroyed()) {
-                  win.webContents.send('memory.localEmbeddingProgress', p);
-                }
-              }
-            }
-          };
-        })(),
+        onLocalEmbeddingProgress: emitLocalEmbeddingProgress,
       },
     });
     const extensionManager = new AgentRuntimeExtensionManager([new MemoryExtension(memoryService)]);
@@ -4340,6 +4348,22 @@ ipcMain.handle('memory.getLocalModelStatus', () => {
     ...getLocalModelRuntimeStatus(),
   };
 });
+
+// Probe the LLM + embedding providers described by an *unsaved* draft runtime
+// config, so the Settings UI can gate "Save" behind a successful check when the
+// model config changed. Builds a throwaway client bound to the draft (real
+// appConfig with memoryRuntime swapped) — nothing is persisted.
+ipcMain.handle(
+  'memory.checkModelAvailability',
+  async (_event, draftRuntime: MemoryRuntimeConfig) => {
+    const testConfig: AppConfig = { ...configStore.getAll(), memoryRuntime: draftRuntime };
+    const client = new MemoryLLMClient(() => testConfig, {
+      getStorageRoot: () => join(app.getPath('userData'), 'memory'),
+      onLocalEmbeddingProgress: emitLocalEmbeddingProgress,
+    });
+    return client.checkAvailability();
+  }
+);
 
 // Proactively download/load the local model (warm-up on select, or manual retry
 // with { force }). Loads the provider lazily so startup stays light. Never throws —

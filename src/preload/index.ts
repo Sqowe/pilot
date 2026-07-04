@@ -31,6 +31,8 @@ import type {
   MemoryInspectSessionResult,
   LocalEmbeddingProgress,
   LocalModelStatus,
+  MemoryModelCheckResult,
+  MemoryRuntimeConfig,
 } from '../renderer/types';
 import type { DiagnosticInput, DiagnosticResult } from '../renderer/types';
 import type {
@@ -658,6 +660,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('memory.getLocalModelStatus'),
     warmUpLocalModel: (force?: boolean): Promise<LocalModelStatus> =>
       ipcRenderer.invoke('memory.warmUpLocalModel', force),
+    checkModelAvailability: (draft: MemoryRuntimeConfig): Promise<MemoryModelCheckResult> =>
+      ipcRenderer.invoke('memory.checkModelAvailability', draft),
     onLocalEmbeddingProgress: (callback: (p: LocalEmbeddingProgress) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, p: LocalEmbeddingProgress) => {
         try {
@@ -1054,6 +1058,7 @@ declare global {
         isLocalModelDownloaded: () => Promise<{ downloaded: boolean }>;
         getLocalModelStatus: () => Promise<LocalModelStatus>;
         warmUpLocalModel: (force?: boolean) => Promise<LocalModelStatus>;
+        checkModelAvailability: (draft: MemoryRuntimeConfig) => Promise<MemoryModelCheckResult>;
         onLocalEmbeddingProgress: (callback: (p: LocalEmbeddingProgress) => void) => () => void;
       };
     };

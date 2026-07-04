@@ -43,6 +43,13 @@ export interface MemoryCompletionResponse {
   text: string;
 }
 
+/** Result of probing the currently-configured memory LLM + embedding providers. */
+export interface MemoryModelCheckResult {
+  llm: { ok: boolean; error?: string };
+  /** `skipped` is true when embeddings are disabled (nothing to check). */
+  embedding: { ok: boolean; error?: string; skipped?: boolean };
+}
+
 export interface MemoryLLMClientLike {
   complete(request: MemoryCompletionRequest): Promise<MemoryCompletionResponse>;
   embed(text: string): Promise<number[]>;
@@ -336,5 +343,53 @@ export class MemoryLLMClient implements MemoryLLMClientLike {
       input: trimmed,
     });
     return response.data[0]?.embedding || [];
+  }
+
+  /**
+   * Probe the currently-configured LLM and embedding providers without saving
+   * anything. Used by the Settings "Check models availability" step before a
+   * model-config change can be saved.
+   *
+   * Bind a throwaway client to the *draft* config to check unsaved settings:
+   *   new MemoryLLMClient(() => ({ ...appConfig, memoryRuntime: draft }), opts)
+   *
+   * - LLM: a 1-token, temperature-0 completion — the only reliable cross-provider
+   *   proof that the key + model + endpoint actually work.
+   * - Embedding: a tiny embed('ping'). For the local provider this warms up
+   *   (downloads if needed) and confirms the pipeline loads; for remote it makes a
+   *   real embeddings call. Skipped entirely when useEmbedding is off.
+   */
+  async checkAvailability(): Promise<MemoryModelCheckResult> {
+    const llm = await this.probeLLM();
+    const embedding = await this.probeEmbedding();
+    return { llm, embedding };
+  }
+
+  private async probeLLM(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await this.complete({ systemPrompt: '', userPrompt: 'ping', temperature: 0, maxTokens: 1 });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  private async probeEmbedding(): Promise<{ ok: boolean; error?: string; skipped?: boolean }> {
+    if (!this.getConfig().memoryRuntime?.useEmbedding) {
+      return { ok: true, skipped: true };
+    }
+    try {
+      const vector = await this.embed('ping');
+      if (!vector.length) {
+        // embed() returns [] (rather than throwing) for unsupported providers.
+        return {
+          ok: false,
+          error: 'Embedding returned an empty vector — provider or model not supported.',
+        };
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 }

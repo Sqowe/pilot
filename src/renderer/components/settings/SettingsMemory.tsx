@@ -6,6 +6,7 @@ import type {
   MemoryDebugFileContent,
   MemoryDebugFileInfo,
   MemoryInspectSessionResult,
+  MemoryModelCheckResult,
   MemoryOverview,
   MemoryReadResult,
   MemoryRuntimeConfig,
@@ -14,6 +15,7 @@ import type {
 } from '../../types';
 import { useAppStore } from '../../store';
 import { SettingsContentSection } from './shared';
+import { classifyEmbeddingModel } from './embedding-model-validation';
 
 type SearchMode = 'workspace' | 'all' | 'global';
 
@@ -100,6 +102,26 @@ const DEFAULT_MEMORY_RUNTIME: MemoryRuntimeConfig = {
   supersessionKeywordThreshold: 0.5,
 };
 
+/**
+ * Deterministic JSON with recursively-sorted object keys, so two configs that
+ * differ only in key order compare equal. Used for dirty-checking the runtime
+ * config and detecting model-config changes.
+ */
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, val) => {
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      const obj = val as Record<string, unknown>;
+      return Object.keys(obj)
+        .sort()
+        .reduce<Record<string, unknown>>((acc, k) => {
+          acc[k] = obj[k];
+          return acc;
+        }, {});
+    }
+    return val;
+  });
+}
+
 function cloneRuntimeConfig(runtime?: MemoryRuntimeConfig): MemoryRuntimeConfig {
   const source = runtime || DEFAULT_MEMORY_RUNTIME;
   return {
@@ -153,6 +175,13 @@ export function SettingsMemory() {
   );
   const [isBusy, setIsBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  // "Check models availability" step: when the LLM/embedding config changes, the
+  // user must run a successful check before Save is enabled. checkedSignature holds
+  // the model signature that last passed; a later edit changes the signature and
+  // re-requires a check.
+  const [isChecking, setIsChecking] = useState(false);
+  const [checkedSignature, setCheckedSignature] = useState<string | null>(null);
+  const [checkResult, setCheckResult] = useState<MemoryModelCheckResult | null>(null);
 
   const enabled = overview?.enabled ?? appConfig?.memoryEnabled ?? true;
 
@@ -312,6 +341,61 @@ export function SettingsMemory() {
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
+    }
+  };
+
+  // Block saving when a Custom-mode embedding override is a chat model (won't embed).
+  // A 'prefix' issue (E5/Nomic) is only a soft warning and does not block.
+  const embeddingModelBlocked =
+    runtimeDraft.useEmbedding &&
+    resolveEmbeddingMode(runtimeDraft.embedding) === 'custom' &&
+    classifyEmbeddingModel(runtimeDraft.embedding.model ?? '') === 'chat';
+
+  // Dirty-check the whole runtime section (compared against a same-shape clone of
+  // the saved config so key order can't cause false positives).
+  const savedRuntimeClone = cloneRuntimeConfig(appConfig?.memoryRuntime);
+  const runtimeDirty = stableStringify(runtimeDraft) !== stableStringify(savedRuntimeClone);
+
+  // Did the model config specifically change? Embedding changes only matter when
+  // embeddings are enabled.
+  const llmChanged = stableStringify(runtimeDraft.llm) !== stableStringify(savedRuntimeClone.llm);
+  const embeddingChanged =
+    stableStringify(runtimeDraft.embedding) !== stableStringify(savedRuntimeClone.embedding);
+  const useEmbeddingChanged = runtimeDraft.useEmbedding !== savedRuntimeClone.useEmbedding;
+  const modelConfigChanged =
+    llmChanged || useEmbeddingChanged || (runtimeDraft.useEmbedding && embeddingChanged);
+
+  // Signature of the model-affecting config; a passed check is only valid while
+  // this stays identical.
+  const modelSignature = stableStringify({
+    llm: runtimeDraft.llm,
+    useEmbedding: runtimeDraft.useEmbedding,
+    embedding: runtimeDraft.embedding,
+  });
+  const checkPassed = checkedSignature === modelSignature;
+  // Must run a successful availability check before saving a model-config change.
+  const needsCheck = modelConfigChanged && !checkPassed;
+
+  const handleCheckModels = async () => {
+    setIsChecking(true);
+    setStatus(null);
+    setCheckResult(null);
+    try {
+      const result = await window.electronAPI.memory.checkModelAvailability(runtimeDraft);
+      setCheckResult(result);
+      if (result.llm.ok && result.embedding.ok) {
+        setCheckedSignature(modelSignature);
+        setStatus(t('memory.modelCheckPassed'));
+      } else {
+        const parts: string[] = [];
+        if (!result.llm.ok) parts.push(`LLM — ${result.llm.error ?? 'failed'}`);
+        if (!result.embedding.ok) parts.push(`Embedding — ${result.embedding.error ?? 'failed'}`);
+        setStatus(`${t('memory.modelCheckFailed')} ${parts.join(' · ')}`);
+      }
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsChecking(false);
     }
   };
 
@@ -737,16 +821,56 @@ export function SettingsMemory() {
             />
           </div>
           <div className="flex justify-end">
-            <button
-              onClick={() => {
-                void handleSaveRuntime();
-              }}
-              disabled={isBusy || !appConfig}
-              className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {t('memory.saveRuntime')}
-            </button>
+            {needsCheck ? (
+              <button
+                onClick={() => {
+                  void handleCheckModels();
+                }}
+                disabled={isBusy || isChecking || embeddingModelBlocked || !appConfig}
+                title={embeddingModelBlocked ? t('memory.embeddingModelChatError') : undefined}
+                className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isChecking ? t('memory.checkingModels') : t('memory.checkModelsAvailability')}
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  void handleSaveRuntime();
+                }}
+                disabled={isBusy || !appConfig || !runtimeDirty || embeddingModelBlocked}
+                title={embeddingModelBlocked ? t('memory.embeddingModelChatError') : undefined}
+                className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {t('memory.saveRuntime')}
+              </button>
+            )}
           </div>
+          {checkResult && (
+            <div className="flex flex-col items-end gap-0.5 text-xs">
+              <span
+                className={
+                  checkResult.llm.ok
+                    ? 'text-green-700 dark:text-green-400'
+                    : 'text-rose-600 dark:text-rose-400'
+                }
+              >
+                {checkResult.llm.ok ? '✓' : '✗'} {t('memory.checkLlmLabel')}
+              </span>
+              <span
+                className={
+                  checkResult.embedding.skipped
+                    ? 'text-text-muted'
+                    : checkResult.embedding.ok
+                      ? 'text-green-700 dark:text-green-400'
+                      : 'text-rose-600 dark:text-rose-400'
+                }
+              >
+                {checkResult.embedding.skipped ? '—' : checkResult.embedding.ok ? '✓' : '✗'}{' '}
+                {t('memory.checkEmbeddingLabel')}
+                {checkResult.embedding.skipped ? ` (${t('memory.checkSkipped')})` : ''}
+              </span>
+            </div>
+          )}
         </div>
       </SettingsContentSection>
 
@@ -1112,6 +1236,10 @@ function EmbeddingConfigBlock({
   const { t } = useTranslation();
   const mode = resolveEmbeddingMode(runtimeDraft.embedding);
 
+  // Custom-mode model-override validation (only meaningful in custom mode).
+  const modelIssue =
+    mode === 'custom' ? classifyEmbeddingModel(runtimeDraft.embedding.model ?? '') : null;
+
   // True when the draft storageRoot differs from the saved one — removal IPC
   // would target the old saved root, not the pending new one.
   const isStorageRootDirty = (runtimeDraft.storageRoot ?? '') !== savedStorageRoot;
@@ -1365,8 +1493,22 @@ function EmbeddingConfigBlock({
                   embedding: { ...prev.embedding, model: event.target.value },
                 }))
               }
-              className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none focus:border-accent"
+              className={`w-full rounded-lg border bg-background px-3 py-2.5 text-sm text-text-primary outline-none ${
+                modelIssue === 'chat'
+                  ? 'border-rose-400 focus:border-rose-500'
+                  : 'border-border focus:border-accent'
+              }`}
             />
+            {modelIssue === 'chat' && (
+              <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                {t('memory.embeddingModelChatError')}
+              </p>
+            )}
+            {modelIssue === 'prefix' && (
+              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                {t('memory.embeddingModelPrefixWarning')}
+              </p>
+            )}
           </LabeledField>
           <LabeledField label={t('memory.baseUrlOverride')}>
             <input
