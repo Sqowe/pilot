@@ -21,12 +21,17 @@ import * as path from 'path';
 import { env, pipeline } from '@huggingface/transformers';
 import type { FeatureExtractionPipeline } from '@huggingface/transformers';
 import { log, logWarn } from '../utils/logger';
+import type { LocalEmbeddingProgress } from '../../shared/local-embedding-types';
+import { LOCAL_EMBEDDING_MODEL_ID } from './local-embedding-cache';
+
+export type { LocalEmbeddingProgress };
+export { LOCAL_EMBEDDING_MODEL_ID };
 
 // Locked per design decision D1.
 // Revision pinned to a known-good commit for supply-chain safety.
 // Re-verify against the live model card before each release to confirm dimension,
 // license, and prefix requirements remain unchanged.
-export const LOCAL_EMBEDDING_MODEL_ID = 'onnx-community/embeddinggemma-300m-ONNX';
+// LOCAL_EMBEDDING_MODEL_ID is imported from ./local-embedding-cache (single source of truth).
 /**
  * Pinned model revision (immutable commit SHA from HuggingFace Hub, verified 2026-07-02).
  * Update intentionally — do not auto-bump without re-validating embedding quality,
@@ -42,15 +47,7 @@ export const LOCAL_EMBEDDING_DIMENSIONS = 768;
 const DTYPE_FALLBACK_ORDER = ['q8', 'fp16', 'fp32'] as const;
 type DType = (typeof DTYPE_FALLBACK_ORDER)[number];
 
-export interface LocalEmbeddingProgress {
-  status: 'downloading' | 'ready' | 'error';
-  /** File being downloaded (present during 'downloading'). */
-  file?: string;
-  /** Download progress 0–100 (present during 'downloading'). */
-  progress?: number;
-  /** Error message (present during 'error'). */
-  message?: string;
-}
+// LocalEmbeddingProgress is re-exported from shared — see ../../shared/local-embedding-types.ts
 
 // Singleton — created once on first embedLocal() call, reused for all subsequent calls.
 let pipelinePromise: Promise<FeatureExtractionPipeline> | null = null;
@@ -228,9 +225,25 @@ export async function embedLocal(
 
 /**
  * Reset the singleton pipeline — primarily for testing.
- * Also called when the model cache is deleted so the next embedLocal() re-downloads.
+ * Also called by local-embedding-cache when the model cache is deleted.
  */
 export function resetLocalEmbeddingPipeline(): void {
   pipelinePromise = null;
   progressListeners.clear();
+}
+
+// Re-export lightweight cache helpers from the dependency-free module.
+// These are available for direct use and for IPC handlers that must not
+// load @huggingface/transformers just to check/delete the model cache.
+export { isLocalModelDownloaded, resolveModelCacheDir } from './local-embedding-cache';
+import { removeLocalModelCache as _removeLocalModelCache } from './local-embedding-cache';
+
+/**
+ * Deletes the local model cache and resets the in-process pipeline singleton
+ * so the next embedLocal() call re-downloads.
+ * Wraps the dependency-free cache helper and injects resetLocalEmbeddingPipeline
+ * as the onDeleted callback.
+ */
+export function removeLocalModelCache(storageRoot: string): Promise<boolean> {
+  return _removeLocalModelCache(storageRoot, resetLocalEmbeddingPipeline);
 }

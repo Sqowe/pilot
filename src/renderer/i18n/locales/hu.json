@@ -249,7 +249,18 @@
     "advancedSave": "Haladó konfiguráció mentése",
     "advancedSaved": "Haladó konfiguráció mentve",
     "advancedResetAll": "Összes visszaállítása alapértelmezettre",
-    "advancedResetConfirm": "Visszaállítja az összes haladó beállítást az alapértelmezett értékekre?"
+    "advancedResetConfirm": "Visszaállítja az összes haladó beállítást az alapértelmezett értékekre?",
+    "embeddingProviderLocal": "Beépített helyi modell",
+    "embeddingProviderInherit": "Aktív API öröklése",
+    "embeddingProviderCustom": "Egyéni",
+    "localModelDownloading": "Modell letöltése… {{progress}}%",
+    "localModelReady": "Kész · EmbeddingGemma-300M · ~180MB",
+    "localModelNotDownloaded": "Még nincs letöltve · ~180MB az első használatkor",
+    "localModelDescription": "Helyben fut, API-kulcs nélkül. Kb. 180MB töltődik le egyszer a HuggingFace-ről, és helyben gyorsítótárazódik. Ezután offline is működik.",
+    "removeDownloadedModel": "Letöltött modell eltávolítása",
+    "removeDownloadedModelConfirm": "Törli a helyi modell gyorsítótárát (~180MB)? A következő memória-feldolgozáskor újra letöltődik.",
+    "removeDownloadedModelSuccess": "A helyi modell gyorsítótára eltávolítva",
+    "embeddingModelDownloadFailed": "A helyi beágyazási modell letöltése sikertelen. Ellenőrizze a kapcsolatot, vagy váltson egyéni API-szolgáltatóra."
   },
   "language": {
     "english": "Angol",

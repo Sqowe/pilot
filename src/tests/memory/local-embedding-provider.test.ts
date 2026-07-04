@@ -4,10 +4,15 @@
  * @huggingface/transformers is fully mocked — no real model download in CI.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as path from 'path';
 
 // --- Mocks (hoisted so they run before imports) ---
 
 const mockMkdirSync = vi.hoisted(() => vi.fn());
+const mockExistsSync = vi.hoisted(() => vi.fn());
+const mockFsPromisesAccess = vi.hoisted(() => vi.fn());
+const mockFsPromisesRm = vi.hoisted(() => vi.fn());
+const mockFsPromisesRealpath = vi.hoisted(() => vi.fn());
 const mockPipelineFn = vi.hoisted(() => vi.fn());
 const mockEnv = vi.hoisted(() => ({
   cacheDir: '',
@@ -15,7 +20,17 @@ const mockEnv = vi.hoisted(() => ({
 
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
-  return { ...actual, mkdirSync: mockMkdirSync };
+  return {
+    ...actual,
+    mkdirSync: mockMkdirSync,
+    existsSync: mockExistsSync,
+    promises: {
+      ...actual.promises,
+      access: mockFsPromisesAccess,
+      rm: mockFsPromisesRm,
+      realpath: mockFsPromisesRealpath,
+    },
+  };
 });
 
 vi.mock('@huggingface/transformers', () => ({
@@ -32,6 +47,8 @@ vi.mock('../../main/utils/logger', () => ({
 import {
   configureLocalEmbeddingCacheDir,
   embedLocal,
+  isLocalModelDownloaded,
+  removeLocalModelCache,
   resetLocalEmbeddingPipeline,
   LOCAL_EMBEDDING_MODEL_ID,
   LOCAL_EMBEDDING_DIMENSIONS,
@@ -49,6 +66,12 @@ describe('local-embedding-provider', () => {
   beforeEach(() => {
     mockEnv.cacheDir = '';
     mockMkdirSync.mockReset();
+    mockExistsSync.mockReset();
+    mockFsPromisesAccess.mockReset();
+    mockFsPromisesRm.mockReset();
+    mockFsPromisesRealpath.mockReset();
+    // Default realpath: echo back the input (no symlinks)
+    mockFsPromisesRealpath.mockImplementation((p: string) => Promise.resolve(p));
     mockPipelineFn.mockReset();
     resetLocalEmbeddingPipeline();
   });
@@ -343,6 +366,226 @@ describe('local-embedding-provider', () => {
 
       await embedLocal('after reset');
       expect(mockPipelineFn).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('isLocalModelDownloaded', () => {
+    const storageRoot = path.join(path.sep, 'abs', 'memory');
+    const modelSlug = LOCAL_EMBEDDING_MODEL_ID.replace('/', '--');
+    const expectedModelDir = path.join(storageRoot, 'models', `models--${modelSlug}`);
+
+    it('returns true when the model directory exists', () => {
+      mockExistsSync.mockReturnValue(true);
+      expect(isLocalModelDownloaded(storageRoot)).toBe(true);
+      expect(mockExistsSync).toHaveBeenCalledWith(expectedModelDir);
+    });
+
+    it('returns false when the model directory does not exist', () => {
+      mockExistsSync.mockReturnValue(false);
+      expect(isLocalModelDownloaded(storageRoot)).toBe(false);
+    });
+
+    it('accepts a relative storageRoot (resolved via path.resolve) and checks existence', () => {
+      // resolveModelCacheDir now uses path.resolve, so relative paths are accepted.
+      // existsSync returns false for the resolved path in test environment.
+      mockExistsSync.mockReturnValue(false);
+      expect(isLocalModelDownloaded('relative/path')).toBe(false);
+      // existsSync IS called — with the resolved absolute path
+      expect(mockExistsSync).toHaveBeenCalled();
+    });
+
+    it('returns false if existsSync throws', () => {
+      mockExistsSync.mockImplementation(() => {
+        throw new Error('EPERM');
+      });
+      expect(isLocalModelDownloaded(storageRoot)).toBe(false);
+    });
+
+    it('returns false for empty storageRoot (catches the thrown error)', () => {
+      expect(isLocalModelDownloaded('')).toBe(false);
+      expect(mockExistsSync).not.toHaveBeenCalled();
+    });
+
+    it('returns false for whitespace-only storageRoot (catches the thrown error)', () => {
+      expect(isLocalModelDownloaded('   ')).toBe(false);
+      expect(mockExistsSync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('removeLocalModelCache', () => {
+    const storageRoot = path.join(path.sep, 'abs', 'memory');
+    const modelSlug = LOCAL_EMBEDDING_MODEL_ID.replace('/', '--');
+    const expectedModelDir = path.join(storageRoot, 'models', `models--${modelSlug}`);
+
+    it('returns false when the model directory does not exist (ENOENT)', async () => {
+      mockFsPromisesAccess.mockRejectedValue(
+        Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' })
+      );
+      const result = await removeLocalModelCache(storageRoot);
+      expect(result).toBe(false);
+      expect(mockFsPromisesRm).not.toHaveBeenCalled();
+    });
+
+    it('rethrows non-ENOENT access errors (e.g. EPERM)', async () => {
+      mockFsPromisesAccess.mockRejectedValue(
+        Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' })
+      );
+      await expect(removeLocalModelCache(storageRoot)).rejects.toThrow('EPERM');
+      expect(mockFsPromisesRm).not.toHaveBeenCalled();
+    });
+
+    it('deletes only the model dir (not the entire models/ dir) and resets the pipeline', async () => {
+      mockFsPromisesAccess.mockResolvedValue(undefined);
+      mockFsPromisesRm.mockResolvedValue(undefined);
+      // realpath echoes back (default mock) — no symlinks
+
+      // Seed a pipeline so we can verify it gets cleared
+      const fakeExtractor = makeFakeExtractor(new Array(LOCAL_EMBEDDING_DIMENSIONS).fill(0.1));
+      mockPipelineFn.mockResolvedValue(fakeExtractor);
+      await embedLocal('before remove');
+      expect(mockPipelineFn).toHaveBeenCalledTimes(1);
+
+      const result = await removeLocalModelCache(storageRoot);
+
+      expect(result).toBe(true);
+      // Must target only the specific model dir, not the entire models/ directory
+      expect(mockFsPromisesRm).toHaveBeenCalledWith(expectedModelDir, { recursive: true });
+      expect(mockFsPromisesRm).not.toHaveBeenCalledWith(
+        path.join(storageRoot, 'models'),
+        expect.anything()
+      );
+      // Pipeline should be reset — next embed triggers re-init
+      await embedLocal('after remove');
+      expect(mockPipelineFn).toHaveBeenCalledTimes(2);
+    });
+
+    it('accepts a relative storageRoot by resolving it to an absolute path', async () => {
+      // resolveModelCacheDir now uses path.resolve, so relative paths are accepted.
+      // access() will return ENOENT for the non-existent relative path in tests.
+      mockFsPromisesAccess.mockRejectedValue(
+        Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      );
+      const result = await removeLocalModelCache('relative/path');
+      expect(result).toBe(false);
+      expect(mockFsPromisesRm).not.toHaveBeenCalled();
+    });
+
+    it('throws for empty storageRoot', async () => {
+      await expect(removeLocalModelCache('')).rejects.toThrow(
+        'storageRoot must not be empty or whitespace'
+      );
+      expect(mockFsPromisesRm).not.toHaveBeenCalled();
+    });
+
+    it('throws for whitespace-only storageRoot', async () => {
+      await expect(removeLocalModelCache('   ')).rejects.toThrow(
+        'storageRoot must not be empty or whitespace'
+      );
+      expect(mockFsPromisesRm).not.toHaveBeenCalled();
+    });
+
+    it('handles whitespace-padded storageRoot by trimming consistently', async () => {
+      // '  /abs/memory  ' should be treated the same as '/abs/memory' —
+      // resolveModelCacheDir and realpath both use path.resolve(storageRoot.trim())
+      mockFsPromisesAccess.mockResolvedValue(undefined);
+      mockFsPromisesRm.mockResolvedValue(undefined);
+      // realpath echoes back normalized (default mock)
+
+      const result = await removeLocalModelCache(`  ${path.join(path.sep, 'abs', 'memory')}  `);
+
+      expect(result).toBe(true);
+      // rm() must be called with the correct model dir derived from the trimmed root
+      const modelSlug = LOCAL_EMBEDDING_MODEL_ID.replace('/', '--');
+      const expectedModelDir = path.join(
+        path.sep,
+        'abs',
+        'memory',
+        'models',
+        `models--${modelSlug}`
+      );
+      expect(mockFsPromisesRm).toHaveBeenCalledWith(expectedModelDir, { recursive: true });
+    });
+
+    it('rethrows when realpath(storageRoot) fails with EPERM', async () => {
+      mockFsPromisesAccess.mockResolvedValue(undefined);
+      // First realpath call is for storageRoot — make it fail
+      mockFsPromisesRealpath.mockRejectedValueOnce(
+        Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' })
+      );
+      await expect(removeLocalModelCache(path.join(path.sep, 'abs', 'memory'))).rejects.toThrow(
+        'EPERM'
+      );
+      expect(mockFsPromisesRm).not.toHaveBeenCalled();
+    });
+
+    it('returns false when realpath(storageRoot) fails with ENOENT (storage dir removed)', async () => {
+      mockFsPromisesAccess.mockResolvedValue(undefined);
+      // realpath(storageRoot) returns ENOENT — storage dir was deleted after access check
+      mockFsPromisesRealpath.mockRejectedValueOnce(
+        Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' })
+      );
+      const result = await removeLocalModelCache(path.join(path.sep, 'abs', 'memory'));
+      expect(result).toBe(false);
+      expect(mockFsPromisesRm).not.toHaveBeenCalled();
+    });
+
+    it('returns false when realpath(modelDir) fails with ENOENT (dir disappeared after access)', async () => {
+      mockFsPromisesAccess.mockResolvedValue(undefined);
+      const expectedCacheDir = path.join(storageRoot, 'models');
+      // storageRoot and cacheDir realpath succeed, modelDir realpath returns ENOENT
+      mockFsPromisesRealpath
+        .mockResolvedValueOnce(storageRoot) // realpath(storageRoot)
+        .mockResolvedValueOnce(expectedCacheDir) // realpath(cacheDir)
+        .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })); // realpath(modelDir)
+      const result = await removeLocalModelCache(storageRoot);
+      expect(result).toBe(false);
+      expect(mockFsPromisesRm).not.toHaveBeenCalled();
+    });
+
+    it('returns true when rm() throws ENOENT (race: directory removed between realpath and rm)', async () => {
+      mockFsPromisesAccess.mockResolvedValue(undefined);
+      mockFsPromisesRm.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      const result = await removeLocalModelCache(path.join(path.sep, 'abs', 'memory'));
+      expect(result).toBe(true);
+    });
+
+    it('does not delete storageRoot itself', async () => {
+      mockFsPromisesAccess.mockResolvedValue(undefined);
+      mockFsPromisesRm.mockResolvedValue(undefined);
+
+      await removeLocalModelCache(storageRoot);
+
+      expect(mockFsPromisesRm).not.toHaveBeenCalledWith(storageRoot, expect.anything());
+    });
+
+    it('rejects when realpath resolves model dir outside cache dir (symlink escape)', async () => {
+      mockFsPromisesAccess.mockResolvedValue(undefined);
+      const expectedCacheDir = path.join(storageRoot, 'models');
+      // cacheDir resolves normally, but modelDir symlinks to an unrelated location
+      mockFsPromisesRealpath.mockImplementation((p: string) => {
+        if (p === expectedModelDir) return Promise.resolve(path.join(path.sep, 'etc', 'passwd'));
+        if (p === expectedCacheDir) return Promise.resolve(expectedCacheDir);
+        return Promise.resolve(p);
+      });
+
+      await expect(removeLocalModelCache(storageRoot)).rejects.toThrow(
+        'Model dir resolves outside cache dir'
+      );
+      expect(mockFsPromisesRm).not.toHaveBeenCalled();
+    });
+
+    it('rejects when storageRoot is filesystem root (unsafe root guard)', async () => {
+      await expect(removeLocalModelCache(path.sep)).rejects.toThrow(
+        'storageRoot is too close to filesystem root'
+      );
+      expect(mockFsPromisesRm).not.toHaveBeenCalled();
+    });
+
+    it('propagates IO errors from rm', async () => {
+      mockFsPromisesAccess.mockResolvedValue(undefined);
+      mockFsPromisesRm.mockRejectedValue(new Error('EPERM: operation not permitted'));
+
+      await expect(removeLocalModelCache(storageRoot)).rejects.toThrow('EPERM');
     });
   });
 });

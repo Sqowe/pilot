@@ -171,7 +171,6 @@
     "clearWorkspaceSuccess": "Workspace memory cleared",
     "clearCoreSuccess": "Core memory cleared",
     "storageRoot": "Storage root",
-    "currentWorkspace": "Current workspace",
     "noWorkspace": "No workspace",
     "runtimeTitle": "Runtime Configuration",
     "runtimeDescription": "Inherits the active API config by default. Adjust navigation depth, embedding, and storage directory here.",
@@ -250,7 +249,18 @@
     "advancedSave": "Save Advanced Config",
     "advancedSaved": "Advanced configuration saved",
     "advancedResetAll": "Reset all to defaults",
-    "advancedResetConfirm": "Reset all advanced settings to their default values?"
+    "advancedResetConfirm": "Reset all advanced settings to their default values?",
+    "embeddingProviderLocal": "Built-in local model",
+    "embeddingProviderInherit": "Inherit active API",
+    "embeddingProviderCustom": "Custom",
+    "localModelDownloading": "Downloading model… {{progress}}%",
+    "localModelReady": "Ready · EmbeddingGemma-300M · ~180MB",
+    "localModelNotDownloaded": "Not yet downloaded · ~180MB on first use",
+    "localModelDescription": "Runs on-device, no API key needed. About 180MB is downloaded once from HuggingFace and cached locally. Works offline after that.",
+    "removeDownloadedModel": "Remove downloaded model",
+    "removeDownloadedModelConfirm": "Delete the local model cache (~180MB)? It will be re-downloaded on the next memory ingestion.",
+    "removeDownloadedModelSuccess": "Local model cache removed",
+    "embeddingModelDownloadFailed": "Could not download the local embedding model. Check your connection and try again, or switch to a custom API provider."
   },
   "language": {
     "english": "English",
@@ -744,7 +754,6 @@
     "protectSuccess": "Skill \"{{name}}\" is now protected from auto-updates",
     "unprotectSuccess": "Skill \"{{name}}\" will receive auto-updates again",
     "protectFailed": "Failed to update protection status",
-
     "conflictResolution": "Conflict Resolution",
     "conflictResolutionDesc": "When a custom skill and built-in share the same name:",
     "policyCustomWins": "Custom wins (recommended)",
@@ -773,7 +782,6 @@
     "conflictCount_plural": "{{count}} conflicts",
     "skillDisabled": "Disabled by user",
     "skillSource": "Source",
-
     "profileSectionHeader": "Pinned Skills",
     "profileActiveCount": "{{pinned}}/{{active}} active · {{removed}} removed",
     "profileSaveToWorkspace": "Save to workspace",

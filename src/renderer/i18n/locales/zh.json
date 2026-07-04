@@ -171,7 +171,6 @@
     "clearWorkspaceSuccess": "当前工作区记忆已清空",
     "clearCoreSuccess": "Core memory 已清空",
     "storageRoot": "存储根目录",
-    "currentWorkspace": "当前工作区",
     "noWorkspace": "暂无工作区",
     "runtimeTitle": "运行时配置",
     "runtimeDescription": "默认继承当前激活的 API 配置。这里主要调节导航深度、embedding 和落盘目录。",
@@ -250,7 +249,18 @@
     "advancedSave": "保存高级配置",
     "advancedSaved": "高级配置已保存",
     "advancedResetAll": "全部恢复默认",
-    "advancedResetConfirm": "将所有高级设置恢复为默认值？"
+    "advancedResetConfirm": "将所有高级设置恢复为默认值？",
+    "embeddingProviderLocal": "内置本地模型",
+    "embeddingProviderInherit": "继承当前 API",
+    "embeddingProviderCustom": "自定义",
+    "localModelDownloading": "正在下载模型… {{progress}}%",
+    "localModelReady": "就绪 · EmbeddingGemma-300M · 约180MB",
+    "localModelNotDownloaded": "尚未下载 · 首次使用时约需下载180MB",
+    "localModelDescription": "本地运行，无需 API 密钥。首次从 HuggingFace 下载约 180MB 并缓存至本地，之后可离线使用。",
+    "removeDownloadedModel": "移除已下载模型",
+    "removeDownloadedModelConfirm": "删除本地模型缓存（约180MB）？下次内存摄取时将重新下载。",
+    "removeDownloadedModelSuccess": "本地模型缓存已移除",
+    "embeddingModelDownloadFailed": "无法下载本地嵌入模型，请检查网络连接后重试，或切换到自定义 API 提供商。"
   },
   "language": {
     "english": "English",
@@ -719,7 +729,6 @@
     "failedToInstall": "安装技能失败",
     "failedToDelete": "删除技能失败",
     "failedToToggle": "切换技能失败",
-
     "conflictResolution": "冲突解决",
     "conflictResolutionDesc": "当自定义技能与内置技能同名时：",
     "policyCustomWins": "自定义优先（推荐）",
@@ -748,7 +757,6 @@
     "conflictCount_plural": "{{count}} 个冲突",
     "skillDisabled": "已被用户禁用",
     "skillSource": "来源",
-
     "profileSectionHeader": "固定技能",
     "profileActiveCount": "{{pinned}}/{{active}} 已激活 · {{removed}} 已移除",
     "profileSaveToWorkspace": "保存到工作区",

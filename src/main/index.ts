@@ -39,6 +39,7 @@ import { SkillsManager } from './skills/skills-manager';
 import { PluginCatalogService } from './skills/plugin-catalog-service';
 import { PluginRuntimeService } from './skills/plugin-runtime-service';
 import { MemoryService } from './memory/memory-service';
+import { isLocalModelDownloaded } from './memory/local-embedding-cache';
 import { MemoryExtension } from './memory/memory-extension';
 import { CORE_MEMORY_UPDATE_SYSTEM_PROMPT } from './memory/memory-prompts';
 import { AgentRuntimeExtensionManager } from './extensions/agent-runtime-extension-manager';
@@ -4321,7 +4322,43 @@ ipcMain.handle('memory.getPanelState', (_event, cwd?: string, sessionId?: string
       workspaceCount: overview.sourceWorkspaceCount,
     },
     lastRetrieval: memoryService.getLastRetrievalMetrics(sessionId || undefined),
+    localModelDownloaded: isLocalModelDownloaded(getMemoryStorageRoot()),
   };
+});
+
+ipcMain.handle('memory.isLocalModelDownloaded', () => {
+  return { downloaded: isLocalModelDownloaded(getMemoryStorageRoot()) };
+});
+
+ipcMain.handle('memory.removeLocalModel', async () => {
+  const storageRoot = getMemoryStorageRoot();
+  // Safety: only allow deletion when storageRoot is under app userData.
+  // This prevents accidental or malicious deletion of unrelated directories
+  // when storageRoot is misconfigured to point outside app-owned storage.
+  const userDataPath = app.getPath('userData');
+  const resolvedRoot = resolve(storageRoot);
+  const resolvedUserData = resolve(userDataPath);
+  const rel = relative(resolvedUserData, resolvedRoot);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    return {
+      success: false,
+      removed: false,
+      error: `storageRoot (${resolvedRoot}) is outside app userData directory. Move storageRoot inside userData to allow model removal.`,
+    };
+  }
+  // Use the provider-level wrapper so resetLocalEmbeddingPipeline() is called
+  // after deletion, preventing stale in-memory pipeline state.
+  const { removeLocalModelCache } = await import('./memory/local-embedding-provider');
+  try {
+    const removed = await removeLocalModelCache(storageRoot);
+    return { success: true, removed };
+  } catch (error) {
+    return {
+      success: false,
+      removed: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 });
 
 ipcMain.handle(
@@ -4502,10 +4539,17 @@ ipcMain.handle('memory.openFileInEditor', () => {
  * is empty, falls back to app.getPath('userData')/memory.
  */
 function resolveMemoryPromptPath(): string {
-  const appConfig = configStore.getAll();
-  const configuredRoot = appConfig.memoryRuntime?.storageRoot?.trim();
-  const storageRoot = configuredRoot || join(app.getPath('userData'), 'memory');
-  return join(storageRoot, 'prompts', 'core-extraction.md');
+  return join(getMemoryStorageRoot(), 'prompts', 'core-extraction.md');
+}
+
+/**
+ * Returns the configured memory storage root, falling back to the default
+ * app userData directory. Single source of truth for all IPC handlers that
+ * need to locate the local embedding model cache.
+ */
+function getMemoryStorageRoot(): string {
+  const configured = configStore.getAll().memoryRuntime?.storageRoot?.trim();
+  return configured || join(app.getPath('userData'), 'memory');
 }
 
 ipcMain.handle('memory.setEnabled', (_event, enabled: boolean) => {

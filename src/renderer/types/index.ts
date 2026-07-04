@@ -448,9 +448,13 @@ export interface MemoryInspectSessionResult {
   chunks: ChunkMemoryItem[];
 }
 
+// Re-export from shared — single source of truth across main/preload/renderer.
+export type { LocalEmbeddingProgress } from '../../shared/local-embedding-types';
+
 export interface MemoryPanelState {
   enabled: boolean;
   skillFallbackEnabled: boolean;
+  localModelDownloaded: boolean;
   coreEntries: Array<{ category: string; key: string; value: string; combinedKey: string }>;
   workspaceStats: {
     name: string;

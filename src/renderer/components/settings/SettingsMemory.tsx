@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
+  EmbeddingProviderType,
+  LocalEmbeddingProgress,
   MemoryDebugFileContent,
   MemoryDebugFileInfo,
   MemoryInspectSessionResult,
@@ -59,6 +61,13 @@ function classifyIngestionError(error: string): string {
   return 'unknown';
 }
 
+/**
+ * UI-side fallback defaults, mirroring config-store.ts defaultConfig.memoryRuntime.
+ * Design decisions D3 (local-by-default for new installs) and D4 (existing installs
+ * frozen via schema v2 migration) are implemented in the main process config layer.
+ * These UI defaults only apply when appConfig.memoryRuntime is absent (e.g., tests
+ * or pre-hydration render). See docs/design/local-embeddings-default.md §7.
+ */
 const DEFAULT_MEMORY_RUNTIME: MemoryRuntimeConfig = {
   llm: {
     inheritFromActive: true,
@@ -68,13 +77,14 @@ const DEFAULT_MEMORY_RUNTIME: MemoryRuntimeConfig = {
     timeoutMs: 180000,
   },
   embedding: {
-    inheritFromActive: true,
+    inheritFromActive: false,
+    provider: 'local' as EmbeddingProviderType,
     apiKey: '',
     baseUrl: '',
-    model: 'text-embedding-3-small',
+    model: '',
     timeoutMs: 180000,
   },
-  useEmbedding: false,
+  useEmbedding: true,
   maxNavSteps: 2,
   ingestionConcurrency: 4,
   storageRoot: '',
@@ -685,63 +695,21 @@ export function SettingsMemory() {
                 />
               </LabeledField>
             </div>
-            <div className="space-y-3 rounded-lg border border-border-muted bg-background/80 p-3">
-              <p className="text-sm font-medium text-text-primary">{t('memory.embeddingConfig')}</p>
-              <ToggleField
-                label={t('memory.inheritActive')}
-                checked={runtimeDraft.embedding.inheritFromActive}
-                onChange={(checked) =>
-                  setRuntimeDraft((prev) => ({
-                    ...prev,
-                    embedding: { ...prev.embedding, inheritFromActive: checked },
-                  }))
-                }
-              />
-              <LabeledField label={t('memory.modelOverride')}>
-                <input
-                  value={runtimeDraft.embedding.model || ''}
-                  onChange={(event) =>
-                    setRuntimeDraft((prev) => ({
-                      ...prev,
-                      embedding: { ...prev.embedding, model: event.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none focus:border-accent"
-                />
-              </LabeledField>
-              <LabeledField label={t('memory.baseUrlOverride')}>
-                <input
-                  value={runtimeDraft.embedding.baseUrl || ''}
-                  onChange={(event) =>
-                    setRuntimeDraft((prev) => ({
-                      ...prev,
-                      embedding: { ...prev.embedding, baseUrl: event.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none focus:border-accent"
-                />
-              </LabeledField>
-              <LabeledField label={t('memory.apiKeyOverride')}>
-                <input
-                  type="password"
-                  value={runtimeDraft.embedding.apiKey || ''}
-                  onChange={(event) =>
-                    setRuntimeDraft((prev) => ({
-                      ...prev,
-                      embedding: { ...prev.embedding, apiKey: event.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none focus:border-accent"
-                />
-              </LabeledField>
-            </div>
+            <EmbeddingConfigBlock
+              runtimeDraft={runtimeDraft}
+              setRuntimeDraft={setRuntimeDraft}
+              savedStorageRoot={appConfig?.memoryRuntime?.storageRoot ?? ''}
+              isBusy={isBusy}
+              setIsBusy={setIsBusy}
+              setStatus={setStatus}
+            />
           </div>
           <div className="flex justify-end">
             <button
               onClick={() => {
                 void handleSaveRuntime();
               }}
-              disabled={isBusy}
+              disabled={isBusy || !appConfig}
               className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
               {t('memory.saveRuntime')}
@@ -1075,6 +1043,272 @@ export function SettingsMemory() {
       {status && (
         <div className="rounded-lg border border-border-muted bg-background-secondary/70 px-4 py-3 text-sm text-text-secondary">
           {status}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Embedding configuration block — 3-way provider selector
+// ---------------------------------------------------------------------------
+
+type EmbeddingMode = 'local' | 'inherit' | 'custom';
+
+function resolveEmbeddingMode(embedding: MemoryRuntimeConfig['embedding']): EmbeddingMode {
+  if (embedding.provider === 'local') return 'local';
+  if (embedding.inheritFromActive) return 'inherit';
+  return 'custom';
+}
+
+function EmbeddingConfigBlock({
+  runtimeDraft,
+  setRuntimeDraft,
+  savedStorageRoot,
+  isBusy,
+  setIsBusy,
+  setStatus,
+}: {
+  runtimeDraft: MemoryRuntimeConfig;
+  setRuntimeDraft: (fn: (prev: MemoryRuntimeConfig) => MemoryRuntimeConfig) => void;
+  /** The last-saved storageRoot from appConfig — used to detect unsaved changes. */
+  savedStorageRoot: string;
+  isBusy: boolean;
+  setIsBusy: (busy: boolean) => void;
+  setStatus: (status: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  const mode = resolveEmbeddingMode(runtimeDraft.embedding);
+
+  // True when the draft storageRoot differs from the saved one — removal IPC
+  // would target the old saved root, not the pending new one.
+  const isStorageRootDirty = (runtimeDraft.storageRoot ?? '') !== savedStorageRoot;
+
+  // Local model download progress
+  const [downloadProgress, setDownloadProgress] = useState<LocalEmbeddingProgress | null>(null);
+  // Whether the model is already cached — seeded from panel state, updated by progress events
+  const [localModelDownloaded, setLocalModelDownloaded] = useState<boolean | null>(null);
+
+  // Fetch initial panel state to seed localModelDownloaded
+  useEffect(() => {
+    window.electronAPI.memory
+      .isLocalModelDownloaded()
+      .then((result) => {
+        setLocalModelDownloaded(result.downloaded);
+      })
+      .catch(() => setLocalModelDownloaded(false));
+  }, []);
+
+  // Subscribe to download progress events
+  useEffect(() => {
+    const unsub = window.electronAPI.memory.onLocalEmbeddingProgress((p) => {
+      setDownloadProgress(p);
+      if (p.status === 'ready') {
+        setLocalModelDownloaded(true);
+        setDownloadProgress(null);
+      } else if (p.status === 'error') {
+        // Transient error — re-check actual cache state rather than forcing false,
+        // so a network blip doesn't incorrectly mark an already-downloaded model as absent.
+        window.electronAPI.memory
+          .isLocalModelDownloaded()
+          .then((result) => setLocalModelDownloaded(result.downloaded))
+          .catch(() => {
+            /* keep current state on IPC failure */
+          });
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const handleModeChange = (next: EmbeddingMode) => {
+    setRuntimeDraft((prev) => {
+      const base = { ...prev.embedding };
+      if (next === 'local') {
+        // Selecting local mode enables embeddings — selecting local is an explicit opt-in.
+        return {
+          ...prev,
+          useEmbedding: true,
+          embedding: {
+            ...base,
+            provider: 'local' as EmbeddingProviderType,
+            inheritFromActive: false,
+          },
+        };
+      }
+      if (next === 'inherit') {
+        return {
+          ...prev,
+          // provider: undefined + inheritFromActive: true — main process normalizeModelConfig
+          // falls back to the active API provider (line 84 in memory-llm-client.ts).
+          // Clear override fields so hidden values cannot affect future modes or cause confusion.
+          // useEmbedding is left unchanged — the user controls it via the toggle above.
+          embedding: {
+            ...base,
+            provider: undefined,
+            inheritFromActive: true,
+            model: '',
+            baseUrl: '',
+            apiKey: '',
+          },
+        };
+      }
+      // custom — provider: undefined + inheritFromActive: false.
+      // normalizeModelConfig resolves undefined provider to the active API provider
+      // (input?.provider || activeProvider at line 84 of memory-llm-client.ts),
+      // so model/baseUrl/apiKey overrides apply on top of the active provider.
+      // useEmbedding is left unchanged — the user controls it via the toggle above.
+      return {
+        ...prev,
+        embedding: { ...base, provider: undefined, inheritFromActive: false },
+      };
+    });
+  };
+
+  const handleRemoveModel = async () => {
+    if (!window.confirm(t('memory.removeDownloadedModelConfirm'))) return;
+    setIsBusy(true);
+    setStatus(null);
+    try {
+      const result = await window.electronAPI.memory.removeLocalModel();
+      if (!result.success) {
+        setStatus(result.error ?? t('memory.embeddingModelDownloadFailed'));
+        return;
+      }
+      setLocalModelDownloaded(false);
+      setDownloadProgress(null);
+      setStatus(t('memory.removeDownloadedModelSuccess'));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const modeOptions: { value: EmbeddingMode; label: string }[] = [
+    { value: 'local', label: t('memory.embeddingProviderLocal') },
+    { value: 'inherit', label: t('memory.embeddingProviderInherit') },
+    { value: 'custom', label: t('memory.embeddingProviderCustom') },
+  ];
+
+  return (
+    <div className="space-y-3 rounded-lg border border-border-muted bg-background/80 p-3">
+      <p className="text-sm font-medium text-text-primary">{t('memory.embeddingConfig')}</p>
+
+      {/* Provider selector */}
+      <div className="flex flex-wrap gap-1.5">
+        {modeOptions.map((opt) => (
+          <button
+            type="button"
+            key={opt.value}
+            onClick={() => handleModeChange(opt.value)}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+              mode === opt.value
+                ? 'border-accent bg-accent/10 text-accent'
+                : 'border-border bg-background text-text-secondary hover:bg-surface-hover'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Local mode status */}
+      {mode === 'local' && (
+        <div className="space-y-2">
+          <p className="text-xs text-text-muted">{t('memory.localModelDescription')}</p>
+
+          {/* Download progress */}
+          {downloadProgress?.status === 'downloading' ? (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-xs text-text-secondary">
+                <span>
+                  {t('memory.localModelDownloading', {
+                    progress: Math.round(downloadProgress.progress ?? 0),
+                  })}
+                </span>
+                {downloadProgress.file && (
+                  <span className="max-w-[200px] truncate text-text-muted">
+                    {downloadProgress.file.split(/[/\\]/).pop()}
+                  </span>
+                )}
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+                <div
+                  className="h-full rounded-full bg-accent transition-all duration-200"
+                  style={{ width: `${downloadProgress.progress ?? 0}%` }}
+                />
+              </div>
+            </div>
+          ) : downloadProgress?.status === 'error' ? (
+            <p className="text-xs text-rose-600 dark:text-rose-400">
+              {t('memory.embeddingModelDownloadFailed')}
+            </p>
+          ) : localModelDownloaded === true ? (
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-green-700 dark:text-green-400">
+                ✓ {t('memory.localModelReady')}
+              </p>
+              <button
+                type="button"
+                onClick={() => void handleRemoveModel()}
+                disabled={isBusy || isStorageRootDirty}
+                title={isStorageRootDirty ? t('memory.saveRuntime') : undefined}
+                className="rounded border border-border bg-background px-2 py-1 text-xs text-text-muted hover:text-rose-600 disabled:opacity-60"
+              >
+                {t('memory.removeDownloadedModel')}
+              </button>
+            </div>
+          ) : (
+            <p className="text-xs text-text-muted">{t('memory.localModelNotDownloaded')}</p>
+          )}
+        </div>
+      )}
+
+      {/* Inherit mode — no extra fields */}
+      {mode === 'inherit' && (
+        <p className="text-xs text-text-muted">{t('memory.runtimeDescription')}</p>
+      )}
+
+      {/* Custom mode — model / baseUrl / apiKey */}
+      {mode === 'custom' && (
+        <div className="space-y-3">
+          <LabeledField label={t('memory.modelOverride')}>
+            <input
+              value={runtimeDraft.embedding.model || ''}
+              onChange={(event) =>
+                setRuntimeDraft((prev) => ({
+                  ...prev,
+                  embedding: { ...prev.embedding, model: event.target.value },
+                }))
+              }
+              className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none focus:border-accent"
+            />
+          </LabeledField>
+          <LabeledField label={t('memory.baseUrlOverride')}>
+            <input
+              value={runtimeDraft.embedding.baseUrl || ''}
+              onChange={(event) =>
+                setRuntimeDraft((prev) => ({
+                  ...prev,
+                  embedding: { ...prev.embedding, baseUrl: event.target.value },
+                }))
+              }
+              className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none focus:border-accent"
+            />
+          </LabeledField>
+          <LabeledField label={t('memory.apiKeyOverride')}>
+            <input
+              type="password"
+              value={runtimeDraft.embedding.apiKey || ''}
+              onChange={(event) =>
+                setRuntimeDraft((prev) => ({
+                  ...prev,
+                  embedding: { ...prev.embedding, apiKey: event.target.value },
+                }))
+              }
+              className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none focus:border-accent"
+            />
+          </LabeledField>
         </div>
       )}
     </div>

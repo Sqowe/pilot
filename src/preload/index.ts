@@ -29,6 +29,7 @@ import type {
   MemoryDebugFileInfo,
   MemoryDebugFileContent,
   MemoryInspectSessionResult,
+  LocalEmbeddingProgress,
 } from '../renderer/types';
 import type { DiagnosticInput, DiagnosticResult } from '../renderer/types';
 import type {
@@ -648,6 +649,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteCustomExtractionPrompt: (): Promise<{ success: boolean }> =>
       ipcRenderer.invoke('memory.deleteCustomExtractionPrompt'),
     openFileInEditor: (): Promise<void> => ipcRenderer.invoke('memory.openFileInEditor'),
+    removeLocalModel: (): Promise<{ success: boolean; removed: boolean; error?: string }> =>
+      ipcRenderer.invoke('memory.removeLocalModel'),
+    isLocalModelDownloaded: (): Promise<{ downloaded: boolean }> =>
+      ipcRenderer.invoke('memory.isLocalModelDownloaded'),
+    onLocalEmbeddingProgress: (callback: (p: LocalEmbeddingProgress) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, p: LocalEmbeddingProgress) => {
+        try {
+          callback(p);
+        } catch (err) {
+          console.error('[preload] onLocalEmbeddingProgress callback threw:', err);
+        }
+      };
+      ipcRenderer.on('memory.localEmbeddingProgress', listener);
+      return () => ipcRenderer.removeListener('memory.localEmbeddingProgress', listener);
+    },
   },
 });
 
@@ -1029,6 +1045,9 @@ declare global {
         createCustomExtractionPrompt: () => Promise<{ success: boolean }>;
         deleteCustomExtractionPrompt: () => Promise<{ success: boolean }>;
         openFileInEditor: () => Promise<void>;
+        removeLocalModel: () => Promise<{ success: boolean; removed: boolean; error?: string }>;
+        isLocalModelDownloaded: () => Promise<{ downloaded: boolean }>;
+        onLocalEmbeddingProgress: (callback: (p: LocalEmbeddingProgress) => void) => () => void;
       };
     };
   }
