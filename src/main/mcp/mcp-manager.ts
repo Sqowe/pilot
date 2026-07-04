@@ -847,7 +847,7 @@ export class MCPManager {
 
         // Pass resourcesPath to MCP servers so they can reliably locate bundled tools/resources
         // (Node processes spawned from bundled Node.js do not have process.resourcesPath)
-        env.OPEN_COWORK_RESOURCES_PATH = process.resourcesPath || '';
+        env.SQOWE_PILOT_RESOURCES_PATH = process.resourcesPath || '';
       }
 
       log(`[MCPManager] Creating STDIO transport: ${command} ${args.join(' ')}`);
