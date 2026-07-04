@@ -216,24 +216,103 @@ One-time, idempotent, on app start (after `storageRoot` is resolved, before memo
 
 ## 10. Code impact
 
-| File                                         | Change                                                                                                                                                                                            |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/main/memory/experience-memory-store.ts` | Reimplement internals against `memory.db` (prepared statements); preserve public methods. Largest change.                                                                                         |
-| `src/main/memory/memory-utils.ts`            | `cosineSimilarity` / `lexicalScore` accept `Float32Array`; add BLOB ↔ Float32 helpers. Keep `saveJsonFile`/`loadJsonFile` (still used by core/state).                                             |
-| `src/main/memory/memory-service.ts`          | `getPaths()` gains `experienceDbPath` under `storageRoot`; open a dedicated `better-sqlite3` handle (separate from `getDatabase()`); run the backfill (§9); `listFiles`/`readFile` updated (§11). |
-| `src/main/db/*`                              | Optionally factor the `better-sqlite3` open/WAL boilerplate into a shared helper reused by `memory.db`. No change to `cowork.db` schema.                                                          |
-| `src/tests/memory/*`                         | Harnesses that build JSON stores (`memory-service.test.ts`, `memory-eval-harness.test.ts`, `memory-smoke-harness.test.ts`) switch to seeding `memory.db`; add a JSON→SQLite backfill test.        |
+| File                                                  | Change                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/main/memory/experience-memory-store.ts`          | Reimplement internals against `memory.db` (prepared statements); preserve public methods. Largest change.                                                                                                                                                                      |
+| `src/main/memory/memory-utils.ts`                     | `cosineSimilarity` / `lexicalScore` accept `Float32Array`; add BLOB ↔ Float32 helpers. Keep `saveJsonFile`/`loadJsonFile` (still used by core/state).                                                                                                                          |
+| `src/main/memory/memory-service.ts`                   | `getPaths()` gains `experienceDbPath` under `storageRoot`; open a dedicated `better-sqlite3` handle (separate from `getDatabase()`); run the backfill (§9); `listFiles`/`readFile` updated, add `getExperienceDbStatus` / `exportExperienceJson` / `vacuumExperienceDb` (§11). |
+| `src/main/db/*`                                       | Optionally factor the `better-sqlite3` open/WAL boilerplate into a shared helper reused by `memory.db`. No change to `cowork.db` schema.                                                                                                                                       |
+| `src/renderer/components/settings/SettingsMemory.tsx` | Rename "Raw File Viewer" → "Memory Storage"; branch entries on `storage` (`file` → raw pane, `sqlite` → DB-status card); wire `[Vacuum]` / `[Export JSON]`. Maintenance buttons keep their verbs (§11).                                                                        |
+| `src/preload/index.ts`                                | Add `memory.getExperienceDbStatus` / `exportExperienceJson` / `vacuumExperienceDb` bridges + their `ipcMain` handlers; existing `rebuild*` / `clear*` / `listFiles` / `readFile` IPCs unchanged (§11).                                                                         |
+| `src/renderer/types/index.ts` (+ shared)              | `MemoryDebugFileInfo` gains `storage: 'file' \| 'sqlite'`; add `ExperienceDbStatus` type (§11).                                                                                                                                                                                |
+| `src/tests/memory/*`                                  | Harnesses that build JSON stores (`memory-service.test.ts`, `memory-eval-harness.test.ts`, `memory-smoke-harness.test.ts`) switch to seeding `memory.db`; add a JSON→SQLite backfill test.                                                                                     |
 
-## 11. Debug / Lens panel
+## 11. UI surfaces: Settings "Raw File Viewer" + ContextPanel Lens
 
-`memory-service.listFiles()` / `readFile()` ([memory-service.ts:304](../../src/main/memory/memory-service.ts))
-and the Memory Lens panel ([memory-lens-panel.md](memory-lens-panel.md)) currently surface the raw
-JSON. After migration:
+Two renderer surfaces read the raw stores today and both must change:
 
-- Replace the `experience_memory.json` entry with DB-backed views (row counts, per-workspace
-  stats via `getStatsBySourceWorkspace`, sample rows).
-- Add an **export tool** (`memory.exportExperienceJson`) that dumps the DB back to the JSON shape,
-  to preserve human inspectability and give users a portable backup.
+1. **Settings → Memory "Raw File Viewer"**
+   ([SettingsMemory.tsx](../../src/renderer/components/settings/SettingsMemory.tsx)) — a file list +
+   raw-content pane driven by `memory.listFiles()` / `memory.readFile()`
+   ([preload:633](../../src/preload/index.ts); `memory-service.ts:306/347`).
+2. **ContextPanel Memory Lens** ([memory-lens-panel.md](memory-lens-panel.md)) — status +
+   per-workspace stats; already consumes `getStatsBySourceWorkspace`, which becomes a cheap indexed
+   `GROUP BY` (see that doc's "Post-Migration Opportunity: Memory-by-Workspace View").
+
+### It's a hybrid, not a wholesale "files → DB status" swap
+
+Three of the four entries stay files; only experience becomes a DB. So rename the section
+**"Raw File Viewer" → "Memory Storage"** and give each entry a storage type:
+
+| Entry                    | After migration | Viewer                                          |
+| ------------------------ | --------------- | ----------------------------------------------- |
+| `core_memory.json`       | JSON file       | raw-JSON pane (unchanged)                       |
+| `session_state.json`     | JSON file       | raw-JSON pane (unchanged)                       |
+| `eval-artifacts/`        | directory       | as-is                                           |
+| `experience_memory.json` | **`memory.db`** | **DB-status card** (a raw byte dump is useless) |
+
+### Experience DB-status card
+
+Replaces the raw pane for the `memory.db` entry. Every field is cheap (`COUNT` / `PRAGMA` / the
+`GROUP BY` breakdown):
+
+```
+┌─ memory.db — Experience DB ──────────────────────────┐
+│ Schema v1 · WAL · 24.1 MB                             │
+│ 91 sessions · 338 chunks                              │
+│ Model: onnx-community/embeddinggemma-300m · dim 768   │
+│ Integrity: ok                                         │
+│ By workspace:  Tree HU 5·14 · Investments 9·41 · …    │
+│ [Rebuild all]   [Vacuum]   [Export JSON]              │
+└───────────────────────────────────────────────────────┘
+```
+
+`Export JSON` dumps the DB back to the `{ sessions, chunks }` shape — this **preserves the
+raw-inspection capability** power users have today and gives a portable backup, without shipping a
+SQL browser.
+
+### Backend / type deltas
+
+- `MemoryDebugFileInfo` gains a `storage: 'file' | 'sqlite'` discriminator; the experience entry
+  flips to `sqlite` and points at `memory.db`. The renderer branches: `file` → existing raw pane,
+  `sqlite` → status card.
+- Add `memory.getExperienceDbStatus` IPC (counts, `embedding_model`/`embedding_dim` from
+  `memory_meta` + rows, `PRAGMA integrity_check`, size, per-workspace breakdown). Keep `readFile`
+  for **files only** so the raw path stays clean.
+- Add `memory.exportExperienceJson` (dump DB → JSON) and `memory.vacuumExperienceDb` (`VACUUM`).
+  Reuse existing `rebuildAll` / the `getWorkspaceBreakdown` from the Lens doc.
+- Update the section's helper text (currently "View raw on-disk files: core / unified experience /
+  session_state / eval artifacts") — "unified experience" is now the DB.
+
+Keep the two surfaces in sync: the Lens "Memory-by-Workspace" view and this Settings DB card both
+read `getWorkspaceBreakdown`.
+
+### Maintenance actions (rebuild / clear)
+
+The same Settings page has a **Maintenance** block with four buttons. All keep their existing IPCs;
+three route through experience-store verbs (now indexed `DELETE` / row inserts), and one is out of
+scope:
+
+| Button                    | IPC                       | Backend                                                                                                                                                            | Under SQLite                                                                                                           |
+| ------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| Rebuild current workspace | `memory.rebuildWorkspace` | `rebuildWorkspace()` ([memory-service.ts:481](../../src/main/memory/memory-service.ts)) — clears then re-ingests ([:487](../../src/main/memory/memory-service.ts)) | `DELETE WHERE source_workspace = ?` + row inserts, **in one transaction**                                              |
+| Rebuild all memory        | `memory.rebuildAll`       | `rebuildAll()` ([memory-service.ts:500](../../src/main/memory/memory-service.ts))                                                                                  | same across the store; **re-stamps every row's `embedding_model`/`embedding_dim`** (the §7 model-change recovery path) |
+| Clear current workspace   | `memory.clearWorkspace`   | `clearWorkspace()` → `removeBySourceWorkspace()` ([memory-service.ts:521/528](../../src/main/memory/memory-service.ts))                                            | indexed `DELETE`; follow with `VACUUM` (DB-card action) to reclaim pages                                               |
+| Clear core memory         | `memory.clearCoreMemory`  | `clearCoreMemory()` ([memory-service.ts:534](../../src/main/memory/memory-service.ts))                                                                             | **unaffected** — core stays JSON (D2)                                                                                  |
+
+Key points:
+
+- **Rebuild = clear + re-ingest must be one transaction.** `rebuildWorkspace` clears the workspace
+  then re-ingests. On the JSON store that is ≥2 whole-file writes with a window where the workspace
+  is empty on disk — a crash between them leaves it cleared-but-not-repopulated. Wrapping the
+  clear+reinsert in a single SQLite transaction makes rebuild **atomic and crash-safe** (and drops
+  the repeated whole-file rewrites). A correctness win, not just performance.
+- **"Rebuild all" and a model/provider switch are the same operation** — both delete and re-embed
+  every row with the active model tag. Keep them on one code path, behind the same Settings
+  save-handler prompt (§7).
+- After a **Clear**, freed pages are not returned to the OS until `VACUUM` (or
+  `PRAGMA incremental_vacuum`); expose it via the DB-status card's `[Vacuum]` action.
+- **Clear core memory** touches `core_memory.json` only — no migration impact.
 
 ## 12. Testing
 
