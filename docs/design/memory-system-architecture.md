@@ -346,14 +346,21 @@ interface MemoryRuntimeConfig {
   };
   embedding: {
     inheritFromActive: boolean;
+    // 'local' = in-process EmbeddingGemma (default for fresh installs); otherwise an
+    // OpenAI-compatible ProviderType (openai/openrouter/ollama/custom+openai).
+    provider?: 'local' | ProviderType;
+    customProtocol?: CustomProtocolType;
     apiKey: string;
     baseUrl: string;
+    // Remote-only fallback model; ignored when provider === 'local' (model ID is hardcoded).
     model: string; // default: "text-embedding-3-small"
     timeoutMs: number;
   };
-  useEmbedding: boolean; // Whether to compute embeddings
+  // Whether to compute embeddings. Default: true for fresh installs (schema v2);
+  // frozen to its prior value for existing installs via the v1→v2 migration.
+  useEmbedding: boolean;
   maxNavSteps: number; // Progressive retrieval depth (default: 2)
-  ingestionConcurrency: number; // Parallel ingestion limit (default: 2)
+  ingestionConcurrency: number; // Parallel LLM-extraction limit (default: 4; embeddings run sequentially)
   storageRoot: string;
   evalArtifactsRoot?: string;
   // Advanced scoring parameters
@@ -366,6 +373,22 @@ interface MemoryRuntimeConfig {
   customExtractionPromptPath?: string;
 }
 ```
+
+### 6.1 Local embedding provider (`provider: 'local'`)
+
+Fresh installs default to an **in-process** embedding provider — no API key, no per-query
+network calls. `MemoryLLMClient.embed()` branches on `embedding.provider === 'local'` before any
+remote-credential resolution and delegates to `local-embedding-provider.ts`, which runs
+`onnx-community/embeddinggemma-300m-ONNX` (quantized q8, 768-dim) via `@huggingface/transformers`.
+The model is downloaded on first use (with backoff/retry) and cached under `{storageRoot}/models`.
+
+EmbeddingGemma requires a task prefix that the pipeline does not auto-apply, so embeds are tagged
+`query` vs `document` (`EmbeddingKind`, threaded from the ingestion/retrieval call sites) and the
+retrieval prefixes are prepended **only in the local provider** (remote models are prefix-free).
+`experience_memory.json` carries an `embeddingFormatVersion` (`EMBEDDING_FORMAT_VERSION`) so a
+format change (e.g. the prefix fix) is detected as a stale index and a rebuild is offered.
+
+Full design, decisions, and empirical validation: [local-embeddings-default.md](local-embeddings-default.md) §13.
 
 ### Custom Extraction Prompt
 
