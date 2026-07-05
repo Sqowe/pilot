@@ -5,7 +5,7 @@ import { resolve } from 'path';
 import { builtinModules } from 'module';
 
 // Node built-in modules must be external for Electron main process
-const nodeBuiltins = builtinModules.flatMap(m => [m, `node:${m}`]);
+const nodeBuiltins = builtinModules.flatMap((m) => [m, `node:${m}`]);
 const ignoredWatchPaths = [
   '**/release/**',
   '**/dist/**',
@@ -34,6 +34,13 @@ export default defineConfig({
                 'bufferutil',
                 'utf-8-validate',
                 'electron',
+                // Native ONNX runtime + image lib for local embeddings
+                // (@huggingface/transformers). These load a .node binding via
+                // dynamic require, which Rollup can't bundle — keep them
+                // external so they resolve from node_modules at runtime.
+                'onnxruntime-node',
+                'onnxruntime-common',
+                'sharp',
                 // Externalize large CJS-compatible main-process dependencies
                 // NOTE: ESM-only packages (pi-coding-agent, pi-ai, electron-store, uuid)
                 // must stay bundled — CJS require() can't load them
