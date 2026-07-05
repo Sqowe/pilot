@@ -362,6 +362,10 @@ interface MemoryRuntimeConfig {
   maxNavSteps: number; // Progressive retrieval depth (default: 2)
   ingestionConcurrency: number; // Parallel LLM-extraction limit (default: 4; embeddings run sequentially)
   storageRoot: string;
+  // Memory eval harness (dev/QA benchmarking; off by default).
+  evalEnabled?: boolean; // default: false — runs eval cases against live retrieval + an LLM judge
+  evalMaxRounds?: number; // default: 12
+  promptIterationRounds?: number;
   evalArtifactsRoot?: string;
   // Advanced scoring parameters
   recencyFloor?: number; // default: 0.05
@@ -387,6 +391,14 @@ EmbeddingGemma requires a task prefix that the pipeline does not auto-apply, so 
 retrieval prefixes are prepended **only in the local provider** (remote models are prefix-free).
 `experience_memory.json` carries an `embeddingFormatVersion` (`EMBEDDING_FORMAT_VERSION`) so a
 format change (e.g. the prefix fix) is detected as a stale index and a rebuild is offered.
+
+**Build/packaging constraint.** `onnxruntime-node` loads its native binding
+(`onnxruntime_binding.node`) via a dynamic `require`, which Rollup cannot bundle. The
+main-process build therefore marks `onnxruntime-node`, `onnxruntime-common`, and `sharp` as
+**external** ([vite.config.ts](../../vite.config.ts) → `rollupOptions.external`) so they resolve
+from `node_modules` at runtime. A bundled build missing these externals fails at load with
+_"Could not dynamically require … onnxruntime_binding.node"_. Production packaging must ship these
+native modules and `asarUnpack` the `.node`/`.dylib` files.
 
 Full design, decisions, and empirical validation: [local-embeddings-default.md](local-embeddings-default.md) §13.
 
