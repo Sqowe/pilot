@@ -3,20 +3,23 @@
 ## 1. Purpose of This Document
 
 This is the architectural source of truth for Sqowe Pilot, an Electron desktop AI agent
-application. It describes the system as it exists today (v3.3.0-sqowe.10), not as imagined.
+application. It describes the system as it exists today (v1.0.x), not as imagined.
 
 Any AI coder working on this repository MUST read this document first to understand
 structure, boundaries, and where to find authoritative coding rules. This document
 does NOT define coding rules — it points to them (see Section 8).
 
 Target audience: AI coding assistants and new human contributors.
-Last updated: 2026-06-20.
+Last updated: 2026-07-04.
 
-> **Rebrand in progress:** the product has been renamed **Open Cowork → "Sqowe Pilot"**.
-> User-facing surfaces (renderer UI, i18n, default system prompts, icons) and documentation
-> already say "Sqowe Pilot"; the packaging identity (`appId`, `package.json` name) and the
-> on-disk data directory still use `open-cowork` (version `3.3.0-sqowe.10`) pending the
-> first-launch migration. See `docs/design/rebrand-to-sqowe-pilot-implementation-plan.md`.
+> **Rebrand complete:** the product was renamed **Open Cowork → "Sqowe Pilot"**. All
+> surfaces now carry the new name — renderer UI, i18n, default system prompts, icons,
+> documentation, the packaging identity (`appId: com.sqowe.pilot`, `package.json` name
+> `sqowe-pilot`, `productName: Sqowe Pilot`, version `1.0.x`), and the on-disk data
+> directory (`<appData>/sqowe-pilot`). First launch migrates legacy `<appData>/open-cowork`
+> data (see `src/main/migration/`). Encryption seed strings and the four `projectName`
+> store values intentionally retain `open-cowork` so migrated `config.json` stays
+> decryptable. See `docs/design/rebrand-to-sqowe-pilot-implementation-plan.md`.
 
 ---
 
@@ -107,7 +110,9 @@ sqowe-pilot/
 │   └── bash-restrictions/     # Drop-in add-on; consumes src/shared engine
 ├── scripts/                    # Build, download, deploy scripts
 ├── resources/                  # Bundled runtimes (Node, Python, skills)
-├── docs/                       # Documentation + chat history
+├── docs/                       # Documentation, design records, chat history
+│   ├── design/                # ACTIVE design notes: in-progress features + cross-cutting findings
+│   │   └── archive/          # Design docs for COMPLETED/shipped features (as-built record)
 │   └── chats/                 # Exported conversation logs (context)
 ├── .claude/skills/             # Dev-time skills (docx, pdf, pptx, etc.)
 ├── adaptations/                # Issue tracking + patch notes
@@ -122,6 +127,11 @@ sqowe-pilot/
 ├── ROADMAP.md                  # Feature roadmap
 └── package.json                # Node 22+, Electron 41, Vite 7
 ```
+
+**Design docs lifecycle:** `docs/design/` holds _active_ design work — in-progress feature
+designs and cross-cutting "findings" write-ups (problem analyses, investigations). When a
+feature ships, move its design doc to `docs/design/archive/` as the as-built record. Treat
+archived docs as history — accurate for what was built, not a to-do list.
 
 ---
 

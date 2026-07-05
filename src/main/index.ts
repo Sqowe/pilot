@@ -39,6 +39,10 @@ import { SkillsManager } from './skills/skills-manager';
 import { PluginCatalogService } from './skills/plugin-catalog-service';
 import { PluginRuntimeService } from './skills/plugin-runtime-service';
 import { MemoryService } from './memory/memory-service';
+import { MemoryLLMClient } from './memory/memory-llm-client';
+import { isLocalModelDownloaded } from './memory/local-embedding-cache';
+import { getLocalModelRuntimeStatus } from './memory/local-embedding-state';
+import type { LocalEmbeddingProgress } from '../shared/local-embedding-types';
 import { MemoryExtension } from './memory/memory-extension';
 import { CORE_MEMORY_UPDATE_SYSTEM_PROMPT } from './memory/memory-prompts';
 import { AgentRuntimeExtensionManager } from './extensions/agent-runtime-extension-manager';
@@ -48,6 +52,7 @@ import {
   type AppConfig,
   type AppTheme,
   type CreateConfigSetPayload,
+  type MemoryRuntimeConfig,
 } from './config/config-store';
 import { runConfigApiTest } from './config/config-test-routing';
 import { listOllamaModels } from './config/ollama-api';
@@ -168,6 +173,28 @@ let mainWindow: BrowserWindow | null = null;
 let sessionManager: SessionManager | null = null;
 let skillsManager: SkillsManager | null = null;
 let pluginRuntimeService: PluginRuntimeService | null = null;
+
+/**
+ * Broadcast local-embedding download progress to all renderer windows.
+ * Throttled to ~10 Hz to avoid flooding the renderer with chatty transformers.js
+ * callbacks; terminal events (ready/error) are always sent immediately. Shared by
+ * the MemoryService ingestion path and the "Check models availability" probe.
+ */
+const emitLocalEmbeddingProgress = (() => {
+  let lastEmitMs = 0;
+  const THROTTLE_MS = 100;
+  return (p: LocalEmbeddingProgress) => {
+    const now = Date.now();
+    if (p.status !== 'downloading' || now - lastEmitMs >= THROTTLE_MS) {
+      lastEmitMs = now;
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('memory.localEmbeddingProgress', p);
+        }
+      }
+    }
+  };
+})();
 let memoryService: MemoryService | null = null;
 let scheduledTaskManager: ScheduledTaskManager | null = null;
 
@@ -1006,7 +1033,12 @@ app
     pluginRuntimeService = new PluginRuntimeService(new PluginCatalogService());
     // Defer orchestrator backfill to avoid blocking startup with synchronous disk I/O
     setImmediate(() => pluginRuntimeService?.backfillOrchestrators());
-    memoryService = new MemoryService(db);
+    memoryService = new MemoryService(db, {
+      llmClientOptions: {
+        getStorageRoot: () => join(app.getPath('userData'), 'memory'),
+        onLocalEmbeddingProgress: emitLocalEmbeddingProgress,
+      },
+    });
     const extensionManager = new AgentRuntimeExtensionManager([new MemoryExtension(memoryService)]);
 
     // Initialize session manager before creating an interactive window.
@@ -4299,7 +4331,89 @@ ipcMain.handle('memory.getPanelState', (_event, cwd?: string, sessionId?: string
       workspaceCount: overview.sourceWorkspaceCount,
     },
     lastRetrieval: memoryService.getLastRetrievalMetrics(sessionId || undefined),
+    localModelDownloaded: isLocalModelDownloaded(getMemoryStorageRoot()),
   };
+});
+
+ipcMain.handle('memory.isLocalModelDownloaded', () => {
+  return { downloaded: isLocalModelDownloaded(getMemoryStorageRoot()) };
+});
+
+// True when stored local embeddings predate a format change (e.g. the prefix fix)
+// and need a rebuild for good search quality. Gated to the local provider in the
+// service so remote users aren't prompted to re-embed (which costs API calls).
+ipcMain.handle('memory.isEmbeddingFormatStale', () => {
+  return { stale: memoryService?.isEmbeddingFormatStale() ?? false };
+});
+
+// Combined status: on-disk cache presence (dependency-free) + in-process runtime
+// state (idle/loading/ready/error + backoff). Reads the runtime status from the
+// dependency-free state module, so opening Settings never loads transformers.js.
+ipcMain.handle('memory.getLocalModelStatus', () => {
+  return {
+    downloaded: isLocalModelDownloaded(getMemoryStorageRoot()),
+    ...getLocalModelRuntimeStatus(),
+  };
+});
+
+// Probe the LLM + embedding providers described by an *unsaved* draft runtime
+// config, so the Settings UI can gate "Save" behind a successful check when the
+// model config changed. Builds a throwaway client bound to the draft (real
+// appConfig with memoryRuntime swapped) — nothing is persisted.
+ipcMain.handle(
+  'memory.checkModelAvailability',
+  async (_event, draftRuntime: MemoryRuntimeConfig) => {
+    const testConfig: AppConfig = { ...configStore.getAll(), memoryRuntime: draftRuntime };
+    const client = new MemoryLLMClient(() => testConfig, {
+      getStorageRoot: () => join(app.getPath('userData'), 'memory'),
+      onLocalEmbeddingProgress: emitLocalEmbeddingProgress,
+    });
+    return client.checkAvailability();
+  }
+);
+
+// Proactively download/load the local model (warm-up on select, or manual retry
+// with { force }). Loads the provider lazily so startup stays light. Never throws —
+// the outcome is reflected in the returned status.
+ipcMain.handle('memory.warmUpLocalModel', async (_event, force?: boolean) => {
+  const storageRoot = getMemoryStorageRoot();
+  const { warmUpLocalModel } = await import('./memory/local-embedding-provider');
+  const status = await warmUpLocalModel(storageRoot, { force: force === true });
+  return {
+    downloaded: isLocalModelDownloaded(storageRoot),
+    ...status,
+  };
+});
+
+ipcMain.handle('memory.removeLocalModel', async () => {
+  const storageRoot = getMemoryStorageRoot();
+  // Safety: only allow deletion when storageRoot is under app userData.
+  // This prevents accidental or malicious deletion of unrelated directories
+  // when storageRoot is misconfigured to point outside app-owned storage.
+  const userDataPath = app.getPath('userData');
+  const resolvedRoot = resolve(storageRoot);
+  const resolvedUserData = resolve(userDataPath);
+  const rel = relative(resolvedUserData, resolvedRoot);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    return {
+      success: false,
+      removed: false,
+      error: `storageRoot (${resolvedRoot}) is outside app userData directory. Move storageRoot inside userData to allow model removal.`,
+    };
+  }
+  // Use the provider-level wrapper so resetLocalEmbeddingPipeline() is called
+  // after deletion, preventing stale in-memory pipeline state.
+  const { removeLocalModelCache } = await import('./memory/local-embedding-provider');
+  try {
+    const removed = await removeLocalModelCache(storageRoot);
+    return { success: true, removed };
+  } catch (error) {
+    return {
+      success: false,
+      removed: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 });
 
 ipcMain.handle(
@@ -4480,10 +4594,17 @@ ipcMain.handle('memory.openFileInEditor', () => {
  * is empty, falls back to app.getPath('userData')/memory.
  */
 function resolveMemoryPromptPath(): string {
-  const appConfig = configStore.getAll();
-  const configuredRoot = appConfig.memoryRuntime?.storageRoot?.trim();
-  const storageRoot = configuredRoot || join(app.getPath('userData'), 'memory');
-  return join(storageRoot, 'prompts', 'core-extraction.md');
+  return join(getMemoryStorageRoot(), 'prompts', 'core-extraction.md');
+}
+
+/**
+ * Returns the configured memory storage root, falling back to the default
+ * app userData directory. Single source of truth for all IPC handlers that
+ * need to locate the local embedding model cache.
+ */
+function getMemoryStorageRoot(): string {
+  const configured = configStore.getAll().memoryRuntime?.storageRoot?.trim();
+  return configured || join(app.getPath('userData'), 'memory');
 }
 
 ipcMain.handle('memory.setEnabled', (_event, enabled: boolean) => {

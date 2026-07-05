@@ -11,7 +11,8 @@ import { ExperienceMemoryExtractor } from './experience-memory-extractor';
 import { ExperienceMemoryStore } from './experience-memory-store';
 import { MemoryIngestionQueue } from './memory-ingestion-queue';
 import type { MemoryLLMClientLike } from './memory-llm-client';
-import { MemoryLLMClient } from './memory-llm-client';
+import { MemoryLLMClient, type MemoryLLMClientOptions } from './memory-llm-client';
+import { EMBEDDING_FORMAT_VERSION, type EmbeddingKind } from '../../shared/local-embedding-types';
 import { MemoryNavigator } from './memory-navigator';
 import { DEFAULT_MEMORY_PROMPTS, type MemoryPromptSet } from './memory-prompts';
 import { MemoryRetriever } from './memory-retriever';
@@ -164,10 +165,12 @@ export class MemoryService {
     private readonly db: DatabaseInstance,
     options?: {
       llmClient?: MemoryLLMClientLike;
+      llmClientOptions?: MemoryLLMClientOptions;
       prompts?: Partial<MemoryPromptSet>;
     }
   ) {
-    this.llmClient = options?.llmClient || new MemoryLLMClient();
+    this.llmClient =
+      options?.llmClient || new MemoryLLMClient(undefined, options?.llmClientOptions);
     const promptSet: MemoryPromptSet = {
       ...DEFAULT_MEMORY_PROMPTS,
       ...options?.prompts,
@@ -845,7 +848,7 @@ export class MemoryService {
         sessionDate: input.sessionDate,
         createdAt: existing?.createdAt || new Date(input.sessionCreatedAt).toISOString(),
         ingestedAt,
-        embedding: await this.embedText(searchableText),
+        embedding: await this.embedText(searchableText, 'document'),
       });
     }
 
@@ -870,7 +873,7 @@ export class MemoryService {
         sessionDate: input.sessionDate,
         createdAt: existing?.createdAt || new Date(input.sessionCreatedAt).toISOString(),
         ingestedAt,
-        embedding: await this.embedText(sessionSearchable),
+        embedding: await this.embedText(sessionSearchable, 'document'),
       },
       chunkInputs
     );
@@ -908,7 +911,7 @@ export class MemoryService {
     if (!store.sessions.length && !store.chunks.length) {
       return { context: '', metrics: emptyMetrics };
     }
-    const queryEmbedding = await this.embedText(prompt);
+    const queryEmbedding = await this.embedText(prompt, 'query');
     const runtimeConfig = this.getAppConfig().memoryRuntime;
     const retrieval = store.retrieveProgressive(prompt, {
       chunkTopK: 10,
@@ -1093,12 +1096,27 @@ export class MemoryService {
     return parts.join('\n');
   }
 
-  private async embedText(text: string): Promise<number[]> {
+  /**
+   * True when the local embedding format changed (e.g. the EmbeddingGemma prefix
+   * fix) and the persisted vectors predate it, so search quality is degraded until
+   * a rebuild. Gated to the local provider: only its computation changed, and
+   * rebuilding a remote index would re-incur API cost for no benefit.
+   */
+  isEmbeddingFormatStale(): boolean {
+    const runtime = this.getAppConfig().memoryRuntime;
+    if (!runtime.useEmbedding || runtime.embedding?.provider !== 'local') {
+      return false;
+    }
+    const store = this.getExperienceStore();
+    return store.getEmbeddingFormatVersion() < EMBEDDING_FORMAT_VERSION && store.hasEmbeddings();
+  }
+
+  private async embedText(text: string, kind: EmbeddingKind = 'document'): Promise<number[]> {
     if (!this.getAppConfig().memoryRuntime.useEmbedding || !text.trim()) {
       return [];
     }
     try {
-      return await this.llmClient.embed(text);
+      return await this.llmClient.embed(text, kind);
     } catch (error) {
       logWarn('[MemoryService] Embedding failed, falling back to lexical retrieval:', error);
       return [];

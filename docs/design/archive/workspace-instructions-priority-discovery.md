@@ -1,6 +1,6 @@
 # Workspace Instructions — Priority-Based Auto-Discovery — Implementation Plan
 
-**Status:** In Progress (Phase 1 ✓, Phase 2 ✓, Phase 3 ✓, Phase 4 ✓, Phase 5 ✓, Phase 9 ✓)
+**Status:** Complete (Phase 1 ✓, Phase 2 ✓, Phase 3 ✓, Phase 4 ✓, Phase 5 ✓, Phase 6 ✓, Phase 7 ✓, Phase 9 ✓)
 **Date:** 2026-07-01
 **Owner:** @obodnikov
 **Related:** [workspace-system-prompt.ts](../../src/main/utils/workspace-system-prompt.ts), [system-prompt-file-choices.ts](../../src/shared/system-prompt-file-choices.ts), [agent-runner.ts](../../src/main/claude/agent-runner.ts), [config-store.ts](../../src/main/config/config-store.ts), [SettingsPrompt.tsx](../../src/renderer/components/settings/SettingsPrompt.tsx), [WorkspaceInstructionsBadge.tsx](../../src/renderer/components/WorkspaceInstructionsBadge.tsx), `node_modules/@earendil-works/pi-coding-agent/docs/usage.md`
@@ -410,8 +410,8 @@ runs (or left inert and ignored). Recommend leaving it untouched for one release
 - [x] `src/main/config/config-store.ts` — fields, defaults, keys, normalizer+migration, update (Phase 4, 7)
 - [x] `src/main/index.ts` — `getStatus` + `settings.update` handlers, legacy compat, batched broadcast (Phase 5)
 - [x] `src/shared/workspace-instructions-status.ts` — `resolvedFile`, aligned docs (Phase 5)
-- [ ] `src/renderer/types/index.ts`, `store/index.ts`, `hooks/useIPC.ts` — fields (Phase 6)
-- [ ] `src/renderer/components/settings/SettingsPrompt.tsx` — toggle + reorder list (Phase 6)
-- [ ] `src/renderer/components/WorkspaceInstructionsBadge.tsx` — show resolved file (Phase 6)
-- [ ] `src/renderer/i18n/locales/{en,zh,hu,ru}.json` — strings (Phase 7)
+- [x] `src/renderer/types/index.ts`, `store/index.ts`, `hooks/useIPC.ts` — fields (Phase 6)
+- [x] `src/renderer/components/settings/SettingsPrompt.tsx` — toggle + reorder list (Phase 6)
+- [x] `src/renderer/components/WorkspaceInstructionsBadge.tsx` — show resolved file (Phase 6)
+- [x] `src/renderer/i18n/locales/{en,zh,hu,ru}.json` — strings (Phase 7)
 - [x] Tests: validator, loader, migration, IPC contract, noContextFiles regression, settings.update migration (Phase 9)

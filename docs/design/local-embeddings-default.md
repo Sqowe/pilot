@@ -1,7 +1,8 @@
 # Local Embeddings by Default — Implementation Plan
 
-**Status:** Proposed (not started)
+**Status:** ✅ **DONE** — all phases shipped (Phases 1–6). See §13 for the as-built outcomes, decisions, and empirical validation.
 **Date:** 2026-07-02
+**Updated:** 2026-07-04
 **Owner:** @obodnikov
 **Related:** [memory-system-architecture.md](memory-system-architecture.md),
 [memory-llm-client.ts](../../src/main/memory/memory-llm-client.ts),
@@ -186,12 +187,12 @@ Design notes:
   "small model for non-experts" goal and the RAM figures verified against the HF model card.
 - **Progress callback**: surfaced up through IPC so the UI can show "Downloading local model…
   (43%)" on first use instead of an unexplained multi-second hang.
-- **No prefix handling needed in v1**: EmbeddingGemma's ONNX card does not require the
-  `search_document:`/`search_query:` prefix dance that Nomic v1.5 needs (unlike the model
-  discussed in the Downloads doc). Confirm against the final model card before shipping; if a
-  prompt/task prefix _is_ recommended for retrieval quality, add it here, symmetrically with the
-  doc-chunk embedding path (memory search is symmetric query↔chunk similarity, per the existing
-  scoring model in `memory-system-architecture.md` §2).
+- **Prefix handling — REQUIRED (this note's original assumption was wrong; corrected in Phase 6).**
+  EmbeddingGemma _does_ require a task prefix, and the feature-extraction pipeline does **not**
+  apply it. Memory retrieval is an **asymmetric** retrieval task (short query vs stored
+  documents), not the symmetric similarity the original note assumed, so we prepend the model-card
+  retrieval prefixes: `task: search result | query: ` for queries and `title: none | text: ` for
+  documents. See §13.4 for the decision, the local-only scoping, and the empirical validation.
 
 ### 6.3 Config schema — `src/main/config/config-store.ts`
 
@@ -375,19 +376,32 @@ network/download path.
 
 ## 10. Rollout phases
 
-1. **Phase 1 — provider + backend wiring**: 6.1–6.4, 6.7 (dependency, module, config schema,
-   client dispatch, packaging). No UI changes yet; `provider: 'local'` is reachable only by
-   editing `config.json` by hand or via a temporary debug affordance. Ship behind
-   `useEmbedding` staying `false` by default still (D3 not yet flipped) so this phase is purely
-   additive and low-risk.
-2. **Phase 2 — migration (§7)**: schema version bump + migration logic + tests. Still no default
-   flip in this phase — this just makes flipping the default _safe_ to do in Phase 3.
-3. **Phase 3 — flip the default (D3)** + **UI** (6.5, 6.6, 6.8): new installs get local
-   embeddings on by default; Settings UI gets the three-way provider selector, download progress,
-   and "Remove downloaded model" action; i18n across all four locales.
-4. **Phase 4 — polish**: rebuild-prompt-on-provider-change (§8) if not already naturally covered,
-   telemetry/logging review, docs update to `memory-system-architecture.md` §6 (Configuration)
-   to document the new `'local'` provider value.
+1. ✅ **Phase 1 + 2 — provider + backend wiring + migration** _(complete 2026-07-03)_:
+   `@huggingface/transformers` dependency added; `local-embedding-provider.ts` written (ONNX
+   pipeline, dtype fallback q8→fp16→fp32, pinned model revision, Set-based progress listeners,
+   dimension validation, mkdirp cache dir). Config schema extended (`EmbeddingProviderType`,
+   split `MemoryLLMRuntimeConfig` / `MemoryEmbeddingRuntimeConfig`). Schema v2 migration
+   implemented (schema-version-aware normalization, `isFreshInstall` flag, `mergeMemoryRuntime`
+   deep-merge for partial updates). `MemoryLLMClient.embed()` local branch wired with throttled
+   IPC progress events. Packaging updated (`electron-builder.yml`). 2650 tests passing.
+   _D3 (default flip) and D4 (migration) are both shipped: fresh installs get
+   `useEmbedding: true`, `provider: 'local'`; existing v1 installs are frozen at their current
+   behavior via schema-version-aware normalization._
+2. ~~**Phase 2 — migration**~~: _Merged into Phase 1 above._
+3. ✅ **Phase 3 — UI** (6.5, 6.6, 6.8) _(complete 2026-07-04, commit 45abaac)_: Settings UI
+   three-way provider selector, download progress indicator, "Remove downloaded model" action,
+   i18n across all four locales (en/ru/hu/zh).
+4. ✅ **Phase 4 — rebuild-prompt-on-provider-change** (§8) _(complete 2026-07-04, commit c4ea702)_:
+   detect an embedding provider/model change on save and offer an immediate `rebuildAll`; skips
+   local↔local (hardcoded model ID).
+5. ✅ **Phase 5 — download resilience + config safety** _(complete 2026-07-04, commits cb26253,
+   8e2c1f8)_: exponential-backoff download retry, warm-up-on-select, persistent error banner +
+   manual retry (`local-embedding-state.ts`); Custom-mode model-override validation (chat models
+   blocked, prefix-needing models warned); "Check models availability" gate before Save. See
+   §13.1–§13.3.
+6. ✅ **Phase 6 — EmbeddingGemma prefixes + format-version rebuild** _(complete 2026-07-04, commit
+   403e748)_: apply the required query/document task prefixes (local-only); `EMBEDDING_FORMAT_VERSION`
+   stamp + stale-index detection + rebuild banner. Empirically validated. See §13.4–§13.5.
 
 ---
 
@@ -403,19 +417,148 @@ network/download path.
 
 ---
 
-## 12. Open questions
+## 12. Open questions — all resolved
 
-1. Should the very first download (Phase 3) require an explicit user confirmation dialog
-   ("Download ~180MB local model now?"), or proceed silently on first memory ingestion since it's
-   opt-out rather than opt-in for new installs? Leaning toward **silent with a visible progress
-   indicator** (matches "just works" goal) but flagging for explicit sign-off before Phase 3.
-2. Does `ingestionConcurrency` need a separate local-specific default, or is the existing value
-   (4) fine given EmbeddingGemma-300M-q8's small footprint? Needs a rough CPU-time benchmark
-   during Phase 1 implementation.
-3. Confirm EmbeddingGemma's ONNX card doesn't need a task/prefix string for retrieval-quality
-   parity with the symmetric chunk↔query scoring this app uses (§6.2 note) — verify empirically,
-   not just from the model card, since the Downloads-doc research showed prefix requirements are
-   an easy thing to get subtly wrong (Nomic v1.5's `search_document:`/`search_query:` case).
+1. **First-download confirmation dialog → RESOLVED: no dialog.** Decided against a confirmation
+   prompt ("we must download it anyway"). Instead: auto-download on select/first-use, with a
+   visible progress bar, **exponential-backoff retry** on failure, a **persistent error banner**
+   ("running in keyword-only mode"), and a **manual "Retry download"** button. Warm-up now fires
+   the moment the user selects local mode, so failures surface on-panel rather than silently on
+   the next ingestion. See §13.1.
+2. **Local-specific `ingestionConcurrency` → RESOLVED: not applicable as framed.** Reading the
+   code showed embeddings run **sequentially** (the `ingestionConcurrency` pool only governs the
+   LLM _extraction_ phase; `persistBundle` awaits each `embedText` one at a time). So the feared
+   concurrency oversubscription can't occur via this path — no local-specific default is needed.
+   The residual (main-process CPU during a large sequential rebuild) is a responsiveness question
+   whose correct fix is a **worker thread**, not a lower concurrency number; deferred until jank
+   is actually observed. See §13.3.
+3. **EmbeddingGemma task/prefix → RESOLVED: prefixes ARE required and are now applied.** The
+   §6.2 "symmetric, no prefix" assumption was wrong. The model card mandates task prefixes that
+   the pipeline does not auto-apply, and memory retrieval is asymmetric. Implemented the retrieval
+   prefixes (query vs document), local-only, and **empirically validated** across EN/RU/HU. See
+   §13.4–§13.5.
+
+---
+
+## 13. As-built outcomes, decisions & findings
+
+Everything below is what actually shipped, keyed to the commits on
+`feat/local-embeddings-default`. This supersedes the forward-looking plan above where they differ.
+
+### 13.1 Download resilience — no confirmation dialog, backoff + retry instead _(commit cb26253)_
+
+Resolves open question #1. The model downloads automatically (on selecting local mode, or on
+first ingestion), never behind a confirmation dialog. Failure handling was the real gap:
+
+- **New `src/main/memory/local-embedding-state.ts`** (dependency-free — no `@huggingface/transformers`
+  import, so IPC can read status without loading the ML runtime): exponential backoff
+  (`60s → 2m → 4m … capped at 30m`) + a coarse runtime status (`idle | loading | ready | error`)
+  - `LocalModelBackoffError`.
+- `getPipeline()` refuses a fresh attempt inside the backoff window, so a failing download no
+  longer re-attempts a full download on **every** ingested chunk (embeddings run sequentially —
+  see §13.3 — so without backoff a single ingestion could trigger dozens of failed downloads).
+  `embedText` degrades to lexical-only instantly during the cooldown.
+- `warmUpLocalModel(root, { force })` downloads without embedding; `force` clears backoff for a
+  manual retry. `resetLocalEmbeddingPipeline()` also clears runtime/backoff state (post-deletion).
+- IPC: `memory.getLocalModelStatus` (cache presence + runtime state) and `memory.warmUpLocalModel`.
+- **UI**: selecting "Built-in local model" warms up immediately (errors surface on-panel, not
+  silently later); a **persistent error banner** ("running in keyword-only mode") with a **Retry
+  download** button replaces the old transient one-liner; status is seeded on mount so a prior
+  failure is visible whenever Settings opens.
+- Graceful degradation was already correct: `embedText` catches the throw and returns `[]`
+  (lexical-only) rather than failing ingestion.
+
+### 13.2 Config safety — model-override validation + "Check models availability" _(commit 8e2c1f8)_
+
+Two Settings guards, since the remote embedding path only handles prefix-free models correctly:
+
+- **`src/renderer/components/settings/embedding-model-validation.ts`** — `classifyEmbeddingModel()`:
+  - `chat` (gpt-\*, claude, o3, llama, …): **blocks Save** with a red error — chat models can't
+    embed.
+  - `prefix` (E5, Nomic): soft amber warning — they work but under-perform because we don't apply
+    their model-specific prefixes.
+  - OpenAI `text-embedding-*`, BGE, other `*-embedding-*` pass clean; unrecognized-but-plausible
+    models are not nagged.
+- **"Check models availability" gate**: Save is disabled when nothing changed; when the LLM or
+  embedding config changes, the button becomes "Check models availability" and Save is re-enabled
+  only after a successful probe (editing a model field re-requires the check; non-model changes
+  save directly). `MemoryLLMClient.checkAvailability()` probes both providers against the **unsaved
+  draft** (1-token completion for the LLM; tiny `embed('ping')` for embeddings, which warms up the
+  local model); `memory.checkModelAvailability` builds a throwaway client on the draft so nothing
+  is persisted.
+
+### 13.3 `ingestionConcurrency` finding (open question #2)
+
+Not applicable as originally framed. `ingestionConcurrency` (default 4) governs only the LLM
+**extraction** phase (`extractExperienceBundles`' worker pool). Embeddings are computed
+**sequentially** — `ingestExtractedBundle` runs in a plain `for` loop and `persistBundle` awaits
+each chunk's `embedText` one at a time. So local ONNX inference never runs concurrently, and no
+local-specific concurrency default is needed. If a large sequential rebuild ever makes the main
+process janky, the fix is to offload inference to a **worker thread**, not to lower a number.
+
+### 13.4 EmbeddingGemma prefixes — the retrieval-quality fix (open question #3) _(commit 403e748)_
+
+Verified against the live `onnx-community/embeddinggemma-300m-ONNX` model card: the task prefixes
+are **mandatory** and are **not** applied by the `feature-extraction` pipeline (the official JS
+example prepends them by hand). Memory retrieval is an **asymmetric** retrieval task, so we use the
+model-card retrieval prefixes:
+
+| kind     | prefix (verbatim)                |
+| -------- | -------------------------------- |
+| query    | `task: search result \| query: ` |
+| document | `title: none \| text: `          |
+
+Design:
+
+- **Provider-neutral `EmbeddingKind = 'query' \| 'document'`** (mirrors sentence-transformers
+  `encode_query`/`encode_document`), threaded `embedText → embed → embedLocal`. The three call
+  sites pass `'document'` for ingested chunks/session summaries and `'query'` for the search
+  prompt.
+- The prefix **strings live only in `local-embedding-provider.ts`** and are applied only in the
+  local branch. **Remote providers ignore `kind`** — prepending Gemma's strings to OpenAI/BGE
+  (both prefix-free) would _degrade_ them. `kind` is the reusable plumbing; a future E5/Nomic
+  provider would add its own `kind → prefix` map. (This is why `kind` is still threaded even though
+  the remote list is effectively OpenAI/BGE: the query-vs-document fact only exists at the call
+  site and is consumed inside the local provider.)
+
+### 13.5 Empirical validation of the prefix fix
+
+A standalone smoke test (real model, no DB/config/index touched) embedded query/relevant/unrelated
+triples in EN/RU/HU, with and without prefixes, and compared the **margin** (relevant − unrelated
+similarity):
+
+| lang | with-prefix margin | no-prefix margin | gain       |
+| ---- | ------------------ | ---------------- | ---------- |
+| EN   | 0.4470             | 0.3277           | **+0.119** |
+| RU   | 0.3821             | 0.3499           | **+0.032** |
+| HU   | 0.1424             | 0.0676           | **+0.075** |
+
+Prefixes widen the relevant/unrelated separation in every language (relevant still out-ranks
+unrelated in all cases). Hungarian — a target locale and the weakest case — more than doubled its
+margin. This closes open question #3 empirically, not just from the model card.
+
+### 13.6 Format-version stamp + stale-index rebuild _(commit 403e748)_
+
+Because prefixed vectors stay 768-dim, old (prefix-less) and new (prefixed) local vectors would be
+_compared_ by cosine and give subtly-wrong scores — the dimension guard in `cosineSimilarity`
+(which returns 0 on a size mismatch) does **not** catch this. So:
+
+- **`EMBEDDING_FORMAT_VERSION`** (in `shared/local-embedding-types.ts`, bumped to **2**: v1 = raw
+  text, v2 = prefixes). The experience store stamps it on `save()` and reads it on load (absent →
+  1).
+- `MemoryService.isEmbeddingFormatStale()` flags a stale index, **gated to the local provider** so
+  remote users are never prompted to re-embed (which would re-incur API cost for a change that
+  didn't affect them). Surfaced via `memory.isEmbeddingFormatStale`, driving an amber "Rebuild now"
+  banner in Settings; a rebuild re-stamps the format and clears the flag. This is the durable,
+  provider-aware generalization of the Phase 4 rebuild prompt.
+
+### 13.7 Test coverage added
+
+`local-embedding-state` (backoff math + status transitions); provider prefix/`kind` assertions
+(query/document/default) and the backoff+forced-warm-up retry; `checkAvailability` orchestration
+(ok/fail/skip); `classifyEmbeddingModel` (chat/prefix/clean); experience-store format-version
+round-trip. All green under `npm test` (native rebuild); CI never downloads the real model — the
+§13.5 smoke test is manual only.
 
 ---
 

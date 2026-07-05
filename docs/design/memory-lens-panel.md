@@ -357,11 +357,98 @@ interface MemoryPanelState {
 
 ---
 
+## Post-Migration Opportunity: Memory-by-Workspace View
+
+> **Gated on the SQLite migration** — see
+> [memory-storage-sqlite-migration.md](memory-storage-sqlite-migration.md). This section is
+> deliberately **not** buildable on the current JSON store; it becomes practical only _after_
+> experience memory moves to SQLite. It resolves Open Question #1 below.
+
+### Why it isn't practical today
+
+The "This Workspace" section (§3) is scoped to the _current_ workspace on purpose. A cross-workspace
+breakdown means aggregating counts per `source_workspace` across the whole store — and today that
+requires loading the entire `experience_memory.json` (~24 MB and growing ~24 MB/month) into memory
+and iterating every session and chunk in JS (`getStatsBySourceWorkspace()`,
+[experience-memory-store.ts:250](../../src/main/memory/experience-memory-store.ts)). That's an
+O(all-rows) in-memory scan per call — too heavy to render live or refresh after every turn. That is
+why the cross-workspace toggle in Open Question #1 was never built.
+
+### What the migration changes
+
+After experience memory is in SQLite, the same breakdown is a single indexed query that reads only
+counts, not row bodies:
+
+```sql
+SELECT source_workspace, source_workspace_label,
+       COUNT(*) AS chunks, MAX(ingested_at) AS last_learned
+FROM memory_chunks
+GROUP BY source_workspace;
+```
+
+With `idx_mem_chunks_workspace` this is near-instant and cheap to call live.
+`getStatsBySourceWorkspace()` is reimplemented as this `GROUP BY` behind the same method signature
+(per D6 of the migration doc), so the panel just consumes it.
+
+### The view it unlocks
+
+A cross-workspace "Memory by Workspace" table — reachable from the panel's `[Full Memory View]` or
+as an expandable mode of the "This Workspace" section:
+
+```
+┌─ Memory by Workspace ─────────────────────────── [⟳ Rebuild all] ┐
+│ Workspace                     Sessions  Chunks  Last learned      │
+│ ──────────────────────────────────────────────────────────────── │
+│ 📂 Tree HU                         5       14    2h ago      ⋯    │
+│ 📂 Investments                     9       41    3d ago      ⋯    │
+│ 📂 Olga Health                     7       33    1w ago      ⋯    │
+│ 📂 open-cowork                     0        0    —           ⋯    │
+│ ──────────────────────────────────────────────────────────────── │
+│ 12 workspaces · 91 sessions · 338 chunks · ~24 MB                 │
+└──────────────────────────────────────────────────────────────────┘
+   ⋯ per row →  [Open]   [Rebuild]   [Clear]
+```
+
+Each row hangs off backend verbs that **already exist** — the migration only makes surfacing them
+cheap enough to show live:
+
+| Row action | Backend                                                                                                          | Effect                                             |
+| ---------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Open       | drill into that workspace's sessions/chunks (read)                                                               | inspect what was learned                           |
+| Rebuild    | `rebuildWorkspace(cwd)` ([memory-service.ts:479](../../src/main/memory/memory-service.ts))                       | re-embed one workspace (e.g. after a model switch) |
+| Clear      | `removeBySourceWorkspace()` ([experience-memory-store.ts:320](../../src/main/memory/experience-memory-store.ts)) | delete one workspace's memory                      |
+
+### New IPC endpoint
+
+```typescript
+// Cheap only post-migration (single indexed GROUP BY). Safe to call on panel open + after ingestion.
+'memory.getWorkspaceBreakdown' → Array<{
+  workspace: string;          // source_workspace (resolved abs path)
+  label: string;              // source_workspace_label
+  sessionCount: number;
+  chunkCount: number;
+  lastIngestedAt: number | null;
+  sizeBytes?: number;         // optional SUM over row text/embedding lengths
+}>
+```
+
+### User value
+
+Answers "which projects does it remember, and how much?", exposes storage bloat per workspace, and
+gives a home for per-workspace rebuild/clear — turning the invisible, monolithic store into a
+browsable, prunable, per-project space (the "memory as a shared, editable space" principle from the
+Problem Statement). It is also the natural read surface for the future read-only memory MCP server,
+which scopes by the same `source_workspace` key.
+
+---
+
 ## Open Questions
 
 1. **Should the panel show memory from ALL workspaces or only the current one?**
    Current design shows current workspace stats + retrieval sources from any workspace.
    Could add a "Cross-workspace" toggle.
+   → Answered as a post-migration feature: see "Post-Migration Opportunity:
+   Memory-by-Workspace View" above.
 
 2. **Should users be able to add manual entries from the panel?**
    Core memory is currently LLM-extracted only. A "Remember this" button could

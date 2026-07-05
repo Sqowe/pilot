@@ -21,6 +21,14 @@ files:
   - node_modules/openai/**/*
   - node_modules/@modelcontextprotocol/**/*
   - node_modules/electron-updater/**/*
+  - node_modules/@huggingface/transformers/**/*
+  - node_modules/@huggingface/tokenizers/**/*
+  - node_modules/@huggingface/jinja/**/*
+  - node_modules/onnxruntime-node/**/*
+  - node_modules/onnxruntime-web/**/*
+  - node_modules/onnxruntime-common/**/*
+  - node_modules/sharp/**/*
+  - node_modules/adm-zip/**/*
   - node_modules/chokidar/**/*
   - node_modules/archiver/**/*
   - node_modules/ngrok/**/*
@@ -59,6 +67,18 @@ asarUnpack:
   - node_modules/better-sqlite3/**/*.node
   - node_modules/bufferutil/**/*.node
   - node_modules/utf-8-validate/**/*.node
+  - node_modules/onnxruntime-node/**/*.node
+  - node_modules/onnxruntime-node/**/*.dll
+  - node_modules/onnxruntime-node/**/*.dylib
+  - node_modules/onnxruntime-node/**/*.so
+  - node_modules/onnxruntime-web/**/*.wasm
+  - node_modules/@huggingface/tokenizers/**/*.node
+  - node_modules/@huggingface/tokenizers/**/*.wasm
+  - node_modules/@huggingface/transformers/**/*.wasm
+  - node_modules/sharp/**/*.node
+  - node_modules/sharp/**/*.dll
+  - node_modules/sharp/**/*.dylib
+  - node_modules/sharp/**/*.so
 
 win:
   icon: resources/icon.ico

@@ -29,6 +29,10 @@ import type {
   MemoryDebugFileInfo,
   MemoryDebugFileContent,
   MemoryInspectSessionResult,
+  LocalEmbeddingProgress,
+  LocalModelStatus,
+  MemoryModelCheckResult,
+  MemoryRuntimeConfig,
 } from '../renderer/types';
 import type { DiagnosticInput, DiagnosticResult } from '../renderer/types';
 import type {
@@ -648,6 +652,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteCustomExtractionPrompt: (): Promise<{ success: boolean }> =>
       ipcRenderer.invoke('memory.deleteCustomExtractionPrompt'),
     openFileInEditor: (): Promise<void> => ipcRenderer.invoke('memory.openFileInEditor'),
+    removeLocalModel: (): Promise<{ success: boolean; removed: boolean; error?: string }> =>
+      ipcRenderer.invoke('memory.removeLocalModel'),
+    isLocalModelDownloaded: (): Promise<{ downloaded: boolean }> =>
+      ipcRenderer.invoke('memory.isLocalModelDownloaded'),
+    isEmbeddingFormatStale: (): Promise<{ stale: boolean }> =>
+      ipcRenderer.invoke('memory.isEmbeddingFormatStale'),
+    getLocalModelStatus: (): Promise<LocalModelStatus> =>
+      ipcRenderer.invoke('memory.getLocalModelStatus'),
+    warmUpLocalModel: (force?: boolean): Promise<LocalModelStatus> =>
+      ipcRenderer.invoke('memory.warmUpLocalModel', force),
+    checkModelAvailability: (draft: MemoryRuntimeConfig): Promise<MemoryModelCheckResult> =>
+      ipcRenderer.invoke('memory.checkModelAvailability', draft),
+    onLocalEmbeddingProgress: (callback: (p: LocalEmbeddingProgress) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, p: LocalEmbeddingProgress) => {
+        try {
+          callback(p);
+        } catch (err) {
+          console.error('[preload] onLocalEmbeddingProgress callback threw:', err);
+        }
+      };
+      ipcRenderer.on('memory.localEmbeddingProgress', listener);
+      return () => ipcRenderer.removeListener('memory.localEmbeddingProgress', listener);
+    },
   },
 });
 
@@ -1029,6 +1056,13 @@ declare global {
         createCustomExtractionPrompt: () => Promise<{ success: boolean }>;
         deleteCustomExtractionPrompt: () => Promise<{ success: boolean }>;
         openFileInEditor: () => Promise<void>;
+        removeLocalModel: () => Promise<{ success: boolean; removed: boolean; error?: string }>;
+        isLocalModelDownloaded: () => Promise<{ downloaded: boolean }>;
+        isEmbeddingFormatStale: () => Promise<{ stale: boolean }>;
+        getLocalModelStatus: () => Promise<LocalModelStatus>;
+        warmUpLocalModel: (force?: boolean) => Promise<LocalModelStatus>;
+        checkModelAvailability: (draft: MemoryRuntimeConfig) => Promise<MemoryModelCheckResult>;
+        onLocalEmbeddingProgress: (callback: (p: LocalEmbeddingProgress) => void) => () => void;
       };
     };
   }

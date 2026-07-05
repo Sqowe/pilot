@@ -314,7 +314,10 @@ The injected block includes safety instructions:
 
 ## 5. Storage Layout
 
-All memory files live under a configurable `storageRoot` (typically `~/.open-cowork/memory/`):
+All memory files live under a configurable `storageRoot`. By default this is
+`app.getPath('userData')/memory` — on macOS `~/Library/Application Support/sqowe-pilot/memory/`
+(Windows `%APPDATA%\sqowe-pilot\memory\`, Linux `~/.config/sqowe-pilot/memory/`), resolved by
+`getPaths()` in `memory-service.ts`:
 
 ```
 storageRoot/
@@ -323,7 +326,7 @@ storageRoot/
 ├── session_state.json        # Tracks which sessions have been ingested
 ├── prompts/                  # Custom prompt overrides (optional)
 │   └── core-extraction.md    # Custom extraction prompt (if created by user)
-└── eval/                     # Eval harness artifacts (optional)
+└── eval-artifacts/           # Eval harness artifacts (optional)
 ```
 
 ---
@@ -343,15 +346,26 @@ interface MemoryRuntimeConfig {
   };
   embedding: {
     inheritFromActive: boolean;
+    // 'local' = in-process EmbeddingGemma (default for fresh installs); otherwise an
+    // OpenAI-compatible ProviderType (openai/openrouter/ollama/custom+openai).
+    provider?: 'local' | ProviderType;
+    customProtocol?: CustomProtocolType;
     apiKey: string;
     baseUrl: string;
+    // Remote-only fallback model; ignored when provider === 'local' (model ID is hardcoded).
     model: string; // default: "text-embedding-3-small"
     timeoutMs: number;
   };
-  useEmbedding: boolean; // Whether to compute embeddings
+  // Whether to compute embeddings. Default: true for fresh installs (schema v2);
+  // frozen to its prior value for existing installs via the v1→v2 migration.
+  useEmbedding: boolean;
   maxNavSteps: number; // Progressive retrieval depth (default: 2)
-  ingestionConcurrency: number; // Parallel ingestion limit (default: 2)
+  ingestionConcurrency: number; // Parallel LLM-extraction limit (default: 4; embeddings run sequentially)
   storageRoot: string;
+  // Memory eval harness (dev/QA benchmarking; off by default).
+  evalEnabled?: boolean; // default: false — runs eval cases against live retrieval + an LLM judge
+  evalMaxRounds?: number; // default: 12
+  promptIterationRounds?: number;
   evalArtifactsRoot?: string;
   // Advanced scoring parameters
   recencyFloor?: number; // default: 0.05
@@ -363,6 +377,30 @@ interface MemoryRuntimeConfig {
   customExtractionPromptPath?: string;
 }
 ```
+
+### 6.1 Local embedding provider (`provider: 'local'`)
+
+Fresh installs default to an **in-process** embedding provider — no API key, no per-query
+network calls. `MemoryLLMClient.embed()` branches on `embedding.provider === 'local'` before any
+remote-credential resolution and delegates to `local-embedding-provider.ts`, which runs
+`onnx-community/embeddinggemma-300m-ONNX` (quantized q8, 768-dim) via `@huggingface/transformers`.
+The model is downloaded on first use (with backoff/retry) and cached under `{storageRoot}/models`.
+
+EmbeddingGemma requires a task prefix that the pipeline does not auto-apply, so embeds are tagged
+`query` vs `document` (`EmbeddingKind`, threaded from the ingestion/retrieval call sites) and the
+retrieval prefixes are prepended **only in the local provider** (remote models are prefix-free).
+`experience_memory.json` carries an `embeddingFormatVersion` (`EMBEDDING_FORMAT_VERSION`) so a
+format change (e.g. the prefix fix) is detected as a stale index and a rebuild is offered.
+
+**Build/packaging constraint.** `onnxruntime-node` loads its native binding
+(`onnxruntime_binding.node`) via a dynamic `require`, which Rollup cannot bundle. The
+main-process build therefore marks `onnxruntime-node`, `onnxruntime-common`, and `sharp` as
+**external** ([vite.config.ts](../../vite.config.ts) → `rollupOptions.external`) so they resolve
+from `node_modules` at runtime. A bundled build missing these externals fails at load with
+_"Could not dynamically require … onnxruntime_binding.node"_. Production packaging must ship these
+native modules and `asarUnpack` the `.node`/`.dylib` files.
+
+Full design, decisions, and empirical validation: [local-embeddings-default.md](local-embeddings-default.md) §13.
 
 ### Custom Extraction Prompt
 

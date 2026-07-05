@@ -3002,7 +3002,7 @@ RULES:
                 }
 
                 if (!imageCapable) {
-                  serverEnv.OPEN_COWORK_DISABLE_IMAGE_TOOL_OUTPUT = '1';
+                  serverEnv.SQOWE_PILOT_DISABLE_IMAGE_TOOL_OUTPUT = '1';
                 }
 
                 // Resolve path placeholders for presets

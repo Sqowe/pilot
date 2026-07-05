@@ -448,9 +448,24 @@ export interface MemoryInspectSessionResult {
   chunks: ChunkMemoryItem[];
 }
 
+// Re-export from shared — single source of truth across main/preload/renderer.
+export type {
+  LocalEmbeddingProgress,
+  LocalModelRuntimeStatus,
+  LocalModelStatus,
+} from '../../shared/local-embedding-types';
+
+/** Result of the "Check models availability" probe (memory LLM + embedding). */
+export interface MemoryModelCheckResult {
+  llm: { ok: boolean; error?: string };
+  /** `skipped` is true when embeddings are disabled (nothing to check). */
+  embedding: { ok: boolean; error?: string; skipped?: boolean };
+}
+
 export interface MemoryPanelState {
   enabled: boolean;
   skillFallbackEnabled: boolean;
+  localModelDownloaded: boolean;
   coreEntries: Array<{ category: string; key: string; value: string; combinedKey: string }>;
   workspaceStats: {
     name: string;
@@ -824,6 +839,11 @@ export interface ExecutionContext {
 
 // App Config types
 export type ProviderType = 'openrouter' | 'anthropic' | 'custom' | 'openai' | 'gemini' | 'ollama';
+/**
+ * Superset of ProviderType that additionally allows 'local' for the embedding sub-config only.
+ * The 'local' value must never appear on the main LLM config or any ApiConfigSet provider field.
+ */
+export type EmbeddingProviderType = ProviderType | 'local';
 export type CustomProtocolType = 'anthropic' | 'openai' | 'gemini';
 export type AppTheme = 'dark' | 'light' | 'system';
 export type ProviderProfileKey =
@@ -863,9 +883,9 @@ export interface CreateSetPayload {
   fromSetId?: string;
 }
 
-export interface MemoryModelRuntimeConfig {
+/** Shared fields for both LLM and embedding memory runtime sub-configs. */
+export interface MemoryModelRuntimeConfigBase {
   inheritFromActive: boolean;
-  provider?: ProviderType;
   customProtocol?: CustomProtocolType;
   apiKey?: string;
   baseUrl?: string;
@@ -873,9 +893,26 @@ export interface MemoryModelRuntimeConfig {
   timeoutMs: number;
 }
 
+/** LLM sub-config: provider is always a ProviderType (never 'local'). */
+export interface MemoryLLMRuntimeConfig extends MemoryModelRuntimeConfigBase {
+  provider?: ProviderType;
+}
+
+/** Embedding sub-config: provider may be 'local' for in-process ONNX inference. */
+export interface MemoryEmbeddingRuntimeConfig extends MemoryModelRuntimeConfigBase {
+  provider?: EmbeddingProviderType;
+}
+
+/**
+ * @deprecated Use MemoryLLMRuntimeConfig or MemoryEmbeddingRuntimeConfig directly.
+ * Kept as a union alias so existing consumers that reference MemoryModelRuntimeConfig
+ * continue to compile during the transition.
+ */
+export type MemoryModelRuntimeConfig = MemoryLLMRuntimeConfig | MemoryEmbeddingRuntimeConfig;
+
 export interface MemoryRuntimeConfig {
-  llm: MemoryModelRuntimeConfig;
-  embedding: MemoryModelRuntimeConfig;
+  llm: MemoryLLMRuntimeConfig;
+  embedding: MemoryEmbeddingRuntimeConfig;
   useEmbedding: boolean;
   maxNavSteps: number;
   ingestionConcurrency: number;
