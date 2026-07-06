@@ -499,6 +499,21 @@
         "model_cold_start": "Модель может ещё загружаться в GPU/CPU память. Большие модели (7B+) могут занять 30–120 секунд. Попробуйте позже."
       }
     },
+    "providerPicker": {
+      "allProviders": "Все провайдеры",
+      "searchPlaceholder": "Поиск провайдеров…",
+      "modelSearchPlaceholder": "Поиск моделей…",
+      "noResults": "Нет результатов",
+      "docs": "Документация",
+      "keyEnvHint": "Или задайте переменную окружения {{envVar}}",
+      "categories": {
+        "featured": "Рекомендуемые",
+        "codingPlan": "Планы для кодинга",
+        "inference": "Быстрый инференс",
+        "local": "Локальные",
+        "custom": "Пользовательские"
+      }
+    },
     "providerHints": {
       "openrouter": {
         "keyHint": "Получить на openrouter.ai/keys"

@@ -497,6 +497,21 @@
         "model_cold_start": "模型可能仍在加载到 GPU/CPU 内存中。大型模型（7B+）首次使用可能需要 30–120 秒，请稍后重试。"
       }
     },
+    "providerPicker": {
+      "allProviders": "所有提供商",
+      "searchPlaceholder": "搜索提供商…",
+      "modelSearchPlaceholder": "搜索模型…",
+      "noResults": "无结果",
+      "docs": "文档",
+      "keyEnvHint": "或设置 {{envVar}} 环境变量",
+      "categories": {
+        "featured": "推荐",
+        "codingPlan": "编程计划",
+        "inference": "快速推理",
+        "local": "本地",
+        "custom": "自定义"
+      }
+    },
     "providerHints": {
       "openrouter": {
         "keyHint": "从 openrouter.ai/keys 获取"

@@ -499,6 +499,21 @@
         "model_cold_start": "A modell még töltődhet a GPU/CPU memóriába. Nagy modellek (7B+) 30–120 másodpercet vehetnek igénybe. Próbálja később."
       }
     },
+    "providerPicker": {
+      "allProviders": "Összes szolgáltató",
+      "searchPlaceholder": "Szolgáltató keresése…",
+      "modelSearchPlaceholder": "Modell keresése…",
+      "noResults": "Nincs találat",
+      "docs": "Dokumentáció",
+      "keyEnvHint": "Vagy állítsd be a {{envVar}} környezeti változót",
+      "categories": {
+        "featured": "Kiemelt",
+        "codingPlan": "Kódolási tervek",
+        "inference": "Gyors inferencia",
+        "local": "Helyi",
+        "custom": "Egyéni"
+      }
+    },
     "providerHints": {
       "openrouter": {
         "keyHint": "Szerezze be az openrouter.ai/keys oldalon"

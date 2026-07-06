@@ -1,7 +1,7 @@
 # Native Provider Catalog — Design & Implementation Plan
 
 **Created:** 2026-07-06
-**Status:** P0 done · P1 done · P2 done · P3 done · P4-P5 pending
+**Status:** P0 done · P1 done · P2 done · P3 done · P4 done · P5 pending
 **Last updated:** 2026-07-06
 **Author:** AI-assisted design session
 **Scope:** "Level A" only — API-key ("coding plan") providers that pi-ai ships as
@@ -554,7 +554,7 @@ streaming works (validates `zaiToolStream`/`thinkingFormat`). Repeat for MiniMax
       **Done 2026-07-06** — see §10c.
 - [x] **P3 — State** (`useApiConfigState`) + profile keys (`native:<id>`).
       **Done 2026-07-06** — see §10d.
-- [ ] **P4 — UI** (`ProviderPicker` + `SettingsAPI` form-shape) + i18n (4 locales). **← NEXT**
+- [x] **P4 — UI** (`ProviderPicker` + `SettingsAPI` form-shape) + i18n (4 locales). **Done 2026-07-06** — see §10e.
 - [ ] **P5 — Smoke** (§8.5), docs, and move this file's Status → Implemented; add an
       as-built note to `docs/design/archive/` if it diverges.
 
@@ -657,6 +657,41 @@ Delivered as designed with these implementation details:
 - 13 new P3 tests in `tests/api-config-state.test.ts` covering catalog lookup,
   profile key derivation, formShape contract, modelOptions, and source-level wiring
   assertions. 2856/2856 tests passing.
+
+### §10e — P4 as-built notes
+
+Delivered as designed with these implementation details:
+
+- `src/renderer/components/SearchableCombobox.tsx` **(new)** — generic controlled
+  typeahead combobox. Implements the ARIA combobox pattern: `role="combobox"` on
+  the always-present trigger button plus the search input (when open), with
+  `aria-controls`, `aria-expanded`, `aria-activedescendant`, and stable
+  `useId()`-scoped option ids. `getElementById` used for scroll-to-focused (avoids
+  CSS-selector crash with colon-containing `useId()` output). `filterItems` helper
+  extracted to prevent double-computation in `onChange` + `useMemo`. `focusedIndex`
+  clamped via a `useEffect` when item list shrinks asynchronously. `disabled` effect
+  closes popover when prop flips true mid-interaction. Selected label falls back to
+  raw `value` string when item is not yet in list (async loading).
+- `src/renderer/components/ProviderPicker.tsx` **(new)** — thin wrapper: feeds
+  non-featured catalog entries (grouped by `ProviderCategory`) into
+  `SearchableCombobox`. `CATEGORY_LABEL_KEY` typed as `Record<ProviderCategory, string>`
+  — exhaustive, no string-indexed fallback.
+- `src/renderer/components/settings/SettingsAPI.tsx` — featured chips rendered from
+  `getFeaturedEntries(providerCatalog)`; `<ProviderPicker>` below for the full catalog.
+  Active native provider shown as a summary chip with optional docs link.
+  `showProtocol` hard-gated to `provider === 'custom'` (not formShape-derived) to
+  prevent protocol selector appearing for native providers. `showModelDropdown`
+  defaults to `false` when `activeFormShape` is null so builtins keep the legacy
+  `<select>`. `activeIsNonFeatured` fully null-safe guard. `getPresetName()` helper
+  replaces `unknown` cast for preset label resolution.
+- `api.providerPicker.*` keys added to all four locales (en/zh/ru/hu) under a new
+  namespace that does not collide with the existing `api.provider` string key.
+- `src/tests/settings/provider-picker.test.ts` **(new)** — 30 tests covering:
+  `filterItems` (empty/label/id/partial/no-match), `buildGroupedList` (group headers,
+  deduplication, ungrouped), catalog mapping (featured/non-featured/sorting/grouping/
+  regionTag), `formShape` display-flag derivation (native/custom/ollama/builtin),
+  `activeIsNonFeatured` null-safety, and `NATIVE_PROVIDER_META` completeness.
+- 2901/2901 tests passing, `tsc --noEmit` clean.
 
 ### Later tiers (not this plan)
 
