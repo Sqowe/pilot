@@ -502,3 +502,49 @@ export function groupEntriesByCategory(
       entries: [...groupEntries].sort((a, b) => a.name.localeCompare(b.name)),
     }));
 }
+
+/**
+ * Set of all native provider ids in the v1 allowlist.
+ * Derived from NATIVE_PROVIDER_META keys — the single source of truth for
+ * which providers are native vs builtin/custom.
+ * Used to gate cold-start fallback behavior in resolvePiRouteProtocol.
+ */
+export const NATIVE_PROVIDER_IDS: ReadonlySet<string> = new Set(Object.keys(NATIVE_PROVIDER_META));
+
+const VALID_PROTOCOLS = new Set(['anthropic', 'openai', 'gemini']);
+
+/**
+ * Cold-start route protocol map for native providers.
+ *
+ * Used by `resolvePiRouteProtocol` when the async catalog hasn't resolved yet
+ * so native providers still get a valid routing protocol (not a raw provider id
+ * string) during cold start. Derived from NATIVE_PROVIDER_META.routeProtocol
+ * overrides; providers not listed here default to 'openai' (the most common
+ * native protocol).
+ *
+ * This is the ONLY place cold-start protocol is hand-specified. The full
+ * catalog (built from getModels()) remains the authoritative source at runtime.
+ * Values are validated at build time against the known protocol set so invalid
+ * strings in NATIVE_PROVIDER_META cannot silently produce bad routing.
+ */
+export const NATIVE_COLD_START_PROTOCOL: Record<string, 'anthropic' | 'openai' | 'gemini'> =
+  Object.fromEntries(
+    Object.entries(NATIVE_PROVIDER_META)
+      .filter(([id, meta]) => {
+        if (meta.routeProtocol === undefined) return false;
+        if (!VALID_PROTOCOLS.has(meta.routeProtocol)) {
+          // Should never happen with correct NATIVE_PROVIDER_META authoring,
+          // but guard defensively so bad values don't silently enter the map.
+          // console.warn used since this runs at module-init before the logger
+          // is available; only reachable via incorrect authoring.
+          console.warn(
+            `[ProviderCatalog] NATIVE_PROVIDER_META['${id}'].routeProtocol ` +
+              `'${meta.routeProtocol}' is not a valid protocol ` +
+              `(anthropic|openai|gemini) — ignoring.`
+          );
+          return false;
+        }
+        return true;
+      })
+      .map(([id, meta]) => [id, meta.routeProtocol as 'anthropic' | 'openai' | 'gemini'])
+  );

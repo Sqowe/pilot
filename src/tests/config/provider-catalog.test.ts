@@ -16,6 +16,7 @@ import {
   buildNativeEntries,
   getFullProviderCatalog,
   resetProviderCatalogCache,
+  getCachedProviderCatalogSync,
   type ProviderCatalogDeps,
 } from '../../main/config/provider-catalog-native';
 
@@ -698,5 +699,121 @@ describe('getFullProviderCatalog', () => {
       const found = catalog.find((e) => e.id === entry.id)!;
       expect(found.modelOptions).toHaveLength(0);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // Sync cache (resolvedCatalogSync / getCachedProviderCatalogSync) — MEDIUM
+  // -------------------------------------------------------------------------
+
+  it('getCachedProviderCatalogSync returns null before any build is requested', () => {
+    // resetProviderCatalogCache is called in beforeEach so cache is clean
+    expect(getCachedProviderCatalogSync()).toBeNull();
+  });
+
+  it('getCachedProviderCatalogSync is populated after a successful build', async () => {
+    expect(getCachedProviderCatalogSync()).toBeNull();
+    const stub = makeStubDeps({ providers: ['zai'] });
+    const catalog = await getFullProviderCatalog(stub);
+    // Sync accessor must now return the same resolved catalog
+    expect(getCachedProviderCatalogSync()).toBe(catalog);
+  });
+
+  it('resetProviderCatalogCache clears both async promise and sync accessor', async () => {
+    const stub = makeStubDeps({ providers: ['zai'] });
+    await getFullProviderCatalog(stub);
+    expect(getCachedProviderCatalogSync()).not.toBeNull();
+
+    resetProviderCatalogCache();
+
+    expect(getCachedProviderCatalogSync()).toBeNull();
+    // A fresh getFullProviderCatalog call should rebuild
+    const catalog2 = await getFullProviderCatalog(stub);
+    expect(getCachedProviderCatalogSync()).toBe(catalog2);
+  });
+
+  it('sync accessor reflects builtin-only fallback when native build fails', async () => {
+    // When getProviders() throws, _buildCatalog catches internally and returns
+    // [...BUILTIN_ENTRIES]. The promise still resolves (not rejects), so the
+    // .then() success handler sets resolvedCatalogSync to that builtin-only array.
+    // The cache is cleared for retry, but getCachedProviderCatalogSync() holds
+    // the last resolved value.
+    const throwingDeps: ProviderCatalogDeps = {
+      getProviders: () => {
+        throw new Error('forced rejection');
+      },
+      getModels: () => [],
+    };
+    const result = await getFullProviderCatalog(throwingDeps);
+    expect(result).toHaveLength(BUILTIN_ENTRIES.length);
+    // resolvedCatalogSync is populated with the builtin-only fallback
+    const sync = getCachedProviderCatalogSync();
+    expect(sync).not.toBeNull();
+    expect(sync).toHaveLength(BUILTIN_ENTRIES.length);
+    // Cache is cleared so next call retries (transient failure recovery)
+    // — confirmed by the 'clears cache on getProviders() failure' test above.
+  });
+
+  it('generation token prevents stale in-flight build from overwriting reset state', async () => {
+    // Simulate: start a build, reset the cache before it resolves, then
+    // resolve the original build. The sync accessor must remain null.
+    let resolveProviders!: (v: string[]) => void;
+    const deferredProviders = new Promise<string[]>((res) => {
+      resolveProviders = res;
+    });
+    const deferredDeps: ProviderCatalogDeps = {
+      getProviders: () => deferredProviders,
+      getModels: () => [{ id: 'glm-4.5-air', name: 'GLM-4.5 Air', api: 'openai-completions' }],
+    };
+
+    // Kick off an async build (in-flight)
+    const buildPromise = getFullProviderCatalog(deferredDeps);
+
+    // Reset before the in-flight build resolves
+    resetProviderCatalogCache();
+    expect(getCachedProviderCatalogSync()).toBeNull();
+
+    // Now resolve the original in-flight build
+    resolveProviders(['zai']);
+    await buildPromise;
+
+    // Stale resolution must NOT overwrite the cleared sync accessor
+    expect(getCachedProviderCatalogSync()).toBeNull();
+
+    // A fresh build after the reset populates the accessor correctly
+    const freshCatalog = await getFullProviderCatalog(makeStubDeps({ providers: ['zai'] }));
+    expect(getCachedProviderCatalogSync()).toBe(freshCatalog);
+  });
+
+  it('stale in-flight rejection after reset does not corrupt newer build cache', async () => {
+    // Build A: deferred — will reject after reset
+    let rejectA!: (err: Error) => void;
+    const deferredProvidersA = new Promise<string[]>((_, rej) => {
+      rejectA = rej;
+    });
+    const depsA: ProviderCatalogDeps = {
+      getProviders: () => deferredProvidersA,
+      getModels: () => [],
+    };
+
+    // Start build A (in-flight)
+    const buildPromiseA = getFullProviderCatalog(depsA);
+
+    // Reset and immediately start build B
+    resetProviderCatalogCache();
+    const catalogB = await getFullProviderCatalog(makeStubDeps({ providers: ['groq'] }));
+    expect(catalogB.some((e) => e.id === 'groq')).toBe(true);
+    expect(getCachedProviderCatalogSync()).toBe(catalogB);
+
+    // Now reject build A (stale) — must NOT clear build B's cachedCatalogPromise
+    // or overwrite resolvedCatalogSync
+    rejectA(new Error('stale build A rejection'));
+    await buildPromiseA; // resolves to BUILTIN_ENTRIES (rejection handler catches)
+
+    // Build B's sync accessor must still be intact
+    expect(getCachedProviderCatalogSync()).toBe(catalogB);
+
+    // A new getFullProviderCatalog call must return the cached build B
+    const catalogB2 = await getFullProviderCatalog(makeStubDeps({ providers: ['zai'] }));
+    expect(catalogB2).toBe(catalogB); // strict cache hit — not a fresh build
   });
 });

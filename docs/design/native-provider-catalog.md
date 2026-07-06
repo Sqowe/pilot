@@ -549,9 +549,10 @@ streaming works (validates `zaiToolStream`/`thinkingFormat`). Repeat for MiniMax
 - [x] **P1 — Type & validator widening** (shared + renderer + config-store) + migration
       tests. Behavior-neutral; native ids now _survivable_ but not yet selectable.
       **Done 2026-07-06** — see §10b.
-- [ ] **P2 — Routing** (`pi-model-resolution.ts`) + auth (`agent-runner.ts`) +
-      resolution tests (§8.3). Native models resolve correctly if selected. **← NEXT**
-- [ ] **P3 — State** (`useApiConfigState`) + profile keys (`native:<id>`).
+- [x] **P2 — Routing** (`pi-model-resolution.ts`) + auth (`agent-runner.ts`) +
+      resolution tests (§8.3). Native models resolve correctly if selected.
+      **Done 2026-07-06** — see §10c.
+- [ ] **P3 — State** (`useApiConfigState`) + profile keys (`native:<id>`). **← NEXT**
 - [ ] **P4 — UI** (`ProviderPicker` + `SettingsAPI` form-shape) + i18n (4 locales).
 - [ ] **P5 — Smoke** (§8.5), docs, and move this file's Status → Implemented; add an
       as-built note to `docs/design/archive/` if it diverges.
@@ -598,6 +599,37 @@ Delivered with significant hardening beyond the original design spec:
   `modelPresetForProfileSafe` (wraps with `EMPTY_PRESET`) where a guaranteed value is needed.
 - 44 unit tests in `src/tests/config/provider-type-widening.test.ts` using real shared
   implementations (no inline mirrors).
+
+### §10c — P2 as-built notes
+
+Delivered exactly as designed with these implementation details:
+
+- `getCachedProviderCatalogSync()` added to `provider-catalog-native.ts` — a
+  parallel `resolvedCatalogSync` variable is populated when the promise settles
+  (success only; failures keep it null). This gives `resolvePiRouteProtocol` and
+  `buildPiModelLookupCandidates` synchronous access to the catalog without
+  threading it as a parameter through every call site.
+- `resetProviderCatalogCache()` now also clears `resolvedCatalogSync` so tests
+  that call it get a clean slate on both fields.
+- `resolvePiRouteProtocol`: builtins (`custom`, `ollama`, `openai`, `openrouter`,
+  `gemini`) return immediately via the existing fast-path branches — the catalog
+  lookup is only reached for unknown/native ids, so the mock assertion
+  `expect(mockGetCachedCatalog).not.toHaveBeenCalled()` holds for all five
+  builtin fast paths.
+- `buildPiModelLookupCandidates`: native candidate is unshifted before the
+  existing logic. Deduplication via the `seen` set prevents the same
+  `provider/model` pair from appearing twice in the tail fallbacks. For a
+  prefixed model string `zai/glm-5` where the prefix matches `piProvider`,
+  the bare `glm-5` id is extracted; for non-matching prefixes the full string
+  is passed through unchanged.
+- `agent-runner.ts` auth block: consults `getCachedProviderCatalogSync()` to
+  derive `piProvider` from `entry.piProvider` for native entries; falls back
+  to the existing `provider === 'custom' ? customProtocol : provider` logic
+  for builtins and when the catalog isn't yet populated.
+- 13 new P2 tests in `tests/pi-model-resolution.test.ts` (32 total in that
+  file). `vi.mock('../src/main/config/provider-catalog-native', ...)` with a
+  `vi.fn()` mock that each test controls via `mockReturnValue`.
+- 2818/2818 tests passing, `tsc --noEmit` clean.
 
 ### Later tiers (not this plan)
 

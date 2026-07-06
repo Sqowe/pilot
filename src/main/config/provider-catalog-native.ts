@@ -53,10 +53,29 @@ export interface ProviderCatalogDeps {
 // ---------------------------------------------------------------------------
 
 let cachedCatalogPromise: Promise<ProviderCatalogEntry[]> | null = null;
+/** Synchronously-accessible resolved value — set when the promise settles. */
+let resolvedCatalogSync: ProviderCatalogEntry[] | null = null;
+/**
+ * Monotonic generation counter. Incremented on every reset so an in-flight
+ * promise that resolves after a reset does not overwrite the cleared state.
+ */
+let catalogGeneration = 0;
 
 /** Reset the catalog cache. Tests only — do not call in production code. */
 export function resetProviderCatalogCache(): void {
   cachedCatalogPromise = null;
+  resolvedCatalogSync = null;
+  catalogGeneration++;
+}
+
+/**
+ * Synchronous read of the last successfully resolved catalog.
+ * Returns null if the catalog has not yet been built (async still in-flight
+ * or not yet requested). Safe to call from synchronous code paths like
+ * resolvePiRouteProtocol — callers must handle null gracefully.
+ */
+export function getCachedProviderCatalogSync(): ProviderCatalogEntry[] | null {
+  return resolvedCatalogSync;
 }
 
 // ---------------------------------------------------------------------------
@@ -224,17 +243,35 @@ export function getFullProviderCatalog(
 ): Promise<ProviderCatalogEntry[]> {
   if (cachedCatalogPromise) return cachedCatalogPromise;
 
+  // Capture generation at promise creation time so an in-flight build that
+  // resolves after resetProviderCatalogCache() does not overwrite the cleared state.
+  const buildGeneration = catalogGeneration;
+
   // Store the promise immediately so concurrent callers share it
-  const promise = _buildCatalog(deps).then(
+  const promise = _buildCatalog(deps, () => {
+    // Only clear the cache if this build is still the current one —
+    // prevents a stale in-flight build from wiping a newer build's state.
+    if (catalogGeneration === buildGeneration && cachedCatalogPromise === promise) {
+      cachedCatalogPromise = null;
+    }
+  }).then(
     (catalog) => {
-      // Success — keep the promise in cache
+      // Only commit if this build is still the current generation
+      if (catalogGeneration === buildGeneration) {
+        resolvedCatalogSync = catalog;
+      }
       return catalog;
     },
     (err) => {
       // Should never reach here (buildCatalog catches internally),
-      // but clear cache defensively so next call retries
+      // but clear cache defensively so next call retries.
+      // Guard both mutations with generation + promise identity checks so a
+      // stale in-flight rejection cannot corrupt a newer build's cache state.
       logWarn('[ProviderCatalog] Unexpected rejection from _buildCatalog:', err);
-      cachedCatalogPromise = null;
+      if (catalogGeneration === buildGeneration && cachedCatalogPromise === promise) {
+        cachedCatalogPromise = null;
+        resolvedCatalogSync = [...BUILTIN_ENTRIES];
+      }
       return [...BUILTIN_ENTRIES];
     }
   );
@@ -243,7 +280,18 @@ export function getFullProviderCatalog(
   return promise;
 }
 
-async function _buildCatalog(deps?: ProviderCatalogDeps): Promise<ProviderCatalogEntry[]> {
+async function _buildCatalog(
+  deps: ProviderCatalogDeps | undefined,
+  clearCacheIfStale: () => void
+): Promise<ProviderCatalogEntry[]> {
+  // Yield to the microtask queue immediately so the caller (getFullProviderCatalog)
+  // always completes `cachedCatalogPromise = promise` before any failure path
+  // in this function can invoke clearCacheIfStale(). Without this, a synchronous
+  // throw before the first real await would call clearCacheIfStale() while
+  // cachedCatalogPromise is still null, making the identity check always false
+  // and preventing proper retry behavior.
+  await Promise.resolve();
+
   let resolvedDeps: ProviderCatalogDeps;
 
   if (deps) {
@@ -266,7 +314,7 @@ async function _buildCatalog(deps?: ProviderCatalogDeps): Promise<ProviderCatalo
     } catch (err) {
       logWarn('[ProviderCatalog] Failed to import pi-ai/compat — using builtin-only catalog:', err);
       // Clear cache so next call retries the import (transient failure recovery)
-      cachedCatalogPromise = null;
+      clearCacheIfStale();
       return [...BUILTIN_ENTRIES];
     }
   }
@@ -288,7 +336,7 @@ async function _buildCatalog(deps?: ProviderCatalogDeps): Promise<ProviderCatalo
   } catch (err) {
     logWarn('[ProviderCatalog] Failed to build native entries — using builtin-only catalog:', err);
     // Clear cache so next call retries
-    cachedCatalogPromise = null;
+    clearCacheIfStale();
     return [...BUILTIN_ENTRIES];
   }
 }
