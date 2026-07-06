@@ -27,6 +27,7 @@ import {
   resolvePiRouteProtocol,
   resolveSyntheticPiModelFallback,
   resolveRuntimeApiKeyProviders,
+  resolveNativeProviderInfo,
 } from '../src/main/claude/pi-model-resolution';
 
 /** Minimal catalog entries used across P2 routing tests. */
@@ -779,5 +780,46 @@ describe('resolveRuntimeApiKeyProviders', () => {
       piModelProvider: 'openai',
     });
     expect(keys).toEqual(['gemini']);
+  });
+});
+
+describe('resolveNativeProviderInfo (diagnostics base-URL + protocol)', () => {
+  afterEach(() => {
+    mockGetCachedCatalog.mockReturnValue(null);
+  });
+
+  it('cold start (catalog null): resolves native openai-routed provider from the registry', () => {
+    mockGetCachedCatalog.mockReturnValue(null);
+    const info = resolveNativeProviderInfo('zai');
+    expect(info).toBeDefined();
+    expect(info?.piProvider).toBe('zai');
+    expect(info?.routeProtocol).toBe('openai');
+    // Real registry base URL — must not be localhost.
+    expect(info?.baseUrl).toContain('z.ai');
+    expect(info?.baseUrl).not.toContain('localhost');
+  });
+
+  it('cold start: native anthropic-routed provider uses cold-start override protocol', () => {
+    mockGetCachedCatalog.mockReturnValue(null);
+    const info = resolveNativeProviderInfo('minimax');
+    expect(info?.routeProtocol).toBe('anthropic');
+    expect(info?.baseUrl).toContain('minimax');
+  });
+
+  it('warm catalog: uses the entry piProvider/routeProtocol', () => {
+    mockGetCachedCatalog.mockReturnValue(MOCK_CATALOG);
+    const info = resolveNativeProviderInfo('kimi-coding');
+    expect(info?.piProvider).toBe('kimi-coding');
+    expect(info?.routeProtocol).toBe('anthropic');
+    expect(info?.baseUrl).toContain('kimi.com');
+  });
+
+  it('returns undefined for builtin, custom, and unknown providers', () => {
+    mockGetCachedCatalog.mockReturnValue(null);
+    expect(resolveNativeProviderInfo('openai')).toBeUndefined();
+    expect(resolveNativeProviderInfo('anthropic')).toBeUndefined();
+    expect(resolveNativeProviderInfo('custom')).toBeUndefined();
+    expect(resolveNativeProviderInfo('not-a-real-provider')).toBeUndefined();
+    expect(resolveNativeProviderInfo('')).toBeUndefined();
   });
 });

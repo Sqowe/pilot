@@ -1,6 +1,6 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
 // `getModel` moved off the pi-ai root entrypoint to `/compat` in 0.80.0.
-import { getModel } from '@earendil-works/pi-ai/compat';
+import { getModel, getModels } from '@earendil-works/pi-ai/compat';
 import { isOfficialOpenAIBaseUrl } from '../config/auth-utils';
 import { log } from '../utils/logger';
 import { getCachedProviderCatalogSync } from '../config/provider-catalog-native';
@@ -95,6 +95,62 @@ export function resolvePiRouteProtocol(provider?: string, customProtocol?: strin
     }
   }
   return provider || 'anthropic';
+}
+
+export interface NativeProviderInfo {
+  /** pi-ai registry provider key (equals the catalog id for v1 natives) */
+  piProvider: string;
+  /** Route protocol derived from the catalog / cold-start map */
+  routeProtocol: 'anthropic' | 'openai' | 'gemini';
+  /** Registry base URL (from the resolved model, or the provider's first model) */
+  baseUrl?: string;
+}
+
+/**
+ * For a native catalog provider, resolve the registry-backed info the
+ * diagnostics engine needs — base URL and route protocol — since native
+ * providers carry no user-entered baseUrl (it lives in the pi-ai registry).
+ *
+ * Returns `undefined` for builtin/custom/unknown providers so callers keep
+ * their existing behavior. Works both after the catalog has warmed (uses the
+ * catalog entry's piProvider/routeProtocol) and during cold start (falls back
+ * to NATIVE_PROVIDER_IDS + NATIVE_COLD_START_PROTOCOL; v1 natives have
+ * id === piProvider).
+ */
+export function resolveNativeProviderInfo(
+  provider: string,
+  model?: string
+): NativeProviderInfo | undefined {
+  if (!provider || provider === 'custom') return undefined;
+
+  const catalog = getCachedProviderCatalogSync();
+  const entry = catalog ? getCatalogEntry(catalog, provider) : undefined;
+
+  let piProvider: string | undefined;
+  let routeProtocol: 'anthropic' | 'openai' | 'gemini' | undefined;
+  if (entry?.kind === 'native') {
+    piProvider = entry.piProvider;
+    routeProtocol = entry.routeProtocol;
+  } else if (NATIVE_PROVIDER_IDS.has(provider)) {
+    piProvider = provider;
+    routeProtocol = NATIVE_COLD_START_PROTOCOL[provider] ?? 'openai';
+  }
+  if (!piProvider || !routeProtocol) return undefined;
+
+  // Resolve base URL from the registry. Prefer the specific model's baseUrl;
+  // fall back to the provider's first model (all models for a native provider
+  // share the same endpoint). Guard registry calls defensively.
+  let baseUrl: string | undefined;
+  const lookup = getModel as (p: string, m: string) => Model<Api> | undefined;
+  const listModels = getModels as (p: string) => Model<Api>[] | undefined;
+  try {
+    if (model) baseUrl = lookup(piProvider, model)?.baseUrl || undefined;
+    if (!baseUrl) baseUrl = listModels(piProvider)?.[0]?.baseUrl || undefined;
+  } catch {
+    // Registry lookup failed — leave baseUrl undefined; caller handles it.
+  }
+
+  return { piProvider, routeProtocol, baseUrl };
 }
 
 function shouldDisableDeveloperRoleForEndpoint(

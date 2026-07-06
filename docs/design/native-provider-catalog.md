@@ -533,11 +533,15 @@ streaming works (validates `zaiToolStream`/`thinkingFormat`). Repeat for MiniMax
 - **O3 — Region duplicates → separate tagged entries.** `minimax`/`minimax-cn`,
   `zai`/`zai-coding-cn`, `moonshotai`/`moonshotai-cn` are distinct selectable entries,
   each with its own credential slot and a region tag chip. Details in §4.5.
-
-### Still open
-
-- **O4 — Diagnostics.** `ApiDiagnosticsPanel` currently keys off provider/baseUrl; confirm
-  it works when baseUrl comes from the registry (native) rather than user input.
+- **O4 — Diagnostics → registry-aware (fixed post-ship).** The diagnostics engine keyed
+  off `provider`/`baseUrl` and only knew the 6 builtin presets, so a native provider
+  (empty user `baseUrl`) fell through to a `localhost` fallback — the connection test hit
+  `localhost:443` and failed at TCP. Fixed by `resolveNativeProviderInfo(provider, model)`
+  in `pi-model-resolution.ts`, which returns the registry base URL + route protocol for
+  native catalog providers (catalog-warm and cold-start paths). `api-diagnostics.ts` now
+  uses it in `resolveEffectiveUrl`, `resolveClientBaseUrl`, and the
+  `isOpenAICompatible`/`isAnthropicCompatible`/`isGeminiProtocol` predicates so native
+  providers are probed against their real endpoint with the correct SDK client.
 
 ---
 
