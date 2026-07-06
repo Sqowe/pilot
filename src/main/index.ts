@@ -55,6 +55,7 @@ import {
   type MemoryRuntimeConfig,
 } from './config/config-store';
 import { runConfigApiTest } from './config/config-test-routing';
+import { getFullProviderCatalog } from './config/provider-catalog-native';
 import { listOllamaModels } from './config/ollama-api';
 import { applyLocalDevPath, isBasePathSet, getEffectivePath } from './utils/path-env';
 import {
@@ -1887,6 +1888,12 @@ ipcMain.handle('config.get', () => {
     logError('[Config] Error getting config:', error);
     return {};
   }
+});
+
+ipcMain.handle('config.getProviderCatalog', async () => {
+  // getFullProviderCatalog never rejects — it falls back to builtin-only entries
+  // on any import or build failure, so no try/catch is needed here.
+  return getFullProviderCatalog();
 });
 
 ipcMain.handle('config.getPresets', () => {
