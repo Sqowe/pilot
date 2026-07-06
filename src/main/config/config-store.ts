@@ -43,6 +43,7 @@ import {
   normalizeProviderId,
   isValidProviderId,
   isValidProfileKey,
+  isNativeProfileKey,
   deriveProfileKey,
   profileKeyToProviderInfo,
   BUILTIN_PROVIDER_ID_LIST,
@@ -1039,6 +1040,14 @@ export class ConfigStore {
 
   private getDefaultProfile(profileKey: ProviderProfileKey): ProviderProfile {
     const fallback = defaultProfiles[profileKey];
+    // Native provider slots (native:*) are dynamic and have no static default
+    // in `defaultProfiles`. Return an empty profile so callers never crash on a
+    // missing key — the base URL and model come from the pi-ai registry at
+    // runtime, not from a persisted default. baseUrl is '' (never undefined):
+    // electron-store persists via JSON and rejects `undefined` values.
+    if (!fallback) {
+      return { apiKey: '', baseUrl: '', model: '' };
+    }
     return {
       apiKey: fallback.apiKey,
       baseUrl: fallback.baseUrl,
@@ -1063,7 +1072,9 @@ export class ConfigStore {
       profileKey === 'ollama' ? normalizeOllamaBaseUrl(rawBaseUrl) || fallback.baseUrl : rawBaseUrl;
     const result: ProviderProfile = {
       apiKey: typeof profile?.apiKey === 'string' ? profile.apiKey : '',
-      baseUrl,
+      // Coerce to '' — never undefined. electron-store persists via JSON and
+      // rejects undefined values (native providers have no default baseUrl).
+      baseUrl: baseUrl ?? '',
       model,
     };
     // Preserve optional numeric fields so callers don't silently lose user-set values
@@ -1082,6 +1093,17 @@ export class ConfigStore {
     const cloned = {} as Record<ProviderProfileKey, ProviderProfile>;
     for (const key of PROFILE_KEYS) {
       cloned[key] = this.normalizeProfile(key, profiles?.[key]);
+    }
+    // Preserve native provider slots (native:<id>), which are dynamic and not
+    // enumerated in PROFILE_KEYS. Without this, native credentials are dropped
+    // on every normalize and native config sets can't persist their API keys.
+    if (profiles) {
+      for (const key of Object.keys(profiles)) {
+        if (isNativeProfileKey(key) && !(key in cloned)) {
+          const nativeKey = key as ProviderProfileKey;
+          cloned[nativeKey] = this.normalizeProfile(nativeKey, profiles[nativeKey]);
+        }
+      }
     }
     return cloned;
   }
@@ -1349,8 +1371,8 @@ export class ConfigStore {
       return true;
     }
 
-    const activeProfile = legacy.profiles[legacy.activeProfileKey];
     const fallbackActive = this.getDefaultProfile(legacy.activeProfileKey);
+    const activeProfile = legacy.profiles[legacy.activeProfileKey] ?? fallbackActive;
     return Boolean(
       activeProfile.apiKey.trim() ||
       (activeProfile.baseUrl || '') !== (fallbackActive.baseUrl || '') ||
@@ -1381,7 +1403,8 @@ export class ConfigStore {
     }
 
     const projected = this.projectFromConfigSet(onlySet);
-    const legacyActive = legacy.profiles[legacy.activeProfileKey];
+    const legacyActive =
+      legacy.profiles[legacy.activeProfileKey] ?? this.getDefaultProfile(legacy.activeProfileKey);
     return !(
       projected.provider === legacy.provider &&
       projected.customProtocol === legacy.customProtocol &&
@@ -1811,6 +1834,14 @@ export class ConfigStore {
         for (const key of PROFILE_KEYS) {
           if (updates.profiles[key]) {
             nextProfiles[key] = this.normalizeProfile(key, updates.profiles[key]);
+          }
+        }
+        // Native slots (native:<id>) aren't in PROFILE_KEYS — apply them too so
+        // native credential updates sent via top-level `profiles` aren't dropped.
+        for (const key of Object.keys(updates.profiles)) {
+          if (isNativeProfileKey(key) && updates.profiles[key as ProviderProfileKey]) {
+            const nativeKey = key as ProviderProfileKey;
+            nextProfiles[nativeKey] = this.normalizeProfile(nativeKey, updates.profiles[nativeKey]);
           }
         }
       }

@@ -48,6 +48,71 @@ describe('ConfigStore provider profiles', () => {
     mocks.seed = {};
   });
 
+  it('saves a native provider without crashing and persists its credentials', () => {
+    const store = new ConfigStore();
+
+    // Reproduces the config.save crash: saving a native catalog provider
+    // (activeProfileKey "native:zai") previously threw
+    // "Cannot read properties of undefined (reading 'apiKey')" because
+    // getDefaultProfile()/cloneProfiles() only knew the 8 builtin profile keys.
+    expect(() =>
+      store.update({
+        provider: 'zai',
+        customProtocol: 'openai',
+        apiKey: 'zai-secret-key',
+        model: 'glm-5.2',
+      })
+    ).not.toThrow();
+
+    const config = store.getAll();
+    expect(config.provider).toBe('zai');
+    expect(config.apiKey).toBe('zai-secret-key');
+    expect(config.model).toBe('glm-5.2');
+
+    const activeSet = config.configSets.find((s) => s.id === config.activeConfigSetId);
+    expect(activeSet?.activeProfileKey).toBe('native:zai');
+    expect(activeSet?.profiles['native:zai']?.apiKey).toBe('zai-secret-key');
+
+    // Regression: native profiles have no default baseUrl. It must be '' (a
+    // string), never undefined — electron-store persists via JSON and rejects
+    // undefined values, which crashed config.save with a JSON type error.
+    expect(config.baseUrl).toBe('');
+    expect(activeSet?.profiles['native:zai']?.baseUrl).toBe('');
+    expect(typeof config.baseUrl).toBe('string');
+  });
+
+  it('preserves native profile slots when re-normalizing persisted config', () => {
+    mocks.seed = {
+      // Realistic persisted shape: top-level legacy mirror reflects the active set.
+      provider: 'minimax',
+      customProtocol: 'anthropic',
+      apiKey: 'mm-key',
+      model: 'MiniMax-M2',
+      activeConfigSetId: 'default',
+      configSets: [
+        {
+          id: 'default',
+          name: 'Default',
+          isSystem: true,
+          provider: 'minimax',
+          customProtocol: 'anthropic',
+          activeProfileKey: 'native:minimax',
+          enableThinking: false,
+          updatedAt: new Date().toISOString(),
+          profiles: {
+            'native:minimax': { apiKey: 'mm-key', baseUrl: '', model: 'MiniMax-M2' },
+          },
+        },
+      ],
+    };
+
+    const store = new ConfigStore();
+    const config = store.getAll();
+    const activeSet = config.configSets.find((s) => s.id === 'default');
+    expect(activeSet?.profiles['native:minimax']?.apiKey).toBe('mm-key');
+    expect(activeSet?.profiles['native:minimax']?.model).toBe('MiniMax-M2');
+  });
+
   it('migrates legacy single-profile fields into active profile', () => {
     mocks.seed = {
       provider: 'openai',

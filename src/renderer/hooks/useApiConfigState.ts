@@ -30,6 +30,7 @@ import {
 import {
   isValidProviderId,
   isValidProfileKey,
+  isNativeProfileKey,
   deriveProfileKey,
   profileKeyToProviderInfo,
 } from '../../shared/provider-ids';
@@ -175,6 +176,31 @@ const PROFILE_KEYS: BuiltinProfileKey[] = [
   'custom:openai',
   'custom:gemini',
 ];
+
+/**
+ * The builtin profile keys plus any native (`native:<id>`) slots present in the
+ * given source map and/or active key. Native slots are dynamic and not in the
+ * fixed PROFILE_KEYS list — enumerating only PROFILE_KEYS would silently drop
+ * native credentials when reading/serializing profiles.
+ */
+function profileKeysWith(
+  source?: Partial<Record<string, unknown>> | null,
+  activeProfileKey?: string
+): ProviderProfileKey[] {
+  const keys: ProviderProfileKey[] = [...PROFILE_KEYS];
+  const seen = new Set<string>(keys);
+  const add = (key: string | undefined) => {
+    if (key && isNativeProfileKey(key) && !seen.has(key)) {
+      seen.add(key);
+      keys.push(key as ProviderProfileKey);
+    }
+  };
+  if (source) {
+    for (const key of Object.keys(source)) add(key);
+  }
+  add(activeProfileKey);
+  return keys;
+}
 
 function isProfileKey(value: unknown): value is ProviderProfileKey {
   return isValidProfileKey(value);
@@ -400,7 +426,7 @@ export function buildApiConfigSnapshot(
       : derivedProfileKey;
 
   const profiles = {} as Record<ProviderProfileKey, UIProviderProfile>;
-  for (const key of PROFILE_KEYS) {
+  for (const key of profileKeysWith(config?.profiles, activeProfileKey)) {
     profiles[key] = normalizeProfile(key, config?.profiles?.[key], presets);
   }
 
@@ -443,8 +469,9 @@ function toPersistedProfiles(
   profiles: Record<ProviderProfileKey, UIProviderProfile>
 ): Partial<Record<ProviderProfileKey, ProviderProfile>> {
   const persisted: Partial<Record<ProviderProfileKey, ProviderProfile>> = {};
-  for (const key of PROFILE_KEYS) {
+  for (const key of profileKeysWith(profiles)) {
     const profile = profiles[key];
+    if (!profile) continue;
     const finalModel = profile.useCustomModel
       ? profile.customModel.trim() || profile.model
       : profile.model;
@@ -468,7 +495,7 @@ export function buildApiConfigDraftSignature(
   return JSON.stringify({
     activeProfileKey,
     enableThinking,
-    profiles: PROFILE_KEYS.map((key) => ({
+    profiles: profileKeysWith(profiles, activeProfileKey).map((key) => ({
       key,
       apiKey: persisted[key]?.apiKey || '',
       baseUrl: persisted[key]?.baseUrl || '',
@@ -508,7 +535,7 @@ export function buildApiConfigSets(
           : fallbackActive;
 
       const normalizedProfiles = {} as Record<ProviderProfileKey, ProviderProfile>;
-      for (const key of PROFILE_KEYS) {
+      for (const key of profileKeysWith(set.profiles, activeProfileKey)) {
         const uiProfile = normalizeProfile(key, set.profiles?.[key], presets);
         normalizedProfiles[key] = {
           apiKey: uiProfile.apiKey,
