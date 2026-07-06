@@ -838,7 +838,22 @@ export interface ExecutionContext {
 }
 
 // App Config types
-export type ProviderType = 'openrouter' | 'anthropic' | 'custom' | 'openai' | 'gemini' | 'ollama';
+/**
+ * The 6 legacy builtin provider ids. Use for exhaustive switches over builtins.
+ */
+export type BuiltinProviderType =
+  | 'openrouter'
+  | 'anthropic'
+  | 'custom'
+  | 'openai'
+  | 'gemini'
+  | 'ollama';
+/**
+ * Open provider type — accepts any catalog id including native providers
+ * (e.g. 'zai', 'minimax', 'deepseek') and the 6 legacy builtin ids.
+ * Use BuiltinProviderType when you need exhaustive matching over the 6.
+ */
+export type ProviderType = string;
 /**
  * Superset of ProviderType that additionally allows 'local' for the embedding sub-config only.
  * The 'local' value must never appear on the main LLM config or any ApiConfigSet provider field.
@@ -846,7 +861,10 @@ export type ProviderType = 'openrouter' | 'anthropic' | 'custom' | 'openai' | 'g
 export type EmbeddingProviderType = ProviderType | 'local';
 export type CustomProtocolType = 'anthropic' | 'openai' | 'gemini';
 export type AppTheme = 'dark' | 'light' | 'system';
-export type ProviderProfileKey =
+/**
+ * Builtin profile keys for the 6 legacy providers.
+ */
+export type BuiltinProfileKey =
   | 'openrouter'
   | 'anthropic'
   | 'openai'
@@ -855,6 +873,12 @@ export type ProviderProfileKey =
   | 'custom:anthropic'
   | 'custom:openai'
   | 'custom:gemini';
+/**
+ * Profile key — builtin slot or a native provider slot (`native:<piProvider>`).
+ * Each native provider gets its own credential slot so switching between
+ * providers preserves both saved keys.
+ */
+export type ProviderProfileKey = BuiltinProfileKey | `native:${string}`;
 export type ConfigSetId = string;
 
 export interface ProviderProfile {

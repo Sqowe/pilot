@@ -1,10 +1,21 @@
-export type SharedProviderType =
+/**
+ * The 6 legacy builtin provider ids. Use this for exhaustive switches
+ * over the builtin set.
+ */
+export type BuiltinProviderType =
   | 'openrouter'
   | 'anthropic'
   | 'custom'
   | 'openai'
   | 'gemini'
   | 'ollama';
+
+/**
+ * Open provider type — accepts any catalog id including native providers
+ * (e.g. 'zai', 'minimax', 'deepseek') and the 6 legacy builtin ids.
+ * Use BuiltinProviderType when you need exhaustive matching over the 6.
+ */
+export type SharedProviderType = string;
 
 export type SharedCustomProtocolType = 'anthropic' | 'openai' | 'gemini';
 
@@ -23,6 +34,19 @@ export interface SharedProviderPresets {
   openai: SharedProviderPreset;
   gemini: SharedProviderPreset;
   ollama: SharedProviderPreset;
+}
+
+/**
+ * Look up a preset by provider id using own-property checks only.
+ * Prototype-chain keys (e.g. `__proto__`, `constructor`) always return undefined.
+ * Returns undefined for unknown/native ids.
+ */
+export function getPresetForProvider(
+  presets: SharedProviderPresets,
+  providerId: string
+): SharedProviderPreset | undefined {
+  if (!Object.prototype.hasOwnProperty.call(presets, providerId)) return undefined;
+  return (presets as unknown as Record<string, SharedProviderPreset | undefined>)[providerId];
 }
 
 export interface ModelInputGuidance {

@@ -10,12 +10,23 @@ import type {
   ProviderModelInfo,
   ProviderProfile,
   ProviderProfileKey,
+  BuiltinProfileKey,
   ProviderPresets,
   ProviderType,
 } from '../types';
 import { isLoopbackBaseUrl } from '../../shared/network/loopback';
 import { DEFAULT_OLLAMA_BASE_URL, normalizeOllamaBaseUrl } from '../../shared/ollama-base-url';
-import { API_PROVIDER_PRESETS, getModelInputGuidance } from '../../shared/api-model-presets';
+import {
+  API_PROVIDER_PRESETS,
+  getModelInputGuidance,
+  type SharedProviderPreset,
+} from '../../shared/api-model-presets';
+import {
+  isValidProviderId,
+  isValidProfileKey,
+  deriveProfileKey,
+  profileKeyToProviderInfo,
+} from '../../shared/provider-ids';
 import {
   COMMON_PROVIDER_SETUPS,
   detectCommonProviderSetup,
@@ -65,7 +76,7 @@ const DEFAULT_CONFIG_SET_ID = 'default';
 const DEFAULT_CONFIG_SET_NAME = 'Default';
 export const FALLBACK_PROVIDER_PRESETS: ProviderPresets = API_PROVIDER_PRESETS;
 
-const PROFILE_KEYS: ProviderProfileKey[] = [
+const PROFILE_KEYS: BuiltinProfileKey[] = [
   'openrouter',
   'anthropic',
   'openai',
@@ -77,18 +88,11 @@ const PROFILE_KEYS: ProviderProfileKey[] = [
 ];
 
 function isProfileKey(value: unknown): value is ProviderProfileKey {
-  return typeof value === 'string' && PROFILE_KEYS.includes(value as ProviderProfileKey);
+  return isValidProfileKey(value);
 }
 
 function isProviderType(value: unknown): value is ProviderType {
-  return (
-    value === 'openrouter' ||
-    value === 'anthropic' ||
-    value === 'custom' ||
-    value === 'openai' ||
-    value === 'gemini' ||
-    value === 'ollama'
-  );
+  return isValidProviderId(value);
 }
 
 function isCustomProtocol(value: unknown): value is CustomProtocolType {
@@ -99,41 +103,14 @@ export function profileKeyFromProvider(
   provider: ProviderType,
   customProtocol: CustomProtocolType = 'anthropic'
 ): ProviderProfileKey {
-  if (provider !== 'custom') {
-    return provider;
-  }
-  if (customProtocol === 'openai') {
-    return 'custom:openai';
-  }
-  if (customProtocol === 'gemini') {
-    return 'custom:gemini';
-  }
-  return 'custom:anthropic';
+  return deriveProfileKey(provider, customProtocol) as ProviderProfileKey;
 }
 
 export function profileKeyToProvider(profileKey: ProviderProfileKey): {
   provider: ProviderType;
   customProtocol: CustomProtocolType;
 } {
-  if (profileKey === 'ollama') {
-    return { provider: 'ollama', customProtocol: 'openai' };
-  }
-  if (profileKey === 'custom:openai') {
-    return { provider: 'custom', customProtocol: 'openai' };
-  }
-  if (profileKey === 'custom:gemini') {
-    return { provider: 'custom', customProtocol: 'gemini' };
-  }
-  if (profileKey === 'custom:anthropic') {
-    return { provider: 'custom', customProtocol: 'anthropic' };
-  }
-  if (profileKey === 'openai') {
-    return { provider: 'openai', customProtocol: 'openai' };
-  }
-  if (profileKey === 'gemini') {
-    return { provider: 'gemini', customProtocol: 'gemini' };
-  }
-  return { provider: profileKey, customProtocol: 'anthropic' };
+  return profileKeyToProviderInfo(profileKey);
 }
 
 export function isCustomAnthropicLoopbackGateway(baseUrl: string): boolean {
@@ -168,27 +145,52 @@ function isLegacyOllamaConfig(
   }
 }
 
-function modelPresetForProfile(profileKey: ProviderProfileKey, presets: ProviderPresets) {
-  if (profileKey === 'ollama') {
-    return presets.ollama;
+const EMPTY_PRESET: SharedProviderPreset = {
+  name: '',
+  baseUrl: '',
+  models: [],
+  keyPlaceholder: '',
+  keyHint: '',
+};
+
+function modelPresetForProfile(
+  profileKey: ProviderProfileKey,
+  presets: ProviderPresets
+): SharedProviderPreset | undefined {
+  if (profileKey === 'ollama') return presets.ollama;
+  if (profileKey === 'custom:openai') return presets.openai;
+  if (profileKey === 'custom:gemini') return presets.gemini;
+  if (profileKey === 'custom:anthropic') return presets.custom;
+  // Builtin keys (openrouter, anthropic, openai, gemini)
+  if (Object.prototype.hasOwnProperty.call(presets, profileKey)) {
+    const builtin = (presets as unknown as Record<string, SharedProviderPreset | undefined>)[
+      profileKey
+    ];
+    if (builtin) return builtin;
   }
-  if (profileKey === 'custom:openai') {
-    return presets.openai;
-  }
-  if (profileKey === 'custom:gemini') {
-    return presets.gemini;
-  }
-  if (profileKey === 'custom:anthropic') {
-    return presets.custom;
-  }
-  return presets[profileKey];
+  // Native keys (native:zai, etc.) have no preset — return undefined.
+  // Callers must handle undefined for native providers.
+  return undefined;
+}
+
+/**
+ * Like modelPresetForProfile but always returns a non-null preset.
+ * Uses EMPTY_PRESET for native providers that have no builtin preset entry.
+ * Only use this where an empty baseUrl/models is safe (e.g. building UI defaults).
+ * Do NOT use this when the baseUrl will be passed to URL() or a network client.
+ */
+function modelPresetForProfileSafe(
+  profileKey: ProviderProfileKey,
+  presets: ProviderPresets
+): SharedProviderPreset {
+  return modelPresetForProfile(profileKey, presets) ?? EMPTY_PRESET;
 }
 
 function defaultProfileForKey(
   profileKey: ProviderProfileKey,
   presets: ProviderPresets
 ): UIProviderProfile {
-  const preset = modelPresetForProfile(profileKey, presets);
+  const preset = modelPresetForProfileSafe(profileKey, presets);
   const prefersCustomInput = profileKey.startsWith('custom:');
   return {
     apiKey: '',
@@ -257,7 +259,7 @@ function normalizeProfile(
 
   const modelValue = profile?.model?.trim() || fallback.model;
   const rawBaseUrl = profile?.baseUrl?.trim() || fallback.baseUrl;
-  const hasPresetModel = modelPresetForProfile(profileKey, presets).models.some(
+  const hasPresetModel = modelPresetForProfileSafe(profileKey, presets).models.some(
     (item) => item.id === modelValue
   );
   return {
@@ -532,7 +534,12 @@ function providerTabLabel(
   if (provider === 'custom') {
     return t('api.custom');
   }
-  return presets[provider]?.name || provider;
+  return (
+    (Object.prototype.hasOwnProperty.call(presets, provider)
+      ? (presets as unknown as Record<string, { name?: string }>)[provider]
+      : undefined
+    )?.name || provider
+  );
 }
 
 function buildSetupModelState(
@@ -540,7 +547,7 @@ function buildSetupModelState(
   profileKey: ProviderProfileKey,
   presets: ProviderPresets
 ): Pick<UIProviderProfile, 'model' | 'customModel' | 'useCustomModel'> {
-  const preset = modelPresetForProfile(profileKey, presets);
+  const preset = modelPresetForProfileSafe(profileKey, presets);
   const hasPresetModel = preset.models.some((item) => item.id === setup.exampleModel);
   return {
     model: hasPresetModel ? setup.exampleModel : preset.models[0]?.id || setup.exampleModel,
@@ -931,7 +938,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   const customProtocol = providerMeta.customProtocol;
   const currentProfile =
     profiles[activeProfileKey] || defaultProfileForKey(activeProfileKey, presets);
-  const modelPreset = modelPresetForProfile(activeProfileKey, presets);
+  const modelPreset = modelPresetForProfileSafe(activeProfileKey, presets);
   const currentPreset = modelPreset;
   const hasDiscoveredOllamaModels =
     provider === 'ollama' &&
@@ -1350,7 +1357,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
 
     // If the current model came from discovered models and is not in presets,
     // reset to an endpoint-selected model once discovery runs again.
-    const preset = modelPresetForProfile(activeProfileKey, presets);
+    const preset = modelPresetForProfileSafe(activeProfileKey, presets);
     dispatch({
       type: 'UPDATE_PROFILE_FN',
       profileKey: activeProfileKey,

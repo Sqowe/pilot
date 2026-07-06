@@ -1,7 +1,8 @@
 # Native Provider Catalog — Design & Implementation Plan
 
 **Created:** 2026-07-06
-**Status:** Draft
+**Status:** P0 done · P1 done · P2 next · P3-P5 pending
+**Last updated:** 2026-07-06
 **Author:** AI-assisted design session
 **Scope:** "Level A" only — API-key ("coding plan") providers that pi-ai ships as
 first-class `KnownProvider`s (z.ai, MiniMax, Kimi, DeepSeek, Groq, xAI, …). True OAuth
@@ -542,13 +543,14 @@ streaming works (validates `zaiToolStream`/`thinkingFormat`). Repeat for MiniMax
 
 ## 10. Phased rollout / task checklist
 
-- [ ] **P0 — Catalog modules** — `shared/provider-catalog.ts` (SDK-free) +
+- [x] **P0 — Catalog modules** — `shared/provider-catalog.ts` (SDK-free) +
       `main/config/provider-catalog-native.ts` (pi-ai) + `config:getProviderCatalog` IPC
-      channel + unit tests (§8.1). No UI wiring yet.
-- [ ] **P1 — Type & validator widening** (shared + renderer + config-store) + migration
-      tests (§8.2). Behavior-neutral; native ids now _survivable_ but not yet selectable.
+      channel + unit tests. No UI wiring. **Done 2026-07-06** — see §10a.
+- [x] **P1 — Type & validator widening** (shared + renderer + config-store) + migration
+      tests. Behavior-neutral; native ids now _survivable_ but not yet selectable.
+      **Done 2026-07-06** — see §10b.
 - [ ] **P2 — Routing** (`pi-model-resolution.ts`) + auth (`agent-runner.ts`) +
-      resolution tests (§8.3). Native models resolve correctly if selected.
+      resolution tests (§8.3). Native models resolve correctly if selected. **← NEXT**
 - [ ] **P3 — State** (`useApiConfigState`) + profile keys (`native:<id>`).
 - [ ] **P4 — UI** (`ProviderPicker` + `SettingsAPI` form-shape) + i18n (4 locales).
 - [ ] **P5 — Smoke** (§8.5), docs, and move this file's Status → Implemented; add an
@@ -556,6 +558,46 @@ streaming works (validates `zaiToolStream`/`thinkingFormat`). Repeat for MiniMax
 
 Each phase is independently reviewable; P0–P2 ship no user-visible change, de-risking the
 UI work in P3–P4.
+
+### §10a — P0 as-built notes
+
+Delivered exactly as designed with these clarifications discovered during implementation:
+
+- `findEnvKeys()` from `pi-ai/compat` is runtime-env-dependent (returns `undefined` when
+  the env var isn't set). Env var names are hard-coded in `NATIVE_PROVIDER_META` instead.
+- `getProviders()` and `getModels()` are confirmed synchronous in the current SDK. The
+  `ProviderCatalogDeps` interface accepts sync or async for forward-compat.
+- `mistral` uses `mistral-conversations` API (not `openai-completions`). `apiToRouteProtocol`
+  uses `startsWith('google-')` prefix matching (not exact strings) for gemini variants.
+- `deriveRouteProtocol` inspects ALL models (not just the first) and takes priority:
+  anthropic > gemini > openai. A `routeProtocol` override in `NATIVE_PROVIDER_META` wins.
+- Cache strategy: promise-memoised on success only. Import failures clear the cache so the
+  next IPC call retries (transient startup recovery).
+- 57 unit tests in `src/tests/config/provider-catalog.test.ts`.
+
+### §10b — P1 as-built notes
+
+Delivered with significant hardening beyond the original design spec:
+
+- `src/shared/provider-ids.ts` (new) — single source of truth for all provider-id and
+  profile-key logic. Used by both main process and renderer to prevent drift.
+  - `normalizeProviderId`: trims, rejects `'local'` (reserved for embedding), and rejects
+    dangerous prototype keys (`__proto__`, `constructor`, `prototype`).
+  - `isValidProfileKey`: strict canonical form — `'native: zai '` is rejected (suffix must
+    equal its normalized form), preventing duplicate credential slots.
+  - `isNativeProfileKey`, `deriveProfileKey`, `profileKeyToProviderInfo`.
+- `ProviderType = string` (open) + `BuiltinProviderType` (6-value union for exhaustive
+  switches). `ProviderProfileKey = BuiltinProfileKey | \`native:\${string}\``.
+- Profile key scheme: native providers use `native:<piProvider>` (e.g. `native:zai`), not
+  the raw provider id. This ensures `isValidProfileKey` accepts it on load.
+- `getPresetForProvider()` helper in `shared/api-model-presets.ts` uses own-property checks
+  to prevent prototype-chain surprises when indexing preset objects.
+- Memory LLM sub-config provider stays constrained to builtin ids via `isBuiltinProviderId`
+  (design §6.2 preserved).
+- `modelPresetForProfile` returns `SharedProviderPreset | undefined`; callers use
+  `modelPresetForProfileSafe` (wraps with `EMPTY_PRESET`) where a guaranteed value is needed.
+- 44 unit tests in `src/tests/config/provider-type-widening.test.ts` using real shared
+  implementations (no inline mirrors).
 
 ### Later tiers (not this plan)
 

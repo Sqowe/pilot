@@ -11,6 +11,7 @@ import * as tls from 'tls';
 import OpenAI from 'openai';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { PROVIDER_PRESETS, configStore } from './config-store';
+import { getPresetForProvider } from '../../shared/api-model-presets';
 import { DEFAULT_OLLAMA_BASE_URL } from '../../shared/ollama-base-url';
 import { isLoopbackBaseUrl } from '../../shared/network/loopback';
 import {
@@ -63,7 +64,7 @@ function resolveEffectiveUrl(input: DiagnosticInput): URL {
   let raw = input.baseUrl?.trim();
 
   if (!raw && input.provider !== 'custom') {
-    raw = PROVIDER_PRESETS[input.provider]?.baseUrl;
+    raw = getPresetForProvider(PROVIDER_PRESETS, input.provider)?.baseUrl;
   }
 
   if (!raw) {
@@ -188,7 +189,7 @@ function resolveClientBaseUrl(input: DiagnosticInput): string | undefined {
   if (isOpenAICompatible(input)) {
     if (raw) return normalizeOpenAICompatibleBaseUrl(raw);
     if (input.provider !== 'custom') {
-      return PROVIDER_PRESETS[input.provider]?.baseUrl;
+      return getPresetForProvider(PROVIDER_PRESETS, input.provider)?.baseUrl;
     }
     return undefined;
   }

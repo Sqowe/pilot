@@ -39,6 +39,14 @@ import {
   type SystemPromptFileName,
 } from '../../shared/system-prompt-file-choices';
 import { sanitizeBashCommandList } from './permission-rules-store';
+import {
+  normalizeProviderId,
+  isValidProviderId,
+  isValidProfileKey,
+  deriveProfileKey,
+  profileKeyToProviderInfo,
+  BUILTIN_PROVIDER_ID_LIST,
+} from '../../shared/provider-ids';
 // Import normalizePermissionTimeout and DEFAULT_BASH_RESTRICTIONS_SETTINGS from the shared module.
 // defaultConfig.permissionTimeoutSeconds is set to DEFAULT_BASH_RESTRICTIONS_SETTINGS.permissionTimeoutSeconds
 // below so the two values are guaranteed to stay in sync — there is no separate copy to drift.
@@ -53,9 +61,21 @@ import {
 } from '../../shared/skill-conflict-types';
 
 /**
- * Application configuration schema
+ * The 6 legacy builtin provider ids. Use for exhaustive switches over builtins.
  */
-export type ProviderType = 'openrouter' | 'anthropic' | 'custom' | 'openai' | 'gemini' | 'ollama';
+export type BuiltinProviderType =
+  | 'openrouter'
+  | 'anthropic'
+  | 'custom'
+  | 'openai'
+  | 'gemini'
+  | 'ollama';
+/**
+ * Open provider type — accepts any catalog id including native providers
+ * (e.g. 'zai', 'minimax', 'deepseek') and the 6 legacy builtin ids.
+ * Use BuiltinProviderType when you need exhaustive matching over the 6.
+ */
+export type ProviderType = string;
 /**
  * Superset of ProviderType that additionally allows 'local' for the embedding sub-config only.
  * The 'local' value must never appear on the main LLM config or any ApiConfigSet provider field.
@@ -63,7 +83,10 @@ export type ProviderType = 'openrouter' | 'anthropic' | 'custom' | 'openai' | 'g
 export type EmbeddingProviderType = ProviderType | 'local';
 export type CustomProtocolType = 'anthropic' | 'openai' | 'gemini';
 export type AppTheme = 'dark' | 'light' | 'system';
-export type ProviderProfileKey =
+/**
+ * Builtin profile keys for the 6 legacy providers.
+ */
+export type BuiltinProfileKey =
   | 'openrouter'
   | 'anthropic'
   | 'openai'
@@ -72,6 +95,12 @@ export type ProviderProfileKey =
   | 'custom:anthropic'
   | 'custom:openai'
   | 'custom:gemini';
+/**
+ * Profile key — builtin slot or a native provider slot (`native:<piProvider>`).
+ * Each native provider gets its own credential slot so switching between
+ * providers preserves both saved keys.
+ */
+export type ProviderProfileKey = BuiltinProfileKey | `native:${string}`;
 export type ConfigSetId = string;
 export type CreateSetMode = 'blank' | 'clone';
 
@@ -478,7 +507,7 @@ export async function getPiAiModelPresets(): Promise<typeof PROVIDER_PRESETS> {
   }
 }
 
-const PROFILE_KEYS: ProviderProfileKey[] = [
+const BUILTIN_PROFILE_KEYS: BuiltinProfileKey[] = [
   'openrouter',
   'anthropic',
   'openai',
@@ -488,25 +517,40 @@ const PROFILE_KEYS: ProviderProfileKey[] = [
   'custom:openai',
   'custom:gemini',
 ];
+
+/**
+ * PROFILE_KEYS enumerates only the builtin slots.
+ * Native slots (native:*) are dynamic and not enumerable upfront —
+ * they live in the sparse profiles map and are accessed by key.
+ */
+const PROFILE_KEYS: BuiltinProfileKey[] = BUILTIN_PROFILE_KEYS;
 const VALID_THEMES: AppTheme[] = ['dark', 'light', 'system'];
 
+/**
+ * Accepts any non-empty string as a provider id EXCEPT 'local', which is
+ * reserved for EmbeddingProviderType and must never appear on the main LLM
+ * config or any ApiConfigSet provider field.
+ * Provider ids are trimmed at persistence boundaries (see normalizeConfig)
+ * so callers receive canonical values.
+ */
+/** Accepts any valid provider id (non-empty, not 'local', not a prototype key). */
 function isProviderType(value: unknown): value is ProviderType {
-  return (
-    value === 'openrouter' ||
-    value === 'anthropic' ||
-    value === 'custom' ||
-    value === 'openai' ||
-    value === 'gemini' ||
-    value === 'ollama'
-  );
+  return isValidProviderId(value);
+}
+
+/** Type-guard for the 6 legacy builtin provider ids (trims before checking). */
+function isBuiltinProviderType(value: unknown): value is BuiltinProviderType {
+  if (typeof value !== 'string') return false;
+  return (BUILTIN_PROVIDER_ID_LIST as readonly string[]).includes(value.trim());
 }
 
 function isCustomProtocol(value: unknown): value is CustomProtocolType {
   return value === 'anthropic' || value === 'openai' || value === 'gemini';
 }
 
+/** Accepts builtin profile keys and `native:<canonical-id>` keys. */
 function isProfileKey(value: unknown): value is ProviderProfileKey {
-  return typeof value === 'string' && PROFILE_KEYS.includes(value as ProviderProfileKey);
+  return isValidProfileKey(value);
 }
 
 function isAppTheme(value: unknown): value is AppTheme {
@@ -595,7 +639,12 @@ function normalizeMemoryLLMRuntimeConfig(
     : undefined;
   return {
     ...base,
-    provider: isProviderType(rawProvider) ? rawProvider : fallback.provider,
+    // Memory LLM provider is intentionally constrained to the 6 builtin ids
+    // (§6.2 of native-provider-catalog design). The memory sub-config has its
+    // own UI path and does not participate in the native provider catalog.
+    // ProviderType widening does NOT affect this field — native provider ids
+    // saved here would be coerced to the fallback, which is the correct behavior.
+    provider: isBuiltinProviderType(rawProvider) ? rawProvider : fallback.provider,
   };
 }
 
@@ -755,41 +804,14 @@ function profileKeyFromProvider(
   provider: ProviderType,
   customProtocol: CustomProtocolType = 'anthropic'
 ): ProviderProfileKey {
-  if (provider !== 'custom') {
-    return provider;
-  }
-  if (customProtocol === 'openai') {
-    return 'custom:openai';
-  }
-  if (customProtocol === 'gemini') {
-    return 'custom:gemini';
-  }
-  return 'custom:anthropic';
+  return deriveProfileKey(provider, customProtocol) as ProviderProfileKey;
 }
 
 function profileKeyToProvider(profileKey: ProviderProfileKey): {
   provider: ProviderType;
   customProtocol: CustomProtocolType;
 } {
-  if (profileKey === 'custom:openai') {
-    return { provider: 'custom', customProtocol: 'openai' };
-  }
-  if (profileKey === 'custom:gemini') {
-    return { provider: 'custom', customProtocol: 'gemini' };
-  }
-  if (profileKey === 'custom:anthropic') {
-    return { provider: 'custom', customProtocol: 'anthropic' };
-  }
-  if (profileKey === 'openai') {
-    return { provider: 'openai', customProtocol: 'openai' };
-  }
-  if (profileKey === 'gemini') {
-    return { provider: 'gemini', customProtocol: 'gemini' };
-  }
-  if (profileKey === 'ollama') {
-    return { provider: 'ollama', customProtocol: 'openai' };
-  }
-  return { provider: profileKey, customProtocol: 'anthropic' };
+  return profileKeyToProviderInfo(profileKey);
 }
 
 function toBoolean(value: unknown, fallback: boolean): boolean {
@@ -1071,7 +1093,7 @@ export class ConfigStore {
     profiles: Record<ProviderProfileKey, ProviderProfile>;
     enableThinking: boolean;
   } {
-    const provider = isProviderType(raw.provider) ? raw.provider : defaultConfig.provider;
+    const provider = normalizeProviderId(raw.provider) ?? defaultConfig.provider;
     const customProtocol: CustomProtocolType = isCustomProtocol(raw.customProtocol)
       ? raw.customProtocol
       : defaultProtocolForProvider(provider);
@@ -1195,7 +1217,7 @@ export class ConfigStore {
       isSystem?: boolean;
     }
   ): ApiConfigSet {
-    const provider = isProviderType(rawSet?.provider) ? rawSet.provider : fallback.provider;
+    const provider = normalizeProviderId(rawSet?.provider) ?? fallback.provider;
     const customProtocol: CustomProtocolType = isCustomProtocol(rawSet?.customProtocol)
       ? rawSet.customProtocol
       : defaultProtocolForProvider(provider);
