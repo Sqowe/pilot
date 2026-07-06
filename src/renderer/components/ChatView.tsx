@@ -976,6 +976,36 @@ export function ChatView() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isExportSelectMode, handleSelectAll]);
 
+  // Type-to-focus: when the user starts typing anywhere outside an editable
+  // field, redirect focus to the chat input so no keystrokes are lost.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only plain printable characters — ignore shortcuts and control keys.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key.length !== 1) return; // skips Enter, Tab, Arrows, Escape, etc.
+      if (e.isComposing) return; // don't disrupt IME composition
+
+      const el = textareaRef.current;
+      if (!el || el.disabled) return;
+
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName.toLowerCase();
+      if (
+        target === el ||
+        tag === 'input' ||
+        tag === 'textarea' ||
+        tag === 'select' ||
+        target?.isContentEditable
+      ) {
+        return; // already typing in an editable element
+      }
+
+      el.focus(); // Chromium routes the in-flight keystroke to the newly focused field
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   if (!activeSession) {
     return (
       <div className="flex-1 flex items-center justify-center text-text-muted">
