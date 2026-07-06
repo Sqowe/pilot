@@ -253,6 +253,9 @@ export const NATIVE_PROVIDER_META: Record<string, NativeProviderMeta> = {
     category: 'coding-plan',
     keyEnvVar: 'MINIMAX_API_KEY',
     docsUrl: 'https://www.minimaxi.com/document/guides/developer',
+    // Registry models use anthropic-messages — override so cold-start routing
+    // (before the catalog builds) matches the derived protocol.
+    routeProtocol: 'anthropic',
   },
   'minimax-cn': {
     name: 'MiniMax (CN)',
@@ -260,12 +263,16 @@ export const NATIVE_PROVIDER_META: Record<string, NativeProviderMeta> = {
     keyEnvVar: 'MINIMAX_CN_API_KEY',
     regionOf: 'minimax',
     regionTag: 'CN',
+    routeProtocol: 'anthropic',
   },
   'kimi-coding': {
     name: 'Kimi (Moonshot)',
     category: 'coding-plan',
     keyEnvVar: 'KIMI_API_KEY',
     docsUrl: 'https://platform.moonshot.cn/docs',
+    // Registry models use anthropic-messages — override so cold-start routing
+    // (before the catalog builds) matches the derived protocol.
+    routeProtocol: 'anthropic',
   },
   moonshotai: {
     name: 'Moonshot',

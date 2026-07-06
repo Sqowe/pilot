@@ -1748,16 +1748,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
         dispatch({ type: 'SET_IS_REFRESHING_MODELS', payload: false });
       }
     }
-  }, [
-    activeProfileKey,
-    apiKey,
-    baseUrl,
-    presets,
-    provider,
-    clearError,
-    showErrorKey,
-    showErrorText,
-  ]);
+  }, [activeProfileKey, apiKey, baseUrl, provider, clearError, showErrorKey, showErrorText]);
 
   const applyDiscoveredOllamaState = useCallback(
     (

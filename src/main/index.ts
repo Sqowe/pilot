@@ -1010,6 +1010,15 @@ app
     log('Config file:', configStore.getPath());
     log('Is configured:', configStore.isConfigured());
     log('[Runtime] Using pi-coding-agent SDK for all providers');
+
+    // Warm the native provider catalog at startup so the synchronous cache
+    // (getCachedProviderCatalogSync) used by routing/auth is populated before
+    // any agent run — even if the user never opens Settings this session.
+    // Without this, a first run with a saved native provider would route via
+    // the cold-start fallback and resolve a synthetic model (losing quirks).
+    // Fire-and-forget: getFullProviderCatalog never rejects (degrades to
+    // builtin-only on failure).
+    void getFullProviderCatalog();
     log('Developer logs:', enableDevLogs ? 'Enabled' : 'Disabled');
     log('Environment Variables:');
     log('  ANTHROPIC_AUTH_TOKEN:', process.env.ANTHROPIC_AUTH_TOKEN ? '✓ Set' : '✗ Not set');

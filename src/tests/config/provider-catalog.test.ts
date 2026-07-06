@@ -538,11 +538,9 @@ describe('buildNativeEntries', () => {
   });
 
   it('per-provider getModels() throw does not abort the whole build', async () => {
-    let callCount = 0;
     const stub: ProviderCatalogDeps = {
       getProviders: () => ['zai', 'groq', 'deepseek'],
       getModels: (id) => {
-        callCount++;
         if (id === 'groq') throw new Error('groq registry unavailable');
         return [{ id: `${id}-model`, name: `${id} model`, api: 'openai-completions' }];
       },
