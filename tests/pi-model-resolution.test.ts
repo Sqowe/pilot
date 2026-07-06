@@ -141,6 +141,27 @@ describe('pi model resolution helpers', () => {
     ).toBe('anthropic/claude-sonnet-4-6');
   });
 
+  it('prefixes native providers with their registry id, not the route protocol', () => {
+    // z.ai routes via the openai protocol, but the model string must be
+    // prefixed with 'zai' (the registry id) so it resolves to the native model
+    // instead of a synthetic OpenAI model pointed at api.openai.com.
+    expect(
+      resolvePiModelString({ provider: 'zai', customProtocol: 'openai', model: 'glm-5.2' })
+    ).toBe('zai/glm-5.2');
+    // Anthropic-routed native provider — still prefixed by registry id.
+    expect(
+      resolvePiModelString({
+        provider: 'minimax',
+        customProtocol: 'anthropic',
+        model: 'MiniMax-M2',
+      })
+    ).toBe('minimax/MiniMax-M2');
+    // Already-prefixed model ids are passed through untouched.
+    expect(
+      resolvePiModelString({ provider: 'zai', customProtocol: 'openai', model: 'zai/glm-5.2' })
+    ).toBe('zai/glm-5.2');
+  });
+
   it('routes openrouter through the openai-compatible protocol', () => {
     expect(resolvePiRouteProtocol('openrouter', 'anthropic')).toBe('openai');
     expect(resolvePiRouteProtocol('ollama', 'openai')).toBe('openai');

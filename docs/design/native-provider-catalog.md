@@ -542,6 +542,14 @@ streaming works (validates `zaiToolStream`/`thinkingFormat`). Repeat for MiniMax
   uses it in `resolveEffectiveUrl`, `resolveClientBaseUrl`, and the
   `isOpenAICompatible`/`isAnthropicCompatible`/`isGeminiProtocol` predicates so native
   providers are probed against their real endpoint with the correct SDK client.
+  A second layer surfaced in the Model-Verification step: the probe
+  (`claude-sdk-one-shot.ts`) builds its model string via `resolvePiModelString`, which
+  prefixed bare ids with `customProtocol` (the route protocol) — yielding `openai/glm-5.2`
+  for z.ai, missing the native registry entry, and synthesizing an OpenAI model pointed at
+  `api.openai.com` (401 "Incorrect API key"). The agent-runner was unaffected because it
+  passes the bare model id. Fixed by making `resolvePiModelString` prefix native providers
+  with their registry id (`zai/glm-5.2`), plus passing the native registry base URL to the
+  probe as a fallback for synthetic/manual native models.
 
 ---
 

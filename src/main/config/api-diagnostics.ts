@@ -522,11 +522,16 @@ async function stepModel(input: DiagnosticInput, step: DiagnosticStep): Promise<
     }
 
     const config = configStore.getAll();
+    // Native providers carry no user-entered baseUrl — supply the registry
+    // endpoint so a synthetic/manual native model still probes the right host
+    // instead of the SDK's default (e.g. api.openai.com). Registry-resolved
+    // native models already embed their baseUrl, so this is a no-op for them.
+    const nativeBaseUrl = resolveNativeProviderInfo(input.provider, input.model)?.baseUrl;
     const result = await probeWithClaudeSdk(
       {
         provider: input.provider,
         apiKey: input.apiKey,
-        baseUrl: input.baseUrl,
+        baseUrl: input.baseUrl || nativeBaseUrl,
         customProtocol: input.customProtocol,
         model: input.model,
         verificationLevel,

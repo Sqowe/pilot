@@ -322,6 +322,17 @@ export function resolvePiModelString(input: PiModelStringInput): string {
     return model;
   }
   const provider = input.provider || 'anthropic';
+  // Native catalog providers (z.ai, MiniMax, …) must be prefixed with their
+  // registry provider id so the model resolves to the native registry entry.
+  // Their `customProtocol` is a routing hint (e.g. 'openai'), NOT a registry
+  // provider id — prefixing with it yields 'openai/glm-5.2', which misses the
+  // native entry and falls back to a synthetic OpenAI model pointed at
+  // api.openai.com. The agent-runner avoids this by passing the bare model id;
+  // this path (probe/diagnostics) builds the string here, so fix it at source.
+  const nativeInfo = resolveNativeProviderInfo(provider);
+  if (nativeInfo) {
+    return `${nativeInfo.piProvider}/${model}`;
+  }
   const protocol = input.customProtocol || provider;
   return `${protocol}/${model}`;
 }
