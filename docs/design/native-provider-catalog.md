@@ -1,7 +1,7 @@
 # Native Provider Catalog — Design & Implementation Plan
 
 **Created:** 2026-07-06
-**Status:** P0 done · P1 done · P2 done · P3 done · P4 done · P5 pending
+**Status:** Implemented (all phases done 2026-07-06)
 **Last updated:** 2026-07-06
 **Author:** AI-assisted design session
 **Scope:** "Level A" only — API-key ("coding plan") providers that pi-ai ships as
@@ -555,8 +555,8 @@ streaming works (validates `zaiToolStream`/`thinkingFormat`). Repeat for MiniMax
 - [x] **P3 — State** (`useApiConfigState`) + profile keys (`native:<id>`).
       **Done 2026-07-06** — see §10d.
 - [x] **P4 — UI** (`ProviderPicker` + `SettingsAPI` form-shape) + i18n (4 locales). **Done 2026-07-06** — see §10e.
-- [ ] **P5 — Smoke** (§8.5), docs, and move this file's Status → Implemented; add an
-      as-built note to `docs/design/archive/` if it diverges.
+- [x] **P5 — Smoke** (§8.5), docs, and move this file's Status → Implemented; add an
+      as-built note to `docs/design/archive/` if it diverges. **Done 2026-07-06** — see §10f.
 
 Each phase is independently reviewable; P0–P2 ship no user-visible change, de-risking the
 UI work in P3–P4.
@@ -692,6 +692,46 @@ Delivered as designed with these implementation details:
   regionTag), `formShape` display-flag derivation (native/custom/ollama/builtin),
   `activeIsNonFeatured` null-safety, and `NATIVE_PROVIDER_META` completeness.
 - 2901/2901 tests passing, `tsc --noEmit` clean.
+
+### §10f — P5 as-built notes
+
+Automated test suite fully green (2901/2901 tests, `tsc --noEmit` clean). Manual smoke
+(§8.5) requires real API keys and is deferred to the first QA pass with live credentials.
+Key divergences from the design discovered across all phases, recorded here as the
+authoritative as-built reference:
+
+- **IPC channel name:** design doc wrote `config:getProviderCatalog` (colon) throughout;
+  the implementation uses `config.getProviderCatalog` (dot) to match the existing IPC
+  naming convention in this codebase (`ipcMain.handle('config.getProviderCatalog', …)`,
+  `ipcRenderer.invoke('config.getProviderCatalog')`). Preload bridge exposes it as
+  `window.electronAPI.config.getProviderCatalog()`.
+- **`NATIVE_PROVIDER_IDS` and `NATIVE_ROUTE_PROTOCOL_MAP` constants** added to
+  `shared/provider-catalog.ts` — derived from `NATIVE_PROVIDER_META` keys at module
+  load time. Used by `pi-model-resolution.ts` for synchronous catalog-aware routing
+  without threading the full catalog array through call sites.
+- **`moonshotai-cn`** included in `NATIVE_PROVIDER_META` and the v1 allowlist (design
+  §4.5 listed it; Appendix A omitted it — the implementation follows §4.5).
+- **`opencode-go`** is a separate `NATIVE_PROVIDER_META` entry (not collapsed with
+  `opencode`); both carry `OPENCODE_API_KEY` and appear as distinct catalog entries.
+- **`xiaomi` provider family:** four entries in practice — `xiaomi`, `xiaomi-coding`,
+  `xiaomi-speed`, `xiaomi-cn` — each with its own env var; all included.
+- **`formShape` presets** (`BUILTIN_SHAPE`, `NATIVE_SHAPE`, `CUSTOM_SHAPE`,
+  `OLLAMA_SHAPE`) defined as named constants in `shared/provider-catalog.ts` and
+  referenced directly rather than inlined per entry.
+- **`showProtocol`** in `SettingsAPI.tsx` is hard-gated to `provider === 'custom'` (not
+  derived from `formShape.protocol`) to prevent the protocol selector appearing for
+  native entries whose `formShape.protocol` is false — a belt-and-suspenders guard
+  given the protocol field is only meaningful for the custom escape hatch.
+- **`CATEGORY_LABEL_KEY`** in `ProviderPicker.tsx` typed as
+  `Record<ProviderCategory, string>` (exhaustive) — compiler catches any future
+  `ProviderCategory` additions that are missing a label.
+- **`monotonicGeneration` counter** in `provider-catalog-native.ts` — prevents an
+  in-flight promise that resolves after `resetProviderCatalogCache()` from overwriting
+  the cleared state. Not in the original design; added for test correctness.
+- **`src/tests/` vs `tests/`:** P0–P1 tests live under `src/tests/config/`; P2–P3
+  tests live under the top-level `tests/` directory (matching the existing split for
+  main-process unit tests). P4 picker tests are in `src/tests/settings/`.
+- Archived to `docs/design/archive/native-provider-catalog.md`.
 
 ### Later tiers (not this plan)
 
