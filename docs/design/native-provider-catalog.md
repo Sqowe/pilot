@@ -1,7 +1,7 @@
 # Native Provider Catalog — Design & Implementation Plan
 
 **Created:** 2026-07-06
-**Status:** P0 done · P1 done · P2 next · P3-P5 pending
+**Status:** P0 done · P1 done · P2 done · P3 done · P4-P5 pending
 **Last updated:** 2026-07-06
 **Author:** AI-assisted design session
 **Scope:** "Level A" only — API-key ("coding plan") providers that pi-ai ships as
@@ -552,8 +552,9 @@ streaming works (validates `zaiToolStream`/`thinkingFormat`). Repeat for MiniMax
 - [x] **P2 — Routing** (`pi-model-resolution.ts`) + auth (`agent-runner.ts`) +
       resolution tests (§8.3). Native models resolve correctly if selected.
       **Done 2026-07-06** — see §10c.
-- [ ] **P3 — State** (`useApiConfigState`) + profile keys (`native:<id>`). **← NEXT**
-- [ ] **P4 — UI** (`ProviderPicker` + `SettingsAPI` form-shape) + i18n (4 locales).
+- [x] **P3 — State** (`useApiConfigState`) + profile keys (`native:<id>`).
+      **Done 2026-07-06** — see §10d.
+- [ ] **P4 — UI** (`ProviderPicker` + `SettingsAPI` form-shape) + i18n (4 locales). **← NEXT**
 - [ ] **P5 — Smoke** (§8.5), docs, and move this file's Status → Implemented; add an
       as-built note to `docs/design/archive/` if it diverges.
 
@@ -630,6 +631,32 @@ Delivered exactly as designed with these implementation details:
   file). `vi.mock('../src/main/config/provider-catalog-native', ...)` with a
   `vi.fn()` mock that each test controls via `mockReturnValue`.
 - 2818/2818 tests passing, `tsc --noEmit` clean.
+
+### §10d — P3 as-built notes
+
+Delivered as designed with these implementation details:
+
+- `useApiConfigState` gains a `providerCatalogRef` (sync, always-current) and
+  `providerCatalog` state (drives re-renders). Both are initialised to `BUILTIN_ENTRIES`
+  so the hook is functional before the IPC call completes.
+- Catalog loaded in the existing `load()` effect alongside presets and config, via
+  `window.electronAPI.config.getProviderCatalog()` with a `.catch(() => BUILTIN_ENTRIES)`
+  fallback. `cancelled` guard prevents stale updates after unmount.
+- `changeProvider(id)`: reads `providerCatalogRef.current` (synchronous, no re-render
+  cost), derives `resolvedProtocol` from `entry.routeProtocol` for native entries,
+  dispatches `SET_ACTIVE_PROFILE_KEY` with the derived profile key.
+- `activeCatalogEntry` = `getCatalogEntry(providerCatalog, provider)` (memo).
+- `activeFormShape` = `activeCatalogEntry?.formShape ?? null`.
+- `modelOptions`: native path uses `activeCatalogEntry.modelOptions` (cast to
+  `ProviderModelInfo[]`); builtin/ollama path unchanged.
+- `requiresApiKey`: native path uses `!activeFormShape.apiKey`; builtin/custom path
+  keeps the existing loopback-gateway logic. `isOllamaMode` uses
+  `activeFormShape.baseUrl && !activeFormShape.apiKey` for native (correct for any
+  future keyless local provider), falls back to `provider === 'ollama'`.
+- Return value gains `providerCatalog`, `activeCatalogEntry`, `activeFormShape`.
+- 13 new P3 tests in `tests/api-config-state.test.ts` covering catalog lookup,
+  profile key derivation, formShape contract, modelOptions, and source-level wiring
+  assertions. 2856/2856 tests passing.
 
 ### Later tiers (not this plan)
 

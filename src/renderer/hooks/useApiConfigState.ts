@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import type {
@@ -21,6 +21,12 @@ import {
   getModelInputGuidance,
   type SharedProviderPreset,
 } from '../../shared/api-model-presets';
+import {
+  BUILTIN_ENTRIES,
+  getCatalogEntry,
+  type ProviderCatalogEntry,
+  type ProviderFormShape,
+} from '../../shared/provider-catalog';
 import {
   isValidProviderId,
   isValidProfileKey,
@@ -76,6 +82,89 @@ const DEFAULT_CONFIG_SET_ID = 'default';
 const DEFAULT_CONFIG_SET_NAME = 'Default';
 export const FALLBACK_PROVIDER_PRESETS: ProviderPresets = API_PROVIDER_PRESETS;
 
+const VALID_ROUTE_PROTOCOLS = new Set(['anthropic', 'openai', 'gemini']);
+
+/**
+ * Validate and sanitize a single catalog entry returned via IPC.
+ * Constructs a fresh typed object (never mutates the IPC input).
+ * Returns null for entries that are structurally invalid or missing
+ * security-sensitive fields so they are silently dropped before merge.
+ *
+ * Security posture:
+ * - Missing or non-boolean `formShape.apiKey` defaults to `true` (key required).
+ *   This ensures unknown/partial entries never accidentally grant allowEmptyApiKey.
+ * - All other formShape booleans default to `false` when absent.
+ * - `routeProtocol` must be one of the three known values; otherwise entry is dropped.
+ */
+function sanitizeCatalogEntry(entry: unknown): ProviderCatalogEntry | null {
+  if (!entry || typeof entry !== 'object') return null;
+  const e = entry as Record<string, unknown>;
+
+  const id = typeof e.id === 'string' ? e.id.trim() : '';
+  if (!id) return null;
+
+  const kind = e.kind;
+  if (kind !== 'builtin' && kind !== 'native' && kind !== 'custom') return null;
+
+  const routeProtocol = e.routeProtocol;
+  if (typeof routeProtocol !== 'string' || !VALID_ROUTE_PROTOCOLS.has(routeProtocol)) return null;
+
+  // Build a fresh formShape — never reference the IPC object's formShape directly.
+  // apiKey defaults to true (key required) to preserve security posture when absent.
+  let formShape: ProviderFormShape | null = null;
+  if (e.formShape !== null && e.formShape !== undefined) {
+    if (typeof e.formShape !== 'object') return null;
+    const fs = e.formShape as Record<string, unknown>;
+    formShape = {
+      apiKey: fs.apiKey === true || fs.apiKey !== false, // default true
+      baseUrl: fs.baseUrl === true,
+      protocol: fs.protocol === true,
+      contextWindow: fs.contextWindow === true,
+      modelDropdown: fs.modelDropdown === true,
+      manualModelToggle: fs.manualModelToggle === true,
+    };
+  }
+
+  // Validate modelOptions items: each must have string id and name.
+  const rawModelOptions = Array.isArray(e.modelOptions) ? e.modelOptions : [];
+  const modelOptions = rawModelOptions
+    .filter((m): m is Record<string, unknown> => !!m && typeof m === 'object')
+    .filter((m) => typeof m.id === 'string' && m.id && typeof m.name === 'string')
+    .map((m) => ({ id: (m.id as string).trim(), name: (m.name as string).trim() }))
+    .filter((m) => m.id && m.name);
+
+  return {
+    id,
+    name: typeof e.name === 'string' ? e.name : id,
+    kind: kind as ProviderCatalogEntry['kind'],
+    category: (typeof e.category === 'string'
+      ? e.category
+      : 'inference') as ProviderCatalogEntry['category'],
+    piProvider: typeof e.piProvider === 'string' && e.piProvider ? e.piProvider : id,
+    routeProtocol: routeProtocol as ProviderCatalogEntry['routeProtocol'],
+    baseUrl: typeof e.baseUrl === 'string' ? e.baseUrl : undefined,
+    keyEnvVar: typeof e.keyEnvVar === 'string' ? e.keyEnvVar : undefined,
+    keyPlaceholder: typeof e.keyPlaceholder === 'string' ? e.keyPlaceholder : undefined,
+    docsUrl: typeof e.docsUrl === 'string' ? e.docsUrl : undefined,
+    formShape: formShape ?? {
+      // Safe fallback: require API key, hide everything else
+      apiKey: true,
+      baseUrl: false,
+      protocol: false,
+      contextWindow: false,
+      modelDropdown: false,
+      manualModelToggle: false,
+    },
+    featured: e.featured === true,
+    regionOf: typeof e.regionOf === 'string' ? e.regionOf : undefined,
+    regionTag: typeof e.regionTag === 'string' ? e.regionTag : undefined,
+    modelOptions,
+  };
+}
+
+/** @internal Exported for unit testing only. */
+export { sanitizeCatalogEntry };
+
 const PROFILE_KEYS: BuiltinProfileKey[] = [
   'openrouter',
   'anthropic',
@@ -111,6 +200,22 @@ export function profileKeyToProvider(profileKey: ProviderProfileKey): {
   customProtocol: CustomProtocolType;
 } {
   return profileKeyToProviderInfo(profileKey);
+}
+
+/**
+ * Resolve the routing protocol for a provider, consulting the catalog entry
+ * when available. Used by changeProvider and exposed for testing.
+ */
+export function resolveProviderProtocol(
+  provider: ProviderType,
+  catalog: ProviderCatalogEntry[],
+  lastCustomProtocol: CustomProtocolType = 'anthropic'
+): CustomProtocolType {
+  const entry = getCatalogEntry(catalog, provider);
+  const entryProtocol = entry?.kind === 'native' ? entry.routeProtocol : undefined;
+  if (isCustomProtocol(entryProtocol)) return entryProtocol;
+  if (provider === 'custom') return lastCustomProtocol;
+  return 'anthropic';
 }
 
 export function isCustomAnthropicLoopbackGateway(baseUrl: string): boolean {
@@ -824,6 +929,15 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   }
   const initialBootstrap = initialBootstrapRef.current;
 
+  // Provider catalog — fetched once via IPC on Settings mount.
+  // Stored in a ref so it's available synchronously in callbacks without
+  // triggering extra re-renders. The state copy drives the return value.
+  const providerCatalogRef = useRef<ProviderCatalogEntry[]>(BUILTIN_ENTRIES);
+  const [providerCatalog, setProviderCatalog] = useState<ProviderCatalogEntry[]>(BUILTIN_ENTRIES);
+  // True until the first IPC catalog load completes (or fails).
+  // Consumers can use this to defer the model picker for native providers.
+  const [isCatalogLoading, setIsCatalogLoading] = useState(isElectron);
+
   const initialLastCustomProtocol: CustomProtocolType =
     initialConfig?.customProtocol === 'openai'
       ? 'openai'
@@ -940,13 +1054,34 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     profiles[activeProfileKey] || defaultProfileForKey(activeProfileKey, presets);
   const modelPreset = modelPresetForProfileSafe(activeProfileKey, presets);
   const currentPreset = modelPreset;
-  const hasDiscoveredOllamaModels =
-    provider === 'ollama' &&
-    Object.prototype.hasOwnProperty.call(discoveredModels, activeProfileKey);
-  const modelOptions =
-    provider === 'ollama'
-      ? discoveredModels[activeProfileKey] || []
-      : hasDiscoveredOllamaModels
+
+  // Catalog entry for the active provider — drives formShape, modelOptions, and
+  // requiresApiKey/isOllamaMode for native providers.
+  // Derived from providerCatalog state so React reactivity is correct.
+  // providerCatalogRef is kept for synchronous access in callbacks (changeProvider)
+  // where state may not yet reflect the latest value.
+  const activeCatalogEntry = useMemo(
+    () => getCatalogEntry(providerCatalog, provider),
+    [providerCatalog, provider]
+  );
+
+  // Form shape: only native providers use the catalog entry's formShape.
+  // Builtins and custom keep legacy provider-literal checks below.
+  // Use `?? null` to ensure activeFormShape is always null (not undefined)
+  // even if a malformed IPC entry omits formShape.
+  const activeFormShape: ProviderFormShape | null =
+    activeCatalogEntry?.kind === 'native' ? (activeCatalogEntry.formShape ?? null) : null;
+
+  // Model options: three clear paths with no redundant branches.
+  // - native: catalog entry modelOptions (from pi-ai registry via IPC)
+  // - ollama: discovered models from local endpoint detection
+  // - builtin/custom: API_PROVIDER_PRESETS model list
+  const modelOptions: ProviderModelInfo[] =
+    activeCatalogEntry?.kind === 'native'
+      ? Array.isArray(activeCatalogEntry.modelOptions)
+        ? (activeCatalogEntry.modelOptions as ProviderModelInfo[])
+        : []
+      : provider === 'ollama'
         ? discoveredModels[activeProfileKey] || []
         : modelPreset.models;
   const modelInputGuidance = getModelInputGuidance(provider, customProtocol);
@@ -1113,8 +1248,14 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     testResult?.details,
   ]);
 
+  // For native providers, formShape.apiKey === false means key is optional.
+  // Use strict comparison to guard against undefined/partial catalog entries
+  // (so a missing apiKey field never accidentally grants allowEmptyApiKey).
+  // For builtins/custom the existing loopback-gateway logic applies.
   const allowEmptyApiKey =
-    provider === 'ollama' ||
+    (activeFormShape !== null
+      ? activeFormShape.apiKey === false // native: strict check only
+      : provider === 'ollama') ||
     (provider === 'custom' &&
       ((customProtocol === 'anthropic' && isCustomAnthropicLoopbackGateway(baseUrl)) ||
         (customProtocol === 'openai' && isCustomOpenAiLoopbackGateway(baseUrl)) ||
@@ -1180,10 +1321,12 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
 
   const changeProvider = useCallback(
     (newProvider: ProviderType) => {
-      const nextProfileKey = profileKeyFromProvider(
+      const resolvedProtocol = resolveProviderProtocol(
         newProvider,
-        newProvider === 'custom' ? lastCustomProtocol : 'anthropic'
+        providerCatalogRef.current,
+        lastCustomProtocol
       );
+      const nextProfileKey = profileKeyFromProvider(newProvider, resolvedProtocol);
       dispatch({ type: 'SET_ACTIVE_PROFILE_KEY', payload: nextProfileKey });
     },
     [lastCustomProtocol]
@@ -1303,13 +1446,49 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
           ? await window.electronAPI.config.getPresets()
           : FALLBACK_PROVIDER_PRESETS;
         const config = initialConfig || (isElectron ? await window.electronAPI.config.get() : null);
+        // Load the provider catalog (builtin + native) from the main process.
+        // Guard against missing IPC method (older preload builds) so catalog
+        // fetch failure never aborts the config/presets load path.
+        // Merge IPC results with BUILTIN_ENTRIES (deduped by id) so builtin
+        // providers are always present even if the main process returns a
+        // partial list.
+        let loadedCatalog: ProviderCatalogEntry[] = BUILTIN_ENTRIES;
+        if (isElectron) {
+          const getCatalog = window.electronAPI?.config?.getProviderCatalog;
+          if (typeof getCatalog === 'function') {
+            try {
+              const result = await getCatalog();
+              if (Array.isArray(result) && result.length > 0) {
+                // Sanitize entries before merging — drop malformed ones
+                const sanitized = result
+                  .map(sanitizeCatalogEntry)
+                  .filter((e): e is ProviderCatalogEntry => e !== null);
+                // Merge with full dedup by id: builtins always win (appear first);
+                // native entries are appended in order, first occurrence wins on dup.
+                const seenIds = new Set(BUILTIN_ENTRIES.map((e) => e.id));
+                const nativeOnly = sanitized.filter((e) => {
+                  if (seenIds.has(e.id)) return false;
+                  seenIds.add(e.id);
+                  return true;
+                });
+                loadedCatalog = [...BUILTIN_ENTRIES, ...nativeOnly];
+              }
+            } catch {
+              // non-fatal — fall back to builtin-only catalog
+            }
+          }
+        }
         if (cancelled) {
           return;
         }
+        providerCatalogRef.current = loadedCatalog;
+        setProviderCatalog(loadedCatalog);
+        setIsCatalogLoading(false);
         applyLoadedState(config, loadedPresets);
       } catch (loadError) {
         if (!cancelled) {
           console.error('Failed to load API config:', loadError);
+          setIsCatalogLoading(false);
           applyLoadedState(initialConfig, FALLBACK_PROVIDER_PRESETS);
         }
       } finally {
@@ -2059,7 +2238,11 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
 
   return {
     isLoadingConfig,
+    isCatalogLoading,
     presets,
+    providerCatalog,
+    activeCatalogEntry,
+    activeFormShape,
     provider,
     customProtocol,
     modelOptions,
@@ -2087,7 +2270,9 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     isDiagnosing,
     handleDiagnose,
     handleDeepDiagnose,
-    isOllamaMode: provider === 'ollama',
+    isOllamaMode: activeFormShape
+      ? activeFormShape.baseUrl === true && activeFormShape.apiKey === false
+      : provider === 'ollama',
     shouldShowOllamaManualModelToggle,
     requiresApiKey,
     detectedProviderSetup,
