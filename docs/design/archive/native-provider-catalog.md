@@ -1,9 +1,5 @@
 # Native Provider Catalog — Design & Implementation Plan
 
-> **ARCHIVED 2026-07-06** — All phases complete. This is the as-built record.
-> Active design doc lives at `docs/design/native-provider-catalog.md` (kept in place
-> as the canonical reference; this copy is the permanent snapshot).
-
 **Created:** 2026-07-06
 **Status:** Implemented (all phases done 2026-07-06)
 **Last updated:** 2026-07-06
@@ -40,8 +36,9 @@ enum is widened to an open catalog id while preserving every existing config ver
   `getModels()`, never re-typed by hand.
 - **Additive and reversible.** Existing config sets load and behave identically; the
   6 legacy provider values simply become 6 catalog entries.
-- **Custom stays.** "More Models" (Custom) remains a first-class chip and the escape
-  hatch for anything not in the registry.
+- **Custom stays.** The **Custom** entry (relabelled from "More Models" per §13.5) remains
+  the escape hatch for anything not in the registry. In the picker it lives under its own
+  **Custom** group (§13.3), not among provider families.
 
 ### Goals
 
@@ -537,11 +534,28 @@ streaming works (validates `zaiToolStream`/`thinkingFormat`). Repeat for MiniMax
 - **O3 — Region duplicates → separate tagged entries.** `minimax`/`minimax-cn`,
   `zai`/`zai-coding-cn`, `moonshotai`/`moonshotai-cn` are distinct selectable entries,
   each with its own credential slot and a region tag chip. Details in §4.5.
-
-### Still open
-
-- **O4 — Diagnostics.** `ApiDiagnosticsPanel` currently keys off provider/baseUrl; confirm
-  it works when baseUrl comes from the registry (native) rather than user input.
+- **O4 — Diagnostics → registry-aware (fixed post-ship).** The diagnostics engine keyed
+  off `provider`/`baseUrl` and only knew the 6 builtin presets, so a native provider
+  (empty user `baseUrl`) fell through to a `localhost` fallback — the connection test hit
+  `localhost:443` and failed at TCP. Fixed by `resolveNativeProviderInfo(provider, model)`
+  in `pi-model-resolution.ts`, which returns the registry base URL + route protocol for
+  native catalog providers (catalog-warm and cold-start paths). `api-diagnostics.ts` now
+  uses it in `resolveEffectiveUrl`, `resolveClientBaseUrl`, and the
+  `isOpenAICompatible`/`isAnthropicCompatible`/`isGeminiProtocol` predicates so native
+  providers are probed against their real endpoint with the correct SDK client.
+  A second layer surfaced in the Model-Verification step: the probe
+  (`claude-sdk-one-shot.ts`) builds its model string via `resolvePiModelString`, which
+  prefixed bare ids with `customProtocol` (the route protocol) — yielding `openai/glm-5.2`
+  for z.ai, missing the native registry entry, and synthesizing an OpenAI model pointed at
+  `api.openai.com` (401 "Incorrect API key"). The agent-runner was unaffected because it
+  passes the bare model id. Fixed by making `resolvePiModelString` prefix native providers
+  with their registry id (`zai/glm-5.2`), plus passing the native registry base URL to the
+  probe as a fallback for synthetic/manual native models.
+- **UX — provider picker → Option 2 (single searchable combobox w/ pinned Popular).**
+  The shipped chip-row + separate dropdown are two controls for one value (ambiguous
+  selected state). Decided to consolidate into one searchable combobox; also rename "More
+  Models" → "Custom", simplify the helper text, and label the key-status dot. Full
+  analysis, options, and plan in §13. **Not yet implemented.**
 
 ---
 
@@ -784,3 +798,147 @@ Plus/Pro (Codex), Claude Pro/Max, GitHub Copilot. z.ai and MiniMax "coding plans
 **API-key** providers — you obtain a key from your plan and set it like any other key.
 They therefore need no OAuth machinery, which is exactly why this plan is tractable and
 OAuth subscriptions are deferred to Level B.
+
+---
+
+## 13. Provider picker UX (post-ship redesign)
+
+**Status:** Option 2 **implemented (2026-07-07)**. Options 1 and 3 recorded for future
+reference. See §13.6 for as-built notes.
+
+The shipped picker (featured chip row + a separate "All providers" dropdown) works, but a
+UX review surfaced a real problem worth fixing.
+
+### 13.1 Problem
+
+The featured chips and the "All providers" dropdown are **two separate controls that
+write the same `provider` value**. When a non-featured provider (e.g. MiniMax) is chosen
+from the dropdown, the chip row shows _nothing selected_ — so there is no single,
+always-visible "this is your provider" state. This is a known anti-pattern: two controls
+for one value "forces users to slow down, question interface behaviour, and lose trust."
+Secondary issues:
+
+- The featured row has 6 items; segmented/chip rows are a visibility-first component best
+  kept to **2–5** options — beyond that the guidance is to move to a dropdown/combobox.
+- **"More Models" / "Custom" is an escape hatch (a mode), not a provider family**, yet it
+  sits in the same row as real providers, mixing two concepts.
+- The helper text ("Choose the provider family and the broad protocol style") is jargon
+  and now inaccurate — native providers aren't a "protocol style".
+
+**Guiding principle:** one selection control, one always-visible selected state.
+
+Research: [W3C APG Combobox](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/),
+[Smashing — combobox vs multiselect vs listbox](https://www.smashingmagazine.com/2026/02/combobox-vs-multiselect-vs-listbox/),
+[Groto — segmented control](https://www.letsgroto.com/blog/segmented-control-ui),
+[UX Movement](https://uxmovement.com/buttons/why-segmented-buttons-are-better-filters-than-dropdowns/),
+[Baymard — drop-down usability](https://baymard.com/blog/drop-down-usability),
+[UX Planet — selection controls](https://uxplanet.org/radio-buttons-checkboxes-toggle-switches-and-dropdown-lists-design-tips-for-using-selection-d120a1e323c5).
+
+### 13.2 Option 1 — Featured chips + "always one selected" (lowest churn)
+
+Keep the chips, but guarantee the row always shows exactly one highlighted item: when a
+non-featured provider is chosen, render it as an appended, highlighted chip. Demote the
+dropdown to a clearly-secondary "Browse all…".
+
+```
+Provider
+[ Anthropic ][ OpenAI ][ OpenRouter ][ Gemini ][ Ollama ][ Custom ]  ●[ MiniMax ✓ ]
+                                                              Browse all providers ⌄
+```
+
+- **Pros:** removes the ambiguity (always one lit chip); keeps one-click for the common
+  case; minimal change.
+- **Cons:** row can grow by one; still two entry points (now visually consistent).
+
+### 13.3 Option 2 — Single searchable combobox with pinned "Popular" (DECIDED ✅)
+
+Drop the separate chip row. One control whose trigger **always shows the current
+selection**; clicking opens a grouped, searchable list with a Popular group pinned on top.
+
+```
+Provider   ● MiniMax                                    [ Docs ↗ ]  ⌄
+           ┌─────────────────────────────────────────────────────┐
+           │ 🔍 type to filter…                                   │
+           │ Popular   Anthropic · OpenAI · OpenRouter · Gemini   │
+           │ Coding    z.ai · MiniMax ✓ · Kimi · DeepSeek · …     │
+           │ Cloud     Groq · Cerebras · xAI · Mistral · …        │
+           │ Local     Ollama                                     │
+           │ Custom    Custom (bring your own endpoint)           │
+           └─────────────────────────────────────────────────────┘
+```
+
+- **Why chosen:** eliminates the two-control problem entirely — one control, one selected
+  state. Scales cleanly to 35+ providers; matches the command-palette mental model users
+  know from Cursor et al. "Popular pinned at top" is an established combobox variant
+  (W3C's no-autocomplete suggestion list).
+- **Cons:** the common providers now cost 2 interactions (open → pick) instead of 1, and
+  the "all options visible at a glance" quality is lost. Accepted trade-off.
+
+**Implementation sketch (reuses existing primitives):**
+
+- Reuse the `SearchableCombobox` primitive already built for the model field (§6.7). The
+  provider picker becomes the same component fed the full catalog, grouped by `category`,
+  with a synthetic **Popular** group listing the featured ids first.
+- The trigger shows the selected entry's name + key-status dot + a `Docs ↗` affordance
+  (from `entry.docsUrl`); this replaces both the chip row and the standalone dropdown.
+- Remove the featured `<button>` grid from `SettingsAPI.tsx` (`:130`); the featured
+  entries survive only as the pinned Popular group in the list.
+- No data-model change — `provider` remains a catalog id; `formShape` still drives the
+  fields below.
+
+### 13.4 Option 3 — Active-provider card + "Change provider" palette (most premium)
+
+Resting state is a compact card describing the active provider (name, key status, base
+URL, docs). A "Change" button opens a full searchable palette.
+
+```
+┌─ Provider ─────────────────────────────────────────────┐
+│ ● MiniMax        anthropic · api.minimax.io   [ Change ] │
+│   API key: set ✓                                Docs ↗   │
+└──────────────────────────────────────────────────────────┘
+```
+
+- **Pros:** strongest single-source-of-truth; surfaces endpoint/key metadata currently
+  hidden.
+- **Cons:** largest redesign; overkill if most users stay on 2–3 providers. Not selected;
+  kept as a future direction if Settings should feel like a first-class console.
+
+### 13.5 Secondary fixes (planned — apply alongside Option 2)
+
+- **Rename "More Models" → "Custom".** Decided: the escape hatch is plainly _custom
+  models_; "More Models" is vague. Touch points: `BUILTIN_ENTRIES` custom entry `name`
+  (`shared/provider-catalog.ts`), the `api.moreModels` i18n key across **all four
+  locales** (en/zh/ru/hu), and any label reference in `SettingsAPI.tsx`. Present it under
+  a dedicated **Custom** group in the list (its own concept), not among provider families.
+- **Simplify the helper text.** Replace "Choose the provider family and the broad protocol
+  style for this workspace." with plain language, e.g. "Choose your model provider."
+  (i18n `api.providerDescription`, four locales.)
+- **Label the status dot.** Add a tooltip/`aria-label` to the green/amber dot: "API key
+  set" / "No API key". (Reuse the `statusDot` prop already on `SearchableCombobox`.)
+
+These are small, localized, and independent of the picker option chosen — but they land
+most naturally as part of the Option 2 rebuild.
+
+### 13.6 As-built (2026-07-07)
+
+Shipped together:
+
+- **Provider picker → single searchable combobox.** Removed the featured chip grid; the
+  builtins render as a pinned **Popular** group inside the one `ProviderPicker`
+  (`SearchableCombobox` over the full catalog). Trigger shows the selection + a labelled
+  key-status dot + a right-aligned **Docs** link on the section header row (§13 Option A).
+- **§13.5 secondary fixes done:** "More Models" → "Custom" (own group; localized via
+  `api.custom`); helper text → "Choose your model provider."; status dot labelled ("API
+  key set" / "No API key"), all four locales.
+- **Model field unified to the searchable combobox for all registry-backed providers.**
+  `showModelDropdown` now reads the catalog entry's `formShape` (not just native), so cloud
+  builtins use the combobox too.
+- **Builtin model lists now come from the live pi-ai registry**, not curated presets:
+  `enrichBuiltinEntries()` (`provider-catalog-native.ts`) populates each registry-backed
+  builtin's `modelOptions` via `getModels(piProvider)`; the renderer treats the IPC catalog
+  as authoritative (`mergeProviderCatalog`) so those enriched lists aren't discarded. This
+  fixed a real bug — the old OpenRouter presets were fictional ids not served by OpenRouter.
+  `custom`/`ollama` are excluded (BYO endpoint / local discovery).
+- **Custom is manual-only.** Custom exposes no `modelOptions` (models depend on the user's
+  endpoint), so the field is manual model entry and the **Preset/Custom toggle is disabled**
+  (general rule: the toggle deactivates whenever there are no models to switch to).
