@@ -16,17 +16,8 @@ import { ApiConfigSetManager } from '../ApiConfigSetManager';
 import { CommonProviderSetupsCard, GuidanceInlineHint } from '../ProviderGuidance';
 import ApiDiagnosticsPanel from '../ApiDiagnosticsPanel';
 import { ProviderPicker } from '../ProviderPicker';
-import { SearchableCombobox } from '../SearchableCombobox';
-import { getFeaturedEntries } from '../../../shared/provider-catalog';
+import { SearchableCombobox, type StatusDotColor } from '../SearchableCombobox';
 import type { ComboboxItem } from '../SearchableCombobox';
-import type { ProviderPresets } from '../../types';
-
-/** Safely get the display name for a provider from the presets map. */
-function getPresetName(presets: ProviderPresets | undefined, id: string): string | undefined {
-  if (!presets) return undefined;
-  const key = id as keyof ProviderPresets;
-  return Object.prototype.hasOwnProperty.call(presets, key) ? presets[key]?.name : undefined;
-}
 
 interface ModelOptionItem {
   id: string;
@@ -49,7 +40,6 @@ export function SettingsAPI() {
     maxTokens,
     modelInputPlaceholder,
     modelInputHint,
-    presets,
     currentPreset,
     modelOptions,
     isSaving,
@@ -137,22 +127,30 @@ export function SettingsAPI() {
       ? activeFormShape.contextWindow
       : provider === 'custom' || provider === 'ollama';
 
-  const showModelDropdown = activeFormShape != null ? activeFormShape.modelDropdown : false;
+  // Source from the catalog entry's formShape (available for ALL providers, not
+  // just native) so cloud builtins (OpenRouter/Anthropic/OpenAI/Gemini) render
+  // the same searchable combobox as native providers instead of a raw OS
+  // <select>. Ollama/Custom keep modelDropdown: false → native select path.
+  const showModelDropdown = activeCatalogEntry?.formShape.modelDropdown ?? false;
 
   const showManualModelToggle =
     activeFormShape != null ? activeFormShape.manualModelToggle : shouldShowOllamaManualModelToggle;
 
   const showCustomSetups = provider === 'custom';
 
-  // Featured chips — always BUILTIN_ENTRIES order (the 6 builtins)
-  const featuredEntries = getFeaturedEntries(providerCatalog);
-
-  // Whether the active provider is a non-featured (native/extended) one.
-  // Fully null-safe: false during catalog loading when activeCatalogEntry is undefined.
-  const activeIsNonFeatured =
-    !!activeCatalogEntry &&
-    !activeCatalogEntry.featured &&
-    (activeCatalogEntry.kind === 'native' || activeCatalogEntry.kind === 'custom');
+  // Provider key-status dot on the picker trigger: green when a key is set,
+  // amber when the provider needs one and it's missing, none when keyless
+  // (e.g. Ollama). Labelled for accessibility (§13.5).
+  const providerStatusDot: StatusDotColor = apiKey.trim()
+    ? 'green'
+    : requiresApiKey
+      ? 'amber'
+      : 'none';
+  const providerStatusLabel = apiKey.trim()
+    ? t('api.providerPicker.keySet')
+    : requiresApiKey
+      ? t('api.providerPicker.keyMissing')
+      : undefined;
 
   // Model combobox items
   const modelComboItems: ComboboxItem[] = (modelOptions as ModelOptionItem[]).map((m) => ({
@@ -160,12 +158,20 @@ export function SettingsAPI() {
     label: m.name,
   }));
 
+  // When a provider supports manual entry but has no preset/registry models to
+  // pick from (e.g. Custom with no presets, or Ollama before/without detection),
+  // force manual input and disable the Preset/Custom toggle — there is nothing
+  // to switch to.
+  const hasModelOptions = modelOptions.length > 0;
+  const forceManualModel = showManualModelToggle && !hasModelOptions;
+  const effectiveManualModel = useCustomModel || forceManualModel;
+
   // For the manual-model toggle label: native uses same wording as custom
   const manualToggleLabel = isOllamaMode
-    ? useCustomModel
+    ? effectiveManualModel
       ? t('api.useDetectedModels')
       : t('api.manualModel')
-    : useCustomModel
+    : effectiveManualModel
       ? t('api.usePreset')
       : t('api.custom');
 
@@ -196,74 +202,43 @@ export function SettingsAPI() {
       {/* Provider Selection                                                  */}
       {/* ------------------------------------------------------------------ */}
       <div className="space-y-3 py-5 border-b border-border-muted">
-        <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
-          <Server className="w-4 h-4" />
-          {t('api.provider')}
-        </label>
-        <p className="text-xs leading-5 text-text-muted">{t('api.providerDescription')}</p>
-
-        {/* Featured chips — the 6 builtin providers */}
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2">
-          {featuredEntries.map((entry) => (
-            <button
-              key={entry.id}
-              onClick={() => changeProvider(entry.id)}
-              disabled={isLoadingConfig}
-              className={`px-3 py-2 rounded-lg text-sm transition-colors border ${
-                provider === entry.id && !activeIsNonFeatured
-                  ? 'border-accent bg-accent/10 text-accent font-medium'
-                  : 'border-border-muted text-text-secondary hover:border-border hover:text-text-primary disabled:opacity-50'
-              }`}
+        {/* Label row: title left, provider Docs link right-aligned (Option A). */}
+        <div className="flex items-center justify-between gap-2">
+          <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
+            <Server className="w-4 h-4" />
+            {t('api.provider')}
+          </label>
+          {activeCatalogEntry?.docsUrl && (
+            <a
+              href={activeCatalogEntry.docsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors"
             >
-              {entry.id === 'custom'
-                ? t('api.moreModels')
-                : getPresetName(presets, entry.id) || entry.name}
-            </button>
-          ))}
-        </div>
-
-        {/* All-providers picker — catalog combobox */}
-        <div className="space-y-1">
-          <p className="text-xs text-text-muted">{t('api.providerPicker.allProviders')}</p>
-          {isCatalogLoading ? (
-            <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-background border border-border text-text-muted text-sm">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span>{t('common.loading')}</span>
-            </div>
-          ) : (
-            <ProviderPicker
-              catalog={providerCatalog}
-              value={provider}
-              onChange={changeProvider}
-              hasKey={(id) => id === provider && apiKey.trim().length > 0}
-              disabled={isLoadingConfig}
-            />
+              <ExternalLink className="w-3 h-3" />
+              {t('api.providerPicker.docs')}
+            </a>
           )}
         </div>
+        <p className="text-xs leading-5 text-text-muted">{t('api.providerDescription')}</p>
 
-        {/* Active native provider summary chip */}
-        {activeIsNonFeatured && activeCatalogEntry && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/30">
-              {activeCatalogEntry.name}
-              {activeCatalogEntry.regionTag && (
-                <span className="text-[10px] font-semibold bg-accent/20 px-1 rounded">
-                  {activeCatalogEntry.regionTag}
-                </span>
-              )}
-            </span>
-            {activeCatalogEntry.docsUrl && (
-              <a
-                href={activeCatalogEntry.docsUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors"
-              >
-                <ExternalLink className="w-3 h-3" />
-                {t('api.providerPicker.docs')}
-              </a>
-            )}
+        {/* Single searchable provider picker (Option 2). Builtin providers
+            appear as a pinned "Popular" group inside the same list, so there is
+            one control and one always-visible selected state. */}
+        {isCatalogLoading ? (
+          <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-background border border-border text-text-muted text-sm">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>{t('common.loading')}</span>
           </div>
+        ) : (
+          <ProviderPicker
+            catalog={providerCatalog}
+            value={provider}
+            onChange={changeProvider}
+            statusDot={providerStatusDot}
+            statusDotLabel={providerStatusLabel}
+            disabled={isLoadingConfig}
+          />
         )}
       </div>
 
@@ -432,8 +407,10 @@ export function SettingsAPI() {
               <button
                 type="button"
                 onClick={toggleCustomModel}
-                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors active:scale-95 ${
-                  useCustomModel
+                disabled={forceManualModel}
+                title={forceManualModel ? t('api.noPresetsManualOnly') : undefined}
+                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 ${
+                  effectiveManualModel
                     ? 'bg-accent-muted text-accent'
                     : 'border border-border-muted bg-background text-text-secondary hover:bg-surface-hover'
                 }`}
@@ -445,7 +422,7 @@ export function SettingsAPI() {
           </div>
         </div>
 
-        {useCustomModel ? (
+        {effectiveManualModel ? (
           <input
             id="api-model-input"
             type="text"
@@ -493,7 +470,7 @@ export function SettingsAPI() {
           </select>
         )}
 
-        {useCustomModel && <p className="text-xs text-text-muted">{modelInputHint}</p>}
+        {effectiveManualModel && <p className="text-xs text-text-muted">{modelInputHint}</p>}
 
         {/* Context Window & Max Tokens — only for non-registry providers */}
         {showContextWindow && (

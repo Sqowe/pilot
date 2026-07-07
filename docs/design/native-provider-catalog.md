@@ -36,8 +36,9 @@ enum is widened to an open catalog id while preserving every existing config ver
   `getModels()`, never re-typed by hand.
 - **Additive and reversible.** Existing config sets load and behave identically; the
   6 legacy provider values simply become 6 catalog entries.
-- **Custom stays.** "More Models" (Custom) remains a first-class chip and the escape
-  hatch for anything not in the registry.
+- **Custom stays.** The **Custom** entry (relabelled from "More Models" per §13.5) remains
+  the escape hatch for anything not in the registry. In the picker it lives under its own
+  **Custom** group (§13.3), not among provider families.
 
 ### Goals
 
@@ -802,8 +803,8 @@ OAuth subscriptions are deferred to Level B.
 
 ## 13. Provider picker UX (post-ship redesign)
 
-**Status:** Option 2 **decided/selected**; not yet implemented. Options 1 and 3 recorded
-for future reference.
+**Status:** Option 2 **implemented (2026-07-07)**. Options 1 and 3 recorded for future
+reference. See §13.6 for as-built notes.
 
 The shipped picker (featured chip row + a separate "All providers" dropdown) works, but a
 UX review surfaced a real problem worth fixing.
@@ -917,3 +918,27 @@ URL, docs). A "Change" button opens a full searchable palette.
 
 These are small, localized, and independent of the picker option chosen — but they land
 most naturally as part of the Option 2 rebuild.
+
+### 13.6 As-built (2026-07-07)
+
+Shipped together:
+
+- **Provider picker → single searchable combobox.** Removed the featured chip grid; the
+  builtins render as a pinned **Popular** group inside the one `ProviderPicker`
+  (`SearchableCombobox` over the full catalog). Trigger shows the selection + a labelled
+  key-status dot + a right-aligned **Docs** link on the section header row (§13 Option A).
+- **§13.5 secondary fixes done:** "More Models" → "Custom" (own group; localized via
+  `api.custom`); helper text → "Choose your model provider."; status dot labelled ("API
+  key set" / "No API key"), all four locales.
+- **Model field unified to the searchable combobox for all registry-backed providers.**
+  `showModelDropdown` now reads the catalog entry's `formShape` (not just native), so cloud
+  builtins use the combobox too.
+- **Builtin model lists now come from the live pi-ai registry**, not curated presets:
+  `enrichBuiltinEntries()` (`provider-catalog-native.ts`) populates each registry-backed
+  builtin's `modelOptions` via `getModels(piProvider)`; the renderer treats the IPC catalog
+  as authoritative (`mergeProviderCatalog`) so those enriched lists aren't discarded. This
+  fixed a real bug — the old OpenRouter presets were fictional ids not served by OpenRouter.
+  `custom`/`ollama` are excluded (BYO endpoint / local discovery).
+- **Custom is manual-only.** Custom exposes no `modelOptions` (models depend on the user's
+  endpoint), so the field is manual model entry and the **Preset/Custom toggle is disabled**
+  (general rule: the toggle deactivates whenever there are no models to switch to).

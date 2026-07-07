@@ -125,6 +125,26 @@ function deriveRouteProtocol(
 const MODEL_FETCH_CONCURRENCY = 8;
 
 /**
+ * Sanitize a raw registry model list into ProviderModelOption[]: drop entries
+ * with a missing/non-string id or name, trim, and deduplicate by id so
+ * malformed registry data can't break the UI.
+ */
+function sanitizeModelOptions(
+  raw: Array<{ id: string; name: string; api?: string }>
+): ProviderModelOption[] {
+  const seen = new Set<string>();
+  const models: ProviderModelOption[] = [];
+  for (const m of raw) {
+    const mId = typeof m.id === 'string' ? m.id.trim() : '';
+    const mName = typeof m.name === 'string' ? m.name.trim() : '';
+    if (!mId || !mName || seen.has(mId)) continue;
+    seen.add(mId);
+    models.push({ id: mId, name: mName });
+  }
+  return models;
+}
+
+/**
  * Run an array of async tasks with bounded concurrency.
  * Preserves input order in the output array.
  */
@@ -184,17 +204,7 @@ export async function buildNativeEntries(
   const modelResults = await runWithConcurrency(tasks, MODEL_FETCH_CONCURRENCY);
 
   return modelResults.map(({ id, raw }) => {
-    // Sanitize: filter out entries with missing/non-string id or name, trim,
-    // and deduplicate by model id so malformed registry data doesn't break UI.
-    const seenModelIds = new Set<string>();
-    const models: ProviderModelOption[] = [];
-    for (const m of raw) {
-      const mId = typeof m.id === 'string' ? m.id.trim() : '';
-      const mName = typeof m.name === 'string' ? m.name.trim() : '';
-      if (!mId || !mName || seenModelIds.has(mId)) continue;
-      seenModelIds.add(mId);
-      models.push({ id: mId, name: mName });
-    }
+    const models = sanitizeModelOptions(raw);
     const meta = NATIVE_PROVIDER_META[id];
     const routeProtocol = deriveRouteProtocol(id, raw, meta?.routeProtocol);
     const name = meta?.name ?? titleCase(id);
@@ -217,6 +227,48 @@ export async function buildNativeEntries(
       modelOptions: models,
     };
   });
+}
+
+/**
+ * Builtin ids whose model list does NOT come from the pi-ai registry:
+ * - 'custom' is the bring-your-own-endpoint escape hatch (no registry models)
+ * - 'ollama' models are discovered from the local server at runtime
+ * Both keep an empty modelOptions; the renderer falls back to presets/discovery.
+ */
+const BUILTIN_NO_REGISTRY_MODELS = new Set(['custom', 'ollama']);
+
+/**
+ * Clone BUILTIN_ENTRIES and populate each registry-backed entry's modelOptions
+ * from the live pi-ai registry (getModels(piProvider)) — so builtin providers
+ * show the same complete, current model list as native providers instead of a
+ * hand-curated preset. custom/ollama keep an empty list (see set above).
+ * Per-provider getModels failures degrade to an empty list (→ preset fallback)
+ * rather than aborting the build.
+ */
+export async function enrichBuiltinEntries(
+  deps: ProviderCatalogDeps
+): Promise<ProviderCatalogEntry[]> {
+  const tasks = BUILTIN_ENTRIES.map((entry) => async (): Promise<ProviderCatalogEntry> => {
+    const cloned: ProviderCatalogEntry = {
+      ...entry,
+      formShape: { ...entry.formShape },
+      modelOptions: [...entry.modelOptions],
+    };
+    if (!BUILTIN_NO_REGISTRY_MODELS.has(entry.id)) {
+      try {
+        const raw = await Promise.resolve(deps.getModels(entry.piProvider));
+        cloned.modelOptions = sanitizeModelOptions(raw ?? []);
+      } catch (err) {
+        logWarn(
+          `[ProviderCatalog] getModels(${entry.piProvider}) for builtin '${entry.id}' threw — ` +
+            `keeping empty list (renderer falls back to presets):`,
+          err
+        );
+      }
+    }
+    return cloned;
+  });
+  return runWithConcurrency(tasks, MODEL_FETCH_CONCURRENCY);
 }
 
 // ---------------------------------------------------------------------------
@@ -320,15 +372,11 @@ async function _buildCatalog(
   }
 
   try {
-    const nativeEntries = await buildNativeEntries(resolvedDeps);
-    // Shallow-clone builtin entries so main-process callers cannot accidentally
-    // mutate the shared BUILTIN_ENTRIES constants.
-    const clonedBuiltins = BUILTIN_ENTRIES.map((e) => ({
-      ...e,
-      formShape: { ...e.formShape },
-      modelOptions: [...e.modelOptions],
-    }));
-    const catalog = [...clonedBuiltins, ...nativeEntries];
+    const [nativeEntries, builtinEntries] = await Promise.all([
+      buildNativeEntries(resolvedDeps),
+      enrichBuiltinEntries(resolvedDeps),
+    ]);
+    const catalog = [...builtinEntries, ...nativeEntries];
     log(
       `[ProviderCatalog] Built catalog: ${BUILTIN_ENTRIES.length} builtin + ${nativeEntries.length} native entries`
     );

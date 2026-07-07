@@ -14,6 +14,7 @@ import {
 } from '../../shared/provider-catalog';
 import {
   buildNativeEntries,
+  enrichBuiltinEntries,
   getFullProviderCatalog,
   resetProviderCatalogCache,
   getCachedProviderCatalogSync,
@@ -300,6 +301,65 @@ describe('NATIVE_PROVIDER_META', () => {
         `${id} is in both NATIVE_PROVIDER_META and EXCLUDED_NATIVE`
       ).toBe(false);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// enrichBuiltinEntries — builtin providers get live registry model lists
+// ---------------------------------------------------------------------------
+
+describe('enrichBuiltinEntries', () => {
+  const builtinModelStub = (): ProviderCatalogDeps => ({
+    getProviders: () => [],
+    getModels: (id) => {
+      const map: Record<string, Array<{ id: string; name: string; api?: string }>> = {
+        // builtin piProviders (note gemini → 'google')
+        anthropic: [{ id: 'claude-x', name: 'Claude X', api: 'anthropic-messages' }],
+        openai: [{ id: 'gpt-x', name: 'GPT X', api: 'openai-completions' }],
+        google: [{ id: 'gemini-x', name: 'Gemini X', api: 'google-generative-ai' }],
+        openrouter: [{ id: 'a/b', name: 'A: B', api: 'openai-completions' }],
+        // these should be ignored for custom/ollama even if present
+        custom: [{ id: 'nope', name: 'Nope' }],
+        ollama: [{ id: 'nope2', name: 'Nope2' }],
+      };
+      return map[id] ?? [];
+    },
+  });
+
+  it('populates registry modelOptions for registry-backed builtins', async () => {
+    const entries = await enrichBuiltinEntries(builtinModelStub());
+    const byId = (id: string) => entries.find((e) => e.id === id);
+    expect(byId('anthropic')?.modelOptions).toEqual([{ id: 'claude-x', name: 'Claude X' }]);
+    expect(byId('openai')?.modelOptions).toEqual([{ id: 'gpt-x', name: 'GPT X' }]);
+    // gemini resolves via piProvider 'google'
+    expect(byId('gemini')?.modelOptions).toEqual([{ id: 'gemini-x', name: 'Gemini X' }]);
+    expect(byId('openrouter')?.modelOptions).toEqual([{ id: 'a/b', name: 'A: B' }]);
+  });
+
+  it('leaves custom and ollama model lists empty (not registry-backed)', async () => {
+    const entries = await enrichBuiltinEntries(builtinModelStub());
+    expect(entries.find((e) => e.id === 'custom')?.modelOptions).toEqual([]);
+    expect(entries.find((e) => e.id === 'ollama')?.modelOptions).toEqual([]);
+  });
+
+  it('degrades to empty modelOptions when getModels throws (no abort)', async () => {
+    const throwingDeps: ProviderCatalogDeps = {
+      getProviders: () => [],
+      getModels: (id) => {
+        if (id === 'anthropic') throw new Error('registry down');
+        return [{ id: `${id}-m`, name: `${id} M` }];
+      },
+    };
+    const entries = await enrichBuiltinEntries(throwingDeps);
+    // anthropic degrades to [], others still populated
+    expect(entries.find((e) => e.id === 'anthropic')?.modelOptions).toEqual([]);
+    expect(entries.find((e) => e.id === 'openai')?.modelOptions?.length).toBeGreaterThan(0);
+  });
+
+  it('does not mutate the shared BUILTIN_ENTRIES constants', async () => {
+    await enrichBuiltinEntries(builtinModelStub());
+    // BUILTIN_ENTRIES.anthropic modelOptions stays empty
+    expect(BUILTIN_ENTRIES.find((e) => e.id === 'anthropic')?.modelOptions).toEqual([]);
   });
 });
 

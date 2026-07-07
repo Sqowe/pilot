@@ -198,7 +198,7 @@ export const BUILTIN_ENTRIES: ProviderCatalogEntry[] = [
   },
   {
     id: 'custom',
-    name: 'More Models',
+    name: 'Custom',
     kind: 'custom',
     category: 'custom',
     piProvider: 'custom',

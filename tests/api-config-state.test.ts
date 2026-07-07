@@ -20,6 +20,7 @@ import {
   profileKeyToProvider,
   resolveProviderProtocol,
   sanitizeCatalogEntry,
+  mergeProviderCatalog,
 } from '../src/renderer/hooks/useApiConfigState';
 
 const hookPath = path.resolve(process.cwd(), 'src/renderer/hooks/useApiConfigState.ts');
@@ -629,5 +630,53 @@ describe('sanitizeCatalogEntry', () => {
     expect(deduped).toHaveLength(2);
     expect(deduped[0].name).toBe('First');
     expect(deduped[1].id).toBe('groq');
+  });
+});
+
+describe('mergeProviderCatalog', () => {
+  const makeEntry = (id: string, modelOptions: { id: string; name: string }[] = []) => ({
+    id,
+    name: id,
+    kind: id === 'custom' ? ('custom' as const) : ('builtin' as const),
+    category: 'featured' as const,
+    piProvider: id === 'gemini' ? 'google' : id,
+    routeProtocol: 'openai' as const,
+    formShape: {
+      apiKey: true,
+      baseUrl: false,
+      protocol: false,
+      contextWindow: false,
+      modelDropdown: true,
+      manualModelToggle: false,
+    },
+    featured: true,
+    modelOptions,
+  });
+
+  it('uses IPC builtin entries (with enriched modelOptions) over local empties', () => {
+    // Regression: builtin modelOptions delivered over IPC must not be discarded
+    // in favour of the local BUILTIN_ENTRIES (which have empty modelOptions).
+    const ipc = [makeEntry('openrouter', [{ id: 'a/b', name: 'A: B' }])];
+    const merged = mergeProviderCatalog(ipc, BUILTIN_ENTRIES);
+    const openrouter = merged.find((e) => e.id === 'openrouter');
+    expect(openrouter?.modelOptions).toEqual([{ id: 'a/b', name: 'A: B' }]);
+  });
+
+  it('appends local builtins the IPC catalog omitted', () => {
+    const ipc = [makeEntry('openrouter', [{ id: 'x', name: 'X' }])];
+    const merged = mergeProviderCatalog(ipc, BUILTIN_ENTRIES);
+    // All 6 builtins present even though IPC only sent one
+    for (const b of BUILTIN_ENTRIES) {
+      expect(merged.some((e) => e.id === b.id)).toBe(true);
+    }
+  });
+
+  it('dedups by id, first (IPC) occurrence wins', () => {
+    const ipc = [makeEntry('openai', [{ id: 'gpt', name: 'GPT' }]), makeEntry('openai', [])];
+    const merged = mergeProviderCatalog(ipc, BUILTIN_ENTRIES);
+    expect(merged.filter((e) => e.id === 'openai')).toHaveLength(1);
+    expect(merged.find((e) => e.id === 'openai')?.modelOptions).toEqual([
+      { id: 'gpt', name: 'GPT' },
+    ]);
   });
 });

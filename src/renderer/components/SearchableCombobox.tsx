@@ -46,6 +46,8 @@ interface SearchableComboboxProps {
   noResultsLabel?: string;
   disabled?: boolean;
   statusDot?: StatusDotColor;
+  /** Accessible label/tooltip for the status dot, e.g. "API key set" */
+  statusDotLabel?: string;
   className?: string;
   /** Accessible label for the trigger button */
   'aria-label'?: string;
@@ -75,6 +77,7 @@ export function SearchableCombobox({
   noResultsLabel = 'No results',
   disabled = false,
   statusDot = 'none',
+  statusDotLabel,
   className = '',
   'aria-label': ariaLabel,
 }: SearchableComboboxProps) {
@@ -226,7 +229,9 @@ export function SearchableCombobox({
           {statusDot !== 'none' && (
             <span
               className={`flex-shrink-0 w-2 h-2 rounded-full ${DOT_CLASSES[statusDot]}`}
-              aria-hidden="true"
+              {...(statusDotLabel
+                ? { role: 'img', 'aria-label': statusDotLabel, title: statusDotLabel }
+                : { 'aria-hidden': true })}
             />
           )}
           <span className="truncate text-sm">

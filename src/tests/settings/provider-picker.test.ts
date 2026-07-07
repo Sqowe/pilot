@@ -249,6 +249,29 @@ describe('ProviderPicker catalog mapping', () => {
   it('getCatalogEntry returns undefined for unknown id', () => {
     expect(getCatalogEntry(fullCatalog, 'nonexistent-provider-xyz')).toBeUndefined();
   });
+
+  // Option 2: the picker feeds the FULL catalog to groupEntriesByCategory so
+  // builtin providers appear as a pinned "Popular" (featured) group at the top,
+  // while Custom and Local remain their own groups (not provider families).
+  it('full-catalog grouping pins the featured (Popular) group first', () => {
+    const groups = groupEntriesByCategory(fullCatalog);
+    expect(groups[0].category).toBe('featured');
+    // Featured group holds the cloud builtins (Anthropic/OpenAI/OpenRouter/Gemini)
+    expect(groups[0].entries.some((e) => e.id === 'anthropic')).toBe(true);
+  });
+
+  it('full-catalog grouping keeps Ollama in Local and Custom in its own group', () => {
+    const groups = groupEntriesByCategory(fullCatalog);
+    const byCat = (c: string) => groups.find((g) => g.category === c)?.entries ?? [];
+    expect(byCat('local').some((e) => e.id === 'ollama')).toBe(true);
+    expect(byCat('custom').some((e) => e.id === 'custom')).toBe(true);
+    // Custom must NOT be in the Popular/featured group.
+    expect(byCat('featured').some((e) => e.id === 'custom')).toBe(false);
+  });
+
+  it('custom builtin entry is renamed to "Custom" (not "More Models")', () => {
+    expect(getCatalogEntry(fullCatalog, 'custom')?.name).toBe('Custom');
+  });
 });
 
 // ---------------------------------------------------------------------------

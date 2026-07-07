@@ -163,8 +163,33 @@ function sanitizeCatalogEntry(entry: unknown): ProviderCatalogEntry | null {
   };
 }
 
+/**
+ * Merge the IPC-delivered catalog with the local BUILTIN_ENTRIES.
+ *
+ * The IPC catalog is authoritative — its builtin entries carry
+ * registry-enriched modelOptions. We dedup by id preserving IPC order (builtins
+ * first, then natives), then append any local builtin the IPC omitted or that
+ * failed sanitization, so all 6 builtins are always present even if the main
+ * process returned a partial/degraded catalog.
+ *
+ * @internal Exported for unit testing only.
+ */
+function mergeProviderCatalog(
+  ipcEntries: ProviderCatalogEntry[],
+  builtins: ProviderCatalogEntry[]
+): ProviderCatalogEntry[] {
+  const seen = new Set<string>();
+  const deduped = ipcEntries.filter((e) => {
+    if (seen.has(e.id)) return false;
+    seen.add(e.id);
+    return true;
+  });
+  const missingBuiltins = builtins.filter((e) => !seen.has(e.id));
+  return [...deduped, ...missingBuiltins];
+}
+
 /** @internal Exported for unit testing only. */
-export { sanitizeCatalogEntry };
+export { sanitizeCatalogEntry, mergeProviderCatalog };
 
 const PROFILE_KEYS: BuiltinProfileKey[] = [
   'openrouter',
@@ -1099,18 +1124,26 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   const activeFormShape: ProviderFormShape | null =
     activeCatalogEntry?.kind === 'native' ? (activeCatalogEntry.formShape ?? null) : null;
 
-  // Model options: three clear paths with no redundant branches.
-  // - native: catalog entry modelOptions (from pi-ai registry via IPC)
+  // Model options:
   // - ollama: discovered models from local endpoint detection
-  // - builtin/custom: API_PROVIDER_PRESETS model list
+  // - any catalog entry with registry modelOptions (native + enriched builtins
+  //   like OpenRouter/Anthropic/OpenAI/Gemini): use the live registry list
+  // - otherwise (custom, or before the IPC catalog resolves): preset list
+  const catalogModelOptions: ProviderModelInfo[] =
+    activeCatalogEntry && Array.isArray(activeCatalogEntry.modelOptions)
+      ? (activeCatalogEntry.modelOptions as ProviderModelInfo[])
+      : [];
   const modelOptions: ProviderModelInfo[] =
-    activeCatalogEntry?.kind === 'native'
-      ? Array.isArray(activeCatalogEntry.modelOptions)
-        ? (activeCatalogEntry.modelOptions as ProviderModelInfo[])
-        : []
-      : provider === 'ollama'
-        ? discoveredModels[activeProfileKey] || []
-        : modelPreset.models;
+    provider === 'ollama'
+      ? discoveredModels[activeProfileKey] || []
+      : provider === 'custom'
+        ? // Custom is bring-your-own-endpoint: the available models depend on the
+          // user's endpoint, not a preset, so there are no model options — the
+          // field is manual-entry only and the Preset/Custom toggle is disabled.
+          []
+        : catalogModelOptions.length > 0
+          ? catalogModelOptions
+          : modelPreset.models;
   const modelInputGuidance = getModelInputGuidance(provider, customProtocol);
 
   const currentConfigSet = useMemo(
@@ -1490,15 +1523,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
                 const sanitized = result
                   .map(sanitizeCatalogEntry)
                   .filter((e): e is ProviderCatalogEntry => e !== null);
-                // Merge with full dedup by id: builtins always win (appear first);
-                // native entries are appended in order, first occurrence wins on dup.
-                const seenIds = new Set(BUILTIN_ENTRIES.map((e) => e.id));
-                const nativeOnly = sanitized.filter((e) => {
-                  if (seenIds.has(e.id)) return false;
-                  seenIds.add(e.id);
-                  return true;
-                });
-                loadedCatalog = [...BUILTIN_ENTRIES, ...nativeOnly];
+                loadedCatalog = mergeProviderCatalog(sanitized, BUILTIN_ENTRIES);
               }
             } catch {
               // non-fatal — fall back to builtin-only catalog

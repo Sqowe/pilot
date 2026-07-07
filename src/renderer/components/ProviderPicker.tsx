@@ -1,14 +1,13 @@
 /**
  * @module ProviderPicker
  *
- * Searchable provider combobox fed by the full provider catalog.
- * Renders native + custom entries grouped by category.
- * Featured (builtin) entries are shown as chips above this component
- * in SettingsAPI — this picker handles the "All providers" expansion.
+ * Single searchable provider combobox fed by the full provider catalog
+ * (Option 2 in docs/design/native-provider-catalog.md §13).
  *
- * The component is always rendered; providers not in the non-featured list
- * simply leave the combobox with an empty selection (showing its placeholder),
- * which acts as a clear visual affordance to expand to more providers.
+ * There is no separate featured-chip row: the builtin/"featured" providers
+ * appear as a pinned "Popular" group at the top of the same list, so there is
+ * exactly one control and one always-visible selected state. The trigger always
+ * shows the current provider (name + region badge + key-status dot).
  */
 
 import { useTranslation } from 'react-i18next';
@@ -26,14 +25,20 @@ interface ProviderPickerProps {
   value: string;
   /** Called when the user picks a new provider */
   onChange: (id: string) => void;
-  /** Whether a key is saved for the given provider id (drives status dot) */
-  hasKey?: (id: string) => boolean;
+  /** Status dot on the trigger (parent computes from key presence / requirement) */
+  statusDot?: StatusDotColor;
+  /** Accessible label/tooltip for the status dot */
+  statusDotLabel?: string;
   disabled?: boolean;
 }
 
-/** Map ProviderCategory to its i18n key */
+/**
+ * Map ProviderCategory to its i18n key. The 'featured' category renders as
+ * "Popular" (the pinned top group); every other category keeps its own name so
+ * Custom and Local read as distinct concepts rather than provider families.
+ */
 const CATEGORY_LABEL_KEY: Record<ProviderCategory, string> = {
-  featured: 'api.providerPicker.categories.featured',
+  featured: 'api.providerPicker.categories.popular',
   'coding-plan': 'api.providerPicker.categories.codingPlan',
   inference: 'api.providerPicker.categories.inference',
   local: 'api.providerPicker.categories.local',
@@ -44,47 +49,40 @@ export function ProviderPicker({
   catalog,
   value,
   onChange,
-  hasKey,
+  statusDot = 'none',
+  statusDotLabel,
   disabled = false,
 }: ProviderPickerProps) {
   const { t } = useTranslation();
 
-  // Non-featured entries only — featured chips are rendered separately above
-  const nonFeatured = catalog.filter((e) => !e.featured);
-  const grouped = groupEntriesByCategory(nonFeatured);
+  // Group the FULL catalog. groupEntriesByCategory orders groups by category
+  // weight (featured/Popular first) — the pinned-Popular combobox pattern.
+  const grouped = groupEntriesByCategory(catalog);
 
-  // Build flat ComboboxItem list with group headings
   const items: ComboboxItem[] = grouped.flatMap(({ category, entries }) => {
     const groupLabel = t(CATEGORY_LABEL_KEY[category]);
     return entries.map((e) => ({
       id: e.id,
-      label: e.name,
+      // 'custom' is a UI concept (bring-your-own endpoint), not a brand name —
+      // localize it; provider brand names stay as-is.
+      label: e.id === 'custom' ? t('api.custom') : e.name,
       group: groupLabel,
       badge: e.regionTag,
     }));
   });
 
-  // Status dot: green if key is saved, amber if selected but no key, none otherwise
-  const statusDot: StatusDotColor = (() => {
-    const entry = catalog.find((e) => e.id === value);
-    if (!entry || entry.featured) return 'none';
-    if (hasKey?.(value)) return 'green';
-    return 'amber';
-  })();
-
-  const selectedIsNonFeatured = nonFeatured.some((e) => e.id === value);
-
   return (
     <SearchableCombobox
       items={items}
-      value={selectedIsNonFeatured ? value : ''}
+      value={value}
       onChange={onChange}
       placeholder={t('api.providerPicker.allProviders')}
       searchPlaceholder={t('api.providerPicker.searchPlaceholder')}
       noResultsLabel={t('api.providerPicker.noResults')}
       statusDot={statusDot}
+      statusDotLabel={statusDotLabel}
       disabled={disabled}
-      aria-label={t('api.providerPicker.allProviders')}
+      aria-label={t('api.provider')}
     />
   );
 }
