@@ -309,7 +309,7 @@
     "configSetDeleted": "Набор конфигурации удалён",
     "configSetSwitched": "Набор конфигурации переключён",
     "provider": "Провайдер API",
-    "providerDescription": "Выберите семейство провайдера и стиль протокола для этой рабочей области.",
+    "providerDescription": "Выберите провайдера модели.",
     "apiKey": "Ключ API",
     "enterApiKey": "Введите ваш ключ API",
     "apiKeyDescription": "Сохраняется локально и привязан к активному набору конфигурации.",
@@ -318,8 +318,9 @@
     "model": "Модель",
     "usePreset": "Использовать пресет",
     "custom": "Пользовательский",
-    "moreModels": "Больше моделей",
+    "moreModels": "Пользовательский",
     "noModelsAvailable": "Нет доступных моделей",
+    "noPresetsManualOnly": "Нет предустановленных моделей — введите ID модели вручную",
     "selectProtocol": "Выберите совместимый протокол для сервиса",
     "enterOllamaUrl": "Введите URL OpenAI-совместимого сервиса Ollama",
     "enterOpenAIUrl": "Введите URL OpenAI-совместимого сервиса",
@@ -497,6 +498,23 @@
         "ollama_model_not_listed": "Модель {{model}} не в списке endpoint. Выберите обнаруженную модель или введите вручную.",
         "ollama_model_loading": "Модель {{model}} может ещё загружаться. Повторите глубокую проверку через мгновение.",
         "model_cold_start": "Модель может ещё загружаться в GPU/CPU память. Большие модели (7B+) могут занять 30–120 секунд. Попробуйте позже."
+      }
+    },
+    "providerPicker": {
+      "allProviders": "Все провайдеры",
+      "searchPlaceholder": "Поиск провайдеров…",
+      "modelSearchPlaceholder": "Поиск моделей…",
+      "noResults": "Нет результатов",
+      "docs": "Документация",
+      "keyEnvHint": "Или задайте переменную окружения {{envVar}}",
+      "keySet": "Ключ API задан",
+      "keyMissing": "Нет ключа API",
+      "categories": {
+        "popular": "Популярные",
+        "codingPlan": "Планы для кодинга",
+        "inference": "Быстрый инференс",
+        "local": "Локальные",
+        "custom": "Пользовательские"
       }
     },
     "providerHints": {

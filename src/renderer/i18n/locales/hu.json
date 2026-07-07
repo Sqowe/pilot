@@ -309,7 +309,7 @@
     "configSetDeleted": "Konfigurációs készlet törölve",
     "configSetSwitched": "Konfigurációs készlet váltva",
     "provider": "API szolgáltató",
-    "providerDescription": "Válassza ki a szolgáltató családot és a protokoll stílust ehhez a munkaterülethez.",
+    "providerDescription": "Válassza ki a modellszolgáltatót.",
     "apiKey": "API kulcs",
     "enterApiKey": "Adja meg az API kulcsát",
     "apiKeyDescription": "Helyben mentve, az aktív konfigurációs készlethez kötve.",
@@ -318,8 +318,9 @@
     "model": "Modell",
     "usePreset": "Preset használata",
     "custom": "Egyéni",
-    "moreModels": "További modellek",
+    "moreModels": "Egyéni",
     "noModelsAvailable": "Nincsenek elérhető modellek",
+    "noPresetsManualOnly": "Nincsenek előre beállított modellek — add meg a modell azonosítóját kézzel",
     "selectProtocol": "Válassza ki a kompatibilis protokollt a szolgáltatáshoz",
     "enterOllamaUrl": "Adja meg az Ollama OpenAI-kompatibilis szolgáltatás URL-jét",
     "enterOpenAIUrl": "Adja meg az OpenAI-kompatibilis szolgáltatás URL-jét",
@@ -497,6 +498,23 @@
         "ollama_model_not_listed": "A(z) {{model}} modell nincs a végpont modelllistájában. Válasszon észlelt modellt vagy adja meg kézzel.",
         "ollama_model_loading": "A(z) {{model}} modell még töltődhet. Próbálja meg a mély ellenőrzést egy pillanat múlva.",
         "model_cold_start": "A modell még töltődhet a GPU/CPU memóriába. Nagy modellek (7B+) 30–120 másodpercet vehetnek igénybe. Próbálja később."
+      }
+    },
+    "providerPicker": {
+      "allProviders": "Összes szolgáltató",
+      "searchPlaceholder": "Szolgáltató keresése…",
+      "modelSearchPlaceholder": "Modell keresése…",
+      "noResults": "Nincs találat",
+      "docs": "Dokumentáció",
+      "keyEnvHint": "Vagy állítsd be a {{envVar}} környezeti változót",
+      "keySet": "API-kulcs beállítva",
+      "keyMissing": "Nincs API-kulcs",
+      "categories": {
+        "popular": "Népszerű",
+        "codingPlan": "Kódolási tervek",
+        "inference": "Gyors inferencia",
+        "local": "Helyi",
+        "custom": "Egyéni"
       }
     },
     "providerHints": {

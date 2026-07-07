@@ -55,6 +55,7 @@ import {
   type MemoryRuntimeConfig,
 } from './config/config-store';
 import { runConfigApiTest } from './config/config-test-routing';
+import { getFullProviderCatalog } from './config/provider-catalog-native';
 import { listOllamaModels } from './config/ollama-api';
 import { applyLocalDevPath, isBasePathSet, getEffectivePath } from './utils/path-env';
 import {
@@ -1009,6 +1010,15 @@ app
     log('Config file:', configStore.getPath());
     log('Is configured:', configStore.isConfigured());
     log('[Runtime] Using pi-coding-agent SDK for all providers');
+
+    // Warm the native provider catalog at startup so the synchronous cache
+    // (getCachedProviderCatalogSync) used by routing/auth is populated before
+    // any agent run — even if the user never opens Settings this session.
+    // Without this, a first run with a saved native provider would route via
+    // the cold-start fallback and resolve a synthetic model (losing quirks).
+    // Fire-and-forget: getFullProviderCatalog never rejects (degrades to
+    // builtin-only on failure).
+    void getFullProviderCatalog();
     log('Developer logs:', enableDevLogs ? 'Enabled' : 'Disabled');
     log('Environment Variables:');
     log('  ANTHROPIC_AUTH_TOKEN:', process.env.ANTHROPIC_AUTH_TOKEN ? '✓ Set' : '✗ Not set');
@@ -1887,6 +1897,12 @@ ipcMain.handle('config.get', () => {
     logError('[Config] Error getting config:', error);
     return {};
   }
+});
+
+ipcMain.handle('config.getProviderCatalog', async () => {
+  // getFullProviderCatalog never rejects — it falls back to builtin-only entries
+  // on any import or build failure, so no try/catch is needed here.
+  return getFullProviderCatalog();
 });
 
 ipcMain.handle('config.getPresets', () => {

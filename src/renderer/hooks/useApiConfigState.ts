@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import type {
@@ -10,12 +10,30 @@ import type {
   ProviderModelInfo,
   ProviderProfile,
   ProviderProfileKey,
+  BuiltinProfileKey,
   ProviderPresets,
   ProviderType,
 } from '../types';
 import { isLoopbackBaseUrl } from '../../shared/network/loopback';
 import { DEFAULT_OLLAMA_BASE_URL, normalizeOllamaBaseUrl } from '../../shared/ollama-base-url';
-import { API_PROVIDER_PRESETS, getModelInputGuidance } from '../../shared/api-model-presets';
+import {
+  API_PROVIDER_PRESETS,
+  getModelInputGuidance,
+  type SharedProviderPreset,
+} from '../../shared/api-model-presets';
+import {
+  BUILTIN_ENTRIES,
+  getCatalogEntry,
+  type ProviderCatalogEntry,
+  type ProviderFormShape,
+} from '../../shared/provider-catalog';
+import {
+  isValidProviderId,
+  isValidProfileKey,
+  isNativeProfileKey,
+  deriveProfileKey,
+  profileKeyToProviderInfo,
+} from '../../shared/provider-ids';
 import {
   COMMON_PROVIDER_SETUPS,
   detectCommonProviderSetup,
@@ -65,7 +83,115 @@ const DEFAULT_CONFIG_SET_ID = 'default';
 const DEFAULT_CONFIG_SET_NAME = 'Default';
 export const FALLBACK_PROVIDER_PRESETS: ProviderPresets = API_PROVIDER_PRESETS;
 
-const PROFILE_KEYS: ProviderProfileKey[] = [
+const VALID_ROUTE_PROTOCOLS = new Set(['anthropic', 'openai', 'gemini']);
+
+/**
+ * Validate and sanitize a single catalog entry returned via IPC.
+ * Constructs a fresh typed object (never mutates the IPC input).
+ * Returns null for entries that are structurally invalid or missing
+ * security-sensitive fields so they are silently dropped before merge.
+ *
+ * Security posture:
+ * - Missing or non-boolean `formShape.apiKey` defaults to `true` (key required).
+ *   This ensures unknown/partial entries never accidentally grant allowEmptyApiKey.
+ * - All other formShape booleans default to `false` when absent.
+ * - `routeProtocol` must be one of the three known values; otherwise entry is dropped.
+ */
+function sanitizeCatalogEntry(entry: unknown): ProviderCatalogEntry | null {
+  if (!entry || typeof entry !== 'object') return null;
+  const e = entry as Record<string, unknown>;
+
+  const id = typeof e.id === 'string' ? e.id.trim() : '';
+  if (!id) return null;
+
+  const kind = e.kind;
+  if (kind !== 'builtin' && kind !== 'native' && kind !== 'custom') return null;
+
+  const routeProtocol = e.routeProtocol;
+  if (typeof routeProtocol !== 'string' || !VALID_ROUTE_PROTOCOLS.has(routeProtocol)) return null;
+
+  // Build a fresh formShape — never reference the IPC object's formShape directly.
+  // apiKey defaults to true (key required) to preserve security posture when absent.
+  let formShape: ProviderFormShape | null = null;
+  if (e.formShape !== null && e.formShape !== undefined) {
+    if (typeof e.formShape !== 'object') return null;
+    const fs = e.formShape as Record<string, unknown>;
+    formShape = {
+      apiKey: fs.apiKey === true || fs.apiKey !== false, // default true
+      baseUrl: fs.baseUrl === true,
+      protocol: fs.protocol === true,
+      contextWindow: fs.contextWindow === true,
+      modelDropdown: fs.modelDropdown === true,
+      manualModelToggle: fs.manualModelToggle === true,
+    };
+  }
+
+  // Validate modelOptions items: each must have string id and name.
+  const rawModelOptions = Array.isArray(e.modelOptions) ? e.modelOptions : [];
+  const modelOptions = rawModelOptions
+    .filter((m): m is Record<string, unknown> => !!m && typeof m === 'object')
+    .filter((m) => typeof m.id === 'string' && m.id && typeof m.name === 'string')
+    .map((m) => ({ id: (m.id as string).trim(), name: (m.name as string).trim() }))
+    .filter((m) => m.id && m.name);
+
+  return {
+    id,
+    name: typeof e.name === 'string' ? e.name : id,
+    kind: kind as ProviderCatalogEntry['kind'],
+    category: (typeof e.category === 'string'
+      ? e.category
+      : 'inference') as ProviderCatalogEntry['category'],
+    piProvider: typeof e.piProvider === 'string' && e.piProvider ? e.piProvider : id,
+    routeProtocol: routeProtocol as ProviderCatalogEntry['routeProtocol'],
+    baseUrl: typeof e.baseUrl === 'string' ? e.baseUrl : undefined,
+    keyEnvVar: typeof e.keyEnvVar === 'string' ? e.keyEnvVar : undefined,
+    keyPlaceholder: typeof e.keyPlaceholder === 'string' ? e.keyPlaceholder : undefined,
+    docsUrl: typeof e.docsUrl === 'string' ? e.docsUrl : undefined,
+    formShape: formShape ?? {
+      // Safe fallback: require API key, hide everything else
+      apiKey: true,
+      baseUrl: false,
+      protocol: false,
+      contextWindow: false,
+      modelDropdown: false,
+      manualModelToggle: false,
+    },
+    featured: e.featured === true,
+    regionOf: typeof e.regionOf === 'string' ? e.regionOf : undefined,
+    regionTag: typeof e.regionTag === 'string' ? e.regionTag : undefined,
+    modelOptions,
+  };
+}
+
+/**
+ * Merge the IPC-delivered catalog with the local BUILTIN_ENTRIES.
+ *
+ * The IPC catalog is authoritative — its builtin entries carry
+ * registry-enriched modelOptions. We dedup by id preserving IPC order (builtins
+ * first, then natives), then append any local builtin the IPC omitted or that
+ * failed sanitization, so all 6 builtins are always present even if the main
+ * process returned a partial/degraded catalog.
+ *
+ * @internal Exported for unit testing only.
+ */
+function mergeProviderCatalog(
+  ipcEntries: ProviderCatalogEntry[],
+  builtins: ProviderCatalogEntry[]
+): ProviderCatalogEntry[] {
+  const seen = new Set<string>();
+  const deduped = ipcEntries.filter((e) => {
+    if (seen.has(e.id)) return false;
+    seen.add(e.id);
+    return true;
+  });
+  const missingBuiltins = builtins.filter((e) => !seen.has(e.id));
+  return [...deduped, ...missingBuiltins];
+}
+
+/** @internal Exported for unit testing only. */
+export { sanitizeCatalogEntry, mergeProviderCatalog };
+
+const PROFILE_KEYS: BuiltinProfileKey[] = [
   'openrouter',
   'anthropic',
   'openai',
@@ -76,19 +202,37 @@ const PROFILE_KEYS: ProviderProfileKey[] = [
   'custom:gemini',
 ];
 
+/**
+ * The builtin profile keys plus any native (`native:<id>`) slots present in the
+ * given source map and/or active key. Native slots are dynamic and not in the
+ * fixed PROFILE_KEYS list — enumerating only PROFILE_KEYS would silently drop
+ * native credentials when reading/serializing profiles.
+ */
+function profileKeysWith(
+  source?: Partial<Record<string, unknown>> | null,
+  activeProfileKey?: string
+): ProviderProfileKey[] {
+  const keys: ProviderProfileKey[] = [...PROFILE_KEYS];
+  const seen = new Set<string>(keys);
+  const add = (key: string | undefined) => {
+    if (key && isNativeProfileKey(key) && !seen.has(key)) {
+      seen.add(key);
+      keys.push(key as ProviderProfileKey);
+    }
+  };
+  if (source) {
+    for (const key of Object.keys(source)) add(key);
+  }
+  add(activeProfileKey);
+  return keys;
+}
+
 function isProfileKey(value: unknown): value is ProviderProfileKey {
-  return typeof value === 'string' && PROFILE_KEYS.includes(value as ProviderProfileKey);
+  return isValidProfileKey(value);
 }
 
 function isProviderType(value: unknown): value is ProviderType {
-  return (
-    value === 'openrouter' ||
-    value === 'anthropic' ||
-    value === 'custom' ||
-    value === 'openai' ||
-    value === 'gemini' ||
-    value === 'ollama'
-  );
+  return isValidProviderId(value);
 }
 
 function isCustomProtocol(value: unknown): value is CustomProtocolType {
@@ -99,41 +243,30 @@ export function profileKeyFromProvider(
   provider: ProviderType,
   customProtocol: CustomProtocolType = 'anthropic'
 ): ProviderProfileKey {
-  if (provider !== 'custom') {
-    return provider;
-  }
-  if (customProtocol === 'openai') {
-    return 'custom:openai';
-  }
-  if (customProtocol === 'gemini') {
-    return 'custom:gemini';
-  }
-  return 'custom:anthropic';
+  return deriveProfileKey(provider, customProtocol) as ProviderProfileKey;
 }
 
 export function profileKeyToProvider(profileKey: ProviderProfileKey): {
   provider: ProviderType;
   customProtocol: CustomProtocolType;
 } {
-  if (profileKey === 'ollama') {
-    return { provider: 'ollama', customProtocol: 'openai' };
-  }
-  if (profileKey === 'custom:openai') {
-    return { provider: 'custom', customProtocol: 'openai' };
-  }
-  if (profileKey === 'custom:gemini') {
-    return { provider: 'custom', customProtocol: 'gemini' };
-  }
-  if (profileKey === 'custom:anthropic') {
-    return { provider: 'custom', customProtocol: 'anthropic' };
-  }
-  if (profileKey === 'openai') {
-    return { provider: 'openai', customProtocol: 'openai' };
-  }
-  if (profileKey === 'gemini') {
-    return { provider: 'gemini', customProtocol: 'gemini' };
-  }
-  return { provider: profileKey, customProtocol: 'anthropic' };
+  return profileKeyToProviderInfo(profileKey);
+}
+
+/**
+ * Resolve the routing protocol for a provider, consulting the catalog entry
+ * when available. Used by changeProvider and exposed for testing.
+ */
+export function resolveProviderProtocol(
+  provider: ProviderType,
+  catalog: ProviderCatalogEntry[],
+  lastCustomProtocol: CustomProtocolType = 'anthropic'
+): CustomProtocolType {
+  const entry = getCatalogEntry(catalog, provider);
+  const entryProtocol = entry?.kind === 'native' ? entry.routeProtocol : undefined;
+  if (isCustomProtocol(entryProtocol)) return entryProtocol;
+  if (provider === 'custom') return lastCustomProtocol;
+  return 'anthropic';
 }
 
 export function isCustomAnthropicLoopbackGateway(baseUrl: string): boolean {
@@ -168,27 +301,52 @@ function isLegacyOllamaConfig(
   }
 }
 
-function modelPresetForProfile(profileKey: ProviderProfileKey, presets: ProviderPresets) {
-  if (profileKey === 'ollama') {
-    return presets.ollama;
+const EMPTY_PRESET: SharedProviderPreset = {
+  name: '',
+  baseUrl: '',
+  models: [],
+  keyPlaceholder: '',
+  keyHint: '',
+};
+
+function modelPresetForProfile(
+  profileKey: ProviderProfileKey,
+  presets: ProviderPresets
+): SharedProviderPreset | undefined {
+  if (profileKey === 'ollama') return presets.ollama;
+  if (profileKey === 'custom:openai') return presets.openai;
+  if (profileKey === 'custom:gemini') return presets.gemini;
+  if (profileKey === 'custom:anthropic') return presets.custom;
+  // Builtin keys (openrouter, anthropic, openai, gemini)
+  if (Object.prototype.hasOwnProperty.call(presets, profileKey)) {
+    const builtin = (presets as unknown as Record<string, SharedProviderPreset | undefined>)[
+      profileKey
+    ];
+    if (builtin) return builtin;
   }
-  if (profileKey === 'custom:openai') {
-    return presets.openai;
-  }
-  if (profileKey === 'custom:gemini') {
-    return presets.gemini;
-  }
-  if (profileKey === 'custom:anthropic') {
-    return presets.custom;
-  }
-  return presets[profileKey];
+  // Native keys (native:zai, etc.) have no preset — return undefined.
+  // Callers must handle undefined for native providers.
+  return undefined;
+}
+
+/**
+ * Like modelPresetForProfile but always returns a non-null preset.
+ * Uses EMPTY_PRESET for native providers that have no builtin preset entry.
+ * Only use this where an empty baseUrl/models is safe (e.g. building UI defaults).
+ * Do NOT use this when the baseUrl will be passed to URL() or a network client.
+ */
+function modelPresetForProfileSafe(
+  profileKey: ProviderProfileKey,
+  presets: ProviderPresets
+): SharedProviderPreset {
+  return modelPresetForProfile(profileKey, presets) ?? EMPTY_PRESET;
 }
 
 function defaultProfileForKey(
   profileKey: ProviderProfileKey,
   presets: ProviderPresets
 ): UIProviderProfile {
-  const preset = modelPresetForProfile(profileKey, presets);
+  const preset = modelPresetForProfileSafe(profileKey, presets);
   const prefersCustomInput = profileKey.startsWith('custom:');
   return {
     apiKey: '',
@@ -257,7 +415,7 @@ function normalizeProfile(
 
   const modelValue = profile?.model?.trim() || fallback.model;
   const rawBaseUrl = profile?.baseUrl?.trim() || fallback.baseUrl;
-  const hasPresetModel = modelPresetForProfile(profileKey, presets).models.some(
+  const hasPresetModel = modelPresetForProfileSafe(profileKey, presets).models.some(
     (item) => item.id === modelValue
   );
   return {
@@ -293,7 +451,7 @@ export function buildApiConfigSnapshot(
       : derivedProfileKey;
 
   const profiles = {} as Record<ProviderProfileKey, UIProviderProfile>;
-  for (const key of PROFILE_KEYS) {
+  for (const key of profileKeysWith(config?.profiles, activeProfileKey)) {
     profiles[key] = normalizeProfile(key, config?.profiles?.[key], presets);
   }
 
@@ -336,8 +494,9 @@ function toPersistedProfiles(
   profiles: Record<ProviderProfileKey, UIProviderProfile>
 ): Partial<Record<ProviderProfileKey, ProviderProfile>> {
   const persisted: Partial<Record<ProviderProfileKey, ProviderProfile>> = {};
-  for (const key of PROFILE_KEYS) {
+  for (const key of profileKeysWith(profiles)) {
     const profile = profiles[key];
+    if (!profile) continue;
     const finalModel = profile.useCustomModel
       ? profile.customModel.trim() || profile.model
       : profile.model;
@@ -361,7 +520,7 @@ export function buildApiConfigDraftSignature(
   return JSON.stringify({
     activeProfileKey,
     enableThinking,
-    profiles: PROFILE_KEYS.map((key) => ({
+    profiles: profileKeysWith(profiles, activeProfileKey).map((key) => ({
       key,
       apiKey: persisted[key]?.apiKey || '',
       baseUrl: persisted[key]?.baseUrl || '',
@@ -401,7 +560,7 @@ export function buildApiConfigSets(
           : fallbackActive;
 
       const normalizedProfiles = {} as Record<ProviderProfileKey, ProviderProfile>;
-      for (const key of PROFILE_KEYS) {
+      for (const key of profileKeysWith(set.profiles, activeProfileKey)) {
         const uiProfile = normalizeProfile(key, set.profiles?.[key], presets);
         normalizedProfiles[key] = {
           apiKey: uiProfile.apiKey,
@@ -532,7 +691,12 @@ function providerTabLabel(
   if (provider === 'custom') {
     return t('api.custom');
   }
-  return presets[provider]?.name || provider;
+  return (
+    (Object.prototype.hasOwnProperty.call(presets, provider)
+      ? (presets as unknown as Record<string, { name?: string }>)[provider]
+      : undefined
+    )?.name || provider
+  );
 }
 
 function buildSetupModelState(
@@ -540,7 +704,7 @@ function buildSetupModelState(
   profileKey: ProviderProfileKey,
   presets: ProviderPresets
 ): Pick<UIProviderProfile, 'model' | 'customModel' | 'useCustomModel'> {
-  const preset = modelPresetForProfile(profileKey, presets);
+  const preset = modelPresetForProfileSafe(profileKey, presets);
   const hasPresetModel = preset.models.some((item) => item.id === setup.exampleModel);
   return {
     model: hasPresetModel ? setup.exampleModel : preset.models[0]?.id || setup.exampleModel,
@@ -817,6 +981,15 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   }
   const initialBootstrap = initialBootstrapRef.current;
 
+  // Provider catalog — fetched once via IPC on Settings mount.
+  // Stored in a ref so it's available synchronously in callbacks without
+  // triggering extra re-renders. The state copy drives the return value.
+  const providerCatalogRef = useRef<ProviderCatalogEntry[]>(BUILTIN_ENTRIES);
+  const [providerCatalog, setProviderCatalog] = useState<ProviderCatalogEntry[]>(BUILTIN_ENTRIES);
+  // True until the first IPC catalog load completes (or fails).
+  // Consumers can use this to defer the model picker for native providers.
+  const [isCatalogLoading, setIsCatalogLoading] = useState(isElectron);
+
   const initialLastCustomProtocol: CustomProtocolType =
     initialConfig?.customProtocol === 'openai'
       ? 'openai'
@@ -931,17 +1104,46 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   const customProtocol = providerMeta.customProtocol;
   const currentProfile =
     profiles[activeProfileKey] || defaultProfileForKey(activeProfileKey, presets);
-  const modelPreset = modelPresetForProfile(activeProfileKey, presets);
+  const modelPreset = modelPresetForProfileSafe(activeProfileKey, presets);
   const currentPreset = modelPreset;
-  const hasDiscoveredOllamaModels =
-    provider === 'ollama' &&
-    Object.prototype.hasOwnProperty.call(discoveredModels, activeProfileKey);
-  const modelOptions =
+
+  // Catalog entry for the active provider — drives formShape, modelOptions, and
+  // requiresApiKey/isOllamaMode for native providers.
+  // Derived from providerCatalog state so React reactivity is correct.
+  // providerCatalogRef is kept for synchronous access in callbacks (changeProvider)
+  // where state may not yet reflect the latest value.
+  const activeCatalogEntry = useMemo(
+    () => getCatalogEntry(providerCatalog, provider),
+    [providerCatalog, provider]
+  );
+
+  // Form shape: only native providers use the catalog entry's formShape.
+  // Builtins and custom keep legacy provider-literal checks below.
+  // Use `?? null` to ensure activeFormShape is always null (not undefined)
+  // even if a malformed IPC entry omits formShape.
+  const activeFormShape: ProviderFormShape | null =
+    activeCatalogEntry?.kind === 'native' ? (activeCatalogEntry.formShape ?? null) : null;
+
+  // Model options:
+  // - ollama: discovered models from local endpoint detection
+  // - any catalog entry with registry modelOptions (native + enriched builtins
+  //   like OpenRouter/Anthropic/OpenAI/Gemini): use the live registry list
+  // - otherwise (custom, or before the IPC catalog resolves): preset list
+  const catalogModelOptions: ProviderModelInfo[] =
+    activeCatalogEntry && Array.isArray(activeCatalogEntry.modelOptions)
+      ? (activeCatalogEntry.modelOptions as ProviderModelInfo[])
+      : [];
+  const modelOptions: ProviderModelInfo[] =
     provider === 'ollama'
       ? discoveredModels[activeProfileKey] || []
-      : hasDiscoveredOllamaModels
-        ? discoveredModels[activeProfileKey] || []
-        : modelPreset.models;
+      : provider === 'custom'
+        ? // Custom is bring-your-own-endpoint: the available models depend on the
+          // user's endpoint, not a preset, so there are no model options — the
+          // field is manual-entry only and the Preset/Custom toggle is disabled.
+          []
+        : catalogModelOptions.length > 0
+          ? catalogModelOptions
+          : modelPreset.models;
   const modelInputGuidance = getModelInputGuidance(provider, customProtocol);
 
   const currentConfigSet = useMemo(
@@ -1106,8 +1308,14 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     testResult?.details,
   ]);
 
+  // For native providers, formShape.apiKey === false means key is optional.
+  // Use strict comparison to guard against undefined/partial catalog entries
+  // (so a missing apiKey field never accidentally grants allowEmptyApiKey).
+  // For builtins/custom the existing loopback-gateway logic applies.
   const allowEmptyApiKey =
-    provider === 'ollama' ||
+    (activeFormShape !== null
+      ? activeFormShape.apiKey === false // native: strict check only
+      : provider === 'ollama') ||
     (provider === 'custom' &&
       ((customProtocol === 'anthropic' && isCustomAnthropicLoopbackGateway(baseUrl)) ||
         (customProtocol === 'openai' && isCustomOpenAiLoopbackGateway(baseUrl)) ||
@@ -1173,10 +1381,12 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
 
   const changeProvider = useCallback(
     (newProvider: ProviderType) => {
-      const nextProfileKey = profileKeyFromProvider(
+      const resolvedProtocol = resolveProviderProtocol(
         newProvider,
-        newProvider === 'custom' ? lastCustomProtocol : 'anthropic'
+        providerCatalogRef.current,
+        lastCustomProtocol
       );
+      const nextProfileKey = profileKeyFromProvider(newProvider, resolvedProtocol);
       dispatch({ type: 'SET_ACTIVE_PROFILE_KEY', payload: nextProfileKey });
     },
     [lastCustomProtocol]
@@ -1296,13 +1506,41 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
           ? await window.electronAPI.config.getPresets()
           : FALLBACK_PROVIDER_PRESETS;
         const config = initialConfig || (isElectron ? await window.electronAPI.config.get() : null);
+        // Load the provider catalog (builtin + native) from the main process.
+        // Guard against missing IPC method (older preload builds) so catalog
+        // fetch failure never aborts the config/presets load path.
+        // Merge IPC results with BUILTIN_ENTRIES (deduped by id) so builtin
+        // providers are always present even if the main process returns a
+        // partial list.
+        let loadedCatalog: ProviderCatalogEntry[] = BUILTIN_ENTRIES;
+        if (isElectron) {
+          const getCatalog = window.electronAPI?.config?.getProviderCatalog;
+          if (typeof getCatalog === 'function') {
+            try {
+              const result = await getCatalog();
+              if (Array.isArray(result) && result.length > 0) {
+                // Sanitize entries before merging — drop malformed ones
+                const sanitized = result
+                  .map(sanitizeCatalogEntry)
+                  .filter((e): e is ProviderCatalogEntry => e !== null);
+                loadedCatalog = mergeProviderCatalog(sanitized, BUILTIN_ENTRIES);
+              }
+            } catch {
+              // non-fatal — fall back to builtin-only catalog
+            }
+          }
+        }
         if (cancelled) {
           return;
         }
+        providerCatalogRef.current = loadedCatalog;
+        setProviderCatalog(loadedCatalog);
+        setIsCatalogLoading(false);
         applyLoadedState(config, loadedPresets);
       } catch (loadError) {
         if (!cancelled) {
           console.error('Failed to load API config:', loadError);
+          setIsCatalogLoading(false);
           applyLoadedState(initialConfig, FALLBACK_PROVIDER_PRESETS);
         }
       } finally {
@@ -1350,7 +1588,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
 
     // If the current model came from discovered models and is not in presets,
     // reset to an endpoint-selected model once discovery runs again.
-    const preset = modelPresetForProfile(activeProfileKey, presets);
+    const preset = modelPresetForProfileSafe(activeProfileKey, presets);
     dispatch({
       type: 'UPDATE_PROFILE_FN',
       profileKey: activeProfileKey,
@@ -1562,16 +1800,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
         dispatch({ type: 'SET_IS_REFRESHING_MODELS', payload: false });
       }
     }
-  }, [
-    activeProfileKey,
-    apiKey,
-    baseUrl,
-    presets,
-    provider,
-    clearError,
-    showErrorKey,
-    showErrorText,
-  ]);
+  }, [activeProfileKey, apiKey, baseUrl, provider, clearError, showErrorKey, showErrorText]);
 
   const applyDiscoveredOllamaState = useCallback(
     (
@@ -2052,7 +2281,11 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
 
   return {
     isLoadingConfig,
+    isCatalogLoading,
     presets,
+    providerCatalog,
+    activeCatalogEntry,
+    activeFormShape,
     provider,
     customProtocol,
     modelOptions,
@@ -2080,7 +2313,9 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     isDiagnosing,
     handleDiagnose,
     handleDeepDiagnose,
-    isOllamaMode: provider === 'ollama',
+    isOllamaMode: activeFormShape
+      ? activeFormShape.baseUrl === true && activeFormShape.apiKey === false
+      : provider === 'ollama',
     shouldShowOllamaManualModelToggle,
     requiresApiKey,
     detectedProviderSetup,

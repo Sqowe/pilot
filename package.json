@@ -1,7 +1,7 @@
 {
   "name": "sqowe-pilot",
   "productName": "Sqowe Pilot",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Sqowe Pilot — a desktop AI agent app for Windows & macOS with MCP tools, Skills, cross-session memory, sandbox isolation, and multi-model support",
   "keywords": [
     "ai-agent",
@@ -70,8 +70,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",
-    "@earendil-works/pi-ai": "0.80.2",
-    "@earendil-works/pi-coding-agent": "0.80.2",
+    "@earendil-works/pi-ai": "0.80.3",
+    "@earendil-works/pi-coding-agent": "0.80.3",
     "@google/genai": "^1.52.0",
     "@huggingface/transformers": "4.2.0",
     "@larksuiteoapi/node-sdk": "^1.66.0",

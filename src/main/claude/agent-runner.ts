@@ -23,6 +23,69 @@ import {
 import type { ImageContent as PiImageContent } from '@earendil-works/pi-ai';
 import { Type } from 'typebox';
 import { getSharedAuthStorage, ModelRegistry } from './shared-auth';
+
+// ---------------------------------------------------------------------------
+// RuntimeKeyTracker — reference-counted runtime API key ownership
+//
+// AuthStorage.runtimeOverrides is a process-global Map shared across all
+// concurrent agent sessions. Naively removing a key in `finally` would break
+// any other in-flight session that set the same key. This tracker maintains a
+// ref-count per provider key: setKey() increments, releaseKeys() decrements,
+// and the key is only removed from AuthStorage when the count reaches zero.
+// ---------------------------------------------------------------------------
+
+const _runtimeKeyRefCounts = new Map<string, number>();
+
+/** @internal Exported for testing only — do not use in production code. */
+export const _testOnly_runtimeKeyRefCounts = _runtimeKeyRefCounts;
+
+/** @internal Exported for testing only — do not use in production code. */
+export function _testOnly_trackRuntimeKeys(
+  authStorage: ReturnType<typeof getSharedAuthStorage>,
+  keys: string[],
+  apiKey: string
+): void {
+  _trackRuntimeKeys(authStorage, keys, apiKey);
+}
+
+/** @internal Exported for testing only — do not use in production code. */
+export function _testOnly_releaseRuntimeKeys(
+  authStorage: ReturnType<typeof getSharedAuthStorage>,
+  keys: string[]
+): void {
+  _releaseRuntimeKeys(authStorage, keys);
+}
+
+function _trackRuntimeKeys(
+  authStorage: ReturnType<typeof getSharedAuthStorage>,
+  keys: string[],
+  apiKey: string
+): void {
+  for (const key of keys) {
+    authStorage.setRuntimeApiKey(key, apiKey);
+    _runtimeKeyRefCounts.set(key, (_runtimeKeyRefCounts.get(key) ?? 0) + 1);
+  }
+}
+
+function _releaseRuntimeKeys(
+  authStorage: ReturnType<typeof getSharedAuthStorage>,
+  keys: string[]
+): void {
+  for (const key of keys) {
+    try {
+      const count = _runtimeKeyRefCounts.get(key) ?? 0;
+      if (count <= 1) {
+        _runtimeKeyRefCounts.delete(key);
+        authStorage.removeRuntimeApiKey(key);
+      } else {
+        _runtimeKeyRefCounts.set(key, count - 1);
+      }
+    } catch (err) {
+      // Best-effort cleanup — log and continue so one bad key doesn't block others
+      logWarn('[ClaudeAgentRunner] Failed to remove runtime API key for provider:', key, err);
+    }
+  }
+}
 import type { Session, Message, TraceStep, ServerEvent, ContentBlock } from '../../renderer/types';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -83,6 +146,8 @@ import {
 import { assembleUserPrompt } from '../prompts/prompt-loader';
 import { enrichToolErrorWithThinking, selectThinkingSource } from './tool-error-enrichment';
 import { normalizeOpenAICompatibleBaseUrl } from '../config/auth-utils';
+import { getCachedProviderCatalogSync } from '../config/provider-catalog-native';
+import { getCatalogEntry } from '../../shared/provider-catalog';
 import { resolveMessageEndPayload, toUserFacingErrorText } from './agent-runner-message-end';
 import {
   applyPiModelRuntimeOverrides,
@@ -90,6 +155,7 @@ import {
   resolvePiRegistryModel,
   resolvePiRouteProtocol,
   resolveSyntheticPiModelFallback,
+  resolveRuntimeApiKeyProviders,
 } from './pi-model-resolution';
 import { buildPiSessionRuntimeSignature } from './pi-session-runtime';
 import { ThinkTagStreamParser } from './think-tag-parser';
@@ -2000,6 +2066,11 @@ RULES:
     // Sandbox isolation state (defined outside try for finally access)
     let sandboxPath: string | null = null;
     let useSandboxIsolation = false;
+    // All runtime API keys set for this run (defined outside try for finally
+    // cleanup). Every key written to shared AuthStorage runtimeOverrides is
+    // tracked here and removed in finally so credentials do not persist into
+    // subsequent runs in the same process.
+    let allRuntimeKeys: string[] = [];
 
     // Helper to convert real sandbox paths back to virtual workspace paths in output
     // Cache the compiled regex to avoid recompilation on every call
@@ -2563,16 +2634,30 @@ RULES:
       const authStorage = getSharedAuthStorage();
       const apiKey = runtimeConfig.apiKey?.trim();
       if (apiKey) {
-        // Map our config provider to pi-ai provider name
+        // Map our config provider to the pi-ai provider name.
+        // For native catalog entries use entry.piProvider (e.g. 'zai', 'minimax');
+        // for custom use the protocol; for builtins fall through to the id itself.
+        const catalog = getCachedProviderCatalogSync();
+        const catalogEntry = catalog ? getCatalogEntry(catalog, provider) : undefined;
         const piProvider =
-          provider === 'custom' ? runtimeConfig.customProtocol || 'anthropic' : provider;
-        authStorage.setRuntimeApiKey(piProvider, apiKey);
-        // Also set the key for the model's native provider (e.g., when using
-        // google/gemini via openrouter, pi-ai looks up "google" not "openrouter")
-        if (piModel.provider !== piProvider) {
-          authStorage.setRuntimeApiKey(piModel.provider, apiKey);
-          log('[ClaudeAgentRunner] Set runtime API key for model provider:', piModel.provider);
-        }
+          catalogEntry?.kind === 'native'
+            ? catalogEntry.piProvider
+            : provider === 'custom'
+              ? runtimeConfig.customProtocol || 'anthropic'
+              : provider;
+        // Compute provider keys before writing so all-or-nothing tracking is
+        // possible even if setRuntimeApiKey throws partway through.
+        const piProviderKeys = resolveRuntimeApiKeyProviders({
+          provider,
+          customProtocol: runtimeConfig.customProtocol,
+          piProvider,
+          piModelProvider: piModel.provider,
+        });
+        // Accumulate all keys set this run for ref-counted cleanup in finally.
+        allRuntimeKeys = [...new Set([...allRuntimeKeys, ...piProviderKeys])];
+        // Write keys and increment ref-counts atomically via _trackRuntimeKeys.
+        _trackRuntimeKeys(authStorage, piProviderKeys, apiKey);
+        log('[ClaudeAgentRunner] Set runtime API key for provider(s):', piProviderKeys.join(', '));
         log('[ClaudeAgentRunner] Set runtime API key for config provider:', piProvider);
       } else {
         if (provider === 'ollama') {
@@ -4398,6 +4483,17 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
     } finally {
       this.activeControllers.delete(session.id);
       this.pathResolver.unregisterSession(session.id);
+
+      // Release all runtime API keys set for this run via ref-counted cleanup.
+      // _releaseRuntimeKeys decrements the ref-count per key and only removes
+      // from AuthStorage when no other concurrent run is still using that key,
+      // preventing cross-session credential clobber in multi-session processes.
+      if (allRuntimeKeys.length > 0) {
+        const authStorage = getSharedAuthStorage();
+        _releaseRuntimeKeys(authStorage, allRuntimeKeys);
+        log('[ClaudeAgentRunner] Released runtime API key(s):', allRuntimeKeys.join(', '));
+        allRuntimeKeys = [];
+      }
 
       // Sync changes from sandbox back to host OS (but don't cleanup - sandbox persists)
       if (useSandboxIsolation && sandboxPath) {

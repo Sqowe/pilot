@@ -35,6 +35,7 @@ import type {
   MemoryRuntimeConfig,
 } from '../renderer/types';
 import type { DiagnosticInput, DiagnosticResult } from '../renderer/types';
+import type { ProviderCatalogEntry } from '../shared/provider-catalog';
 import type {
   McpServerConfig,
   McpTool,
@@ -185,6 +186,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   config: {
     get: (): Promise<AppConfig> => ipcRenderer.invoke('config.get'),
     getPresets: (): Promise<ProviderPresets> => ipcRenderer.invoke('config.getPresets'),
+    getProviderCatalog: (): Promise<ProviderCatalogEntry[]> =>
+      ipcRenderer.invoke('config.getProviderCatalog'),
     save: (config: Partial<AppConfig>): Promise<{ success: boolean; config: AppConfig }> =>
       ipcRenderer.invoke('config.save', config),
     createSet: (payload: CreateSetPayload): Promise<{ success: boolean; config: AppConfig }> =>
@@ -703,6 +706,7 @@ declare global {
       config: {
         get: () => Promise<AppConfig>;
         getPresets: () => Promise<ProviderPresets>;
+        getProviderCatalog: () => Promise<ProviderCatalogEntry[]>;
         save: (config: Partial<AppConfig>) => Promise<{ success: boolean; config: AppConfig }>;
         createSet: (payload: CreateSetPayload) => Promise<{ success: boolean; config: AppConfig }>;
         renameSet: (payload: {

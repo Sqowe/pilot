@@ -3,6 +3,7 @@ import type { UserMessage as PiUserMessage } from '@earendil-works/pi-ai';
 import { completeSimple } from '@earendil-works/pi-ai/compat';
 import type { ApiTestInput, ApiTestResult } from '../../renderer/types';
 import { PROVIDER_PRESETS, type AppConfig, type CustomProtocolType } from '../config/config-store';
+import { getPresetForProvider } from '../../shared/api-model-presets';
 import {
   normalizeAnthropicBaseUrl,
   normalizeOllamaBaseUrl,
@@ -39,7 +40,7 @@ function resolveProbeBaseUrl(input: ApiTestInput): string | undefined {
   const configured = input.baseUrl?.trim();
   if (configured) return configured;
   if (input.provider !== 'custom') {
-    return PROVIDER_PRESETS[input.provider]?.baseUrl;
+    return getPresetForProvider(PROVIDER_PRESETS, input.provider)?.baseUrl;
   }
   return undefined;
 }
