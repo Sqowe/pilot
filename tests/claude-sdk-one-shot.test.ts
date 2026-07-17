@@ -50,9 +50,11 @@ vi.mock('@earendil-works/pi-ai/compat', () => ({
 }));
 
 vi.mock('../src/main/claude/shared-auth', () => ({
-  getSharedAuthStorage: () => ({
-    setRuntimeApiKey: mocks.setRuntimeApiKey,
-  }),
+  getSharedModelRuntime: () =>
+    Promise.resolve({
+      setRuntimeApiKey: mocks.setRuntimeApiKey,
+      removeRuntimeApiKey: vi.fn(() => Promise.resolve()),
+    }),
 }));
 
 vi.mock('../src/main/claude/pi-model-resolution', () => ({
