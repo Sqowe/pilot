@@ -1,10 +1,22 @@
 # Test Verification Gaps — npm 12 install-script gate & untested credential ref-counting
 
 **Created:** 2026-07-17
-**Status:** Draft — problem analysis + proposed fixes; no code changed yet
+**Status:** Done — all items implemented and verified (2026-07-17)
 **Author:** AI-assisted session (surfaced during the pi SDK 0.80.3 → 0.80.10 uplift)
 **Scope:** Two independent gaps that both weaken our ability to verify changes. Neither is
 caused by the uplift; the uplift is what made them visible and made the second one urgent.
+
+### What was done
+
+| #           | Item                              | Resolution                                                                                                                                                                  |
+| ----------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| §3          | Credential ref-count tests        | `src/tests/claude/runtime-key-refcount.test.ts` — 7 cases, all green                                                                                                        |
+| §2.2 Step 2 | Fix rebuild script (Cause A)      | Replaced hand-rolled flags with `electron-rebuild -f -w better-sqlite3`; `@electron/rebuild@4.2.0` added as devDep                                                          |
+| §2.2 Step 1 | Approve install scripts (Cause B) | `allowScripts` map added to `package.json` (pinned); 8 packages approved, 3 denied (`@google/genai`, `@turbodocx/html-to-docx`, `ngrok`)                                    |
+| §2.2 Step 3 | Pin npm engine range              | `engines.npm` set to `">=10 <12"`                                                                                                                                           |
+| bonus       | Fix 17 pre-existing test failures | `tests/runtime-key-tracker.test.ts` — async/await + stub fix; `tests/claude-sdk-one-shot.test.ts` — replaced stale `getSharedAuthStorage` mock with `getSharedModelRuntime` |
+
+**Final state:** `npm test` — 211 files, 2925 tests, 0 failures.
 
 ---
 
@@ -270,16 +282,10 @@ multi-session use — the worst possible failure mode to debug from a bug report
 
 ---
 
-## 5. Open questions
+## 5. Open questions — resolved
 
-1. **`@electron/rebuild` vs env vars** (§2.4 Step 2) — add the devDependency, or keep the
-   hand-rolled script with `npm_config_*`?
-2. **Approve list** (§2.4 Step 1) — which of the 11 blocked packages genuinely need install
-   scripts? `ngrok`, `@google/genai`, and `@turbodocx/html-to-docx` look deniable; needs
-   confirmation per package.
-3. **Pinned vs unpinned `allowScripts`** — pinned is safer but adds re-approval friction on
-   every bump.
-4. **CI coverage** — does CI run `npm install` on npm 12 today? If so it may already be
-   silently degraded, or pinned to an older npm that masks the problem.
-5. **Singleton enforcement** (§3.4 item 7) — is a test sufficient, or should
-   `shared-auth.ts` actively detect a second `ModelRuntime` construction?
+1. **`@electron/rebuild` vs env vars** — chose Option B (`@electron/rebuild`). Done.
+2. **Approve list** — approved 8 packages; denied `@google/genai`, `@turbodocx/html-to-docx`, `ngrok`. Done.
+3. **Pinned vs unpinned `allowScripts`** — pinned (`pkg@version`). Done.
+4. **CI coverage** — not investigated; out of scope for this session.
+5. **Singleton enforcement** — covered by test case 7 (memoisation assertion). No runtime guard added; test is sufficient.
