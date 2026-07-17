@@ -972,7 +972,9 @@
     "contextUsage": "Context Usage",
     "contextUsageLabel": "{{used}} / {{total}}",
     "contextUsageTools": "{{count}} tools",
-    "contextUsageOutput": "{{count}} output"
+    "contextUsageOutput": "{{count}} output",
+    "cacheHit": "CH {{rate}}%",
+    "cacheHitTooltip": "Prompt cache hit rate for the latest turn"
   },
   "memoryLens": {
     "title": "Memory",

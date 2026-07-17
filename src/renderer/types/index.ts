@@ -1,4 +1,6 @@
 import type { SkillSource } from '../../shared/skill-conflict-types';
+import type { TokenUsage } from '../../shared/token-usage';
+export type { TokenUsage } from '../../shared/token-usage';
 
 // Session types
 export interface Session {
@@ -90,11 +92,6 @@ export interface ToolResultContent {
 export interface ThinkingContent {
   type: 'thinking';
   thinking: string;
-}
-
-export interface TokenUsage {
-  input: number;
-  output: number;
 }
 
 // Trace types for visualization

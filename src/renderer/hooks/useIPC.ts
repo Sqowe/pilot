@@ -344,15 +344,15 @@ export function useIPC() {
             }
             break;
 
-          case 'session.contextInfo':
-            store.setSessionContextWindow(
-              event.payload.sessionId,
-              event.payload.contextWindow,
-              event.payload.toolSchemaTokens,
-              event.payload.maxOutputTokens,
-              event.payload.currentInputTokens
-            );
+          case 'session.contextInfo': {
+            const p = event.payload;
+            const opts: Parameters<typeof store.setSessionContextWindow>[2] = {};
+            if (p.toolSchemaTokens !== undefined) opts.toolSchemaTokens = p.toolSchemaTokens;
+            if (p.maxOutputTokens !== undefined) opts.maxOutputTokens = p.maxOutputTokens;
+            if (p.currentInputTokens !== undefined) opts.currentInputTokens = p.currentInputTokens;
+            store.setSessionContextWindow(p.sessionId, p.contextWindow, opts);
             break;
+          }
 
           case 'error':
             console.error('[useIPC] Server error:', event.payload.message);

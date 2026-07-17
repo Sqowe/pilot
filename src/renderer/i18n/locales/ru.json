@@ -972,7 +972,9 @@
     "contextUsage": "Использование контекста",
     "contextUsageLabel": "{{used}} / {{total}}",
     "contextUsageTools": "{{count}} инструментов",
-    "contextUsageOutput": "{{count}} вывод"
+    "contextUsageOutput": "{{count}} вывод",
+    "cacheHit": "CH {{rate}}%",
+    "cacheHitTooltip": "Доля попаданий в кэш подсказок для последнего хода"
   },
   "memoryLens": {
     "title": "Память",

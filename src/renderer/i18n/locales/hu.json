@@ -972,7 +972,9 @@
     "contextUsage": "Kontextus használat",
     "contextUsageLabel": "{{used}} / {{total}}",
     "contextUsageTools": "{{count}} eszköz",
-    "contextUsageOutput": "{{count}} kimenet"
+    "contextUsageOutput": "{{count}} kimenet",
+    "cacheHit": "CH {{rate}}%",
+    "cacheHitTooltip": "Gyorsítótár találati arány az utolsó fordulóban"
   },
   "memoryLens": {
     "title": "Memória",

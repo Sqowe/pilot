@@ -1,8 +1,7 @@
 # Pi SDK 0.79–0.80 Feature Adoption — Design & Implementation Plan
 
 **Created:** 2026-06-25
-**Status:** Ready to implement — rebased onto the 0.80.10 baseline and all §8 questions
-resolved on 2026-07-17 (except §4.2's, which is owned by its own investigation phase)
+**Status:** T1 complete (2026-07-17). T2/T3 pending.
 **Author:** AI-assisted design session
 **Baseline:** **0.80.10** — `chore(deps): uplift pi-ai + pi-coding-agent 0.80.3 → 0.80.10`
 (`eee3877`), landed. The original blocking dependency (the 0.78.1 → 0.80.2 uplift,
@@ -40,14 +39,14 @@ Guiding principles (consistent with `ARCHITECTURE.md`):
 
 ### Prioritization summary
 
-| Tier   | Feature                                                                | SDK version          | Effort | Risk                |
-| ------ | ---------------------------------------------------------------------- | -------------------- | ------ | ------------------- |
-| **T1** | Compaction transparency — surface post-compaction token estimate       | 0.79.8               | S      | Low                 |
-| **T1** | Prompt-cache hit visibility (CH)                                       | 0.79.0 + pi-ai usage | S–M    | Low                 |
-| **T2** | `CONFIG_DIR_NAME` hardening                                            | 0.79.7               | S      | Low                 |
-| **T2** | Native project-trust alignment (investigation → design)                | 0.79.0–0.79.1        | L      | **High (security)** |
-| **T3** | Thinking-level surface — import the SDK type (§5.4 step 1)             | 0.80.6               | S      | Low                 |
-| **T3** | Claude Fable 5 + refresh stale curation                                | 0.79.1–0.80.9        | S      | Low                 |
+| Tier   | Feature                                                                | SDK version          | Effort | Risk                | Status  |
+| ------ | ---------------------------------------------------------------------- | -------------------- | ------ | ------------------- | ------- |
+| **T1** | Compaction transparency — surface post-compaction token estimate       | 0.79.8               | S      | Low                 | ✅ Done |
+| **T1** | Prompt-cache hit visibility (CH)                                       | 0.79.0 + pi-ai usage | S–M    | Low                 | ✅ Done |
+| **T2** | `CONFIG_DIR_NAME` hardening                                            | 0.79.7               | S      | Low                 | Pending |
+| **T2** | Native project-trust alignment (investigation → design)                | 0.79.0–0.79.1        | L      | **High (security)** | Pending |
+| **T3** | Thinking-level surface — import the SDK type (§5.4 step 1)             | 0.80.6               | S      | Low                 | Pending |
+| **T3** | Claude Fable 5 + refresh stale curation                                | 0.79.1–0.80.9        | S      | Low                 | Pending |
 | **T3** | RPC extension UI typed surface                                         | 0.79.0               | S      | Low                 |
 | **T3** | Provider/runtime config surface (httpProxy, Mistral cache, scoped env) | 0.79.5–**0.80.8**    | S–M    | Low                 |
 | **T3** | Edit diff rendering via SDK helpers (reframed — see §4.1.3)            | 0.79.7               | M      | Low                 |
@@ -91,9 +90,9 @@ refresh), which are the cheapest and fix drift that already exists.
 
 ---
 
-## 3. Tier 1 — high-value, low-risk
+## 3. Tier 1 — high-value, low-risk ✅ Complete
 
-### 3.1 Compaction transparency (post-compaction token estimate)
+### 3.1 Compaction transparency (post-compaction token estimate) ✅
 
 **SDK capability (0.79.8):** compaction-end events now carry
 `estimatedTokensAfter?: number` (verified in
@@ -135,7 +134,18 @@ carrying `estimatedTokensAfter` (and one without, asserting graceful omission).
 **Risk:** Low. Purely additive to an existing handler; field is optional.
 **Effort:** Small.
 
-### 3.2 Prompt-cache hit visibility ("CH")
+> **As built (2026-07-17):**
+>
+> - `src/main/claude/token-usage-utils.ts` — new shared module with `formatTokenCount`
+>   (incl. k/M suffixes, NaN/negative guard, boundary fix at 999950) and
+>   `normalizeTokenUsage` (widened to thread `cacheRead`/`cacheWrite` through, with
+>   multi-provider key-name variants).
+> - `agent-runner.ts` `compaction_end` handler — reads `event.result?.estimatedTokensAfter`,
+>   appends `(~12.4k tokens)` suffix to trace title; emits `session.contextInfo` with
+>   `currentInputTokens: estimatedTokensAfter` only when `piModel.contextWindow` is known.
+> - Tests: `tests/agent-runner-compaction-cache.test.ts` (formatTokenCount + normalizeTokenUsage).
+
+### 3.2 Prompt-cache hit visibility ("CH") ✅
 
 **SDK capability (0.79.0 + pi-ai usage type):** pi's interactive footer shows the
 latest prompt-cache hit rate ("CH"). The underlying data — `cacheRead`, `cacheWrite`,
@@ -177,6 +187,26 @@ render test that the chip appears when cache data is present.
 
 **Risk:** Low. Display-only; no behavioral change to requests.
 **Effort:** Small–Medium (mostly renderer plumbing).
+
+> **As built (2026-07-17):**
+>
+> - `src/shared/token-usage.ts` — new shared `TokenUsage` type (cacheRead/cacheWrite
+>   optional); imported by both main and renderer to avoid cross-layer coupling.
+> - `normalizeTokenUsage` widened to pass cache fields; handles `cacheRead`, `cache_read`,
+>   `cache_read_tokens`, `cacheReadTokens`, `prompt_cache_read_tokens` variants (and write
+>   equivalents).
+> - `src/renderer/utils/context-usage.ts` — `computeCacheHitRate` (pure, documented
+>   Anthropic semantics assumption) and `findLastTokenUsage` (role-filtered reverse scan,
+>   presence check not truthy).
+> - `ContextPanel.tsx` — `lastAssistantTokenUsage` memo (single O(n) scan, shared by
+>   `contextUsage` fallback and `cacheHitRate`); `CH NN%` chip in header with tooltip,
+>   visible only when cache data is present.
+> - `session.contextInfo` IPC payload and `SessionState` do **not** carry cache fields —
+>   CH% is derived exclusively from message `tokenUsage` (single source of truth).
+> - i18n keys `cacheHit` / `cacheHitTooltip` added to all four locales (en/zh/ru/hu).
+> - `setSessionContextWindow` refactored to opts-object signature.
+> - Tests: `tests/context-usage-calculation.test.ts` (computeCacheHitRate + findLastTokenUsage),
+>   `src/tests/store/session-state.test.ts` (context window opts).
 
 ---
 

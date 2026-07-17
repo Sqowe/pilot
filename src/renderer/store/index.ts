@@ -207,9 +207,11 @@ interface AppState {
   setSessionContextWindow: (
     sessionId: string,
     contextWindow: number,
-    toolSchemaTokens?: number,
-    maxOutputTokens?: number,
-    currentInputTokens?: number
+    opts?: {
+      toolSchemaTokens?: number;
+      maxOutputTokens?: number;
+      currentInputTokens?: number;
+    }
   ) => void;
 
   // System theme actions
@@ -632,24 +634,18 @@ export const useAppStore = create<AppState>((set) => ({
   setSkillsStorageChangedAt: (timestamp) => set({ skillsStorageChangedAt: timestamp }),
   setSkillsStorageChangeEvent: (event) => set({ skillsStorageChangeEvent: event }),
 
-  // Context window actions — always sets all context fields explicitly to
-  // prevent stale values from prior updates when a newer event omits them.
-  setSessionContextWindow: (
-    sessionId,
-    contextWindow,
-    toolSchemaTokens,
-    maxOutputTokens,
-    currentInputTokens
-  ) =>
-    set((state) => ({
-      sessionStates: patchSession(state.sessionStates, sessionId, {
+  // Context window actions
+  setSessionContextWindow: (sessionId, contextWindow, opts) =>
+    set((state) => {
+      const prev = state.sessionStates[sessionId];
+      const patch: Partial<SessionState> = {
         contextWindow,
-        toolSchemaTokens: toolSchemaTokens ?? state.sessionStates[sessionId]?.toolSchemaTokens ?? 0,
-        maxOutputTokens: maxOutputTokens ?? state.sessionStates[sessionId]?.maxOutputTokens ?? 0,
-        currentInputTokens:
-          currentInputTokens ?? state.sessionStates[sessionId]?.currentInputTokens ?? 0,
-      }),
-    })),
+        toolSchemaTokens: opts?.toolSchemaTokens ?? prev?.toolSchemaTokens ?? 0,
+        maxOutputTokens: opts?.maxOutputTokens ?? prev?.maxOutputTokens ?? 0,
+        currentInputTokens: opts?.currentInputTokens ?? prev?.currentInputTokens ?? 0,
+      };
+      return { sessionStates: patchSession(state.sessionStates, sessionId, patch) };
+    }),
 
   // System theme actions
   setSystemDarkMode: (dark) => set({ systemDarkMode: dark }),

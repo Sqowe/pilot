@@ -23,6 +23,7 @@ import {
 import type { ImageContent as PiImageContent } from '@earendil-works/pi-ai';
 import { Type } from 'typebox';
 import { getSharedModelRuntime, type ModelRuntime } from './shared-auth';
+import { formatTokenCount, normalizeTokenUsage } from './token-usage-utils';
 
 // ---------------------------------------------------------------------------
 // RuntimeKeyTracker — reference-counted runtime API key ownership
@@ -551,30 +552,6 @@ function toErrorText(error: unknown): string {
     return String(error);
   }
   return serialized;
-}
-
-function normalizeTokenUsage(usage: unknown): Message['tokenUsage'] | undefined {
-  if (!usage || typeof usage !== 'object') {
-    return undefined;
-  }
-
-  const raw = usage as {
-    input?: unknown;
-    output?: unknown;
-    input_tokens?: unknown;
-    output_tokens?: unknown;
-    inputTokens?: unknown;
-    outputTokens?: unknown;
-  };
-
-  const input = raw.input ?? raw.input_tokens ?? raw.inputTokens;
-  const output = raw.output ?? raw.output_tokens ?? raw.outputTokens;
-
-  if (typeof input !== 'number' || typeof output !== 'number') {
-    return undefined;
-  }
-
-  return { input, output };
 }
 
 interface AgentRunnerOptions {
@@ -4116,11 +4093,19 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
 
             case 'compaction_end': {
               const status = event.aborted ? 'error' : event.errorMessage ? 'error' : 'completed';
+              const estimatedTokensAfter =
+                !event.aborted && !event.errorMessage
+                  ? event.result?.estimatedTokensAfter
+                  : undefined;
+              const tokenSuffix =
+                typeof estimatedTokensAfter === 'number'
+                  ? ` (~${formatTokenCount(estimatedTokensAfter)} tokens)`
+                  : '';
               const title = event.aborted
                 ? 'Context compaction aborted'
                 : event.errorMessage
                   ? `Context compaction failed: ${event.errorMessage}`
-                  : 'Context compaction completed';
+                  : `Context compaction completed${tokenSuffix}`;
               log(
                 '[ClaudeAgentRunner] Auto-compaction ended:',
                 title,
@@ -4138,6 +4123,21 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
                   status,
                   title,
                   timestamp: Date.now(),
+                });
+              }
+              // Phase 2: bridge the post-compaction token estimate to the ContextPanel
+              // so the usage bar drops immediately rather than waiting for the next
+              // message_end. Reuses the existing session.contextInfo channel — no
+              // extra IPC cost. Only emit when we have a known contextWindow so we
+              // don't overwrite the renderer's correct value with a stale default.
+              if (typeof estimatedTokensAfter === 'number' && piModel.contextWindow) {
+                this.sendToRenderer({
+                  type: 'session.contextInfo',
+                  payload: {
+                    sessionId: session.id,
+                    contextWindow: piModel.contextWindow,
+                    currentInputTokens: estimatedTokensAfter,
+                  },
                 });
               }
               break;

@@ -3,7 +3,11 @@
  * Imports the production function directly to prevent test/implementation drift.
  */
 import { describe, it, expect } from 'vitest';
-import { computeContextUsage } from '../src/renderer/utils/context-usage';
+import {
+  computeContextUsage,
+  computeCacheHitRate,
+  findLastTokenUsage,
+} from '../src/renderer/utils/context-usage';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -216,5 +220,110 @@ describe('edge cases', () => {
     });
     expect(result!.outputPercentage).toBe(0);
     expect(result!.maxOutputTokens).toBe(0);
+  });
+});
+
+describe('computeCacheHitRate', () => {
+  it('returns null when both cacheRead and input are 0', () => {
+    expect(computeCacheHitRate({ cacheRead: 0, input: 0 })).toBeNull();
+  });
+
+  it('returns 0 when input is positive but cacheRead is 0 (full cache miss)', () => {
+    expect(computeCacheHitRate({ cacheRead: 0, input: 10000 })).toBe(0);
+  });
+
+  it('returns 100 when all input tokens were cache hits', () => {
+    // cacheRead === input → nonCachedInput = 0, denominator = cacheRead
+    expect(computeCacheHitRate({ cacheRead: 10000, input: 10000 })).toBe(100);
+  });
+
+  it('computes correct rate for a partial cache hit', () => {
+    // 8000 cached out of 10000 input → nonCachedInput = 2000
+    // rate = 8000 / (8000 + 2000) = 80%
+    expect(computeCacheHitRate({ cacheRead: 8000, input: 10000 })).toBe(80);
+  });
+
+  it('rounds fractional rates to nearest integer', () => {
+    // 1 cached, 3 non-cached → 1/4 = 25%
+    expect(computeCacheHitRate({ cacheRead: 1, input: 4 })).toBe(25);
+    // 1 cached, 2 non-cached → 1/3 ≈ 33.3% → rounds to 33
+    expect(computeCacheHitRate({ cacheRead: 1, input: 3 })).toBe(33);
+  });
+
+  it('handles cacheRead larger than input gracefully (clamps nonCachedInput to 0)', () => {
+    // Some providers report cacheRead > input; nonCachedInput should not go negative
+    expect(computeCacheHitRate({ cacheRead: 12000, input: 10000 })).toBe(100);
+  });
+
+  it('returns 100 when cacheRead > 0 and input === 0 (all served from cache)', () => {
+    // When a provider reports cache reads but input tokens = 0, the entire
+    // request was served from cache. nonCachedInput = max(0, 0 - cacheRead) = 0,
+    // denominator = cacheRead, so the hit rate is 100%.
+    // This is distinct from the null case (both zero) and intentionally returns 100.
+    expect(computeCacheHitRate({ cacheRead: 10, input: 0 })).toBe(100);
+  });
+});
+
+describe('findLastTokenUsage', () => {
+  it('returns undefined for an empty message array', () => {
+    expect(findLastTokenUsage([])).toBeUndefined();
+  });
+
+  it('returns undefined when no messages have tokenUsage', () => {
+    expect(findLastTokenUsage([{ tokenUsage: undefined }, {}])).toBeUndefined();
+  });
+
+  it('returns the tokenUsage from the only message that has it', () => {
+    const usage = { input: 100, output: 50 };
+    expect(findLastTokenUsage([{ tokenUsage: usage }])).toBe(usage);
+  });
+
+  it('returns the last tokenUsage when multiple messages have it', () => {
+    const first = { input: 100, output: 50 };
+    const last = { input: 200, output: 80 };
+    expect(
+      findLastTokenUsage([{ tokenUsage: first }, { tokenUsage: undefined }, { tokenUsage: last }])
+    ).toBe(last);
+  });
+
+  it('does not skip tokenUsage with input === 0 (presence check, not truthy)', () => {
+    // A truthy check on input would incorrectly skip this entry and fall through
+    // to an earlier message. The fix uses typeof tu.input === 'number' instead.
+    const zeroInput = { input: 0, output: 0, cacheRead: 500 };
+    const earlier = { input: 5000, output: 200 };
+    expect(findLastTokenUsage([{ tokenUsage: earlier }, { tokenUsage: zeroInput }])).toBe(
+      zeroInput
+    );
+  });
+
+  it('scans backwards past trailing messages without tokenUsage', () => {
+    const usage = { input: 100, output: 50 };
+    const result = findLastTokenUsage([{ tokenUsage: usage }, { tokenUsage: undefined }]);
+    expect(result).toBe(usage);
+  });
+
+  it('CH% is computable from a message with input=0 and cacheRead>0', () => {
+    // Integration: findLastTokenUsage picks the right message, then
+    // computeCacheHitRate returns 100 (all served from cache).
+    const tu = findLastTokenUsage([{ tokenUsage: { input: 0, output: 0, cacheRead: 800 } }]);
+    expect(tu).toBeDefined();
+    expect(computeCacheHitRate({ cacheRead: tu!.cacheRead!, input: tu!.input })).toBe(100);
+  });
+
+  it('skips non-assistant messages when role is present', () => {
+    const userUsage = { input: 200, output: 0 };
+    const assistantUsage = { input: 500, output: 100 };
+    const result = findLastTokenUsage([
+      { role: 'assistant', tokenUsage: assistantUsage },
+      { role: 'user', tokenUsage: userUsage },
+    ]);
+    // user message comes last but should be skipped; assistant should be returned
+    expect(result).toBe(assistantUsage);
+  });
+
+  it('returns tokenUsage from messages without a role field (role-agnostic fallback)', () => {
+    // When role is absent, the message is not skipped — backwards compat.
+    const usage = { input: 100, output: 50 };
+    expect(findLastTokenUsage([{ tokenUsage: usage }])).toBe(usage);
   });
 });
