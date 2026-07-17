@@ -15,7 +15,7 @@ import {
 } from '../config/auth-utils';
 import { log, logWarn } from '../utils/logger';
 import { normalizeGeneratedTitle } from '../session/session-title-utils';
-import { getSharedAuthStorage } from './shared-auth';
+import { getSharedModelRuntime } from './shared-auth';
 import {
   applyPiModelRuntimeOverrides,
   buildSyntheticPiModel,
@@ -227,15 +227,16 @@ export async function runPiAiOneShot(
   // piModel is guaranteed non-undefined after synthetic fallback
   const resolvedModel = piModel!;
 
-  // Set API key via AuthStorage (for agent sessions) AND env vars (for pi-ai completeSimple)
+  // Set API key via the shared ModelRuntime (for agent sessions) AND env vars
+  // (for pi-ai completeSimple)
   const apiKey = config.apiKey?.trim();
   if (apiKey) {
-    const authStorage = getSharedAuthStorage();
+    const modelRuntime = await getSharedModelRuntime();
     // Set for the config provider
-    authStorage.setRuntimeApiKey(provider, apiKey);
+    await modelRuntime.setRuntimeApiKey(provider, apiKey);
     // Also set for the model's native provider if different
     if (resolvedModel.provider !== provider) {
-      authStorage.setRuntimeApiKey(resolvedModel.provider, apiKey);
+      await modelRuntime.setRuntimeApiKey(resolvedModel.provider, apiKey);
     }
   }
 

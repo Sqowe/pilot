@@ -22,16 +22,16 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import type { ImageContent as PiImageContent } from '@earendil-works/pi-ai';
 import { Type } from 'typebox';
-import { getSharedAuthStorage, ModelRegistry } from './shared-auth';
+import { getSharedModelRuntime, type ModelRuntime } from './shared-auth';
 
 // ---------------------------------------------------------------------------
 // RuntimeKeyTracker — reference-counted runtime API key ownership
 //
-// AuthStorage.runtimeOverrides is a process-global Map shared across all
-// concurrent agent sessions. Naively removing a key in `finally` would break
-// any other in-flight session that set the same key. This tracker maintains a
+// Runtime API keys live on the shared ModelRuntime instance, reachable by every
+// concurrent agent session. Naively removing a key in `finally` would break any
+// other in-flight session that set the same key. This tracker maintains a
 // ref-count per provider key: setKey() increments, releaseKeys() decrements,
-// and the key is only removed from AuthStorage when the count reaches zero.
+// and the key is only removed from the runtime when the count reaches zero.
 // ---------------------------------------------------------------------------
 
 const _runtimeKeyRefCounts = new Map<string, number>();
@@ -41,42 +41,43 @@ export const _testOnly_runtimeKeyRefCounts = _runtimeKeyRefCounts;
 
 /** @internal Exported for testing only — do not use in production code. */
 export function _testOnly_trackRuntimeKeys(
-  authStorage: ReturnType<typeof getSharedAuthStorage>,
+  modelRuntime: ModelRuntime,
   keys: string[],
   apiKey: string
-): void {
-  _trackRuntimeKeys(authStorage, keys, apiKey);
+): Promise<void> {
+  return _trackRuntimeKeys(modelRuntime, keys, apiKey);
 }
 
 /** @internal Exported for testing only — do not use in production code. */
 export function _testOnly_releaseRuntimeKeys(
-  authStorage: ReturnType<typeof getSharedAuthStorage>,
+  modelRuntime: ModelRuntime,
   keys: string[]
-): void {
-  _releaseRuntimeKeys(authStorage, keys);
+): Promise<void> {
+  return _releaseRuntimeKeys(modelRuntime, keys);
 }
 
-function _trackRuntimeKeys(
-  authStorage: ReturnType<typeof getSharedAuthStorage>,
+async function _trackRuntimeKeys(
+  modelRuntime: ModelRuntime,
   keys: string[],
   apiKey: string
-): void {
+): Promise<void> {
   for (const key of keys) {
-    authStorage.setRuntimeApiKey(key, apiKey);
+    // Increment before awaiting the write: setRuntimeApiKey is async as of
+    // 0.80.8, and a concurrent release must never observe a zero count for a key
+    // this run is still claiming and delete it mid-write. Callers record the keys
+    // before calling, so a throw here still releases them in `finally`.
     _runtimeKeyRefCounts.set(key, (_runtimeKeyRefCounts.get(key) ?? 0) + 1);
+    await modelRuntime.setRuntimeApiKey(key, apiKey);
   }
 }
 
-function _releaseRuntimeKeys(
-  authStorage: ReturnType<typeof getSharedAuthStorage>,
-  keys: string[]
-): void {
+async function _releaseRuntimeKeys(modelRuntime: ModelRuntime, keys: string[]): Promise<void> {
   for (const key of keys) {
     try {
       const count = _runtimeKeyRefCounts.get(key) ?? 0;
       if (count <= 1) {
         _runtimeKeyRefCounts.delete(key);
-        authStorage.removeRuntimeApiKey(key);
+        await modelRuntime.removeRuntimeApiKey(key);
       } else {
         _runtimeKeyRefCounts.set(key, count - 1);
       }
@@ -2067,9 +2068,9 @@ RULES:
     let sandboxPath: string | null = null;
     let useSandboxIsolation = false;
     // All runtime API keys set for this run (defined outside try for finally
-    // cleanup). Every key written to shared AuthStorage runtimeOverrides is
-    // tracked here and removed in finally so credentials do not persist into
-    // subsequent runs in the same process.
+    // cleanup). Every key written to the shared ModelRuntime is tracked here and
+    // removed in finally so credentials do not persist into subsequent runs in
+    // the same process.
     let allRuntimeKeys: string[] = [];
 
     // Helper to convert real sandbox paths back to virtual workspace paths in output
@@ -2630,8 +2631,8 @@ RULES:
         },
       });
 
-      // Set up API keys via AuthStorage
-      const authStorage = getSharedAuthStorage();
+      // Set up API keys via the shared ModelRuntime
+      const modelRuntime = await getSharedModelRuntime();
       const apiKey = runtimeConfig.apiKey?.trim();
       if (apiKey) {
         // Map our config provider to the pi-ai provider name.
@@ -2656,7 +2657,7 @@ RULES:
         // Accumulate all keys set this run for ref-counted cleanup in finally.
         allRuntimeKeys = [...new Set([...allRuntimeKeys, ...piProviderKeys])];
         // Write keys and increment ref-counts atomically via _trackRuntimeKeys.
-        _trackRuntimeKeys(authStorage, piProviderKeys, apiKey);
+        await _trackRuntimeKeys(modelRuntime, piProviderKeys, apiKey);
         log('[ClaudeAgentRunner] Set runtime API key for provider(s):', piProviderKeys.join(', '));
         log('[ClaudeAgentRunner] Set runtime API key for config provider:', piProvider);
       } else {
@@ -3328,7 +3329,7 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
         logTiming('pi-coding-agent session reused', runStartTime);
       } else {
         // First query in this session — create new pi-coding-agent session
-        // ResourceLoader + ModelRegistry only needed for session creation — skip on reuse
+        // ResourceLoader only needed for session creation — skip on reuse
         const { DefaultResourceLoader } = await import('@earendil-works/pi-coding-agent');
 
         // Workspace-level instructions (loaded earlier in this call for signature
@@ -3377,8 +3378,6 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
           '[ClaudeAgentRunner] noContextFiles=true: pi native context-file discovery disabled; app priority-list resolver is sole injection source.'
         );
         await resourceLoader.reload();
-
-        const modelRegistry = ModelRegistry.inMemory(authStorage);
 
         // Ollama-specific compaction tuning based on actual context window
         const contextWindow = piModel.contextWindow || 128000;
@@ -3453,8 +3452,7 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
         const { session: newPiSession } = await createAgentSession({
           model: piModel,
           thinkingLevel,
-          authStorage,
-          modelRegistry,
+          modelRuntime,
           noTools: 'builtin',
           customTools: [
             ...(wrappedTools as ToolDefinition[]),
@@ -4485,13 +4483,18 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
       this.pathResolver.unregisterSession(session.id);
 
       // Release all runtime API keys set for this run via ref-counted cleanup.
-      // _releaseRuntimeKeys decrements the ref-count per key and only removes
-      // from AuthStorage when no other concurrent run is still using that key,
-      // preventing cross-session credential clobber in multi-session processes.
+      // _releaseRuntimeKeys decrements the ref-count per key and only removes it
+      // from the shared ModelRuntime when no other concurrent run is still using
+      // that key, preventing cross-session credential clobber in multi-session
+      // processes. Guarded so a failure here can't mask the original error.
       if (allRuntimeKeys.length > 0) {
-        const authStorage = getSharedAuthStorage();
-        _releaseRuntimeKeys(authStorage, allRuntimeKeys);
-        log('[ClaudeAgentRunner] Released runtime API key(s):', allRuntimeKeys.join(', '));
+        try {
+          const modelRuntime = await getSharedModelRuntime();
+          await _releaseRuntimeKeys(modelRuntime, allRuntimeKeys);
+          log('[ClaudeAgentRunner] Released runtime API key(s):', allRuntimeKeys.join(', '));
+        } catch (err) {
+          logWarn('[ClaudeAgentRunner] Failed to release runtime API key(s):', err);
+        }
         allRuntimeKeys = [];
       }
 

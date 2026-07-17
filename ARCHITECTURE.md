@@ -150,6 +150,30 @@ Key files: `agent-runner.ts`, `pi-model-resolution.ts`, `before-tool-call-hook.t
 Critical constraint: `pi-ai` and `pi-coding-agent` MUST be version-locked together
 (same monorepo, pre-1.0, frequent breaking changes).
 
+**SDK-only boundary — never inherit the `pi` CLI's workflow.** Sqowe Pilot consumes the
+pi _SDK_. It is not a front-end for the `pi` command-line agent and must never adopt that
+agent's user-level configuration, catalogs, or network behavior. Sqowe Pilot owns its own
+provider config (`config-store.ts` + the native provider catalog); inheriting the CLI's
+would bleed foreign models into the picker and make app behavior depend on whether the
+user also happens to run `pi` locally.
+
+The shared `ModelRuntime` singleton (`shared-auth.ts`) enforces this at construction:
+
+| Option                     | Why                                                                                                                                                                                                                                                                                                  |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `modelsPath: null`         | Never read `~/.pi/models.json`; also keeps the model store in memory instead of writing `models-store.json` next to it.                                                                                                                                                                              |
+| `allowModelNetwork: false` | No pi.dev dynamic catalog fetches. Model resolution goes through our own native catalog. Also keeps `create()` off the network (it otherwise refreshes inline with a 15s timeout) and keeps `setRuntimeApiKey()` cheap — it triggers a catalog refresh on every call, once per provider key per run. |
+
+This replaced the pre-0.80.8 `ModelRegistry.inMemory(authStorage)`, which encoded the same
+isolation. **Any future SDK uplift MUST re-assert it.** The SDK's defaults are CLI-shaped —
+file-backed and networked — so a mechanical migration silently re-introduces the coupling
+rather than failing loudly.
+
+Runtime API keys are injected per-run via `ModelRuntime.setRuntimeApiKey()` and are
+in-memory only (never persisted to `auth.json`). They are ref-counted and released in
+`finally` so concurrent sessions cannot clobber each other's credentials — see
+`docs/design/test-verification-gaps.md` for the coverage gap around this mechanism.
+
 ### 4.2 Renderer (`src/renderer/`)
 
 React 18 + Zustand + Tailwind CSS. Zero direct Node/Electron imports — all main-process
