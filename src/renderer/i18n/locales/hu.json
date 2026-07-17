@@ -103,7 +103,16 @@
     "workspaceInstructionsMoveDown": "Lejjebb",
     "notifications": "Asztali értesítések",
     "notificationsEnabled": "Értesítések engedélyezése",
-    "notificationsHint": "Natív OS értesítések megjelenítése, ha az alkalmazás nincs fókuszban (engedélykérések, feladatok befejezése)."
+    "notificationsHint": "Natív OS értesítések megjelenítése, ha az alkalmazás nincs fókuszban (engedélykérések, feladatok befejezése).",
+    "httpProxy": "HTTP proxy",
+    "httpProxyHint": "Az összes kimenő API-kérés proxy-n keresztüli irányítása. Hagyja üresen a rendszer vagy shell proxy örökléséhez (HTTP_PROXY / HTTPS_PROXY). Megjegyzés: a hitelesítő adatokat tartalmazó proxy URL-ek (user:pass@host) titkosítás nélkül kerülnek tárolásra.",
+    "httpProxySave": "Mentés",
+    "httpProxySaving": "Mentés…",
+    "httpProxySaved": "Mentve",
+    "httpProxySaveFailed": "Nem sikerült menteni a proxy beállítást.",
+    "httpProxyInvalidUrl": "Érvénytelen proxy URL. Használja a http://gép:port formátumot.",
+    "httpProxyInvalidScheme": "Csak http:// és https:// proxy URL-ek támogatottak.",
+    "httpProxyNoCredentials": "A proxy URL nem tartalmazhat hitelesítő adatokat (user:pass@host). A proxy hitelesítést külön kell konfigurálni."
   },
   "bashCommands": {
     "modeAuthoritative": "Tekintélyes mód: ezek a listák a bash parancsok teljes szabályzata. Bármi, ami nem kifejezetten megbízható, jóváhagyást kér.",

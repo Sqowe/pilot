@@ -103,7 +103,16 @@
     "workspaceInstructionsMoveDown": "Move down",
     "notifications": "Desktop Notifications",
     "notificationsEnabled": "Enable notifications",
-    "notificationsHint": "Show native OS notifications when the app is not focused (permission requests, task completion)."
+    "notificationsHint": "Show native OS notifications when the app is not focused (permission requests, task completion).",
+    "httpProxy": "HTTP Proxy",
+    "httpProxyHint": "Route all outbound API requests through a proxy. Leave blank to inherit the system or shell proxy (HTTP_PROXY / HTTPS_PROXY). Note: proxy URLs with credentials (user:pass@host) are stored in plaintext.",
+    "httpProxySave": "Save",
+    "httpProxySaving": "Saving…",
+    "httpProxySaved": "Saved",
+    "httpProxySaveFailed": "Failed to save proxy setting.",
+    "httpProxyInvalidUrl": "Invalid proxy URL. Use http://host:port format.",
+    "httpProxyInvalidScheme": "Only http:// and https:// proxy URLs are supported.",
+    "httpProxyNoCredentials": "Proxy URLs must not include credentials (user:pass@host). Configure proxy authentication separately."
   },
   "bashCommands": {
     "modeAuthoritative": "Authoritative mode: these lists are the complete policy for bash commands. Anything not explicitly trusted will prompt for approval.",

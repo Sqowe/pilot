@@ -237,12 +237,12 @@ describe('api config state helpers', () => {
       activeProfileKey: 'custom:openai',
       apiKey: '',
       baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       profiles: {
         'custom:openai': {
           apiKey: '',
           baseUrl: 'https://api.openai.com/v1',
-          model: 'gpt-5.4',
+          model: 'gpt-5.5',
         },
       },
       isConfigured: false,
@@ -251,7 +251,7 @@ describe('api config state helpers', () => {
     const snapshot = buildApiConfigSnapshot(config, FALLBACK_PROVIDER_PRESETS);
     expect(snapshot.profiles['custom:openai'].useCustomModel).toBe(true);
     expect(snapshot.profiles['custom:openai'].customModel).toBe('');
-    expect(snapshot.profiles['custom:openai'].model).toBe('gpt-5.4');
+    expect(snapshot.profiles['custom:openai'].model).toBe('gpt-5.5');
   });
 
   it('exposes updated preset lists and custom guidance', () => {
@@ -273,9 +273,7 @@ describe('api config state helpers', () => {
     expect(FALLBACK_PROVIDER_PRESETS.custom.models.map((item) => item.id)).toContain(
       'MiniMax-M2.5'
     );
-    expect(FALLBACK_PROVIDER_PRESETS.custom.models.map((item) => item.id)).toContain(
-      'grok-code-fast-1'
-    );
+    expect(FALLBACK_PROVIDER_PRESETS.custom.models.map((item) => item.id)).toContain('kimi-k3');
     expect(FALLBACK_PROVIDER_PRESETS.custom.models.map((item) => item.id)).toContain(
       'mistral-large-latest'
     );

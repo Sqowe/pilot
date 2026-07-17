@@ -249,6 +249,12 @@ export interface AppConfig {
   // Workspace orphan detection dismissals.
   // Tracks per-workspace dismissals so we don't re-notify until config files change.
   orphanDismissals: import('../../shared/workspace-orphan-types').WorkspaceOrphanDismissal[];
+
+  // Optional HTTP proxy URL for all outbound API requests (e.g. http://proxy:8080).
+  // Applied via applyConfigHttpProxy() in src/main/utils/http-proxy.ts at startup
+  // and whenever the value changes. Empty string or undefined means no override
+  // (shell/OS proxy env vars are inherited as-is).
+  httpProxy?: string;
 }
 
 /** Shared fields for both LLM and embedding memory runtime sub-configs. */
@@ -1501,6 +1507,9 @@ export class ConfigStore {
       notificationsEnabled: toBoolean(raw.notificationsEnabled, defaultConfig.notificationsEnabled),
       skillConflictConfig: normalizeSkillConflictConfig(raw.skillConflictConfig),
       orphanDismissals: normalizeOrphanDismissals(raw.orphanDismissals),
+      ...(typeof raw.httpProxy === 'string' && raw.httpProxy.trim()
+        ? { httpProxy: raw.httpProxy.trim() }
+        : {}),
     };
     this.normalizeModelIds(result);
     return result;
@@ -1905,7 +1914,7 @@ export class ConfigStore {
     }
 
     const projectedConfig = this.composeProjectedConfig(current, nextConfigSets, activeConfigSetId);
-    this.saveConfig({
+    const mergedForSave: AppConfig = {
       ...projectedConfig,
       claudeCodePath:
         updates.claudeCodePath !== undefined ? updates.claudeCodePath : current.claudeCodePath,
@@ -2012,6 +2021,13 @@ export class ConfigStore {
         updates.notificationsEnabled !== undefined
           ? toBoolean(updates.notificationsEnabled, current.notificationsEnabled)
           : current.notificationsEnabled,
+      ...(() => {
+        const next =
+          updates.httpProxy === undefined
+            ? current.httpProxy // no change
+            : (typeof updates.httpProxy === 'string' ? updates.httpProxy.trim() : '') || undefined; // empty = clear
+        return next ? { httpProxy: next } : {};
+      })(),
       skillConflictConfig:
         updates.skillConflictConfig !== undefined
           ? normalizeSkillConflictConfig(updates.skillConflictConfig)
@@ -2020,7 +2036,20 @@ export class ConfigStore {
         updates.orphanDismissals !== undefined
           ? normalizeOrphanDismissals(updates.orphanDismissals)
           : current.orphanDismissals,
-    });
+    };
+    // httpProxy is optional — delete from the merged object when the user
+    // clears it (empty string) so normalizeConfig sees it as absent.
+    const isHttpProxyClearing =
+      updates.httpProxy !== undefined &&
+      (typeof updates.httpProxy !== 'string' || !updates.httpProxy.trim());
+    if (isHttpProxyClearing) {
+      delete mergedForSave.httpProxy;
+      // Explicitly delete from the store so conf's merge-write doesn't leave
+      // the stale key on disk (conf.set(object) merges; it does not delete
+      // absent keys — only conf.delete(key) removes a key from the file).
+      this.store.delete('httpProxy' as unknown as keyof AppConfig);
+    }
+    this.saveConfig(mergedForSave);
   }
 
   /**

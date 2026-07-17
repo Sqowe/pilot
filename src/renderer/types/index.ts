@@ -992,6 +992,8 @@ export interface AppConfig {
   mcpToolTimeoutSeconds?: number;
   // Native desktop notifications when the app is not focused.
   notificationsEnabled?: boolean;
+  // Optional HTTP proxy URL for all outbound API requests.
+  httpProxy?: string;
 }
 
 export interface ProviderPreset {

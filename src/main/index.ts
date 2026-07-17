@@ -58,6 +58,7 @@ import { runConfigApiTest } from './config/config-test-routing';
 import { getFullProviderCatalog } from './config/provider-catalog-native';
 import { listOllamaModels } from './config/ollama-api';
 import { applyLocalDevPath, isBasePathSet, getEffectivePath } from './utils/path-env';
+import { applyConfigHttpProxy } from './utils/http-proxy';
 import {
   setPermissionRules,
   setBashCommandLists,
@@ -165,6 +166,13 @@ if (dotenvResult.error) {
 if (configStore.isConfigured()) {
   log('[Config] Applying saved configuration...');
   configStore.applyToEnv();
+}
+
+// Apply saved HTTP proxy setting so all outbound SDK requests honour it.
+// Only applies when a proxy is actually configured; does not clear shell-set vars on startup.
+const savedHttpProxy = configStore.get('httpProxy');
+if (savedHttpProxy) {
+  applyConfigHttpProxy(savedHttpProxy);
 }
 
 // Disable hardware acceleration for better compatibility
@@ -1972,6 +1980,7 @@ ipcMain.handle('config.save', async (_event, newConfig: Partial<AppConfig>) => {
   log('[Config] Saving config:', {
     ...newConfig,
     apiKey: newConfig.apiKey ? '***' : '',
+    httpProxy: newConfig.httpProxy ? '<redacted>' : newConfig.httpProxy,
     memoryRuntime: newConfig.memoryRuntime
       ? {
           ...newConfig.memoryRuntime,
@@ -1992,6 +2001,32 @@ ipcMain.handle('config.save', async (_event, newConfig: Partial<AppConfig>) => {
   });
 
   const previousConfig = configStore.getAll();
+
+  // Server-side validation for httpProxy — renderer validation can be bypassed
+  // via devtools or corrupted config on disk.
+  if (newConfig.httpProxy !== undefined) {
+    const rawProxy = newConfig.httpProxy;
+    if (rawProxy && rawProxy.trim()) {
+      try {
+        const parsed = new URL(rawProxy.trim());
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          return { success: false, error: 'httpProxy must use http:// or https:// scheme' };
+        }
+        // Strip credentials from stored value — proxy URLs with user:pass@host
+        // are stored in plaintext; reject them to avoid silent secret exposure.
+        if (parsed.username || parsed.password) {
+          return {
+            success: false,
+            error:
+              'httpProxy must not include credentials (user:pass@host). Configure authentication separately.',
+          };
+        }
+      } catch {
+        return { success: false, error: 'httpProxy is not a valid URL' };
+      }
+    }
+  }
+
   // Update config
   configStore.update(newConfig);
 
@@ -2011,6 +2046,11 @@ ipcMain.handle('config.save', async (_event, newConfig: Partial<AppConfig>) => {
         mcpManager.invalidateEnvCache();
       }
     }
+  }
+
+  // If httpProxy changed, re-apply it unconditionally so all outbound requests pick it up
+  if (newConfig.httpProxy !== undefined && newConfig.httpProxy !== previousConfig.httpProxy) {
+    applyConfigHttpProxy(newConfig.httpProxy, true);
   }
 
   const updatedConfig = await syncConfigAfterMutation(previousConfig);
