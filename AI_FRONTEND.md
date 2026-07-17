@@ -13,7 +13,7 @@ real bugs, and architectural decisions in this project.
 | State      | Zustand 5                                                                  | Single store in `store/index.ts`              |
 | Styling    | Tailwind CSS 3                                                             | `tailwind.config.js`; no CSS Modules, no SASS |
 | Icons      | Lucide React                                                               | `lucide-react` — no other icon libraries      |
-| i18n       | i18next + react-i18next                                                    | EN + ZH; see Section 7                        |
+| i18n       | i18next + react-i18next                                                    | en/zh/ru/hu; see Section 7                    |
 | Markdown   | react-markdown + remark-gfm + remark-math + rehype-katex + rehype-sanitize | See Section 8                                 |
 | Build      | Vite 7 + vite-plugin-electron                                              | `vite.config.ts`                              |
 | Test       | Vitest + (React Testing Library if needed)                                 | `vitest.config.mts`                           |
@@ -180,7 +180,8 @@ This is the most critical hook in the renderer. It:
 ## 7. Internationalization (i18n)
 
 - **All user-visible text must use `t()` from `useTranslation()`** — no hardcoded strings.
-- Two locale files: `src/renderer/i18n/locales/en.json` and `zh.json`.
+- Four locale files: `src/renderer/i18n/locales/{en,zh,ru,hu}.json`. Run
+  `ls src/renderer/i18n/locales/` before adding a key — don't assume the count from memory.
 - Key naming: dot-separated, grouped by feature module:
   ```
   settings.general.title
@@ -188,9 +189,11 @@ This is the most critical hook in the renderer. It:
   chat.input.placeholder
   mcp.toolsAvailable
   ```
-- **Always add both EN and ZH** when creating new keys. If you don't know the
-  Chinese translation, add the English text as a placeholder with a `// TODO: translate`
+- **Always add the key to all four locale files** in the same change. If you don't know a
+  translation, add the English text as a placeholder with a `// TODO: translate`
   comment in the JSON (JSON doesn't support comments — add a `_todo` sibling key).
+  Match each locale's existing terminology (e.g. ru/hu already use "ИИ"/"MI" for "AI") and
+  punctuation convention rather than inventing new phrasing.
 - Variables use `{{name}}` interpolation syntax.
 - Plurals use `_plural` suffix (i18next convention).
 - Language detection order: localStorage → browser navigator.
@@ -289,7 +292,7 @@ react-markdown
 | ------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------- |
 | Stale state in IPC handler      | Closure captures old store reference                | Use `useAppStore.getState()` for latest state in callbacks              |
 | Re-render storm                 | Subscribing to entire store or large objects        | Use `useShallow` selectors, select minimal slices                       |
-| Missing translations            | Added EN key but forgot ZH                          | Always add both locale files simultaneously                             |
+| Missing translations            | Added EN key but forgot ru/zh/hu                    | Always add all four locale files simultaneously                         |
 | Event silently dropped          | New ClientEvent type not in preload allowlist       | Add to `ALLOWED_CLIENT_EVENTS` in `src/preload/index.ts`                |
 | Markdown XSS                    | Removed or reordered rehype-sanitize                | Never remove; always keep it last in rehype chain                       |
 | Dark mode broken                | Used raw Tailwind colors instead of semantic tokens | Use `text-text-primary`, `bg-surface`, etc.                             |
