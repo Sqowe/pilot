@@ -20,7 +20,7 @@ import {
   type AgentSession as PiAgentSession,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import type { ImageContent as PiImageContent } from '@earendil-works/pi-ai';
+import type { ImageContent as PiImageContent, ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { Type } from 'typebox';
 import { getSharedModelRuntime, type ModelRuntime } from './shared-auth';
 import { formatTokenCount, normalizeTokenUsage } from './token-usage-utils';
@@ -2845,8 +2845,9 @@ RULES:
       // Resolve thinking level early — needed for session reuse check below
       const enableThinking = configStore.get('enableThinking') ?? false;
       logCtx('[ClaudeAgentRunner] Enable thinking mode:', enableThinking);
-      type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-      const thinkingLevel: PiThinkingLevel = enableThinking ? 'medium' : 'off';
+      // ModelThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+      // imported from pi-ai — single source of truth, no local union to maintain.
+      const thinkingLevel: ModelThinkingLevel = enableThinking ? 'medium' : 'off';
 
       // Load workspace-level instructions once per query so the fingerprint is
       // available to the runtime signature below. Reused cached sessions get

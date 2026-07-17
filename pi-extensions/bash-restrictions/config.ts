@@ -27,8 +27,10 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 // Namespace import (not a named import): CONFIG_DIR_NAME was added in pi SDK
-// 0.79; a static named import would resolve to undefined on older SDKs (and can
-// throw under strict ESM). Reading it off the namespace lets us fall back safely.
+// 0.79 and is guaranteed present on the project's 0.80+ floor. A static named
+// import would resolve to undefined on older SDKs (and can throw under strict
+// ESM). Reading it off the namespace keeps the fallback active so the extension
+// remains loadable by users running an older pi distribution at their machine.
 import * as piSdk from '@earendil-works/pi-coding-agent';
 import {
   sanitizeBashCommandList,
@@ -39,8 +41,9 @@ import {
 
 /**
  * pi's config directory name. Defaults to ".pi" but rebranded pi distributions
- * may use a different name (pi exposes this as CONFIG_DIR_NAME from SDK 0.79+).
- * Falls back to ".pi" when the running SDK doesn't provide it.
+ * may use a different name (pi exposes this as CONFIG_DIR_NAME from SDK 0.79+,
+ * guaranteed present on the project's 0.80+ baseline). Falls back to ".pi" when
+ * the running SDK doesn't provide it (older user-installed pi distributions).
  */
 const CONFIG_DIR: string =
   typeof (piSdk as { CONFIG_DIR_NAME?: unknown }).CONFIG_DIR_NAME === 'string' &&

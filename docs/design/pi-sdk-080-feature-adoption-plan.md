@@ -1,7 +1,7 @@
 # Pi SDK 0.79–0.80 Feature Adoption — Design & Implementation Plan
 
 **Created:** 2026-06-25
-**Status:** T1 complete (2026-07-17). T2/T3 pending.
+**Status:** T1 complete (2026-07-17). T2 partially complete (2026-07-18): `CONFIG_DIR_NAME` hardening + `ModelThinkingLevel` type hygiene done; project-trust investigation pending.
 **Author:** AI-assisted design session
 **Baseline:** **0.80.10** — `chore(deps): uplift pi-ai + pi-coding-agent 0.80.3 → 0.80.10`
 (`eee3877`), landed. The original blocking dependency (the 0.78.1 → 0.80.2 uplift,
@@ -43,7 +43,8 @@ Guiding principles (consistent with `ARCHITECTURE.md`):
 | ------ | ---------------------------------------------------------------------- | -------------------- | ------ | ------------------- | ------- |
 | **T1** | Compaction transparency — surface post-compaction token estimate       | 0.79.8               | S      | Low                 | ✅ Done |
 | **T1** | Prompt-cache hit visibility (CH)                                       | 0.79.0 + pi-ai usage | S–M    | Low                 | ✅ Done |
-| **T2** | `CONFIG_DIR_NAME` hardening                                            | 0.79.7               | S      | Low                 | Pending |
+| **T2** | `CONFIG_DIR_NAME` hardening                                            | 0.79.7               | S      | Low                 | ✅ Done |
+| **T2** | `ModelThinkingLevel` type hygiene (§5.4 step 1)                        | 0.80.6               | S      | Low                 | ✅ Done |
 | **T2** | Native project-trust alignment (investigation → design)                | 0.79.0–0.79.1        | L      | **High (security)** | Pending |
 | **T3** | Thinking-level surface — import the SDK type (§5.4 step 1)             | 0.80.6               | S      | Low                 | Pending |
 | **T3** | Claude Fable 5 + refresh stale curation                                | 0.79.1–0.80.9        | S      | Low                 | Pending |
@@ -212,7 +213,7 @@ render test that the chip appears when cache data is present.
 
 ## 4. Tier 2 — cleanup & alignment
 
-### 4.1 `CONFIG_DIR_NAME` hardening + exported edit-diff helpers
+### 4.1 `CONFIG_DIR_NAME` hardening ✅ (items 1–2)
 
 **SDK capability (0.79.7):** `CONFIG_DIR_NAME` is exported from the coding-agent public
 API (so extensions resolve project config paths without hardcoding `.pi`), along with
@@ -255,6 +256,18 @@ edit-diff helpers `generateDiffString`, `generateUnifiedPatch`, and the
    _add_ code; the question is whether the UX win justifies it. Sizing changes from a
    Small–Medium spike to a Medium feature, and it no longer belongs in T2 "cleanup" —
    propose moving it to T3 or splitting it into its own item when picked up.
+
+> **As built (2026-07-18):**
+>
+> - `pi-extensions/bash-restrictions/config.ts` — updated namespace-import comment
+>   and `CONFIG_DIR` jsdoc to note the 0.80+ floor and that the fallback serves
+>   older user-installed distributions, not the project's own build.
+> - `tests/pi-bash-extension-config.test.ts` — added `CONFIG_DIR_NAME exported from
+the SDK is honored` test: reads the live SDK namespace export and asserts both
+>   `resolveGlobalConfigPath` and `resolveProjectConfigPath` embed it.
+>
+> Item 3 (edit-diff rendering) remains pending — it is a Medium feature, not a
+> cleanup, and is tracked separately (see §4.1 item 3 note above).
 
 **Risk:** Low. **Effort:** Small (items 1–2); Medium for item 3 (now a feature, not a
 swap).
@@ -396,7 +409,7 @@ management (§7).
 **Risk:** Low. **Effort:** Small–Medium (settings UI + i18n) — down from Medium now that
 `env` is a parameter rather than plumbing.
 
-### 5.4 Thinking-level surface — `max` + drop the hand-rolled union (0.80.6)
+### 5.4 Thinking-level surface — `max` + drop the hand-rolled union (0.80.6) ✅ (step 1)
 
 **Capability:** 0.80.6 added an opt-in `max` thinking level above `xhigh` (natively on
 GPT-5.6 and adaptive Claude models) across CLI, SDK, RPC, and model selection; themes can
@@ -429,6 +442,15 @@ unreachable.
 > Step 2 is deferred, not rejected: it needs per-model capability clamping (not every model
 > supports `max`/`xhigh`) plus i18n across four locales, which is a real feature, not a
 > by-product of an uplift. Revisit if users ask for finer control.
+
+> **As built (2026-07-18):**
+>
+> - `src/main/claude/agent-runner.ts` — dropped local `type PiThinkingLevel` union
+>   (was missing `'max'`, already drifted); imported `ModelThinkingLevel` from
+>   `@earendil-works/pi-ai` instead. `thinkingLevel` is now typed against the SDK
+>   union — single source of truth, compile-time drift detection going forward.
+>
+> Step 2 (UX — expose levels in UI) remains deferred.
 
 **Risk:** Low. **Effort:** Small (step 1 only, as decided).
 
