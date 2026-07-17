@@ -3,11 +3,7 @@
  * Imports the production function directly to prevent test/implementation drift.
  */
 import { describe, it, expect } from 'vitest';
-import {
-  computeContextUsage,
-  computeCacheHitRate,
-  findLastTokenUsage,
-} from '../src/renderer/utils/context-usage';
+import { computeContextUsage, findLastTokenUsage } from '../src/renderer/utils/context-usage';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -223,47 +219,6 @@ describe('edge cases', () => {
   });
 });
 
-describe('computeCacheHitRate', () => {
-  it('returns null when both cacheRead and input are 0', () => {
-    expect(computeCacheHitRate({ cacheRead: 0, input: 0 })).toBeNull();
-  });
-
-  it('returns 0 when input is positive but cacheRead is 0 (full cache miss)', () => {
-    expect(computeCacheHitRate({ cacheRead: 0, input: 10000 })).toBe(0);
-  });
-
-  it('returns 100 when all input tokens were cache hits', () => {
-    // cacheRead === input → nonCachedInput = 0, denominator = cacheRead
-    expect(computeCacheHitRate({ cacheRead: 10000, input: 10000 })).toBe(100);
-  });
-
-  it('computes correct rate for a partial cache hit', () => {
-    // 8000 cached out of 10000 input → nonCachedInput = 2000
-    // rate = 8000 / (8000 + 2000) = 80%
-    expect(computeCacheHitRate({ cacheRead: 8000, input: 10000 })).toBe(80);
-  });
-
-  it('rounds fractional rates to nearest integer', () => {
-    // 1 cached, 3 non-cached → 1/4 = 25%
-    expect(computeCacheHitRate({ cacheRead: 1, input: 4 })).toBe(25);
-    // 1 cached, 2 non-cached → 1/3 ≈ 33.3% → rounds to 33
-    expect(computeCacheHitRate({ cacheRead: 1, input: 3 })).toBe(33);
-  });
-
-  it('handles cacheRead larger than input gracefully (clamps nonCachedInput to 0)', () => {
-    // Some providers report cacheRead > input; nonCachedInput should not go negative
-    expect(computeCacheHitRate({ cacheRead: 12000, input: 10000 })).toBe(100);
-  });
-
-  it('returns 100 when cacheRead > 0 and input === 0 (all served from cache)', () => {
-    // When a provider reports cache reads but input tokens = 0, the entire
-    // request was served from cache. nonCachedInput = max(0, 0 - cacheRead) = 0,
-    // denominator = cacheRead, so the hit rate is 100%.
-    // This is distinct from the null case (both zero) and intentionally returns 100.
-    expect(computeCacheHitRate({ cacheRead: 10, input: 0 })).toBe(100);
-  });
-});
-
 describe('findLastTokenUsage', () => {
   it('returns undefined for an empty message array', () => {
     expect(findLastTokenUsage([])).toBeUndefined();
@@ -300,14 +255,6 @@ describe('findLastTokenUsage', () => {
     const usage = { input: 100, output: 50 };
     const result = findLastTokenUsage([{ tokenUsage: usage }, { tokenUsage: undefined }]);
     expect(result).toBe(usage);
-  });
-
-  it('CH% is computable from a message with input=0 and cacheRead>0', () => {
-    // Integration: findLastTokenUsage picks the right message, then
-    // computeCacheHitRate returns 100 (all served from cache).
-    const tu = findLastTokenUsage([{ tokenUsage: { input: 0, output: 0, cacheRead: 800 } }]);
-    expect(tu).toBeDefined();
-    expect(computeCacheHitRate({ cacheRead: tu!.cacheRead!, input: tu!.input })).toBe(100);
   });
 
   it('skips non-assistant messages when role is present', () => {

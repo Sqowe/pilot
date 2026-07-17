@@ -46,11 +46,7 @@ import {
 } from 'lucide-react';
 import type { TraceStep, MCPServerInfo } from '../types';
 import type { SkillsWorkspaceProfile } from '../../shared/skill-conflict-types';
-import {
-  computeContextUsage,
-  computeCacheHitRate,
-  findLastTokenUsage,
-} from '../utils/context-usage';
+import { computeContextUsage, findLastTokenUsage } from '../utils/context-usage';
 import { deriveDisabledServerIds } from '../utils/mcp-profile-derive';
 import { isSkillsProfileDirty } from '../utils/skills-profile-derive';
 
@@ -245,9 +241,8 @@ export function ContextPanel() {
     return { input, output, total: input + output };
   }, [messages]);
 
-  // Single reverse scan to find the latest assistant message tokenUsage.
-  // Shared by contextUsage (lastMessageInputTokens fallback) and cacheHitRate
-  // so we don't scan the messages array more than once per render.
+  // Single reverse scan to find the latest assistant message tokenUsage,
+  // used as the contextUsage lastMessageInputTokens fallback.
   const lastAssistantTokenUsage = useMemo(() => findLastTokenUsage(messages), [messages]);
 
   // Context usage: effective budget including tool schemas + output reservation
@@ -270,18 +265,6 @@ export function ContextPanel() {
       lastMessageInputTokens: lastAssistantTokenUsage?.input ?? 0,
     });
   }, [activeSessionId, sessionStates, lastAssistantTokenUsage]);
-
-  // Cache-hit rate chip: derived from the latest assistant message's tokenUsage
-  // so that both `input` and `cacheRead` always come from the same turn.
-  // Using session state cacheRead + a separately-scanned lastInput risks a
-  // race between message persistence and session.contextInfo updates.
-  const cacheHitRate = useMemo(() => {
-    if (!lastAssistantTokenUsage || lastAssistantTokenUsage.cacheRead === undefined) return null;
-    return computeCacheHitRate({
-      cacheRead: lastAssistantTokenUsage.cacheRead,
-      input: lastAssistantTokenUsage.input,
-    });
-  }, [lastAssistantTokenUsage]);
 
   const completedStepCount = useMemo(
     () => steps.reduce((n, s) => n + (s.status === 'completed' ? 1 : 0), 0),
@@ -1092,14 +1075,6 @@ export function ContextPanel() {
         <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
           {t('context.context')}
         </span>
-        {cacheHitRate !== null && (
-          <span
-            className="ml-auto text-xs font-medium text-text-muted/70 tabular-nums"
-            title={t('context.cacheHitTooltip')}
-          >
-            {t('context.cacheHit', { rate: cacheHitRate })}
-          </span>
-        )}
       </div>
 
       {/* Scrollable content area */}

@@ -956,9 +956,7 @@
     "contextUsage": "上下文用量",
     "contextUsageLabel": "{{used}} / {{total}}",
     "contextUsageTools": "{{count}} 工具",
-    "contextUsageOutput": "{{count}} 输出",
-    "cacheHit": "CH {{rate}}%",
-    "cacheHitTooltip": "最新回合的提示缓存命中率"
+    "contextUsageOutput": "{{count}} 输出"
   },
   "messageCard": {
     "request": "请求",

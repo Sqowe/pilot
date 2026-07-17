@@ -60,37 +60,6 @@ export interface ContextUsageResult {
 }
 
 /**
- * Compute the prompt-cache hit rate as a percentage (0–100), rounded to the
- * nearest integer.
- *
- * **Provider semantics assumed:** `input` is the total input token count
- * (cached + non-cached combined), and `cacheRead` is a subset of `input`.
- * This matches Anthropic's usage reporting. Providers that define `input` as
- * non-cached tokens only (i.e., `total = input + cacheRead`) will produce
- * a misleading result — add a provider-specific normalization step before
- * calling this function if that is the case.
- *
- * Formula: cacheRead / (cacheRead + nonCachedInput) * 100
- * where nonCachedInput = max(0, input - cacheRead).
- *
- * Returns null when there is no meaningful cache data (both fields zero/absent).
- * Returns 0 when input is positive but cacheRead is zero (cache miss).
- */
-export function computeCacheHitRate({
-  cacheRead,
-  input,
-}: {
-  cacheRead: number;
-  input: number;
-}): number | null {
-  if (cacheRead === 0 && input === 0) return null;
-  const nonCachedInput = Math.max(0, input - cacheRead);
-  const denominator = cacheRead + nonCachedInput;
-  if (denominator === 0) return null;
-  return Math.round((cacheRead / denominator) * 100);
-}
-
-/**
  * Compute context usage for display in the ContextPanel.
  *
  * Returns null when there's no meaningful data to display (no context window,
