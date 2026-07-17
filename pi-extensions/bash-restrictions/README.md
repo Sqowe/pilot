@@ -119,12 +119,65 @@ The extension reads up to two optional config files and **unions** them:
 }
 ```
 
+### Paths, quotes & backslashes (Windows)
+
+Pattern entries are ordinary JSON strings, so characters that are special in
+JSON must be escaped. This matters most for Windows-style paths:
+
+| Character          | Write in JSON as | Example                           |
+| ------------------ | ---------------- | --------------------------------- |
+| `"` (double quote) | `\"`             | a quoted path argument            |
+| `\` (backslash)    | `\\`             | Windows paths like `C:\Users\...` |
+| `:` and `/`        | as-is            | no escaping needed                |
+
+So `cd "C:/Users/you/projects/app"` is written as:
+
+```jsonc
+{ "trusted": ["cd \"C:/Users/you/projects/app\""] }
+```
+
+and the backslash form `cd "C:\Users\you\projects\app"` as:
+
+```jsonc
+{ "trusted": ["cd \"C:\\Users\\you\\projects\\app\""] }
+```
+
+**Matching is literal — including quotes.** A `trusted` prefix is matched
+against the raw command text (only `*` is a wildcard), so the entries above
+match **only** when the agent quotes the path exactly the same way. If it runs
+the command unquoted, they won't match. Wrap the variable part in `*` to accept
+either form:
+
+```jsonc
+{ "trusted": ["cd *C:/Users/you/projects/app*"] } // matches quoted or unquoted
+```
+
 ### Merge rules
 
 - `trusted` and `denied` → **union** of global ∪ project, deduped
   (global entries first). Per-project tightening is done by _adding_ denials.
 - `permissionTimeoutSeconds` → project value if the key is present, else global,
   else the shared default (`300`).
+
+For example, a global file plus a trusted project file:
+
+```jsonc
+// ~/.pi/agent/bash-restrictions.json   (global)
+{ "trusted": ["ls *", "git status*"], "denied": ["rm"] }
+
+// <cwd>/.pi/bash-restrictions.json     (project)
+{ "trusted": ["npm run *"], "denied": ["git push"] }
+```
+
+are evaluated against the merged result:
+
+```jsonc
+{ "trusted": ["ls *", "git status*", "npm run *"], "denied": ["rm", "git push"] }
+```
+
+A project can only **add** entries — it can't drop the global `rm` denial or
+otherwise loosen a global rule. (If the project isn't trusted, its file is
+skipped entirely and only the global lists apply.)
 
 ### Project trust
 
@@ -134,6 +187,25 @@ project's file is ignored, so it cannot widen `trusted` to auto-allow dangerous
 commands or otherwise loosen the gate — only the **global** file applies there.
 If trust state is unavailable, the extension fails closed (treats the project as
 untrusted).
+
+### Wildcards & blanket trust
+
+`*` is the only wildcard in a `trusted` pattern, and a bare `"*"` compiles to
+`^.*` — it matches **every** command. So `"trusted": ["*"]` opts the gate in and
+**auto-allows all bash** without a prompt. Two things still force a prompt even
+then:
+
+- **Denylist hits.** The `denied` list (global ∪ project) is checked first, so a
+  denied pattern still sends the command to **ask** — `"*"` cannot override it.
+- **Unsupported shell syntax.** Command substitution `$(...)`, backticks,
+  newlines, a background `&`, subshells `(...)`, and process substitution `<(...)`
+  fail closed to **ask**.
+
+In a **project** file, `["*"]` obeys the **Project trust** rule above: an
+untrusted project's `["*"]` is ignored (only the global config applies), so a
+project cannot self-authorize blanket trust. Prefer specific prefixes
+(`"npm run *"`, `"git status*"`) over `"*"`; if you do use `"*"`, pair it with a
+strong **global** `denied` list — the one layer a project's `"*"` can't loosen.
 
 ### Reload
 
