@@ -70,8 +70,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",
-    "@earendil-works/pi-ai": "0.80.2",
-    "@earendil-works/pi-coding-agent": "0.80.2",
+    "@earendil-works/pi-ai": "0.80.10",
+    "@earendil-works/pi-coding-agent": "0.80.10",
     "@google/genai": "^1.52.0",
     "@larksuiteoapi/node-sdk": "^1.66.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
@@ -83,7 +83,7 @@
     "dotenv": "^17.2.3",
     "electron-store": "^11.0.2",
     "yauzl": "^2.10.0",
-    "electron-updater": "^6.3.0",
+    "electron-updater": "^6.8.9",
     "glob": "^10.3.10",
     "highlight.js": "^11.11.1",
     "i18next": "^25.10.1",
@@ -104,8 +104,8 @@
     "remark-math": "^6.0.0",
     "typebox": "^1.1.38",
     "uuid": "^11.1.1",
-    "ws": "^8.21.0",
-    "zustand": "^5.0.12"
+    "ws": "^8.21.1",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
