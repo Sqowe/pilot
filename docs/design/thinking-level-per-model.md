@@ -1,12 +1,18 @@
 # Per-Model Thinking Level — Inherit pi's Reasoning Capabilities
 
 **Created:** 2026-07-19
-**Status:** Design — not started. Extracts and supersedes
+**Status:** **Implemented — shipped 2026-07-20** (`9078c543`, `a5b628d2`). See §9 for the
+as-built record, including four defects found in review and three deliberate divergences
+from this design. Extracts and supersedes
 [`pi-sdk-080-feature-adoption-plan.md`](./pi-sdk-080-feature-adoption-plan.md) **§5.4 step 2**
 (the deferred UX half). Step 1 — importing `ModelThinkingLevel` — already shipped
 (`agent-runner.ts`, 2026-07-18).
 **Author:** AI-assisted design session
 **Baseline:** pi-ai / pi-coding-agent **0.80.10** (same as the §5.4 plan).
+
+> **Reading note.** §§1-8 are the original design, left intact as written. Line references
+> and the "Today" column in §3 describe the pre-implementation codebase and have since
+> drifted. §9 records what was actually built.
 
 ---
 
@@ -210,3 +216,108 @@ a distinct feature (config schema + editor UI) and should not block the core lev
   model → nearest.
 - **Manual:** switch models in Settings, confirm the segment set changes and runtime logs
   `thinkingLevel=<clamped>` at [`agent-runner.ts:3255`](../../src/main/claude/agent-runner.ts#L3255).
+
+---
+
+## 9. As built (2026-07-20)
+
+Shipped in `9078c543` (feature + three defects) and `a5b628d2` (Custom-endpoint
+detection). Verified against the code at time of writing.
+
+### 9.1 Status by section
+
+| §   | Piece                    | Status  | Notes                                                              |
+| --- | ------------------------ | ------- | ------------------------------------------------------------------ |
+| 4.1 | Capability helper + IPC  | ✅ Done | `resolveThinkingCapabilities`, `config.getThinkingLevels`, preload |
+| 4.2 | Config field + migration | ✅ Done | `thinkingLevel` on `ConfigSet`/`AppConfig`; legacy boolean derived |
+| 4.3 | agent-runner clamp       | ✅ Done | Diverged — clamps the resolved `Model`, not a re-resolved string   |
+| 4.4 | Segmented level control  | ✅ Done | Diverged — storage stays unclamped, display clamps (see 9.3)       |
+| 4.5 | i18n ×4                  | ✅ Done | Keys renamed `enableThinking*` → `thinkingLevel*`                  |
+| 6   | Inherited limitations    | ➖ N/A  | Documented only; still accurate                                    |
+| 7   | User `thinkingLevelMap`  | ⬜ Open | Partly overtaken — see 9.4                                         |
+| 8   | Verification             | ✅ Done | 49 tests across 4 files (see 9.6)                                  |
+
+### 9.2 Defects found in review, fixed before/after ship
+
+The design was implemented as written; review and manual testing then surfaced four
+bugs, three of them variations on a single root cause — **treating "unknown" as a
+known negative, and letting derived data overwrite user intent.**
+
+1. **Clamp direction inverted.** The renderer searched down-then-up; pi searches
+   up-then-down (`pi-ai/dist/models.js:404-422`). Settings could show a level the agent
+   never ran at. Consolidated into `src/shared/thinking-levels.ts`
+   (`clampToSupportedLevel`), verified against pi across all 448 map/level combinations.
+2. **Mount-time reset.** The capability effect runs once before `profiles` loads, with no
+   model resolvable. That dispatched "unsupported", which forced the stored level to
+   `off` — destroying the loaded preference, which the next save then persisted. Fixed by
+   splitting `CLEAR_THINKING_CAPABILITIES` (unknown) from `SET_THINKING_CAPABILITIES`
+   (known); only the latter may affect the level.
+3. **Spurious unsaved-changes.** Clamping into state changed `thinkingLevel`, which is
+   part of the draft signature — so merely opening Settings marked the config set dirty
+   and the unsaved-changes gate **blocked config-set switching**. Fixed by 9.3.
+4. **Custom endpoints reported as non-reasoning.** Detection searched only
+   `COMMON_FALLBACK_PROVIDERS` (3 of pi's 35), so `MiniMax-M3`, `z-ai/glm-5.1` and
+   others were declared to have no reasoning support. Fixed in `a5b628d2` — see 9.4.
+
+### 9.3 Divergence 1 — storage stays unclamped (§4.4)
+
+The design said the UI should "show the clamped value as active." The first
+implementation clamped into reducer state, making it the stored value and causing
+defect 3.
+
+As built: `thinkingLevel` holds the user's model-independent intent verbatim and is never
+written by capability loading. A derived `effectiveThinkingLevel` clamps **for display
+only**; `agent-runner` clamps again at consumption. This is what §4.2 already required
+("keep the value unclamped in storage… so switching models never corrupts the stored
+preference") — the two sections were in tension and §4.2 won.
+
+Consequence worth knowing: switching to a non-reasoning model and back now **restores**
+the previous level rather than having silently erased it.
+
+Related rule, learned the hard way and worth preserving: **`off` is sticky.** Capability
+data must never move a user off `off`, or switching models could silently enable billed
+reasoning. Covered by a test.
+
+### 9.4 Divergence 2 — reasoning traits, not whole models (§7)
+
+§7 proposed user-supplied `thinkingLevelMap` overrides as a separate epic. `a5b628d2`
+took a narrower path first: `findRegistryReasoningTraits` sweeps every registry provider
+for a matching model id and borrows **only** the `reasoning` flag.
+
+Model _resolution_ is deliberately unchanged. Adopting a foreign provider's entry
+wholesale would import its `compat` quirks, pricing and context limits for an endpoint
+the user is not calling — `claude-opus-4.8` resolves under `github-copilot`,
+`z-ai/glm-5.1` under `opencode`. `thinkingLevelMap` is likewise not borrowed: pi gates
+`xhigh`/`max` behind explicit per-vendor mapping, and the donor is by definition not the
+endpoint being called.
+
+Still open, now with its own design note: models pi has **never seen** (a proxy serving
+something newer than the pinned pi-ai) remain undetectable, and the panel still asserts
+they lack reasoning support. See
+[`model-reasoning-override.md`](./model-reasoning-override.md).
+
+### 9.5 Divergence 3 — small corrections to the design's assumptions
+
+- **`SETTABLE_KEYS` (§4.2) does not exist** in this codebase. `ConfigStore.update()` takes
+  `Partial<AppConfig>`; the `mutatesActiveSet` guard was extended instead.
+- **No `useIPC` wrapper (§4.1).** `useIPC.ts` does not wrap `config.*` at all —
+  `useApiConfigState` calls `window.electronAPI.config.*` directly (11 sites). The new
+  call follows that existing convention; adding a wrapper for one method would have been
+  the inconsistent choice.
+- **`supportsThinking` is `nonOff.length > 0`, not `!!model.reasoning`** (§4.1). These
+  agree except when `reasoning: true` but every non-off level is mapped `null` — where
+  the implemented form is the more correct answer.
+
+### 9.6 Tests
+
+| File                                                 | Tests | Covers                                    |
+| ---------------------------------------------------- | ----- | ----------------------------------------- |
+| `tests/config-store-thinking-level.test.ts`          | 15    | Migration, normalization, persistence     |
+| `tests/pi-model-resolution-thinking.test.ts`         | 15    | Capability resolution, clamping (mocked)  |
+| `tests/api-config-state-thinking-level.test.ts`      | 14    | Reducer, clamp parity, draft signature    |
+| `tests/pi-model-resolution-reasoning-traits.test.ts` | 5     | Trait borrowing (real registry, unmocked) |
+
+The last file is deliberately unmocked: it asserts things about pi's actual model tables,
+which mocked tables cannot verify. Note that the mocked file stubs `getProviders` to `[]`
+on purpose — without that stub the traits lookup degrades silently and those tests would
+pass for the wrong reason.
