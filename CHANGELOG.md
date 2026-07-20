@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- HTTP proxy setting for routing model API requests through a corporate/egress proxy
+  (Settings → API), alongside a refreshed curated model list.
+- Single searchable provider and model pickers in Settings → API, backed by the live
+  pi-ai registry (replaces the split featured/catalog pickers).
+- Compaction estimate in the Context Panel, surfacing when the conversation is
+  approaching the auto-compaction threshold (pi SDK 0.80 adoption).
+
+### Changed
+
+- Uplifted `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` from 0.80.3 to 0.80.10.
+- Adopted the SDK's `ModelThinkingLevel` type internally (groundwork for a future
+  per-model thinking-level selector).
+
+### Fixed
+
+- Corrected OpenRouter Anthropic model slugs to the dot form so those models resolve.
+- Native provider profiles now persist without crashing `config.save`.
+- Native model diagnostics now probe each provider against its own registry endpoint
+  instead of defaulting to the OpenAI endpoint.
+
+### Removed
+
+- Removed the prompt-cache hit (CH) chip from the Context Panel — it was buggy and
+  redundant next to the Context Usage readout.
+
+## [1.0.4] - 2026-07-06
+
+### Added
+
+- Native provider catalog: z.ai, MiniMax, Kimi, DeepSeek, Groq, xAI and other pi-ai
+  first-class providers are now selectable in Settings → API, driven by a data-driven
+  projection of the SDK registry (real pricing, context windows, base URLs, and
+  provider-specific streaming quirks) behind a searchable model picker. The Custom
+  entry remains as the escape hatch. Existing config sets load and behave identically.
+- Local embedding hardening: exponential backoff, retry, and warm-up-on-select for
+  first-use model downloads; embedding-model validation that blocks chat models and
+  warns on misconfiguration; EmbeddingGemma query/document prefixes for better
+  retrieval quality; and a "Rebuild now" prompt when the on-disk index format is stale.
+- Chat input now refocuses when you start typing outside an editable field.
+
+### Changed
+
+- Uplifted `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` from 0.80.2 to 0.80.3.
+- Renamed internal `OPEN_COWORK_*` environment variables to `SQOWE_PILOT_*` (rebrand cleanup).
+
+### Fixed
+
+- Externalized `onnxruntime-node` and `sharp` in the build so local embeddings load
+  correctly in the packaged app.
+- Native provider catalog is now warmed at startup, fixing cold-start routing.
+
+## [1.0.3] - 2026-07-04
+
+### Added
+
+- Local ONNX embedding provider for memory, running fully offline in-process
+  (EmbeddingGemma-300M via transformers.js) — the default for new installs, with no
+  Python and no API key required.
+- Settings UI to select the local embedding provider and model.
+
+## [1.0.2] - 2026-07-02
+
+### Added
+
+- Priority-based workspace-instructions auto-discovery: instead of picking one exact
+  filename, the app scans the working directory for a fixed candidate set
+  (`CLAUDE.md`, `AGENTS.md`, `.cowork/instructions.md`, `memory.md`, `instructions.md`)
+  and injects the first one that exists, in a user-reorderable priority order.
+- Animated "agent is working" indicator in the chat input.
+
+### Fixed
+
+- Workspace-instructions migration now reads the decrypted config store.
+- Workspace-instructions badge no longer shows a phantom filename when no instructions
+  file is found.
+- Hungarian and Russian Electron locales are retained during the after-pack cleanup.
+
+## [1.0.1] - 2026-07-01
+
+### Added
+
+- Right-click "Copy" context menu for arbitrary text selections in the chat window.
+- Chat export to DOCX and PDF, with format chosen via the save dialog's file-type
+  filter (format-as-parameter, no new menu items).
+
+### Fixed
+
+- Skill conflict config and orphan dismissals now persist via `ConfigStore.update`.
+
 ## [1.0.0] - 2026-06-25
 
 > Fresh product identity after the **Open Cowork → Sqowe Pilot** rebrand — a deliberate
@@ -229,7 +320,11 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/sqowe/pilot/compare/v1.0.3...v1.0.4
+[1.0.3]: https://github.com/sqowe/pilot/compare/v1.0.2...v1.0.3
+[1.0.2]: https://github.com/sqowe/pilot/compare/v1.0.1...v1.0.2
+[1.0.1]: https://github.com/sqowe/pilot/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/sqowe/pilot/releases/tag/v1.0.0
 [3.3.0-sqowe.8]: https://github.com/sqowe/pilot/compare/v3.3.0-sqowe.7...v3.3.0-sqowe.8
 [3.3.0-sqowe.7]: https://github.com/sqowe/pilot/compare/v3.3.0-sqowe.6...v3.3.0-sqowe.7
