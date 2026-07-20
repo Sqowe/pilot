@@ -10,6 +10,11 @@ const mockClampThinkingLevel = vi.fn();
 vi.mock('@earendil-works/pi-ai/compat', () => ({
   getModel: (...args: unknown[]) => mockGetModel(...args),
   getModels: vi.fn(() => []),
+  // Declared explicitly: without it the traits lookup silently degrades to an
+  // empty provider list and these tests would pass for the wrong reason.
+  // Empty here on purpose — trait borrowing is covered against the real
+  // registry in pi-model-resolution-reasoning-traits.test.ts.
+  getProviders: vi.fn(() => []),
   getSupportedThinkingLevels: (...args: unknown[]) => mockGetSupportedThinkingLevels(...args),
   clampThinkingLevel: (...args: unknown[]) => mockClampThinkingLevel(...args),
 }));

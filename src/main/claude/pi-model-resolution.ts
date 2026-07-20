@@ -3,6 +3,7 @@ import type { Api, Model, ModelThinkingLevel } from '@earendil-works/pi-ai';
 import {
   getModel,
   getModels,
+  getProviders,
   getSupportedThinkingLevels,
   clampThinkingLevel,
 } from '@earendil-works/pi-ai/compat';
@@ -38,6 +39,31 @@ export const PROVIDER_AUTH_ALIASES: Record<string, string> = {
 
 const COMMON_FALLBACK_PROVIDERS = ['openai', 'anthropic', 'google'] as const;
 const INVALID_REGISTRY_PROVIDERS = new Set(['', 'custom']);
+
+/**
+ * Every provider id in pi's registry, cached for the process.
+ *
+ * Backs {@link findRegistryReasoningTraits}. Model *resolution* deliberately
+ * still searches only COMMON_FALLBACK_PROVIDERS — widening that would change
+ * which transport/compat/pricing entry a Custom endpoint adopts. This list is
+ * used solely to answer "does pi know this model id reasons?".
+ */
+let _registryProviderIds: readonly string[] | undefined;
+function getRegistryProviderIds(): readonly string[] {
+  if (_registryProviderIds) return _registryProviderIds;
+  try {
+    const providers = (getProviders as () => unknown)();
+    _registryProviderIds = Array.isArray(providers)
+      ? providers.filter((id): id is string => typeof id === 'string')
+      : Object.keys(providers as Record<string, unknown>);
+  } catch (err) {
+    // Registry unavailable — degrade to the narrow fallback list rather than
+    // failing resolution outright.
+    logWarn('[pi-model-resolution] getProviders() failed, skipping wide sweep:', err);
+    _registryProviderIds = [];
+  }
+  return _registryProviderIds;
+}
 const REASONING_MODEL_PATTERN =
   /\bthinking\b|\breasoner\b|deepseek-r1|kimi-k2|qwen3(?:\.5)?(?=[:/-]|$)/i;
 type PiRegistryProvider = Parameters<typeof getModel>[0];
@@ -457,6 +483,60 @@ export function buildPiModelLookupCandidates(
   return candidates;
 }
 
+/** Reasoning metadata borrowed from a registry entry for the same model id. */
+export interface ReasoningTraits {
+  reasoning: boolean;
+  /** provider/id the traits came from — for logging only. */
+  source: string;
+}
+
+/**
+ * Find any registry entry, under any provider, describing this model id, and
+ * return only its *reasoning* traits.
+ *
+ * Why traits and not the whole model: a model served through a Custom endpoint
+ * may exist in pi's registry under a provider the user isn't calling (e.g.
+ * `claude-opus-4.8` under `github-copilot`). Adopting that entry wholesale would
+ * import its `compat` quirks, pricing and context limits — a far bigger change
+ * than the capability question warrants, and one that could break a working
+ * endpoint. Reasoning support is a property of the *model*, so it travels; the
+ * transport details do not.
+ *
+ * Tries the full model string before the prefix-stripped id, so a registry that
+ * keys models by a slash-containing id (openrouter's `z-ai/glm-5.1`) wins over a
+ * coincidental bare-id match under an unrelated provider.
+ *
+ * Deliberately does NOT borrow `thinkingLevelMap`. pi gates `xhigh`/`max` behind
+ * an explicit map entry because those levels need per-vendor confirmation, and
+ * the donor entry is by definition not the endpoint being called — inheriting a
+ * map from it would offer levels the real endpoint may reject. Without a map,
+ * `getSupportedThinkingLevels` yields the safe default `off…high`.
+ */
+export function findRegistryReasoningTraits(modelString: string): ReasoningTraits | undefined {
+  const trimmed = modelString.trim();
+  if (!trimmed) return undefined;
+
+  const parts = trimmed.split('/');
+  const ids = parts.length >= 2 ? [trimmed, parts.slice(1).join('/')] : [trimmed];
+  const lookup = getModel as (p: string, m: string) => Model<Api> | undefined;
+
+  for (const id of ids) {
+    for (const providerId of getRegistryProviderIds()) {
+      if (INVALID_REGISTRY_PROVIDERS.has(providerId)) continue;
+      let found: Model<Api> | undefined;
+      try {
+        found = lookup(providerId, id);
+      } catch {
+        continue;
+      }
+      if (found?.reasoning) {
+        return { reasoning: true, source: `${found.provider}/${found.id}` };
+      }
+    }
+  }
+  return undefined;
+}
+
 export function applyPiModelRuntimeOverrides(
   model: Model<Api>,
   options: PiModelLookupOptions = {}
@@ -557,7 +637,39 @@ function resolveModelForThinking(modelString: string, options: PiModelLookupOpti
 
   const synthProvider = options.rawProvider || options.configProvider || 'anthropic';
   const synthProtocol = resolvePiRouteProtocol(synthProvider, options.customProtocol);
-  return buildSyntheticPiModel(modelString, synthProvider, synthProtocol, options.customBaseUrl);
+  const synthetic = buildSyntheticPiModel(
+    modelString,
+    synthProvider,
+    synthProtocol,
+    options.customBaseUrl
+  );
+  return applyRegistryReasoningTraits(synthetic, modelString);
+}
+
+/**
+ * Enrich a synthetic model with reasoning traits borrowed from the registry.
+ *
+ * Synthetic models infer `reasoning` from REASONING_MODEL_PATTERN, which misses
+ * anything the pattern doesn't name — so a Custom endpoint serving a model pi
+ * *does* know about was reported as having no reasoning support at all. Only the
+ * reasoning fields are copied; transport, cost and context stay synthetic.
+ *
+ * No-op when the model already claims reasoning support (the pattern matched, or
+ * the caller supplied it).
+ */
+export function applyRegistryReasoningTraits(model: Model<Api>, modelString: string): Model<Api> {
+  if (model.reasoning) return model;
+
+  const traits = findRegistryReasoningTraits(modelString);
+  if (!traits) return model;
+
+  log(
+    '[PiModelResolution] Borrowed reasoning support for',
+    modelString,
+    'from registry entry',
+    traits.source
+  );
+  return { ...model, reasoning: true } as Model<Api>;
 }
 
 /**

@@ -159,6 +159,7 @@ import {
   resolveSyntheticPiModelFallback,
   resolveRuntimeApiKeyProviders,
   clampThinkingLevelForModel,
+  applyRegistryReasoningTraits,
 } from './pi-model-resolution';
 import { buildPiSessionRuntimeSignature } from './pi-session-runtime';
 import { ThinkTagStreamParser } from './think-tag-parser';
@@ -2482,6 +2483,11 @@ RULES:
           rawProvider: runtimeConfig.provider,
           customProtocol: runtimeConfig.customProtocol,
         });
+        // Borrow reasoning traits from any registry entry for the same model id.
+        // Must match what Settings showed via resolveThinkingCapabilities, or the
+        // UI would offer levels that pi then drops (every reasoning path in
+        // pi-ai's openai-completions is gated on `model.reasoning`).
+        piModel = applyRegistryReasoningTraits(piModel, modelString);
         logCtxWarn(
           '[ClaudeAgentRunner] Model not in pi-ai registry, using synthetic model:',
           modelString,
