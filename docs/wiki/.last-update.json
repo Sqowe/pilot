@@ -1,0 +1,211 @@
+{
+  "gitHead": "b418d360eb3476b8887176eb80f7a86bd43d7bb1",
+  "updatedAt": "2026-07-20T16:05:00.000Z",
+  "features": [
+    {
+      "feature": "Models & API",
+      "page": "features/models-and-api.md",
+      "sources": [
+        "src/main/config/config-store.ts",
+        "src/renderer/components/settings/SettingsAPI.tsx",
+        "src/renderer/components/ApiConfigSetManager.tsx",
+        "src/renderer/components/ProviderPicker.tsx",
+        "README.md",
+        "CHANGELOG.md"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "Chat & sessions",
+      "page": "features/chat-and-sessions.md",
+      "sources": [
+        "src/renderer/components/ChatView.tsx",
+        "src/renderer/components/Sidebar.tsx",
+        "src/renderer/components/message/",
+        "src/main/chat/export-router.ts",
+        "README.md"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "Workspaces & files",
+      "page": "features/workspaces.md",
+      "sources": [
+        "src/renderer/components/WelcomeView.tsx",
+        "src/renderer/components/WorkspacePicker.tsx",
+        "src/renderer/components/ContextPanel.tsx",
+        "src/main/config/config-store.ts",
+        "docs/design/workspace-instructions-priority-discovery.md",
+        "docs/design/archive/stale-workspace-config-cleanup.md"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "Skills",
+      "page": "features/skills.md",
+      "sources": [
+        "src/renderer/components/settings/SettingsSkills.tsx",
+        "src/main/skills/skills-manager.ts",
+        ".claude/skills/",
+        "README.md",
+        "docs/design/archive/skill-features-implementation-plan.md"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "Skill pinning & profiles",
+      "page": "features/skill-pinning-and-profiles.md",
+      "sources": [
+        "src/renderer/components/ContextPanel.tsx",
+        "src/renderer/components/WelcomeView.tsx",
+        "src/main/skills/skills-workspace-profile.ts",
+        "src/shared/skill-pinning-constants.ts",
+        "docs/design/archive/skill-pinning-ux.md",
+        "docs/design/archive/skill-workspace-profiles.md"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "Skill conflicts",
+      "page": "features/skill-conflicts.md",
+      "sources": [
+        "src/renderer/components/settings/SettingsSkills.tsx",
+        "src/main/skills/skill-conflict-detector.ts",
+        "src/shared/skill-conflict-types.ts",
+        "docs/design/archive/skill-conflict-resolution.md"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "Plugins",
+      "page": "features/plugins.md",
+      "sources": [
+        "src/renderer/components/settings/SettingsSkills.tsx",
+        "src/main/skills/plugin-runtime-service.ts",
+        "src/main/skills/plugin-registry-store.ts",
+        "src/main/skills/plugin-catalog-service.ts",
+        "src/renderer/components/ContextPanel.tsx",
+        "docs/design/archive/plugin-archive-install-and-pin.md"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "MCP connectors",
+      "page": "features/mcp-connectors.md",
+      "sources": [
+        "src/renderer/components/settings/SettingsConnectors.tsx",
+        "src/renderer/components/settings/McpToolPermissions.tsx",
+        "src/renderer/components/ContextPanel.tsx",
+        "src/main/mcp/mcp-manager.ts",
+        "src/main/mcp/mcp-tool-permissions.ts",
+        "src/main/mcp/mcp-description-generator.ts",
+        "src/main/mcp/mcp-workspace-profile.ts",
+        "README.md",
+        "ARCHITECTURE.md"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "Memory",
+      "page": "features/memory.md",
+      "sources": [
+        "src/renderer/components/settings/SettingsMemory.tsx",
+        "src/renderer/components/MemoryLensSection.tsx",
+        "src/renderer/components/message/MemorySourcesBadge.tsx",
+        "src/main/memory/memory-extension.ts",
+        "src/main/memory/memory-chat-search-tool.ts",
+        "README.md",
+        "ARCHITECTURE.md",
+        "docs/design/local-embeddings-default.md"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "Scheduling",
+      "page": "features/scheduling.md",
+      "sources": [
+        "src/renderer/components/settings/SettingsSchedule.tsx",
+        "src/renderer/components/ScheduleCatchUpPanel.tsx",
+        "src/main/schedule/scheduled-task-manager.ts",
+        "src/main/config/config-store.ts",
+        "docs/design/archive/scheduler-v2.md"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "Remote control",
+      "page": "features/remote-control.md",
+      "sources": [
+        "src/renderer/components/RemoteControlPanel.tsx",
+        "src/main/remote/",
+        "README.md",
+        "ARCHITECTURE.md"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "GUI operation",
+      "page": "features/gui-operation.md",
+      "sources": [
+        "src/main/mcp/gui-operate-server.ts",
+        "src/main/mcp/mcp-config-store.ts",
+        "README.md",
+        "ARCHITECTURE.md"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "System prompt",
+      "page": "features/system-prompt.md",
+      "sources": [
+        "src/renderer/components/settings/SettingsPrompt.tsx",
+        "src/main/prompts/prompt-loader.ts",
+        "src/main/config/config-store.ts",
+        "ARCHITECTURE.md"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "Bash restrictions",
+      "page": "features/bash-restrictions.md",
+      "sources": [
+        "src/renderer/components/settings/SettingsBashCommands.tsx",
+        "src/shared/bash-restrictions/",
+        "BASH_COMMAND_RESTRICTIONS.md",
+        "src/main/config/config-store.ts"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "Search conversations",
+      "page": "features/search.md",
+      "sources": [
+        "src/renderer/components/SearchOverlay.tsx",
+        "src/renderer/components/Sidebar.tsx",
+        "src/renderer/i18n/locales/en.json"
+      ],
+      "status": "shipped"
+    },
+    {
+      "feature": "Approvals & safety",
+      "page": "features/permissions-and-safety.md",
+      "sources": [
+        "src/renderer/components/PermissionDialog.tsx",
+        "src/renderer/components/settings/SettingsGeneral.tsx",
+        "src/main/tools/",
+        "src/main/sandbox/",
+        "src/main/config/config-store.ts",
+        "ARCHITECTURE.md"
+      ],
+      "status": "shipped"
+    }
+  ],
+  "reference_sources": [
+    "src/main/index.ts (menu, tray, dock)",
+    "src/renderer/components/Sidebar.tsx",
+    "src/renderer/components/ChatView.tsx",
+    "src/renderer/components/SettingsPanel.tsx",
+    "src/main/config/config-store.ts (AppConfig)",
+    "src/renderer/components/settings/*"
+  ]
+}
