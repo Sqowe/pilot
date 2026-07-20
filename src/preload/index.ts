@@ -33,6 +33,7 @@ import type {
   LocalModelStatus,
   MemoryModelCheckResult,
   MemoryRuntimeConfig,
+  ThinkingCapabilities,
 } from '../renderer/types';
 import type { DiagnosticInput, DiagnosticResult } from '../renderer/types';
 import type { ProviderCatalogEntry } from '../shared/provider-catalog';
@@ -213,6 +214,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('config.diagnose', input),
     discoverLocal: (payload?: { baseUrl?: string }): Promise<LocalOllamaDiscoveryResult> =>
       ipcRenderer.invoke('config.discover-local', payload),
+    getThinkingLevels: (payload: {
+      provider: string;
+      model: string;
+      customProtocol?: string;
+      baseUrl?: string;
+    }): Promise<ThinkingCapabilities> => ipcRenderer.invoke('config.getThinkingLevels', payload),
   },
 
   // Window control methods
@@ -724,6 +731,12 @@ declare global {
         }) => Promise<ProviderModelInfo[]>;
         diagnose: (input: DiagnosticInput) => Promise<DiagnosticResult>;
         discoverLocal: (payload?: { baseUrl?: string }) => Promise<LocalOllamaDiscoveryResult>;
+        getThinkingLevels: (payload: {
+          provider: string;
+          model: string;
+          customProtocol?: string;
+          baseUrl?: string;
+        }) => Promise<ThinkingCapabilities>;
       };
       window: {
         minimize: () => void;

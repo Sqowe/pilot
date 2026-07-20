@@ -1,8 +1,14 @@
-import type { Api, Model } from '@earendil-works/pi-ai';
+import type { Api, Model, ModelThinkingLevel } from '@earendil-works/pi-ai';
 // `getModel` moved off the pi-ai root entrypoint to `/compat` in 0.80.0.
-import { getModel, getModels } from '@earendil-works/pi-ai/compat';
+import {
+  getModel,
+  getModels,
+  getSupportedThinkingLevels,
+  clampThinkingLevel,
+} from '@earendil-works/pi-ai/compat';
 import { isOfficialOpenAIBaseUrl } from '../config/auth-utils';
-import { log } from '../utils/logger';
+import { log, logWarn } from '../utils/logger';
+import { THINKING_LEVELS } from '../../shared/thinking-levels';
 import { getCachedProviderCatalogSync } from '../config/provider-catalog-native';
 import {
   getCatalogEntry,
@@ -533,6 +539,126 @@ export function resolvePiRegistryModel(
     }
   }
   return undefined;
+}
+
+export interface ThinkingCapabilities {
+  supportsThinking: boolean;
+  levels: ModelThinkingLevel[];
+}
+
+/**
+ * Resolve a model string to a pi `Model`, falling back to a synthetic one for
+ * models absent from the registry. Shared by the two thinking-level helpers so
+ * both agree on which model they are describing.
+ */
+function resolveModelForThinking(modelString: string, options: PiModelLookupOptions): Model<Api> {
+  const registryModel = resolvePiRegistryModel(modelString, options);
+  if (registryModel) return registryModel;
+
+  const synthProvider = options.rawProvider || options.configProvider || 'anthropic';
+  const synthProtocol = resolvePiRouteProtocol(synthProvider, options.customProtocol);
+  return buildSyntheticPiModel(modelString, synthProvider, synthProtocol, options.customBaseUrl);
+}
+
+/**
+ * Thinking capabilities of an already-resolved pi `Model`.
+ * Delegates entirely to pi-ai's `getSupportedThinkingLevels` — no per-model
+ * tables are hardcoded here.
+ *
+ * `supportsThinking` is false when the model has no reasoning support *or* when
+ * its `thinkingLevelMap` masks every non-off level (nothing left to choose).
+ */
+export function resolveThinkingCapabilitiesForModel(model: Model<Api>): ThinkingCapabilities {
+  if (!model.reasoning) return { supportsThinking: false, levels: ['off'] };
+
+  const supported = getSupportedThinkingLevels(model) as string[];
+  // Re-order through THINKING_LEVELS so callers always get canonical order, and
+  // drop anything a newer pi-ai adds that this build doesn't know about.
+  const levels = (THINKING_LEVELS as readonly string[]).filter((level) =>
+    supported.includes(level)
+  ) as ModelThinkingLevel[];
+  const nonOff = levels.filter((level) => level !== 'off');
+
+  // 'off' is always offered so a stored non-off level can always be cleared.
+  return { supportsThinking: nonOff.length > 0, levels: ['off', ...nonOff] };
+}
+
+/**
+ * Clamp a stored thinking level to one an already-resolved model supports.
+ * Delegates to pi-ai's `clampThinkingLevel` — handles the up/down/off search.
+ *
+ * Prefer this over {@link clampModelThinkingLevel} wherever the caller already
+ * holds the `Model`: re-resolving from a model *string* can land on a different
+ * model than the one actually in use.
+ */
+export function clampThinkingLevelForModel(
+  model: Model<Api>,
+  level: ModelThinkingLevel
+): ModelThinkingLevel {
+  // Short-circuit non-reasoning models — never return a non-off level.
+  if (!model.reasoning) return 'off';
+  try {
+    const clamped = clampThinkingLevel(model, level) as string;
+    return (THINKING_LEVELS as readonly string[]).includes(clamped)
+      ? (clamped as ModelThinkingLevel)
+      : 'off';
+  } catch (err) {
+    // Silent downgrade to 'off' looks like "the model stopped reasoning" with
+    // nothing to grep for — always leave a trail.
+    logWarn(
+      '[pi-model-resolution] clampThinkingLevel failed for',
+      model.provider,
+      model.id,
+      '— falling back to off:',
+      err
+    );
+    return 'off';
+  }
+}
+
+/**
+ * Resolve the thinking levels supported by a given model string.
+ * String-keyed entry point for callers without a resolved `Model` (e.g. the
+ * Settings IPC handler).
+ */
+export function resolveThinkingCapabilities(
+  modelString: string,
+  options: PiModelLookupOptions = {}
+): ThinkingCapabilities {
+  try {
+    return resolveThinkingCapabilitiesForModel(resolveModelForThinking(modelString, options));
+  } catch (err) {
+    logWarn(
+      '[pi-model-resolution] resolveThinkingCapabilities failed for',
+      modelString,
+      '— reporting no thinking support:',
+      err
+    );
+    return { supportsThinking: false, levels: ['off'] };
+  }
+}
+
+/**
+ * Clamp a stored thinking level against a model *string*.
+ * Use {@link clampThinkingLevelForModel} instead when the resolved `Model` is
+ * already in hand.
+ */
+export function clampModelThinkingLevel(
+  modelString: string,
+  level: ModelThinkingLevel,
+  options: PiModelLookupOptions = {}
+): ModelThinkingLevel {
+  try {
+    return clampThinkingLevelForModel(resolveModelForThinking(modelString, options), level);
+  } catch (err) {
+    logWarn(
+      '[pi-model-resolution] clampModelThinkingLevel failed to resolve',
+      modelString,
+      '— falling back to off:',
+      err
+    );
+    return 'off';
+  }
 }
 
 /**

@@ -93,7 +93,10 @@ export function extractLocalFilePathFromHref(href?: string): string | null {
   return null;
 }
 
-export function resolveLocalFilePathFromHref(href: string | undefined, cwd?: string | null): string | null {
+export function resolveLocalFilePathFromHref(
+  href: string | undefined,
+  cwd?: string | null
+): string | null {
   if (!href) {
     return null;
   }

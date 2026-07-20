@@ -42,9 +42,7 @@ export function AdvancedConfigStep({
             className="w-full px-4 py-3 bg-surface-hover border border-border rounded-xl text-text-primary focus:border-accent focus:outline-none"
             placeholder={t('remote.defaultWorkingDirectoryPlaceholder')}
           />
-          <p className="text-xs text-text-muted mt-1">
-            {t('remote.defaultWorkingDirectoryHint')}
-          </p>
+          <p className="text-xs text-text-muted mt-1">{t('remote.defaultWorkingDirectoryHint')}</p>
         </div>
 
         <div>
@@ -65,9 +63,7 @@ export function AdvancedConfigStep({
             <div className="font-medium text-text-primary text-sm">
               {t('remote.autoApproveSafeTools')}
             </div>
-            <p className="text-xs text-text-muted mt-0.5">
-              {t('remote.autoApproveSafeToolsDesc')}
-            </p>
+            <p className="text-xs text-text-muted mt-0.5">{t('remote.autoApproveSafeToolsDesc')}</p>
           </div>
           <button
             onClick={() => onAutoApproveChange(!autoApproveSafeTools)}

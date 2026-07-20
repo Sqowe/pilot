@@ -362,9 +362,19 @@
     "localOllamaNoModels": "Helyi Ollama szolgáltatás találva, de nem szolgáltat modelleket.",
     "localOllamaModelUnavailable": "Helyi Ollama találva, de a(z) {{model}} modell nem tudott minimális kérést teljesíteni.",
     "localOllamaModelLoading": "Helyi Ollama találva, de a modell még töltődik a memóriába. Nagy modellek akár egy percet is igénybe vehetnek.",
-    "enableThinking": "Gondolkodási mód engedélyezése",
-    "enableThinkingHint": "Claude gondolkodási folyamatának lépésről lépésre megjelenítése. Ez átláthatóságot biztosít, de növelheti a token használatot.",
-    "enableThinkingOllamaHint": "A legtöbb Ollama modell nem támogatja a gondolkodási módot. Csak akkor engedélyezze, ha modellje kifejezetten támogatja.",
+    "thinkingLevelOllamaHint": "A legtöbb Ollama modell nem támogatja a gondolkodási módot. Csak akkor engedélyezze, ha modellje kifejezetten támogatja.",
+    "thinkingLevel": "Gondolkodási szint",
+    "thinkingLevelHint": "Meghatározza, hogy a modell mennyi következtetési erőfeszítést fordít. Csak az aktuális modell által támogatott szintek jelennek meg.",
+    "thinkingLevelUnsupportedHint": "Ez a modell nem támogatja az állítható gondolkodást, ezért a gondolkodás kikapcsolva marad.",
+    "thinkingLevelOption": {
+      "off": "Kikapcsolva",
+      "minimal": "Minimális",
+      "low": "Alacsony",
+      "medium": "Közepes",
+      "high": "Magas",
+      "xhigh": "Extra magas",
+      "max": "Maximum"
+    },
     "testSuccess": "Kapcsolat sikeres ({{ms}}ms)",
     "testSuccessNeedSave": "Kapcsolat teszt sikeres. Mentse a beállításokat munkamenet indítása előtt.",
     "testError": {

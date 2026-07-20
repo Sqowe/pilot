@@ -184,9 +184,10 @@ export function getArtifactSteps(steps: TraceStep[]): ArtifactStepResult {
   const fileSteps: TraceStep[] = [];
   for (let i = rawFileSteps.length - 1; i >= 0; i -= 1) {
     const step = rawFileSteps[i];
-    const pathValue = extractFilePathFromToolOutput(step.toolOutput)
-      || extractFilePathFromToolInput(step.toolInput)
-      || '';
+    const pathValue =
+      extractFilePathFromToolOutput(step.toolOutput) ||
+      extractFilePathFromToolInput(step.toolInput) ||
+      '';
     const key = pathValue.trim();
     if (!key || seenPaths.has(key)) {
       continue;

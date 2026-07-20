@@ -362,9 +362,19 @@
     "localOllamaNoModels": "Found a local Ollama service, but it does not currently expose any models.",
     "localOllamaModelUnavailable": "Found local Ollama, but model {{model}} could not complete a minimal inference request.",
     "localOllamaModelLoading": "Found local Ollama, but the model is still loading into memory. Large models may take up to a minute.",
-    "enableThinking": "Enable Thinking Mode",
-    "enableThinkingHint": "Show Claude's thinking process step by step. This provides more transparency but may increase token usage.",
-    "enableThinkingOllamaHint": "Most Ollama models do not support thinking mode. Enable only if your model explicitly supports it.",
+    "thinkingLevelOllamaHint": "Most Ollama models do not support thinking mode. Enable only if your model explicitly supports it.",
+    "thinkingLevel": "Thinking Level",
+    "thinkingLevelHint": "Controls how much reasoning effort the model expends. Only levels supported by the current model are shown.",
+    "thinkingLevelUnsupportedHint": "This model does not support adjustable reasoning, so thinking stays off.",
+    "thinkingLevelOption": {
+      "off": "Off",
+      "minimal": "Minimal",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "xhigh": "Extra High",
+      "max": "Max"
+    },
     "testSuccess": "Connection successful ({{ms}}ms)",
     "testSuccessNeedSave": "Connection test passed. Save settings before starting a session.",
     "testError": {

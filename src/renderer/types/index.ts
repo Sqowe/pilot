@@ -1,5 +1,6 @@
 import type { SkillSource } from '../../shared/skill-conflict-types';
 import type { TokenUsage } from '../../shared/token-usage';
+import type { SharedModelThinkingLevel } from '../../shared/thinking-levels';
 export type { TokenUsage } from '../../shared/token-usage';
 
 // Session types
@@ -886,6 +887,14 @@ export interface ProviderProfile {
   maxTokens?: number;
 }
 
+/** Re-exported from shared/thinking-levels to keep renderer types consistent with main. */
+export type ModelThinkingLevel = SharedModelThinkingLevel;
+
+export interface ThinkingCapabilities {
+  supportsThinking: boolean;
+  levels: ModelThinkingLevel[];
+}
+
 export interface ApiConfigSet {
   id: ConfigSetId;
   name: string;
@@ -895,6 +904,8 @@ export interface ApiConfigSet {
   activeProfileKey: ProviderProfileKey;
   profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
   enableThinking: boolean;
+  /** Replaces enableThinking. Always a valid ModelThinkingLevel after normalization. */
+  thinkingLevel: ModelThinkingLevel;
   updatedAt: string;
 }
 
@@ -981,6 +992,8 @@ export interface AppConfig {
   memoryEnabled?: boolean;
   memoryRuntime?: MemoryRuntimeConfig;
   enableThinking?: boolean;
+  /** Replaces enableThinking. Always a valid ModelThinkingLevel after normalization. */
+  thinkingLevel?: ModelThinkingLevel;
   isConfigured: boolean;
   // Scheduler settings (v2)
   schedulerCatchUpPolicy?: CatchUpPolicy;

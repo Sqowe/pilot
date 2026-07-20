@@ -18,7 +18,10 @@ interface PanelErrorBoundaryState {
  * and replaces it with a static fallback to prevent full-page white-screen.
  * Resets automatically when `resetKey` changes (e.g. on navigation).
  */
-export class PanelErrorBoundary extends Component<PanelErrorBoundaryProps, PanelErrorBoundaryState> {
+export class PanelErrorBoundary extends Component<
+  PanelErrorBoundaryProps,
+  PanelErrorBoundaryState
+> {
   state: PanelErrorBoundaryState = { hasError: false, prevResetKey: undefined };
 
   static getDerivedStateFromError(): Partial<PanelErrorBoundaryState> {
@@ -27,7 +30,7 @@ export class PanelErrorBoundary extends Component<PanelErrorBoundaryProps, Panel
 
   static getDerivedStateFromProps(
     props: PanelErrorBoundaryProps,
-    state: PanelErrorBoundaryState,
+    state: PanelErrorBoundaryState
   ): Partial<PanelErrorBoundaryState> | null {
     if (props.resetKey !== state.prevResetKey) {
       return { hasError: false, prevResetKey: props.resetKey };

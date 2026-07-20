@@ -312,25 +312,23 @@ describe('memory-chat-search-tool workspace isolation', () => {
   describe('response-level workspace isolation (defense in depth)', () => {
     it('filters out foreign-workspace results from search output', async () => {
       const service = createMockMemoryService({
-        search: vi
-          .fn()
-          .mockReturnValue([
-            makeSearchResult({
-              id: 'c1',
-              title: 'Same workspace',
-              sourceWorkspace: '/Users/test/project-a',
-            }),
-            makeSearchResult({
-              id: 'c2',
-              title: 'Foreign workspace',
-              sourceWorkspace: '/Users/test/OTHER-project',
-            }),
-            makeSearchResult({
-              id: 'c3',
-              title: 'Also same',
-              sourceWorkspace: '/Users/test/project-a',
-            }),
-          ]),
+        search: vi.fn().mockReturnValue([
+          makeSearchResult({
+            id: 'c1',
+            title: 'Same workspace',
+            sourceWorkspace: '/Users/test/project-a',
+          }),
+          makeSearchResult({
+            id: 'c2',
+            title: 'Foreign workspace',
+            sourceWorkspace: '/Users/test/OTHER-project',
+          }),
+          makeSearchResult({
+            id: 'c3',
+            title: 'Also same',
+            sourceWorkspace: '/Users/test/project-a',
+          }),
+        ]),
       });
       const tools = createWorkspaceChatSearchTools(service, '/Users/test/project-a');
       const searchTool = tools.find((t) => t.name === 'search_workspace_chats')!;
@@ -399,17 +397,15 @@ describe('memory-chat-search-tool workspace isolation', () => {
 
     it('filters out core entries from search results (strict workspace-only)', async () => {
       const service = createMockMemoryService({
-        search: vi
-          .fn()
-          .mockReturnValue([
-            makeSearchResult({ id: 'c1', kind: 'core', title: 'Core pref', sourceWorkspace: null }),
-            makeSearchResult({
-              id: 'c2',
-              kind: 'experience_chunk',
-              title: 'Workspace chunk',
-              sourceWorkspace: '/Users/test/project-a',
-            }),
-          ]),
+        search: vi.fn().mockReturnValue([
+          makeSearchResult({ id: 'c1', kind: 'core', title: 'Core pref', sourceWorkspace: null }),
+          makeSearchResult({
+            id: 'c2',
+            kind: 'experience_chunk',
+            title: 'Workspace chunk',
+            sourceWorkspace: '/Users/test/project-a',
+          }),
+        ]),
       });
       const tools = createWorkspaceChatSearchTools(service, '/Users/test/project-a');
       const searchTool = tools.find((t) => t.name === 'search_workspace_chats')!;

@@ -1,7 +1,5 @@
 export function normalizePathForContainment(pathValue: string, caseInsensitive = false): string {
-  const normalized = pathValue
-    .replace(/[\\/]+/g, '/')
-    .replace(/\/+$/, '');
+  const normalized = pathValue.replace(/[\\/]+/g, '/').replace(/\/+$/, '');
 
   if (!normalized) {
     return pathValue.includes('/') || pathValue.includes('\\') ? '/' : '';

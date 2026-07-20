@@ -57,6 +57,8 @@ import {
 import { runConfigApiTest } from './config/config-test-routing';
 import { getFullProviderCatalog } from './config/provider-catalog-native';
 import { listOllamaModels } from './config/ollama-api';
+import { resolveThinkingCapabilities, resolvePiModelString } from './claude/pi-model-resolution';
+import type { ThinkingCapabilities } from './claude/pi-model-resolution';
 import { applyLocalDevPath, isBasePathSet, getEffectivePath } from './utils/path-env';
 import { applyConfigHttpProxy } from './utils/http-proxy';
 import {
@@ -1930,6 +1932,7 @@ const buildAgentRuntimeSignature = (config: AppConfig): string =>
     customProtocol: config.customProtocol,
     model: config.model,
     enableThinking: config.enableThinking,
+    thinkingLevel: config.thinkingLevel ?? (config.enableThinking ? 'medium' : 'off'),
     memoryEnabled: config.memoryEnabled,
     memoryRuntime: config.memoryRuntime,
   });
@@ -2162,6 +2165,38 @@ ipcMain.handle(
       return [];
     }
     return listOllamaModels(payload);
+  }
+);
+
+ipcMain.handle(
+  'config.getThinkingLevels',
+  (
+    _event,
+    payload: {
+      provider: string;
+      model: string;
+      customProtocol?: string;
+      baseUrl?: string;
+    }
+  ): ThinkingCapabilities => {
+    try {
+      const modelString = resolvePiModelString({
+        provider: payload.provider,
+        customProtocol: payload.customProtocol,
+        model: payload.model,
+      });
+      // `resolveThinkingCapabilities` already guarantees 'off' is present and the
+      // list is in canonical order.
+      return resolveThinkingCapabilities(modelString, {
+        configProvider: payload.provider,
+        rawProvider: payload.provider,
+        customProtocol: payload.customProtocol,
+        customBaseUrl: payload.baseUrl,
+      });
+    } catch (err) {
+      logWarn('[Config] getThinkingLevels error:', err);
+      return { supportsThinking: false, levels: ['off'] };
+    }
   }
 );
 

@@ -40,10 +40,7 @@ interface CommonProviderSetupsCardProps {
   onApplySetup: (setupId: string) => void;
 }
 
-export function CommonProviderSetupsCard({
-  setups,
-  onApplySetup,
-}: CommonProviderSetupsCardProps) {
+export function CommonProviderSetupsCard({ setups, onApplySetup }: CommonProviderSetupsCardProps) {
   const { t } = useTranslation();
 
   if (setups.length === 0) {
@@ -79,7 +76,9 @@ export function CommonProviderSetupsCard({
             {setups.map((setup) => (
               <tr
                 key={setup.id}
-                className={setup.isDetected ? 'bg-accent/5 text-text-primary' : 'text-text-secondary'}
+                className={
+                  setup.isDetected ? 'bg-accent/5 text-text-primary' : 'text-text-secondary'
+                }
               >
                 <td className="px-2 py-3 font-medium">
                   <div className="flex items-center gap-2">

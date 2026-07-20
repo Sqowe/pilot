@@ -103,7 +103,7 @@ class TunnelManager {
 
       this.currentUrl = url;
       this.isConnected = true;
-      
+
       log('[TunnelManager] Ngrok tunnel established:', url);
       this.emitStatus();
 

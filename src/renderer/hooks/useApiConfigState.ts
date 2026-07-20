@@ -7,6 +7,8 @@ import type {
   ApiTestResult,
   CustomProtocolType,
   DiagnosticResult,
+  ModelThinkingLevel,
+  ThinkingCapabilities,
   ProviderModelInfo,
   ProviderProfile,
   ProviderProfileKey,
@@ -43,6 +45,7 @@ import {
   resolveProviderGuidanceErrorHint,
   type CommonProviderSetup,
 } from '../../shared/api-provider-guidance';
+import { clampToSupportedLevel } from '../../shared/thinking-levels';
 export { getModelInputGuidance } from '../../shared/api-model-presets';
 
 interface UseApiConfigStateOptions {
@@ -65,6 +68,7 @@ interface ConfigStateSnapshot {
   activeProfileKey: ProviderProfileKey;
   profiles: Record<ProviderProfileKey, UIProviderProfile>;
   enableThinking: boolean;
+  thinkingLevel: ModelThinkingLevel;
 }
 
 interface ApiConfigBootstrap {
@@ -487,6 +491,8 @@ export function buildApiConfigSnapshot(
     activeProfileKey,
     profiles,
     enableThinking: Boolean(config?.enableThinking),
+    thinkingLevel: (config?.thinkingLevel ??
+      (config?.enableThinking ? 'medium' : 'off')) as ModelThinkingLevel,
   };
 }
 
@@ -514,12 +520,12 @@ function toPersistedProfiles(
 export function buildApiConfigDraftSignature(
   activeProfileKey: ProviderProfileKey,
   profiles: Record<ProviderProfileKey, UIProviderProfile>,
-  enableThinking: boolean
+  thinkingLevel: ModelThinkingLevel
 ): string {
   const persisted = toPersistedProfiles(profiles);
   return JSON.stringify({
     activeProfileKey,
-    enableThinking,
+    thinkingLevel,
     profiles: profileKeysWith(profiles, activeProfileKey).map((key) => ({
       key,
       apiKey: persisted[key]?.apiKey || '',
@@ -596,6 +602,11 @@ export function buildApiConfigSets(
         activeProfileKey,
         profiles: normalizedProfiles,
         enableThinking: Boolean(set.enableThinking),
+        // Carried explicitly rather than relying on the spread: sets read from an
+        // older on-disk config have no thinkingLevel, and silently dropping it
+        // here would resurrect the legacy boolean as the only source of truth.
+        thinkingLevel: (set.thinkingLevel ??
+          (set.enableThinking ? 'medium' : 'off')) as ModelThinkingLevel,
         updatedAt: typeof set.updatedAt === 'string' && set.updatedAt.trim() ? set.updatedAt : now,
       };
     });
@@ -618,6 +629,7 @@ export function buildApiConfigSets(
       activeProfileKey: snapshot.activeProfileKey,
       profiles: toPersistedProfiles(snapshot.profiles),
       enableThinking: snapshot.enableThinking,
+      thinkingLevel: snapshot.thinkingLevel,
       updatedAt: now,
     },
   ];
@@ -717,7 +729,7 @@ function buildSetupModelState(
 // Reducer state
 // ---------------------------------------------------------------------------
 
-interface ApiConfigState {
+export interface ApiConfigState {
   // Provider presets loaded from Electron
   presets: ProviderPresets;
   // Per-profile UI fields
@@ -729,8 +741,11 @@ interface ApiConfigState {
   activeConfigSetId: string;
   // Deferred action waiting for unsaved-changes resolution
   pendingConfigSetAction: PendingConfigSetAction | null;
-  // Extended thinking flag
+  // Extended thinking level
   enableThinking: boolean;
+  thinkingLevel: ModelThinkingLevel;
+  // Thinking capabilities for current model (loaded async)
+  thinkingCapabilities: ThinkingCapabilities;
   // Remember last custom protocol so switching back to custom restores it
   lastCustomProtocol: CustomProtocolType;
   // Signature of the last persisted state (used for dirty-check)
@@ -763,7 +778,7 @@ interface ApiConfigState {
 // Actions (discriminated union — no plain string payloads where avoidable)
 // ---------------------------------------------------------------------------
 
-type ApiConfigAction =
+export type ApiConfigAction =
   // Bulk resets from loaded config
   | {
       type: 'APPLY_LOADED_STATE';
@@ -772,6 +787,7 @@ type ApiConfigAction =
         profiles: Record<ProviderProfileKey, UIProviderProfile>;
         activeProfileKey: ProviderProfileKey;
         enableThinking: boolean;
+        thinkingLevel: ModelThinkingLevel;
         configSets: ApiConfigSet[];
         activeConfigSetId: string;
         lastCustomProtocol: CustomProtocolType;
@@ -780,8 +796,13 @@ type ApiConfigAction =
     }
   // Active profile key
   | { type: 'SET_ACTIVE_PROFILE_KEY'; payload: ProviderProfileKey }
-  // Enable thinking toggle
-  | { type: 'SET_ENABLE_THINKING'; payload: boolean }
+  // Thinking level selector
+  | { type: 'SET_THINKING_LEVEL'; payload: ModelThinkingLevel }
+  // Thinking capabilities resolved for a concrete model (may clamp the level)
+  | { type: 'SET_THINKING_CAPABILITIES'; payload: ThinkingCapabilities }
+  // Capabilities not knowable right now (no model selected yet, or the query
+  // failed). Collapses the selector but must never touch the stored level.
+  | { type: 'CLEAR_THINKING_CAPABILITIES' }
   // Patch one profile in the profiles map
   | { type: 'PATCH_PROFILE'; profileKey: ProviderProfileKey; patch: Partial<UIProviderProfile> }
   // Replace a profile using a functional updater
@@ -831,27 +852,56 @@ type ApiConfigAction =
 // Reducer
 // ---------------------------------------------------------------------------
 
-function apiConfigReducer(state: ApiConfigState, action: ApiConfigAction): ApiConfigState {
+export function apiConfigReducer(state: ApiConfigState, action: ApiConfigAction): ApiConfigState {
   switch (action.type) {
-    case 'APPLY_LOADED_STATE':
+    case 'APPLY_LOADED_STATE': {
+      // Derive enableThinking strictly from thinkingLevel to prevent state divergence.
+      const loadedLevel: ModelThinkingLevel =
+        action.payload.thinkingLevel ?? (action.payload.enableThinking ? 'medium' : 'off');
       return {
         ...state,
         presets: action.payload.presets,
         profiles: action.payload.profiles,
         activeProfileKey: action.payload.activeProfileKey,
-        enableThinking: action.payload.enableThinking,
+        thinkingLevel: loadedLevel,
+        enableThinking: loadedLevel !== 'off',
         configSets: action.payload.configSets,
         activeConfigSetId: action.payload.activeConfigSetId,
         pendingConfigSetAction: null,
         lastCustomProtocol: action.payload.lastCustomProtocol,
         savedDraftSignature: action.payload.savedDraftSignature,
       };
+    }
 
     case 'SET_ACTIVE_PROFILE_KEY':
       return { ...state, activeProfileKey: action.payload };
 
-    case 'SET_ENABLE_THINKING':
-      return { ...state, enableThinking: action.payload };
+    case 'SET_THINKING_LEVEL': {
+      const level = action.payload;
+      return { ...state, thinkingLevel: level, enableThinking: level !== 'off' };
+    }
+
+    case 'CLEAR_THINKING_CAPABILITIES':
+      // "Unknown" is not "unsupported". On mount `profiles` is still empty, so the
+      // capability effect runs once with no model; treating that as unsupported
+      // used to overwrite the level loaded from config with 'off' — the user's
+      // stored preference was destroyed before it was ever displayed, and the
+      // bogus value then got persisted by the next save.
+      return {
+        ...state,
+        thinkingCapabilities: { supportsThinking: false, levels: ['off'] },
+      };
+
+    case 'SET_THINKING_CAPABILITIES':
+      // Capabilities describe the *model*; `thinkingLevel` is the user's
+      // model-independent intent. Clamping the stored value here corrupted that
+      // intent on every model switch and — because the draft signature covers
+      // thinkingLevel — left the form permanently "unsaved", which in turn
+      // blocked config-set switching behind the unsaved-changes gate.
+      //
+      // Storage stays unclamped (design §4.2); the clamp is applied for display
+      // via `effectiveThinkingLevel` and again at consumption in agent-runner.
+      return { ...state, thinkingCapabilities: action.payload };
 
     case 'PATCH_PROFILE':
       return {
@@ -1010,6 +1060,9 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       isMutatingConfigSet: false,
       lastCustomProtocol: initialLastCustomProtocol,
       enableThinking: Boolean(initialConfig?.enableThinking),
+      thinkingLevel: (initialConfig?.thinkingLevel ??
+        (initialConfig?.enableThinking ? 'medium' : 'off')) as ModelThinkingLevel,
+      thinkingCapabilities: { supportsThinking: false, levels: ['off'] },
       discoveredModels: {},
       isLoadingConfig: true,
       savedDraftSignature: '',
@@ -1041,6 +1094,8 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     isMutatingConfigSet,
     lastCustomProtocol,
     enableThinking,
+    thinkingLevel,
+    thinkingCapabilities,
     discoveredModels,
     isLoadingConfig,
     savedDraftSignature,
@@ -1308,6 +1363,18 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     testResult?.details,
   ]);
 
+  // Level to render as active. The stored `thinkingLevel` is the user's intent and
+  // is kept verbatim; what the current model can actually honour is derived here so
+  // the highlighted segment matches what agent-runner will send. Purely presentational
+  // — it never feeds the draft signature or the save payload.
+  const effectiveThinkingLevel = useMemo<ModelThinkingLevel>(
+    () =>
+      thinkingCapabilities.supportsThinking
+        ? clampToSupportedLevel(thinkingCapabilities.levels, thinkingLevel)
+        : 'off',
+    [thinkingCapabilities, thinkingLevel]
+  );
+
   // For native providers, formShape.apiKey === false means key is optional.
   // Use strict comparison to guard against undefined/partial catalog entries
   // (so a missing apiKey field never accidentally grants allowEmptyApiKey).
@@ -1322,8 +1389,8 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
         (customProtocol === 'gemini' && isCustomGeminiLoopbackGateway(baseUrl))));
   const requiresApiKey = !allowEmptyApiKey;
   const currentDraftSignature = useMemo(
-    () => buildApiConfigDraftSignature(activeProfileKey, profiles, enableThinking),
-    [activeProfileKey, profiles, enableThinking]
+    () => buildApiConfigDraftSignature(activeProfileKey, profiles, thinkingLevel),
+    [activeProfileKey, profiles, thinkingLevel]
   );
   const hasUnsavedChanges =
     savedDraftSignature !== '' && currentDraftSignature !== savedDraftSignature;
@@ -1349,13 +1416,14 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
           profiles: bootstrap.snapshot.profiles,
           activeProfileKey: bootstrap.snapshot.activeProfileKey,
           enableThinking: bootstrap.snapshot.enableThinking,
+          thinkingLevel: bootstrap.snapshot.thinkingLevel,
           configSets: bootstrap.configSets,
           activeConfigSetId: bootstrap.activeConfigSetId,
           lastCustomProtocol: resolvedLastCustomProtocol,
           savedDraftSignature: buildApiConfigDraftSignature(
             bootstrap.snapshot.activeProfileKey,
             bootstrap.snapshot.profiles,
-            bootstrap.snapshot.enableThinking
+            bootstrap.snapshot.thinkingLevel
           ),
         },
       });
@@ -1371,6 +1439,83 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     },
     [applyLoadedState, setAppConfig, setIsConfigured]
   );
+
+  // Memoized key from only the active-profile fields that affect config.getThinkingLevels.
+  // Computed from individual field values so unrelated profile edits (apiKey, contextWindow,
+  // etc.) don't retrigger the IPC call.
+  const activeProfile = profiles[activeProfileKey];
+
+  // Debounced custom model string — avoids high-frequency IPC while the user types.
+  // Only kicks in when useCustomModel is true; the stable model field triggers immediately.
+  const [debouncedCustomModel, setDebouncedCustomModel] = useState(
+    activeProfile?.customModel ?? ''
+  );
+  useEffect(() => {
+    if (!activeProfile?.useCustomModel) return;
+    const timer = setTimeout(() => setDebouncedCustomModel(activeProfile.customModel ?? ''), 250);
+    return () => clearTimeout(timer);
+  }, [activeProfile?.customModel, activeProfile?.useCustomModel]);
+
+  const thinkingCapabilitiesKey = useMemo(() => {
+    const model = activeProfile?.useCustomModel
+      ? debouncedCustomModel.trim() || activeProfile.model
+      : activeProfile?.model || '';
+    const { provider: prov, customProtocol: proto } = profileKeyToProvider(activeProfileKey);
+    const baseUrl = activeProfile?.baseUrl || '';
+    return `${activeProfileKey}::${prov}::${proto}::${model}::${baseUrl}`;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeProfileKey,
+    activeProfile?.model,
+    debouncedCustomModel,
+    activeProfile?.useCustomModel,
+    activeProfile?.baseUrl,
+  ]);
+
+  // Load thinking capabilities whenever provider/model/protocol/baseUrl changes.
+  // Re-queries main via IPC (pure, no network, instant from registry).
+  useEffect(() => {
+    if (!isElectron) return;
+    // Use debouncedCustomModel (same value used for key) to keep key and IPC in sync.
+    // Guard against undefined with nullish coalesce before .trim().
+    const safeCustomModel = (debouncedCustomModel ?? '').trim();
+    const currentModel = activeProfile?.useCustomModel
+      ? safeCustomModel || (activeProfile?.model ?? '')
+      : activeProfile?.model || '';
+    const { provider: currentProvider, customProtocol: currentProtocol } =
+      profileKeyToProvider(activeProfileKey);
+    if (!currentModel) {
+      // No model resolved yet (config still loading, or the field is empty) —
+      // capabilities are unknown, so leave the stored level alone.
+      dispatch({ type: 'CLEAR_THINKING_CAPABILITIES' });
+      return;
+    }
+    let cancelled = false;
+    window.electronAPI.config
+      .getThinkingLevels({
+        provider: currentProvider,
+        model: currentModel,
+        customProtocol: currentProtocol,
+        baseUrl: activeProfile?.baseUrl || undefined,
+      })
+      .then((caps: ThinkingCapabilities) => {
+        if (!cancelled) dispatch({ type: 'SET_THINKING_CAPABILITIES', payload: caps });
+      })
+      .catch(() => {
+        // Query failed — we learned nothing about the model, so don't downgrade
+        // the user's stored level on the strength of a transient IPC error.
+        if (!cancelled) dispatch({ type: 'CLEAR_THINKING_CAPABILITIES' });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // thinkingCapabilitiesKey encodes all fields that affect the IPC call
+    // (activeProfileKey, provider, protocol, model, baseUrl — debounced for customModel).
+    // Adding individual primitives here would cause double-firing; the key is the
+    // single stable dependency. Update the key construction above if new routing
+    // fields are added (e.g., customBaseUrl overrides, per-model auth).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thinkingCapabilitiesKey]);
 
   const updateActiveProfile = useCallback(
     (updater: (prev: UIProviderProfile) => UIProviderProfile) => {
@@ -1488,8 +1633,8 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
   }, [updateActiveProfile]);
 
   // Public setter exposed to consumers — wraps dispatch so the interface stays stable
-  const setEnableThinking = useCallback((value: boolean) => {
-    dispatch({ type: 'SET_ENABLE_THINKING', payload: value });
+  const setThinkingLevel = useCallback((value: ModelThinkingLevel) => {
+    dispatch({ type: 'SET_THINKING_LEVEL', payload: value });
   }, []);
 
   useEffect(() => {
@@ -1981,6 +2126,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
           profiles: persistedProfiles,
           activeConfigSetId,
           enableThinking,
+          thinkingLevel,
         };
 
         if (onSave) {
@@ -2019,6 +2165,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       customModel,
       customProtocol,
       enableThinking,
+      thinkingLevel,
       model,
       onSave,
       presets,
@@ -2300,6 +2447,9 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     modelInputPlaceholder: modelInputGuidance.placeholder,
     modelInputHint: modelInputGuidance.hint,
     enableThinking,
+    thinkingLevel,
+    effectiveThinkingLevel,
+    thinkingCapabilities,
     isSaving,
     isTesting,
     isRefreshingModels,
@@ -2339,7 +2489,7 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     setContextWindow,
     setMaxTokens,
     toggleCustomModel,
-    setEnableThinking,
+    setThinkingLevel,
     applyCommonProviderSetup,
     changeProvider,
     changeProtocol,

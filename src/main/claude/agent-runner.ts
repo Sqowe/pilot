@@ -158,6 +158,7 @@ import {
   resolvePiRouteProtocol,
   resolveSyntheticPiModelFallback,
   resolveRuntimeApiKeyProviders,
+  clampThinkingLevelForModel,
 } from './pi-model-resolution';
 import { buildPiSessionRuntimeSignature } from './pi-session-runtime';
 import { ThinkTagStreamParser } from './think-tag-parser';
@@ -2842,12 +2843,17 @@ RULES:
       // pi-ai handles auth and model routing natively — no proxy, no env overrides needed.
       logCtx('[ClaudeAgentRunner] Using pi-ai native routing for:', piModel.provider, piModel.id);
 
-      // Resolve thinking level early — needed for session reuse check below
-      const enableThinking = configStore.get('enableThinking') ?? false;
-      logCtx('[ClaudeAgentRunner] Enable thinking mode:', enableThinking);
-      // ModelThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-      // imported from pi-ai — single source of truth, no local union to maintain.
-      const thinkingLevel: ModelThinkingLevel = enableThinking ? 'medium' : 'off';
+      // Resolve thinking level — read stored level (migrate from legacy boolean),
+      // then clamp via the shared helper which enforces reasoning=false=>off,
+      // filters against THINKING_LEVELS, and wraps compat errors safely.
+      const allConfig = configStore.getAll();
+      const storedLevel: ModelThinkingLevel =
+        allConfig.thinkingLevel ?? (allConfig.enableThinking ? 'medium' : 'off');
+      // Clamp against the `piModel` resolved above rather than re-resolving from
+      // its id — re-resolution drops customProtocol/customBaseUrl and can land on
+      // a different model (or a differently-built synthetic) than the one we run.
+      const thinkingLevel: ModelThinkingLevel = clampThinkingLevelForModel(piModel, storedLevel);
+      logCtx(`[ClaudeAgentRunner] thinkingLevel stored=${storedLevel} clamped=${thinkingLevel}`);
 
       // Load workspace-level instructions once per query so the fingerprint is
       // available to the runtime signature below. Reused cached sessions get

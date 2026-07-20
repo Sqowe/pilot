@@ -360,9 +360,19 @@
     "localOllamaNoModels": "已发现本地 Ollama 服务，但当前没有可用模型。",
     "localOllamaModelUnavailable": "已发现本地 Ollama，但模型 {{model}} 目前无法完成最小推理请求。",
     "localOllamaModelLoading": "已发现本地 Ollama，但模型仍在加载中，大型模型可能需要一分钟左右。",
-    "enableThinking": "启用思考模式",
-    "enableThinkingHint": "显示 Claude 的思考过程。这提供更多透明度，但可能增加 token 消耗。",
-    "enableThinkingOllamaHint": "大多数 Ollama 模型不支持思考模式，仅在模型明确支持时启用。",
+    "thinkingLevelOllamaHint": "大多数 Ollama 模型不支持思考模式，仅在模型明确支持时启用。",
+    "thinkingLevel": "思考级别",
+    "thinkingLevelHint": "控制模型投入的推理力度。仅显示当前模型支持的级别。",
+    "thinkingLevelUnsupportedHint": "此模型不支持调节推理强度，思考将保持关闭。",
+    "thinkingLevelOption": {
+      "off": "关闭",
+      "minimal": "最小",
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "xhigh": "超高",
+      "max": "最大"
+    },
     "testSuccess": "连接成功（{{ms}}ms）",
     "testSuccessNeedSave": "连接测试成功，请点击“保存设置”后再开始会话。",
     "testError": {

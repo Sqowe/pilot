@@ -99,13 +99,16 @@ export function PermissionDialog({ permission }: PermissionDialogProps) {
         {showSuggestionInput && (
           <div className="mt-4 p-3 bg-surface-muted border border-border rounded-xl">
             <label className="text-sm font-medium text-text-primary block mb-2">
-              {t('permission.suggestionLabel', { defaultValue: 'Suggest an alternative approach:' })}
+              {t('permission.suggestionLabel', {
+                defaultValue: 'Suggest an alternative approach:',
+              })}
             </label>
             <textarea
               value={suggestion}
               onChange={(e) => setSuggestion(e.target.value)}
               placeholder={t('permission.suggestionPlaceholder', {
-                defaultValue: 'e.g., "Use the pdf skill instead" or "Read with pdfplumber, not pypdf"',
+                defaultValue:
+                  'e.g., "Use the pdf skill instead" or "Read with pdfplumber, not pypdf"',
               })}
               className="w-full p-2 text-sm rounded-lg border border-border bg-background text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:border-accent"
               rows={3}

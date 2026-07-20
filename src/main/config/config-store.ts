@@ -39,6 +39,8 @@ import {
   type SystemPromptFileName,
 } from '../../shared/system-prompt-file-choices';
 import { sanitizeBashCommandList } from './permission-rules-store';
+import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
+import { THINKING_LEVELS } from '../../shared/thinking-levels';
 import {
   normalizeProviderId,
   isValidProviderId,
@@ -128,6 +130,8 @@ export interface ApiConfigSet {
   activeProfileKey: ProviderProfileKey;
   profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
   enableThinking: boolean;
+  /** Replaces enableThinking. Always a valid ModelThinkingLevel after normalization. */
+  thinkingLevel: ModelThinkingLevel;
   updatedAt: string;
 }
 
@@ -207,6 +211,10 @@ export interface AppConfig {
 
   // Enable thinking mode (show thinking steps)
   enableThinking: boolean;
+  /** Per-model thinking level. Always a valid ModelThinkingLevel after normalization.
+   * Optional in AppConfig (storage) because it may be absent in old on-disk configs
+   * — always present and required in ApiConfigSet after normalization. */
+  thinkingLevel?: ModelThinkingLevel;
 
   // First run flag
   isConfigured: boolean;
@@ -384,6 +392,7 @@ const defaultConfigSet: ApiConfigSet = {
   activeProfileKey: 'openrouter',
   profiles: defaultProfiles,
   enableThinking: false,
+  thinkingLevel: 'off' as ModelThinkingLevel,
   updatedAt: '1970-01-01T00:00:00.000Z',
 };
 
@@ -821,6 +830,38 @@ function profileKeyToProvider(profileKey: ProviderProfileKey): {
   return profileKeyToProviderInfo(profileKey);
 }
 
+// VALID_THINKING_LEVELS is now THINKING_LEVELS from shared/thinking-levels
+
+function normalizeThinkingLevel(value: unknown, fallback: ModelThinkingLevel): ModelThinkingLevel {
+  if (typeof value === 'string' && (THINKING_LEVELS as readonly string[]).includes(value)) {
+    return value as ModelThinkingLevel;
+  }
+  return fallback;
+}
+
+/** Derive a ModelThinkingLevel from either the new thinkingLevel field or the
+ * legacy enableThinking boolean. New field wins when present and valid. */
+function resolveThinkingLevelFromRaw(
+  thinkingLevel: unknown,
+  enableThinking: unknown
+): ModelThinkingLevel {
+  const hasExplicitLevel =
+    typeof thinkingLevel === 'string' &&
+    (THINKING_LEVELS as readonly string[]).includes(thinkingLevel);
+
+  if (hasExplicitLevel) {
+    // 'off' wins only when enableThinking is absent or false.
+    // If enableThinking is explicitly true and thinkingLevel is 'off',
+    // that's legacy/default bleedthrough — honour the boolean intent instead.
+    if (thinkingLevel !== 'off') return thinkingLevel as ModelThinkingLevel;
+    if (typeof enableThinking === 'boolean' && enableThinking) return 'medium';
+    return 'off';
+  }
+
+  // No valid stored level — migrate from the legacy boolean.
+  return typeof enableThinking === 'boolean' && enableThinking ? 'medium' : 'off';
+}
+
 function toBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
@@ -1120,6 +1161,7 @@ export class ConfigStore {
     activeProfileKey: ProviderProfileKey;
     profiles: Record<ProviderProfileKey, ProviderProfile>;
     enableThinking: boolean;
+    thinkingLevel: ModelThinkingLevel;
   } {
     const provider = normalizeProviderId(raw.provider) ?? defaultConfig.provider;
     const customProtocol: CustomProtocolType = isCustomProtocol(raw.customProtocol)
@@ -1191,12 +1233,14 @@ export class ConfigStore {
       activeProfileKey = derivedProfileKey;
     }
 
+    const thinkingLevel = resolveThinkingLevelFromRaw(raw.thinkingLevel, raw.enableThinking);
     return {
       provider,
       customProtocol,
       activeProfileKey,
       profiles,
-      enableThinking: toBoolean(raw.enableThinking, defaultConfig.enableThinking),
+      enableThinking: thinkingLevel !== 'off',
+      thinkingLevel,
     };
   }
 
@@ -1211,12 +1255,17 @@ export class ConfigStore {
     contextWindow?: number;
     maxTokens?: number;
     enableThinking: boolean;
+    thinkingLevel: ModelThinkingLevel;
   } {
     const profiles = this.cloneProfiles(configSet.profiles);
     const activeProfileKey = isProfileKey(configSet.activeProfileKey)
       ? configSet.activeProfileKey
       : profileKeyFromProvider(configSet.provider, configSet.customProtocol);
     const activeProfile = profiles[activeProfileKey] || this.getDefaultProfile(activeProfileKey);
+    const thinkingLevel = resolveThinkingLevelFromRaw(
+      configSet.thinkingLevel,
+      configSet.enableThinking
+    );
 
     return {
       provider: configSet.provider,
@@ -1228,7 +1277,8 @@ export class ConfigStore {
       model: activeProfile.model,
       contextWindow: activeProfile.contextWindow,
       maxTokens: activeProfile.maxTokens,
-      enableThinking: toBoolean(configSet.enableThinking, false),
+      enableThinking: thinkingLevel !== 'off',
+      thinkingLevel,
     };
   }
 
@@ -1242,6 +1292,7 @@ export class ConfigStore {
       activeProfileKey: ProviderProfileKey;
       profiles: Record<ProviderProfileKey, ProviderProfile>;
       enableThinking: boolean;
+      thinkingLevel: ModelThinkingLevel;
       isSystem?: boolean;
     }
   ): ApiConfigSet {
@@ -1265,6 +1316,24 @@ export class ConfigStore {
     const name = toNonEmptyString(rawSet?.name) || fallback.name;
     const updatedAt = toNonEmptyString(rawSet?.updatedAt) || nowISO();
 
+    // Only treat rawSet.thinkingLevel as 'present' when it's a recognized valid level.
+    // Invalid/unknown strings (e.g. future levels from a newer pi-ai) fall through to
+    // the enableThinking migration or the fallback, preserving user intent.
+    const rawThinkingLevelValid =
+      rawSet?.thinkingLevel !== undefined &&
+      (THINKING_LEVELS as readonly string[]).includes(rawSet.thinkingLevel as string);
+    const thinkingLevel = resolveThinkingLevelFromRaw(
+      rawThinkingLevelValid ? rawSet!.thinkingLevel : undefined,
+      rawSet?.enableThinking
+    );
+    // fallback.thinkingLevel may be undefined (intentionally absent from defaults);
+    // coalesce to 'off' so resolvedThinkingLevel is always a valid ModelThinkingLevel.
+    const fallbackThinkingLevel: ModelThinkingLevel =
+      fallback.thinkingLevel ?? (fallback.enableThinking ? 'medium' : 'off');
+    const resolvedThinkingLevel: ModelThinkingLevel =
+      rawThinkingLevelValid || rawSet?.enableThinking !== undefined
+        ? thinkingLevel
+        : fallbackThinkingLevel;
     return {
       id,
       name,
@@ -1273,7 +1342,8 @@ export class ConfigStore {
       customProtocol,
       activeProfileKey,
       profiles,
-      enableThinking: toBoolean(rawSet?.enableThinking, fallback.enableThinking),
+      enableThinking: resolvedThinkingLevel !== 'off',
+      thinkingLevel: resolvedThinkingLevel,
       updatedAt,
     };
   }
@@ -1284,6 +1354,7 @@ export class ConfigStore {
     activeProfileKey: ProviderProfileKey;
     profiles: Record<ProviderProfileKey, ProviderProfile>;
     enableThinking: boolean;
+    thinkingLevel: ModelThinkingLevel;
   }): ApiConfigSet {
     return this.normalizeConfigSet(
       {
@@ -1295,6 +1366,7 @@ export class ConfigStore {
         activeProfileKey: legacy.activeProfileKey,
         profiles: legacy.profiles,
         enableThinking: legacy.enableThinking,
+        thinkingLevel: legacy.thinkingLevel,
         updatedAt: nowISO(),
       },
       {
@@ -1306,6 +1378,7 @@ export class ConfigStore {
         activeProfileKey: legacy.activeProfileKey,
         profiles: legacy.profiles,
         enableThinking: legacy.enableThinking,
+        thinkingLevel: legacy.thinkingLevel,
       }
     );
   }
@@ -1318,6 +1391,7 @@ export class ConfigStore {
       activeProfileKey: ProviderProfileKey;
       profiles: Record<ProviderProfileKey, ProviderProfile>;
       enableThinking: boolean;
+      thinkingLevel: ModelThinkingLevel;
     }
   ): ApiConfigSet[] {
     const list = Array.isArray(rawSets) ? rawSets : [];
@@ -1347,6 +1421,7 @@ export class ConfigStore {
         activeProfileKey: legacy.activeProfileKey,
         profiles: legacy.profiles,
         enableThinking: legacy.enableThinking,
+        thinkingLevel: legacy.thinkingLevel,
         isSystem: Boolean(rawSet.isSystem),
       });
       normalizedSet.id = nextId;
@@ -1367,12 +1442,14 @@ export class ConfigStore {
     activeProfileKey: ProviderProfileKey;
     profiles: Record<ProviderProfileKey, ProviderProfile>;
     enableThinking: boolean;
+    thinkingLevel: ModelThinkingLevel;
   }): boolean {
     if (
       legacy.provider !== defaultConfig.provider ||
       legacy.customProtocol !== (defaultConfig.customProtocol || 'anthropic') ||
       legacy.activeProfileKey !== defaultConfig.activeProfileKey ||
-      legacy.enableThinking !== defaultConfig.enableThinking
+      (legacy.thinkingLevel ?? (legacy.enableThinking ? 'medium' : 'off')) !==
+        (defaultConfig.thinkingLevel ?? 'off')
     ) {
       return true;
     }
@@ -1394,6 +1471,7 @@ export class ConfigStore {
       activeProfileKey: ProviderProfileKey;
       profiles: Record<ProviderProfileKey, ProviderProfile>;
       enableThinking: boolean;
+      thinkingLevel: ModelThinkingLevel;
     }
   ): boolean {
     if (!this.hasLegacySignal(legacy)) {
@@ -1415,7 +1493,8 @@ export class ConfigStore {
       projected.provider === legacy.provider &&
       projected.customProtocol === legacy.customProtocol &&
       projected.activeProfileKey === legacy.activeProfileKey &&
-      projected.enableThinking === legacy.enableThinking &&
+      projected.thinkingLevel ===
+        (legacy.thinkingLevel ?? (legacy.enableThinking ? 'medium' : 'off')) &&
       projected.apiKey === legacyActive.apiKey &&
       (projected.baseUrl || '') === (legacyActive.baseUrl || '') &&
       projected.model === legacyActive.model
@@ -1490,6 +1569,7 @@ export class ConfigStore {
         isFreshInstall
       ),
       enableThinking: projected.enableThinking,
+      thinkingLevel: projected.thinkingLevel,
       isConfigured: toBoolean(raw.isConfigured, defaultConfig.isConfigured),
       configSchemaVersion:
         typeof raw.configSchemaVersion === 'number' && raw.configSchemaVersion >= 2
@@ -1546,6 +1626,7 @@ export class ConfigStore {
       activeProfileKey: projected.activeProfileKey,
       profiles: projected.profiles,
       enableThinking: projected.enableThinking,
+      thinkingLevel: projected.thinkingLevel,
       activeConfigSetId: activeConfigSet.id,
       configSets: nextConfigSets,
     };
@@ -1613,6 +1694,7 @@ export class ConfigStore {
       activeProfileKey,
       profiles,
       enableThinking: false,
+      thinkingLevel: 'off' as ModelThinkingLevel,
       updatedAt: nowISO(),
     };
   }
@@ -1804,6 +1886,7 @@ export class ConfigStore {
         activeProfileKey: current.activeProfileKey,
         profiles: this.cloneProfiles(current.profiles),
         enableThinking: current.enableThinking,
+        thinkingLevel: current.thinkingLevel ?? 'off',
       });
       nextConfigSets = normalizedSets;
     }
@@ -1836,7 +1919,8 @@ export class ConfigStore {
       updates.apiKey !== undefined ||
       updates.baseUrl !== undefined ||
       updates.model !== undefined ||
-      updates.enableThinking !== undefined;
+      updates.enableThinking !== undefined ||
+      updates.thinkingLevel !== undefined;
 
     if (mutatesActiveSet) {
       if (updates.profiles) {
@@ -1897,14 +1981,22 @@ export class ConfigStore {
         nextActiveProfile
       );
 
+      const resolvedThinkingLevel: ModelThinkingLevel =
+        updates.thinkingLevel !== undefined
+          ? normalizeThinkingLevel(updates.thinkingLevel, targetSet.thinkingLevel ?? 'off')
+          : updates.enableThinking !== undefined
+            ? updates.enableThinking
+              ? 'medium'
+              : 'off'
+            : (targetSet.thinkingLevel ?? (targetSet.enableThinking ? 'medium' : 'off'));
       const updatedSet: ApiConfigSet = {
         ...targetSet,
         provider: nextProvider,
         customProtocol: nextCustomProtocol,
         activeProfileKey: nextActiveProfileKey,
         profiles: nextProfiles,
-        enableThinking:
-          updates.enableThinking !== undefined ? updates.enableThinking : targetSet.enableThinking,
+        enableThinking: resolvedThinkingLevel !== 'off',
+        thinkingLevel: resolvedThinkingLevel,
         updatedAt: nowISO(),
       };
 

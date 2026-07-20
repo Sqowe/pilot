@@ -49,7 +49,8 @@ export function SettingsAPI() {
     successMessage,
     isRefreshingModels,
     isDiscoveringLocalOllama,
-    enableThinking,
+    effectiveThinkingLevel,
+    thinkingCapabilities,
     isOllamaMode,
     requiresApiKey,
     protocolGuidanceText,
@@ -74,7 +75,7 @@ export function SettingsAPI() {
     setContextWindow,
     setMaxTokens,
     toggleCustomModel,
-    setEnableThinking,
+    setThinkingLevel,
     applyCommonProviderSetup,
     changeProvider,
     changeProtocol,
@@ -525,27 +526,41 @@ export function SettingsAPI() {
       )}
 
       {/* ------------------------------------------------------------------ */}
-      {/* Enable Thinking Mode                                                */}
+      {/* Thinking Level                                                       */}
       {/* ------------------------------------------------------------------ */}
-      <div className="space-y-3 py-5 border-b border-border-muted">
-        <div className="flex items-start gap-2 text-xs text-text-muted">
-          <input
-            type="checkbox"
-            id="enable-thinking"
-            checked={enableThinking}
-            onChange={(e) => setEnableThinking(e.target.checked)}
-            className="mt-0.5 w-4 h-4 rounded border-border text-accent focus:ring-accent"
-          />
-          <label htmlFor="enable-thinking" className="space-y-0.5 flex-1">
-            <div className="text-text-primary font-medium">{t('api.enableThinking')}</div>
-            <div>{t('api.enableThinkingHint')}</div>
-            {isOllamaMode && (
-              <div className="text-amber-500 dark:text-amber-400 text-xs mt-1">
-                {t('api.enableThinkingOllamaHint')}
-              </div>
-            )}
-          </label>
+      <div className="space-y-2 py-5 border-b border-border-muted">
+        <div className="text-xs font-medium text-text-primary">{t('api.thinkingLevel')}</div>
+        <div className="text-xs text-text-muted mb-2">
+          {thinkingCapabilities.supportsThinking
+            ? t('api.thinkingLevelHint')
+            : t('api.thinkingLevelUnsupportedHint')}
         </div>
+        {thinkingCapabilities.supportsThinking && (
+          <div className="flex flex-wrap gap-1" role="group" aria-label={t('api.thinkingLevel')}>
+            {/* `levels` arrives canonically ordered and always contains 'off'. */}
+            {thinkingCapabilities.levels.map((level) => (
+              <button
+                key={level}
+                type="button"
+                onClick={() => setThinkingLevel(level)}
+                aria-pressed={effectiveThinkingLevel === level}
+                className={[
+                  'px-3 py-1 rounded text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                  effectiveThinkingLevel === level
+                    ? 'bg-accent text-white'
+                    : 'bg-bg-tertiary text-text-muted hover:bg-bg-secondary hover:text-text-primary',
+                ].join(' ')}
+              >
+                {t(`api.thinkingLevelOption.${level}`, { defaultValue: level })}
+              </button>
+            ))}
+          </div>
+        )}
+        {isOllamaMode && (
+          <div className="text-amber-500 dark:text-amber-400 text-xs mt-1">
+            {t('api.thinkingLevelOllamaHint')}
+          </div>
+        )}
       </div>
 
       {/* Error/Success Messages */}

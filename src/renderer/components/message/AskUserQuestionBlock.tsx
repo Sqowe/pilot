@@ -9,7 +9,8 @@ interface AskUserQuestionBlockProps {
 
 export function AskUserQuestionBlock({ block }: AskUserQuestionBlockProps) {
   const { t } = useTranslation();
-  const questions: QuestionItem[] = (block.input as Record<string, unknown>)?.questions as QuestionItem[] || [];
+  const questions: QuestionItem[] =
+    ((block.input as Record<string, unknown>)?.questions as QuestionItem[]) || [];
 
   const getOptionLetter = (index: number) => String.fromCharCode(65 + index);
 

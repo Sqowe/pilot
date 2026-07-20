@@ -118,6 +118,7 @@ function makeConfig(timeoutMs: number): AppConfig {
       promptIterationRounds: 2,
     },
     enableThinking: false,
+    thinkingLevel: 'off' as const,
     bashTrustedCommands: [],
     bashDenylist: [],
     schedulerCatchUpPolicy: 'ask',
