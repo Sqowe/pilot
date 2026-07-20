@@ -54,7 +54,8 @@ It provides a sandboxed workspace where AI can manage files, generate profession
 | Sqowe Pilot   | ✓            | ✓              | ✓             |
 
 - **One-Click Install, Ready to Use**: Pre-built installers for Windows and macOS, no environment setup needed—just download and start using.
-- **Flexible Model Support**: Supports **Claude**, **OpenAI-compatible APIs**, and Chinese models like **GLM**, **MiniMax**, **Kimi**. Use your OpenRouter, Anthropic, or other API keys with flexible configuration. More models coming soon!
+- **Flexible Model Support**: Supports **Claude**, **OpenAI-compatible APIs**, and Chinese models like **GLM**, **MiniMax**, **Kimi**. Use your OpenRouter, Anthropic, or other API keys with flexible configuration. A searchable provider/model picker is backed by the live pi-ai registry, and a **per-model Thinking Level** selector exposes exactly the reasoning effort each model supports. More models coming soon!
+- **HTTP Proxy Support**: Route model API requests through a corporate or egress proxy (Settings → API).
 - **Remote Control**: Connect to collaboration platforms like **Feishu (Lark)** and other remote services to automate workflows and cross-platform operations.
 - **GUI Operation**: Control and interact with various desktop GUI applications on your computer. **Recommended model: Gemini-3-Pro** for optimal GUI understanding and control.
 - **Smart File Management**: Read, write, and organize files within your workspace.
@@ -501,6 +502,10 @@ Memory data lives at `~/Library/Application Support/sqowe-pilot/memory/` (macOS)
 | `experience_memory.json` | Session summaries, chunks, and embeddings            |
 | `session_state.json`     | Tracks which sessions have been ingested             |
 
+### Local Embeddings (Default)
+
+By default, memory embeddings run **fully offline and in-process** via ONNX (EmbeddingGemma-300M through transformers.js) — no Python, no API key, and no data leaves your machine. The model downloads once on first use. Switch to a remote embedding provider in **Settings → Memory** if you prefer.
+
 ### Configuration
 
 Memory is enabled by default. Toggle it in **Settings → Memory** or via the Memory panel in the sidebar. Disabling memory stops future ingestion and auto-recall but keeps existing records intact.
@@ -593,9 +598,9 @@ sqowe-pilot/
 
 See our full **[ROADMAP.md](ROADMAP.md)** for detailed plans.
 
-**Completed:** Core installers · Filesystem sandboxing · VM isolation (WSL2/Lima) · Skills (PPTX/DOCX/PDF/XLSX) · Skill conflict resolution · Skill workspace profiles · MCP connectors · Multi-model support · Rich input · i18n · Task scheduling (v2)
+**Completed:** Core installers · Filesystem sandboxing · VM isolation (WSL2/Lima) · Skills (PPTX/DOCX/PDF/XLSX) · Skill conflict resolution · Skill workspace profiles · MCP connectors · Multi-model support · Rich input · i18n · Task scheduling (v2) · Cross-session memory (local embeddings) · Per-model thinking levels · HTTP proxy · Plugin system · Computer use
 
-**Coming next:** Memory optimization · Linux support · Plugin system · Computer use · Stable release
+**Coming next:** Linux support · Stable release
 
 ---
 

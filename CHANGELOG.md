@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-07-20
+
 ### Added
 
 - HTTP proxy setting for routing model API requests through a corporate/egress proxy
@@ -15,12 +17,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pi-ai registry (replaces the split featured/catalog pickers).
 - Compaction estimate in the Context Panel, surfacing when the conversation is
   approaching the auto-compaction threshold (pi SDK 0.80 adoption).
+- Per-model thinking level selector in Settings → API, replacing the "Enable
+  thinking" on/off checkbox. The offered levels now come straight from pi-ai's
+  per-model capability tables (`getSupportedThinkingLevels`), so each model
+  shows only the reasoning levels it actually supports (e.g. Sonnet 4.6 hides
+  `xhigh`, GLM-5.2 collapses `low`/`medium` into `high`, MiniMax is
+  budget-only) and follows pi's updates automatically. Existing `enableThinking`
+  settings migrate losslessly (`true → medium`, `false → off`); the stored value
+  stays unclamped so switching models never erases the preference. Models reached
+  through a Custom endpoint are now detected as reasoning-capable when pi knows
+  the model under any provider (previously only OpenAI/Anthropic/Google were
+  consulted, so e.g. MiniMax-M3 and z-ai/glm-5.1 were reported as non-reasoning).
 
 ### Changed
 
 - Uplifted `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` from 0.80.3 to 0.80.10.
-- Adopted the SDK's `ModelThinkingLevel` type internally (groundwork for a future
-  per-model thinking-level selector).
+- The SDK's `ModelThinkingLevel` type now flows through the config layer,
+  agent-runner, IPC, and the Settings UI (previously adopted as an internal
+  type only).
 
 ### Fixed
 
@@ -320,7 +334,8 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.4...HEAD
+[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/sqowe/pilot/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/sqowe/pilot/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/sqowe/pilot/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/sqowe/pilot/compare/v1.0.1...v1.0.2
