@@ -117,11 +117,10 @@ interface SessionRowLight {
   summary: string;
   keywords: string;
   chunk_ids: string;
-  raw_session: string | null;
   session_date: string | null;
   created_at: string | null;
   ingested_at: string | null;
-  // embedding intentionally omitted
+  // embedding and raw_session intentionally omitted — see getLightRows
 }
 
 function rowLightToChunkNoEmbed(
@@ -161,7 +160,8 @@ function rowLightToSessionNoEmbed(
     summary: row.summary,
     keywords: parseJsonArray(row.keywords),
     chunkIds: parseJsonArray(row.chunk_ids),
-    rawSession: parseRawSession(row.raw_session),
+    // Transcripts are hydrated lazily, for the ranked top-K only — see retrieveProgressive.
+    rawSession: [],
     sessionDate: row.session_date ?? '',
     createdAt: row.created_at ?? '',
     ingestedAt: row.ingested_at ?? '',
@@ -377,10 +377,13 @@ export class ExperienceMemoryStore {
       getChunksBySessionId: db.prepare<[string]>(
         `SELECT * FROM memory_chunks WHERE session_id = ? ORDER BY rowid ASC`
       ),
+      // raw_session is deliberately absent: it is the largest column by far, and the
+      // scan only needs text to score. Transcripts are fetched by id for the ranked
+      // top-K afterwards (see retrieveProgressive), not for every row on every rebuild.
       getAllSessionsLight: db.prepare(
         `SELECT id, session_id, source_workspace, source_workspace_label,
                 source_session_id, source_session_title, source_session_date,
-                summary, keywords, chunk_ids, raw_session,
+                summary, keywords, chunk_ids,
                 session_date, created_at, ingested_at
            FROM memory_sessions`
       ),
@@ -952,6 +955,21 @@ export class ExperienceMemoryStore {
       scoringConfig
     );
 
+    // Step 4: hydrate transcripts for the ranked sessions only.
+    // `rawSession` is needed solely to build `rawSessionCandidates` below — at most
+    // `sessionTopK` rows (default 5). Parsing it during the scan instead would mean
+    // JSON-parsing every transcript in the store on every cache rebuild, which is the
+    // single largest cost on this path and is hit after every ingest (writes drop the
+    // cache). Fetching by id here keeps that bounded by K rather than by store size.
+    if (rankedSessions.length) {
+      const transcripts = this.fetchRawSessions(
+        rankedSessions.map((item) => item.record.sessionId)
+      );
+      for (const item of rankedSessions) {
+        item.record = { ...item.record, rawSession: transcripts.get(item.record.sessionId) ?? [] };
+      }
+    }
+
     const broadSummaries = [
       ...rankedChunks.map(
         (
@@ -1024,6 +1042,31 @@ export class ExperienceMemoryStore {
       rankedChunks: rankedChunks.map((item) => item.record),
       rankedSessions: rankedSessions.map((item) => item.record),
     };
+  }
+
+  /**
+   * Fetch and parse `raw_session` transcripts for the given session ids.
+   *
+   * Batched at 900 ids to stay under SQLite's SQLITE_MAX_VARIABLE_NUMBER (default
+   * 999), matching the embedding fetch — though in practice the caller passes at
+   * most `sessionTopK` ids.
+   */
+  private fetchRawSessions(sessionIds: string[]): Map<string, MemoryTranscriptTurn[]> {
+    const BATCH = 900;
+    const result = new Map<string, MemoryTranscriptTurn[]>();
+    for (let i = 0; i < sessionIds.length; i += BATCH) {
+      const batch = sessionIds.slice(i, i + BATCH);
+      const placeholders = batch.map(() => '?').join(',');
+      const rows = this.db
+        .prepare(
+          `SELECT session_id, raw_session FROM memory_sessions WHERE session_id IN (${placeholders})`
+        )
+        .all(...batch) as Array<{ session_id: string; raw_session: string | null }>;
+      for (const row of rows) {
+        result.set(row.session_id, parseRawSession(row.raw_session));
+      }
+    }
+    return result;
   }
 
   // ---------------------------------------------------------------------------

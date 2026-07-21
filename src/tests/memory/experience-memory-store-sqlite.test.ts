@@ -10,7 +10,7 @@
  * - getChunk / getChunksBySession
  * - hasEmbeddings / getCounts
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -970,6 +970,173 @@ describe('ExperienceMemoryStore — SQLite backend', () => {
   // -------------------------------------------------------------------------
   // getSearchRows — lexical-search row shape + SQL workspace push-down
   // -------------------------------------------------------------------------
+
+  // -------------------------------------------------------------------------
+  // Lazy transcript hydration (§16.2)
+  // -------------------------------------------------------------------------
+
+  describe('lazy raw_session hydration', () => {
+    const turns = [
+      { role: 'user', content: 'how do we rotate the gateway token' },
+      { role: 'assistant', content: 'call the rotate endpoint' },
+    ];
+
+    it('still returns full transcripts for ranked sessions (contract preserved)', () => {
+      store.replaceSession(
+        'sess-raw',
+        makeSession({
+          sessionId: 'sess-raw',
+          summary: 'gateway token rotation',
+          keywords: ['gateway', 'rotation'],
+          rawSession: turns,
+        }),
+        []
+      );
+
+      const result = store.retrieveProgressive('gateway rotation');
+
+      expect(result.rawSessionCandidates).toHaveLength(1);
+      expect(result.rawSessionCandidates[0].rawSession).toEqual(turns);
+      // The ranked record itself is hydrated too, not just the candidates view.
+      expect(result.rankedSessions[0].rawSession).toEqual(turns);
+    });
+
+    it('hydrates only the ranked sessions, not every row in the store', () => {
+      // One matching session plus noise that scores zero and must stay unhydrated.
+      store.replaceSession(
+        'match',
+        makeSession({
+          sessionId: 'match',
+          summary: 'gateway token rotation',
+          keywords: ['gateway'],
+          rawSession: turns,
+        }),
+        []
+      );
+      for (let i = 0; i < 5; i++) {
+        store.replaceSession(
+          `noise-${i}`,
+          makeSession({
+            sessionId: `noise-${i}`,
+            summary: 'completely unrelated topic',
+            keywords: ['unrelated'],
+            rawSession: [{ role: 'user', content: 'unrelated transcript body' }],
+          }),
+          []
+        );
+      }
+
+      const result = store.retrieveProgressive('gateway rotation');
+
+      expect(result.rawSessionCandidates.map((c) => c.sessionId)).toEqual(['match']);
+      expect(result.rawSessionCandidates[0].rawSession).toEqual(turns);
+    });
+
+    it('respects sessionTopK — hydration is bounded by K, not by store size', () => {
+      for (let i = 0; i < 8; i++) {
+        store.replaceSession(
+          `sess-${i}`,
+          makeSession({
+            sessionId: `sess-${i}`,
+            summary: 'gateway token rotation',
+            keywords: ['gateway'],
+            rawSession: turns,
+          }),
+          []
+        );
+      }
+
+      const result = store.retrieveProgressive('gateway rotation', { sessionTopK: 3 });
+
+      expect(result.rawSessionCandidates).toHaveLength(3);
+      for (const candidate of result.rawSessionCandidates) {
+        expect(candidate.rawSession).toEqual(turns);
+      }
+    });
+
+    it('yields an empty transcript when the stored raw_session is corrupt', () => {
+      store.replaceSession(
+        'sess-bad',
+        makeSession({
+          sessionId: 'sess-bad',
+          summary: 'gateway token rotation',
+          keywords: ['gateway'],
+          rawSession: turns,
+        }),
+        []
+      );
+      memDb.raw
+        .prepare(`UPDATE memory_sessions SET raw_session = 'not json' WHERE session_id = ?`)
+        .run('sess-bad');
+
+      const result = store.retrieveProgressive('gateway rotation');
+
+      expect(result.rawSessionCandidates[0].rawSession).toEqual([]);
+    });
+
+    it('never selects raw_session in an unfiltered scan', () => {
+      // Deliberately white-box: every other test here passes both before and after
+      // the lazy-hydration change, because behaviour is identical by design. This one
+      // pins the mechanism, so a revert to parsing transcripts during the full-table
+      // scan fails loudly instead of silently costing a JSON.parse per row per rebuild.
+      const executed: string[] = [];
+      const realPrepare = memDb.raw.prepare.bind(memDb.raw);
+      const spy = vi.spyOn(memDb.raw, 'prepare').mockImplementation(((sql: string) => {
+        executed.push(sql);
+        return realPrepare(sql);
+      }) as typeof memDb.raw.prepare);
+
+      try {
+        // Fresh store so prepared statements are built (and captured) here.
+        const freshStore = new ExperienceMemoryStore(memDb.raw, dbPath);
+        freshStore.replaceSession(
+          'sess-scan',
+          makeSession({
+            sessionId: 'sess-scan',
+            summary: 'gateway token rotation',
+            keywords: ['gateway'],
+            rawSession: turns,
+          }),
+          []
+        );
+        const result = freshStore.retrieveProgressive('gateway rotation');
+        expect(result.rawSessionCandidates[0].rawSession).toEqual(turns);
+      } finally {
+        spy.mockRestore();
+      }
+
+      const unfilteredSessionScans = executed.filter(
+        (sql) => /FROM\s+memory_sessions/i.test(sql) && !/WHERE/i.test(sql)
+      );
+      expect(unfilteredSessionScans.length).toBeGreaterThan(0);
+      for (const sql of unfilteredSessionScans) {
+        expect(sql).not.toMatch(/raw_session/i);
+      }
+      // ...and the transcript did get fetched, by id.
+      expect(
+        executed.some((sql) => /raw_session/i.test(sql) && /WHERE\s+session_id\s+IN/i.test(sql))
+      ).toBe(true);
+    });
+
+    it('scoring is unaffected by transcripts leaving the scan', () => {
+      // rawSession was never part of the session text selector, so a session whose
+      // transcript alone contains the query term must still not match.
+      store.replaceSession(
+        'transcript-only',
+        makeSession({
+          sessionId: 'transcript-only',
+          summary: 'unrelated summary',
+          keywords: ['unrelated'],
+          rawSession: [{ role: 'user', content: 'zebrafish' }],
+        }),
+        []
+      );
+
+      const result = store.retrieveProgressive('zebrafish');
+
+      expect(result.rankedSessions).toHaveLength(0);
+    });
+  });
 
   describe('getSearchRows', () => {
     beforeEach(() => {
