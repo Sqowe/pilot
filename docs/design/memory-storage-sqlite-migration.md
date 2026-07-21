@@ -23,6 +23,7 @@
 | 3.1   | Post-review fixes — §7 staleness gate, per-row model stamping   | ✅ Done | `5dd814d` |
 | 3.2   | Search path narrowed to text-only rows; deprecated getters gone | ✅ Done | `69a1204` |
 | 3.3   | Lazy transcript hydration — §1 goal #2 fully closed             | ✅ Done | `03a56c8` |
+| 3.4   | Hardening — BLOB alignment, column-definition guard, doc sync   | ✅ Done | `5fcfd1b` |
 
 > Note: [memory-system-architecture.md §5](memory-system-architecture.md)'s storage-root
 > default is now **fixed** (`app.getPath('userData')/memory`). Its storage-layout tree is
@@ -551,22 +552,39 @@ Items are struck off here as they land rather than moved, so the reasoning stays
    fields from a public result type is a judgement call about reserved API, not a cleanup —
    worth a decision of its own.
 
-3. **`blobToEmbedding` guards `byteLength % 4` but not `byteOffset % 4`.** A non-4-aligned
-   `Buffer` throws `RangeError: start offset of Float32Array should be a multiple of 4`.
-   Verified unreachable today — better-sqlite3 returns `byteOffset === 0` for every BLOB (probed
-   over 200 rows of varying size) — so this is hardening, not a live bug. Note the asymmetry: the
-   store wraps decoding in `safeDecodeEmbedding`, but `exportExperienceJson`'s
-   `blobToEmbeddingForExport` has no try/catch.
+3. ✅ **DONE (`5fcfd1b`) — `blobToEmbedding` guarded `byteLength % 4` but not `byteOffset % 4`.**
+   Still verified unreachable through better-sqlite3, which returns `byteOffset === 0` for every
+   BLOB (probed over 200 rows of varying size) — so this was hardening, not a live bug. It was
+   worth closing anyway because of the asymmetry: the store swallows decode failures via
+   `safeDecodeEmbedding`, while `exportExperienceJson` decodes with no `try/catch`, so one sliced
+   or pooled `Buffer` reaching that path would have thrown mid-export. Fixed at the source rather
+   than by adding a second `try/catch`: on an unaligned offset the bytes are copied into a fresh
+   `ArrayBuffer`, which is offset 0 by construction.
 4. **The `Float32Array` widening on `cosineSimilarity` is dead in production.** `blobToEmbedding`
    returns `Array.from(f32)`, so nothing passes a `Float32Array` outside tests — §8's intent was
    to hand the view straight to the scorer and skip the `number[]` materialization per candidate.
-5. **`ensureColumn`'s type validator is weaker than it looks**
-   ([memory-db.ts:41](../../src/main/memory/memory-db.ts)): it prefix-matches
-   `ALLOWED_COLUMN_TYPES` then interpolates the original suffix verbatim, so anything trailing a
-   matched prefix passes through. All call sites are hardcoded constants — no injection path —
-   but the guard doesn't deliver the assurance its name implies.
-6. **`memory-system-architecture.md` §5's storage tree** still lists `experience_memory.json`
-   with no `memory.db` (its storage-root default is already fixed).
-7. **Repoint the future read-only memory MCP reader at `memory.db`** (was §13 step 3). It becomes
-   simpler and race-free versus reading a JSON file mid-rewrite, and it can afford the per-row
-   `embedding_model` assert that §7's O(1) service-level gate skips.
+5. ✅ **DONE (`5fcfd1b`) — `ensureColumn`'s validator did not actually validate.** It
+   prefix-matched `ALLOWED_COLUMN_TYPES` and then interpolated the remainder verbatim into a
+   `db.exec()`, which executes multiple statements. So
+   `probe TEXT NOT NULL DEFAULT ''; DROP TABLE memory_chunks; --` passed the check — confirmed by
+   running the payload against the old implementation, which accepted it and dropped the table.
+
+   Not a live vulnerability: every call site is a hardcoded constant, and nothing routes user
+   input here. But "the guard is fine because no caller abuses it" is an argument that expires the
+   moment someone adds a caller. Replaced with a single end-anchored pattern covering the whole
+   definition, `DEFAULT` literals limited to a quoted string, a number, or `NULL`. `ensureColumn`
+   is now exported so the rejection is testable.
+
+6. ✅ **DONE (`5fcfd1b`) — `memory-system-architecture.md` still described the JSON store.**
+   The storage tree now shows `memory.db` (plus its WAL sidecars and the `.bak` artefact). Four
+   further stale references were found beyond the tree and fixed in the same pass: the layer table
+   at the top, the extraction-pipeline diagram, the ingestion flow, and the staleness paragraph —
+   which now points at `memory_meta.embedding_format_version` and cross-references §7 for the
+   separate model-change signal.
+7. **Not actionable yet — note for whoever builds the memory MCP reader.** There is no such
+   reader in the codebase today ([src/main/mcp/](../../src/main/mcp/) has the gui-operate server,
+   config store and manager, nothing for memory), so this is not a task that can be picked up: it
+   is a constraint to honour when that feature is designed. When it is: point it at `memory.db`
+   rather than the JSON — it is simpler and race-free versus reading a file mid-rewrite — and have
+   it assert per-row `embedding_model`, which it can afford and which §7's O(1) service-level gate
+   deliberately skips.

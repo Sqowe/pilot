@@ -9,10 +9,10 @@ The memory system provides long-term context persistence across chat sessions. I
 
 The architecture uses a **two-layer design**:
 
-| Layer             | Type                | Injection                    | Scope                   | Storage                  |
-| ----------------- | ------------------- | ---------------------------- | ----------------------- | ------------------------ |
-| Core Memory       | User profile        | Passive (always in prompt)   | Workspace-filtered      | `core_memory.json`       |
-| Experience Memory | Past session chunks | Active (on-demand via tools) | Workspace-scoped search | `experience_memory.json` |
+| Layer             | Type                | Injection                    | Scope                   | Storage            |
+| ----------------- | ------------------- | ---------------------------- | ----------------------- | ------------------ |
+| Core Memory       | User profile        | Passive (always in prompt)   | Workspace-filtered      | `core_memory.json` |
+| Experience Memory | Past session chunks | Active (on-demand via tools) | Workspace-scoped search | `memory.db`        |
 
 ---
 
@@ -181,7 +181,7 @@ LLM call → returns JSON:
 Each chunk gets:
   - rawText extracted from source turns
   - embedding vector computed
-  - stored in experience_memory.json
+  - stored in memory.db (memory_chunks / memory_sessions)
 ```
 
 Each session produces 1–8 chunks. The extraction prompt instructs the LLM to organize chunks around: goal / decision / implementation / constraint / result / unresolved.
@@ -270,7 +270,7 @@ IngestionQueue processes (concurrency-limited)
          │      └─ Returns session_summary + chunks
          │
          └─ 3. storeExperienceSession(extracted, embeddings)
-                └─ Compute embeddings → store in experience_memory.json
+                └─ Compute embeddings → store in memory.db
 ```
 
 ### Deduplication
@@ -321,13 +321,22 @@ All memory files live under a configurable `storageRoot`. By default this is
 
 ```
 storageRoot/
-├── core_memory.json          # Core memory entries (v2 format)
-├── experience_memory.json    # Sessions + chunks with embeddings
-├── session_state.json        # Tracks which sessions have been ingested
-├── prompts/                  # Custom prompt overrides (optional)
-│   └── core-extraction.md    # Custom extraction prompt (if created by user)
-└── eval-artifacts/           # Eval harness artifacts (optional)
+├── core_memory.json              # Core memory entries (v2 format)
+├── memory.db                     # Experience memory: sessions + chunks + embeddings (SQLite, WAL)
+├── memory.db-wal                 # WAL sidecars, present while the DB is open
+├── memory.db-shm
+├── experience_memory.json.bak    # Pre-migration JSON, retained as a rollback artefact
+├── session_state.json            # Tracks which sessions have been ingested
+├── prompts/                      # Custom prompt overrides (optional)
+│   └── core-extraction.md        # Custom extraction prompt (if created by user)
+└── eval-artifacts/               # Eval harness artifacts (optional)
 ```
+
+> Experience memory moved from `experience_memory.json` to **`memory.db`** — see
+> [memory-storage-sqlite-migration.md](memory-storage-sqlite-migration.md). Core memory and
+> session state stay JSON by design (decision D2 there): both are small enough that indexed
+> queries buy nothing. The `.bak` is created once by the backfill and kept for one release cycle;
+> a store that never had embeddings enabled will not have one.
 
 ---
 
@@ -389,8 +398,11 @@ The model is downloaded on first use (with backoff/retry) and cached under `{sto
 EmbeddingGemma requires a task prefix that the pipeline does not auto-apply, so embeds are tagged
 `query` vs `document` (`EmbeddingKind`, threaded from the ingestion/retrieval call sites) and the
 retrieval prefixes are prepended **only in the local provider** (remote models are prefix-free).
-`experience_memory.json` carries an `embeddingFormatVersion` (`EMBEDDING_FORMAT_VERSION`) so a
-format change (e.g. the prefix fix) is detected as a stale index and a rebuild is offered.
+`memory.db` records `embedding_format_version` in its `memory_meta` table
+(`EMBEDDING_FORMAT_VERSION`) so a format change (e.g. the prefix fix) is detected as a stale index
+and a rebuild is offered. A change of embedding _model_ is detected separately, via
+`memory_meta.embedding_model` — see
+[memory-storage-sqlite-migration.md §7](memory-storage-sqlite-migration.md).
 
 **Build/packaging constraint.** `onnxruntime-node` loads its native binding
 (`onnxruntime_binding.node`) via a dynamic `require`, which Rollup cannot bundle. The
