@@ -70,6 +70,9 @@ function initSchema(db: Database.Database): void {
   try {
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
+    // Set a busy timeout so VACUUM and concurrent reads/writes don't immediately
+    // fail with SQLITE_BUSY — they'll retry for up to 5 s before giving up.
+    db.pragma('busy_timeout = 5000');
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS memory_sessions (

@@ -4698,6 +4698,60 @@ function getMemoryStorageRoot(): string {
   return configured || join(app.getPath('userData'), 'memory');
 }
 
+ipcMain.handle('memory.getExperienceDbStatus', () => {
+  if (!memoryService) return { success: false, error: 'Memory service not initialized' };
+  try {
+    return { success: true, status: memoryService.getExperienceDbStatus() };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+/**
+ * Export experience memory to a user-selected file via save dialog.
+ * Uses atomic temp+rename write so disk I/O does not corrupt the file on crash.
+ * Note: exportExperienceJson() + JSON.stringify() runs on the main thread;
+ * for the current store size (~24 MB) this takes ~100ms and is triggered
+ * only by an explicit user action in the Settings UI.
+ */
+ipcMain.handle('memory.exportExperienceMemoryToFile', async () => {
+  if (!memoryService) return { success: false, error: 'Memory service not initialized' };
+  try {
+    // Prefer focused window; fall back to mainWindow if alive; allow no-parent dialog.
+    const win =
+      BrowserWindow.getFocusedWindow() ??
+      (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined);
+    const defaultExportPath = join(
+      app.getPath('downloads'),
+      `experience_memory_export_${Date.now()}.json`
+    );
+    const dialogOptions = {
+      title: 'Export Experience Memory',
+      defaultPath: defaultExportPath,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    };
+    const dialogResult = await (win
+      ? dialog.showSaveDialog(win, dialogOptions)
+      : dialog.showSaveDialog(dialogOptions));
+    if (dialogResult.canceled || !dialogResult.filePath) {
+      return { success: false, canceled: true };
+    }
+    return memoryService.exportExperienceJsonToFile(dialogResult.filePath);
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+/**
+ * VACUUM memory.db via the ingestion queue to prevent SQLITE_BUSY conflicts
+ * with concurrent memory reads/writes.
+ */
+ipcMain.handle('memory.vacuumExperienceDb', () => {
+  if (!memoryService)
+    return Promise.resolve({ success: false, error: 'Memory service not initialized' });
+  return memoryService.vacuumExperienceDbQueued();
+});
+
 ipcMain.handle('memory.setEnabled', (_event, enabled: boolean) => {
   if (!memoryService) {
     throw new Error('Memory service not initialized');

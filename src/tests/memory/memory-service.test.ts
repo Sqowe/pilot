@@ -665,7 +665,50 @@ describe('MemoryService', () => {
     // Trigger store init.
     service.getOverview();
     expect(() => service.vacuumExperienceDb()).not.toThrow();
-    expect(service.vacuumExperienceDb()).toEqual({ success: true });
+    // vacuumExperienceDb() now returns void; confirm queued variant returns success.
+    await expect(service.vacuumExperienceDbQueued()).resolves.toMatchObject({ success: true });
+  });
+
+  it('exportExperienceJsonToFile writes valid JSON to a temp+rename atomic path', async () => {
+    const outPath = path.join(storageRoot, 'test-export.json');
+    // Trigger store init so the export has something to read.
+    service.getOverview();
+    const result = await service.exportExperienceJsonToFile(outPath);
+    expect(result).toMatchObject({ success: true, path: outPath });
+    expect(fs.existsSync(outPath)).toBe(true);
+    const parsed = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+    expect(Array.isArray(parsed.sessions)).toBe(true);
+    expect(Array.isArray(parsed.chunks)).toBe(true);
+    expect(typeof parsed.embeddingFormatVersion).toBe('number');
+    // No stray .tmp files left behind.
+    const tmpFiles = fs.readdirSync(storageRoot).filter((f) => f.endsWith('.tmp'));
+    expect(tmpFiles).toHaveLength(0);
+  });
+
+  it('exportExperienceJsonToFile overwrites an existing file successfully', async () => {
+    const outPath = path.join(storageRoot, 'test-export-overwrite.json');
+    fs.writeFileSync(outPath, '{"old":true}', 'utf8');
+    service.getOverview();
+    const result = await service.exportExperienceJsonToFile(outPath);
+    expect(result).toMatchObject({ success: true });
+    const parsed = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+    expect(parsed).not.toHaveProperty('old');
+    expect(Array.isArray(parsed.sessions)).toBe(true);
+  });
+
+  it('vacuumExperienceDbQueued returns success:false when VACUUM fails', async () => {
+    service.getOverview(); // ensure init
+    // Stub vacuumExperienceDb to throw, simulating a SQLite error.
+    // We spy on the method so the error is handled by the queue's catch.
+    const spy = vi
+      .spyOn(service as unknown as { vacuumExperienceDb: () => void }, 'vacuumExperienceDb')
+      .mockImplementation(() => {
+        throw new Error('SQLITE_BUSY: database is locked');
+      });
+    const result = await service.vacuumExperienceDbQueued();
+    spy.mockRestore();
+    expect(result.success).toBe(false);
+    expect((result as { success: false; error: string }).error).toContain('SQLITE_BUSY');
   });
 
   it('does not resurrect deleted experience memory when deletion happens during queued ingestion', async () => {

@@ -29,6 +29,8 @@ import type {
   MemoryDebugFileInfo,
   MemoryDebugFileContent,
   MemoryInspectSessionResult,
+  ExperienceDbStatus,
+  ExperienceExportResult,
   LocalEmbeddingProgress,
   LocalModelStatus,
   MemoryModelCheckResult,
@@ -674,6 +676,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('memory.warmUpLocalModel', force),
     checkModelAvailability: (draft: MemoryRuntimeConfig): Promise<MemoryModelCheckResult> =>
       ipcRenderer.invoke('memory.checkModelAvailability', draft),
+    getExperienceDbStatus: (): Promise<
+      { success: true; status: ExperienceDbStatus } | { success: false; error: string }
+    > => ipcRenderer.invoke('memory.getExperienceDbStatus'),
+    exportExperienceMemoryToFile: (): Promise<ExperienceExportResult> =>
+      ipcRenderer.invoke('memory.exportExperienceMemoryToFile'),
+    vacuumExperienceDb: (): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('memory.vacuumExperienceDb'),
     onLocalEmbeddingProgress: (callback: (p: LocalEmbeddingProgress) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, p: LocalEmbeddingProgress) => {
         try {
@@ -1079,6 +1088,11 @@ declare global {
         getLocalModelStatus: () => Promise<LocalModelStatus>;
         warmUpLocalModel: (force?: boolean) => Promise<LocalModelStatus>;
         checkModelAvailability: (draft: MemoryRuntimeConfig) => Promise<MemoryModelCheckResult>;
+        getExperienceDbStatus: () => Promise<
+          { success: true; status: ExperienceDbStatus } | { success: false; error: string }
+        >;
+        exportExperienceMemoryToFile: () => Promise<ExperienceExportResult>;
+        vacuumExperienceDb: () => Promise<{ success: boolean; error?: string }>;
         onLocalEmbeddingProgress: (callback: (p: LocalEmbeddingProgress) => void) => () => void;
       };
     };

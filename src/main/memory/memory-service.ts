@@ -633,12 +633,19 @@ export class MemoryService {
   } {
     this.ensureStores(); // guarantees memoryDb is open
     const db = this.memoryDb!.raw;
-    const sessionRows = db.prepare(`SELECT * FROM memory_sessions`).all() as Array<
-      Record<string, unknown> & { embedding: Buffer | null }
-    >;
-    const chunkRows = db.prepare(`SELECT * FROM memory_chunks`).all() as Array<
-      Record<string, unknown> & { embedding: Buffer | null }
-    >;
+
+    // Wrap in a deferred read transaction to get a consistent snapshot and
+    // prevent a partially-committed write from producing an inconsistent export.
+    const readSnapshot = db.transaction(() => {
+      const sessionRows = db.prepare(`SELECT * FROM memory_sessions`).all() as Array<
+        Record<string, unknown> & { embedding: Buffer | null }
+      >;
+      const chunkRows = db.prepare(`SELECT * FROM memory_chunks`).all() as Array<
+        Record<string, unknown> & { embedding: Buffer | null }
+      >;
+      return { sessionRows, chunkRows };
+    });
+    const { sessionRows, chunkRows } = readSnapshot();
 
     const sessions = sessionRows.map((r) => ({
       id: r.id,
@@ -687,11 +694,81 @@ export class MemoryService {
     };
   }
 
-  /** Run VACUUM on memory.db to reclaim freed pages after large deletes. */
-  vacuumExperienceDb(): { success: boolean } {
+  /**
+   * Write experience memory export to a file path (async, non-blocking disk I/O).
+   * Preferred over exportExperienceJson() for UI-triggered exports —
+   * avoids sending a large payload over IPC.
+   */
+  async exportExperienceJsonToFile(
+    filePath: string
+  ): Promise<{ success: true; path: string } | { success: false; error: string }> {
+    try {
+      const data = this.exportExperienceJson();
+      const json = JSON.stringify(data, null, 2);
+      const { writeFile, rename, unlink } = await import('node:fs/promises');
+      // Use a unique tmp name to avoid collisions with concurrent exports.
+      const tmpPath = `${filePath}.${Date.now()}.tmp`;
+      const bakPath = `${filePath}.bak`;
+      let bakCreated = false;
+      try {
+        await writeFile(tmpPath, json, 'utf8');
+        // Safe overwrite strategy: rename dest → .bak, then tmp → dest, then delete .bak.
+        // If tmp→dest fails, restore .bak. No delete-then-rename gap.
+        try {
+          await rename(filePath, bakPath);
+          bakCreated = true;
+        } catch (bakErr) {
+          // dest does not exist yet — that is fine, skip backup.
+          const code = (bakErr as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT') throw bakErr;
+        }
+        try {
+          await rename(tmpPath, filePath);
+        } catch (moveErr) {
+          // Restore backup if the final move failed.
+          if (bakCreated) {
+            await rename(bakPath, filePath).catch(() => {});
+          }
+          throw moveErr;
+        }
+        // Success: clean up backup.
+        if (bakCreated) {
+          await unlink(bakPath).catch(() => {});
+        }
+      } catch (writeErr) {
+        // Clean up temp file on failure (best-effort).
+        await unlink(tmpPath).catch(() => {});
+        throw writeErr;
+      }
+      return { success: true, path: filePath };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Run VACUUM on memory.db, serialized to avoid SQLITE_BUSY.
+   * Always resolves — errors are returned as { success: false, error }.
+   * Does NOT use the ingestion queue to avoid unhandled-rejection leaks
+   * from the queue's internal promise chain.
+   */
+  async vacuumExperienceDbQueued(): Promise<{ success: boolean; error?: string }> {
+    try {
+      this.vacuumExperienceDb();
+      return { success: true };
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  /** Run VACUUM on memory.db to reclaim freed pages after large deletes.
+   * Throws on SQLite error so callers can propagate the failure.
+   */
+  vacuumExperienceDb(): void {
     this.ensureStores(); // guarantees memoryDb is open
     this.memoryDb!.raw.exec('VACUUM');
-    return { success: true };
   }
 
   clearCoreMemory(): { success: boolean } {
