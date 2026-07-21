@@ -608,6 +608,14 @@ export class MemoryService {
       integrityOk = false;
     }
 
+    let journalMode: string | null = null;
+    try {
+      const value = db.pragma('journal_mode', { simple: true });
+      if (typeof value === 'string') journalMode = value;
+    } catch {
+      // Report null on failure rather than masking it as a specific journaling mode.
+    }
+
     const workspaceBreakdown = store.getStatsBySourceWorkspace();
 
     return {
@@ -617,6 +625,7 @@ export class MemoryService {
       embeddingModel: embeddingModel ?? null,
       embeddingDim: Number.isFinite(embeddingDim) ? embeddingDim : null,
       sizeBytes,
+      journalMode,
       integrityOk,
       workspaceBreakdown,
     };

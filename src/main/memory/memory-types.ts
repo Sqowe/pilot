@@ -227,6 +227,7 @@ export interface ExperienceDbStatus {
   embeddingModel: string | null;
   embeddingDim: number | null;
   sizeBytes: number;
+  journalMode?: string | null;
   integrityOk: boolean;
   workspaceBreakdown: Array<{
     workspaceKey: string;

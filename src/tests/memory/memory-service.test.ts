@@ -658,6 +658,7 @@ describe('MemoryService', () => {
     expect(status.sessionCount).toBeGreaterThanOrEqual(1);
     expect(status.integrityOk).toBe(true);
     expect(status.sizeBytes).toBeGreaterThan(0);
+    expect(status.journalMode).toBe('wal');
     expect(Array.isArray(status.workspaceBreakdown)).toBe(true);
   });
 

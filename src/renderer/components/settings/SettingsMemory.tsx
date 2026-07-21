@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
   EmbeddingProviderType,
+  ExperienceDbStatus,
   LocalEmbeddingProgress,
   MemoryDebugFileContent,
   MemoryDebugFileInfo,
@@ -18,6 +19,19 @@ import { SettingsContentSection } from './shared';
 import { classifyEmbeddingModel } from './embedding-model-validation';
 
 type SearchMode = 'workspace' | 'all' | 'global';
+
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes)) return '—';
+  const KB = 1024;
+  const MB = KB * 1024;
+  const GB = MB * 1024;
+  const TB = GB * 1024;
+  if (bytes < KB) return `${bytes} B`;
+  if (bytes < MB) return `${(bytes / KB).toFixed(1)} KB`;
+  if (bytes < GB) return `${(bytes / MB).toFixed(1)} MB`;
+  if (bytes < TB) return `${(bytes / GB).toFixed(2)} GB`;
+  return `${(bytes / TB).toFixed(2)} TB`;
+}
 
 function formatRelativeTime(timestamp: number, locale?: string): string {
   const now = Date.now();
@@ -185,6 +199,15 @@ export function SettingsMemory() {
   // True when stored local embeddings predate a format change (e.g. the prefix fix).
   const [embeddingFormatStale, setEmbeddingFormatStale] = useState(false);
 
+  // Experience DB (memory.db) status card — populated when the sqlite entry is selected.
+  const [experienceDbStatus, setExperienceDbStatus] = useState<ExperienceDbStatus | null>(null);
+  const [isVacuuming, setIsVacuuming] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Selection request sequencing: bumped on each selection/refresh so that in-flight
+  // reads/status fetches whose selection has since changed are discarded (stale-guard).
+  const selectionRequestRef = useRef(0);
+
   const refreshEmbeddingFormatStale = useCallback(async () => {
     try {
       const { stale } = await window.electronAPI.memory.isEmbeddingFormatStale();
@@ -199,6 +222,10 @@ export function SettingsMemory() {
   }, [refreshEmbeddingFormatStale]);
 
   const enabled = overview?.enabled ?? appConfig?.memoryEnabled ?? true;
+
+  const selectedFile =
+    selectedFilePath != null ? (files.find((f) => f.filePath === selectedFilePath) ?? null) : null;
+  const selectedIsSqlite = selectedFile?.storage === 'sqlite';
 
   const groupedResults = useMemo(() => {
     return {
@@ -224,16 +251,64 @@ export function SettingsMemory() {
     setOverview(nextOverview);
   };
 
+  // Fetch the experience DB status card data. When `requestId` is supplied it acts as a
+  // stale-guard: if the selection has since changed (token bumped) the result is discarded.
+  // `silent` skips touching the shared `status` message — used by actions (e.g. vacuum) that
+  // set their own status and don't want it cleared by this refresh.
+  const refreshExperienceDbStatus = async (opts?: { requestId?: number; silent?: boolean }) => {
+    const { requestId, silent = false } = opts ?? {};
+    const isStale = () => requestId != null && requestId !== selectionRequestRef.current;
+    try {
+      const result = await window.electronAPI.memory.getExperienceDbStatus();
+      if (isStale()) return;
+      if (result.success) {
+        setExperienceDbStatus(result.status);
+        // Clear any prior error so a successful reload doesn't leave stale error text.
+        if (!silent) setStatus(null);
+      } else {
+        setExperienceDbStatus(null);
+        if (!silent) {
+          setStatus(
+            `${t('memory.experienceDbStatusError')}${result.error ? `: ${result.error}` : ''}`
+          );
+        }
+      }
+    } catch (error) {
+      if (isStale()) return;
+      setExperienceDbStatus(null);
+      if (!silent) setStatus(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const refreshFiles = async () => {
     const nextFiles = await window.electronAPI.memory.listFiles();
     setFiles(nextFiles);
     const selectedEntry = nextFiles.find((item) => item.filePath === selectedFilePath);
     if (selectedFilePath && selectedEntry?.exists) {
-      const nextContent = await window.electronAPI.memory.readFile(selectedFilePath);
-      setFileContent(nextContent);
+      const requestId = ++selectionRequestRef.current;
+      // Experience memory lives in a binary SQLite DB; the backend refuses raw reads,
+      // so fetch structured status instead of trying to parse the file.
+      if (selectedEntry.storage === 'sqlite') {
+        setFileContent(null); // clear the raw pane when viewing the DB card
+        await refreshExperienceDbStatus({ requestId });
+      } else {
+        setExperienceDbStatus(null); // clear the DB card when viewing a raw file
+        try {
+          const nextContent = await window.electronAPI.memory.readFile(selectedFilePath);
+          if (requestId === selectionRequestRef.current) setFileContent(nextContent);
+        } catch (error) {
+          if (requestId === selectionRequestRef.current) {
+            setStatus(error instanceof Error ? error.message : String(error));
+          }
+        }
+      }
     } else {
+      // Selection no longer valid (file removed/missing): invalidate any in-flight
+      // fetch for the previous entry before resetting the pane.
+      ++selectionRequestRef.current;
       setSelectedFilePath(null);
       setFileContent(null);
+      setExperienceDbStatus(null);
     }
   };
 
@@ -341,21 +416,90 @@ export function SettingsMemory() {
   const handleSelectFile = async (filePath: string) => {
     const entry = files.find((item) => item.filePath === filePath);
     if (entry && !entry.exists) {
+      // Supersede any in-flight fetch for the prior entry; nothing to load here.
+      ++selectionRequestRef.current;
       setSelectedFilePath(filePath);
       setFileContent(null);
-      setStatus(t('memory.fileNotCreatedYet'));
+      setExperienceDbStatus(null);
+      setIsBusy(false);
+      setStatus(
+        entry.storage === 'sqlite'
+          ? t('memory.experienceDbNotCreatedYet')
+          : t('memory.fileNotCreatedYet')
+      );
       return;
     }
+    // Bump on each selection so in-flight reads/status fetches for the previous entry
+    // are discarded once they resolve (stale-guard against out-of-order resolution).
+    const requestId = ++selectionRequestRef.current;
+    setSelectedFilePath(filePath);
+    setStatus(null);
     setIsBusy(true);
+    try {
+      // Experience memory lives in a binary SQLite DB (memory.db); the backend refuses
+      // raw reads, so fetch the structured status instead of trying to parse the file.
+      if (entry?.storage === 'sqlite') {
+        setFileContent(null);
+        await refreshExperienceDbStatus({ requestId });
+      } else {
+        setExperienceDbStatus(null);
+        const nextContent = await window.electronAPI.memory.readFile(filePath);
+        if (requestId === selectionRequestRef.current) setFileContent(nextContent);
+      }
+    } catch (error) {
+      if (requestId === selectionRequestRef.current) {
+        setStatus(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (requestId === selectionRequestRef.current) setIsBusy(false);
+    }
+  };
+
+  const handleVacuumExperienceDb = async () => {
+    // Capture the selection token so a selection change mid-vacuum doesn't clobber the
+    // newly-selected entry's status / DB card with this action's result.
+    const requestId = selectionRequestRef.current;
+    const stillCurrent = () => requestId === selectionRequestRef.current;
+    setIsVacuuming(true);
     setStatus(null);
     try {
-      const nextContent = await window.electronAPI.memory.readFile(filePath);
-      setSelectedFilePath(filePath);
-      setFileContent(nextContent);
+      const result = await window.electronAPI.memory.vacuumExperienceDb();
+      if (result.success) {
+        if (stillCurrent()) setStatus(t('memory.vacuumSuccess'));
+        // Silent refresh so this success message isn't cleared by the status reload.
+        await refreshExperienceDbStatus({ requestId, silent: true });
+      } else if (stillCurrent()) {
+        setStatus(`${t('memory.vacuumFailed')}${result.error ? `: ${result.error}` : ''}`);
+      }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      if (stillCurrent()) setStatus(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsBusy(false);
+      setIsVacuuming(false);
+    }
+  };
+
+  const handleExportExperienceJson = async () => {
+    const requestId = selectionRequestRef.current;
+    const stillCurrent = () => requestId === selectionRequestRef.current;
+    setIsExporting(true);
+    setStatus(null);
+    try {
+      const result = await window.electronAPI.memory.exportExperienceMemoryToFile();
+      if (!stillCurrent()) return;
+      if (result.success) {
+        setStatus(t('memory.exportSuccess', { path: result.path }));
+      } else if ('canceled' in result && result.canceled) {
+        // User dismissed the save dialog — no message.
+      } else {
+        // Failure (carries `error`) or any unexpected shape — surface it rather than
+        // silently misclassifying it as a cancellation.
+        const detail = 'error' in result && result.error ? `: ${result.error}` : '';
+        setStatus(`${t('memory.exportFailed')}${detail}`);
+      }
+    } catch (error) {
+      if (stillCurrent()) setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -1123,7 +1267,14 @@ export function SettingsMemory() {
                       : 'border-border-muted bg-background/80 hover:bg-surface-hover'
                   }`}
                 >
-                  <p className="text-sm font-medium text-text-primary">{file.label}</p>
+                  <p className="text-sm font-medium text-text-primary">
+                    {file.label}
+                    {file.storage === 'sqlite' && (
+                      <span className="ml-2 rounded bg-accent/10 px-1.5 py-0.5 align-middle text-[10px] font-medium uppercase tracking-wide text-accent">
+                        SQLite
+                      </span>
+                    )}
+                  </p>
                   <p className="mt-1 text-xs text-text-muted">{file.filePath}</p>
                   <p className="mt-2 text-[11px] text-text-muted">
                     {file.sizeBytes} bytes
@@ -1142,32 +1293,51 @@ export function SettingsMemory() {
           </div>
 
           <div className="rounded-xl border border-border-muted bg-background/80 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-text-primary">{t('memory.fileContent')}</p>
-                {fileContent?.filePath && (
-                  <p className="mt-1 text-xs text-text-muted">{fileContent.filePath}</p>
-                )}
-              </div>
-              {fileContent?.filePath && (
-                <button
-                  onClick={() => {
-                    void window.electronAPI.showItemInFolder(fileContent.filePath);
-                  }}
-                  className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-text-primary"
-                >
-                  {t('memory.revealInFinder')}
-                </button>
-              )}
-            </div>
-            {fileContent ? (
-              <pre className="mt-3 max-h-[34rem] overflow-auto rounded-lg bg-background-secondary/80 p-3 text-xs leading-5 text-text-secondary whitespace-pre-wrap">
-                {fileContent.parsed
-                  ? JSON.stringify(fileContent.parsed, null, 2)
-                  : fileContent.text || t('memory.emptyFile')}
-              </pre>
+            {selectedIsSqlite ? (
+              <ExperienceDbStatusCard
+                status={experienceDbStatus}
+                exists={selectedFile?.exists ?? false}
+                isVacuuming={isVacuuming}
+                isExporting={isExporting}
+                onVacuum={() => {
+                  void handleVacuumExperienceDb();
+                }}
+                onExport={() => {
+                  void handleExportExperienceJson();
+                }}
+              />
             ) : (
-              <p className="mt-3 text-sm text-text-muted">{t('memory.selectFileHint')}</p>
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-text-primary">
+                      {t('memory.fileContent')}
+                    </p>
+                    {fileContent?.filePath && (
+                      <p className="mt-1 text-xs text-text-muted">{fileContent.filePath}</p>
+                    )}
+                  </div>
+                  {fileContent?.filePath && (
+                    <button
+                      onClick={() => {
+                        void window.electronAPI.showItemInFolder(fileContent.filePath);
+                      }}
+                      className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-text-primary"
+                    >
+                      {t('memory.revealInFinder')}
+                    </button>
+                  )}
+                </div>
+                {fileContent ? (
+                  <pre className="mt-3 max-h-[34rem] overflow-auto rounded-lg bg-background-secondary/80 p-3 text-xs leading-5 text-text-secondary whitespace-pre-wrap">
+                    {fileContent.parsed
+                      ? JSON.stringify(fileContent.parsed, null, 2)
+                      : fileContent.text || t('memory.emptyFile')}
+                  </pre>
+                ) : (
+                  <p className="mt-3 text-sm text-text-muted">{t('memory.selectFileHint')}</p>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -2065,6 +2235,122 @@ function NumberField({
         step={step}
         className="w-20 rounded border border-border bg-background px-2 py-1 text-right text-sm text-text-primary"
       />
+    </div>
+  );
+}
+
+function ExperienceDbStatusCard({
+  status,
+  exists,
+  isVacuuming,
+  isExporting,
+  onVacuum,
+  onExport,
+}: {
+  status: ExperienceDbStatus | null;
+  /** Whether the selected memory.db entry exists on disk. */
+  exists: boolean;
+  isVacuuming: boolean;
+  isExporting: boolean;
+  onVacuum: () => void;
+  onExport: () => void;
+}) {
+  const { t } = useTranslation();
+  // Defensive normalization: the backend type guarantees these fields, but guard the
+  // render boundary against partial/undefined payloads (older schema, IPC mismatch)
+  // so the card degrades gracefully instead of throwing or rendering NaN.
+  const breakdown = status?.workspaceBreakdown ?? [];
+  const sizeLabel =
+    status && typeof status.sizeBytes === 'number' ? formatFileSize(status.sizeBytes) : '—';
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-text-primary">{t('memory.experienceDbTitle')}</p>
+          <p className="mt-1 text-xs text-text-muted">memory.db</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={onExport}
+            disabled={!status || isExporting}
+            className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isExporting ? t('memory.exporting') : t('memory.exportJson')}
+          </button>
+          <button
+            onClick={onVacuum}
+            disabled={!status || isVacuuming}
+            className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isVacuuming ? t('memory.vacuuming') : t('memory.vacuum')}
+          </button>
+        </div>
+      </div>
+
+      {!exists ? (
+        <p className="text-sm text-text-muted">{t('memory.experienceDbNotCreatedYet')}</p>
+      ) : status ? (
+        <div className="space-y-2">
+          <p className="text-[11px] text-text-muted">
+            {t('memory.experienceDbSchema', { version: status.schemaVersion ?? 1 })} ·{' '}
+            {status.journalMode ? status.journalMode.toUpperCase() : '—'} · {sizeLabel}
+          </p>
+          <p className="text-sm text-text-primary">
+            {t('memory.experienceDbCounts', {
+              sessions: status.sessionCount ?? 0,
+              chunks: status.chunkCount ?? 0,
+            })}
+          </p>
+          <p className="text-xs text-text-secondary">
+            <span className="text-text-muted">{t('memory.embeddingModel')}:</span>{' '}
+            {status.embeddingModel ? (
+              <>
+                {status.embeddingModel}
+                {status.embeddingDim != null
+                  ? ` · ${t('memory.dimensionShort')} ${status.embeddingDim}`
+                  : ''}
+              </>
+            ) : (
+              t('memory.noEmbeddingModel')
+            )}
+          </p>
+          <p className="text-xs text-text-secondary">
+            <span className="text-text-muted">{t('memory.integrity')}:</span>{' '}
+            {status.integrityOk ? t('memory.integrityOk') : t('memory.integrityFailed')}
+          </p>
+
+          <div>
+            <p className="text-xs text-text-muted">{t('memory.byWorkspace')}</p>
+            {breakdown.length > 0 ? (
+              <ul className="mt-1 space-y-1">
+                {breakdown.map((ws, idx) => {
+                  const key =
+                    ws.workspaceKey && ws.workspaceKey !== '(none)' ? ws.workspaceKey : '';
+                  const label = key
+                    ? (key.split(/[\\/]/).filter(Boolean).pop() ?? key)
+                    : t('memory.globalWorkspace');
+                  return (
+                    <li
+                      key={`${ws.workspaceKey || '(none)'}-${idx}`}
+                      className="flex items-center justify-between gap-2 text-xs text-text-secondary"
+                      title={ws.workspaceKey || undefined}
+                    >
+                      <span className="truncate">{label}</span>
+                      <span className="shrink-0 text-text-muted">
+                        {ws.sessionCount ?? 0} · {ws.chunkCount ?? 0}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="mt-1 text-xs text-text-muted">{t('memory.noWorkspaces')}</p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-text-muted">{t('memory.experienceDbStatusMissing')}</p>
+      )}
     </div>
   );
 }

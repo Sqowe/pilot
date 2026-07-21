@@ -15,11 +15,11 @@
 
 ## Rollout status
 
-| Phase | Scope                                                 | Status     | Commit    |
-| ----- | ----------------------------------------------------- | ---------- | --------- |
-| 1     | SQLite store, migration, tests                        | ✅ Done    | `a19fc4f` |
-| 2     | IPC bridge, renderer types, export/vacuum/status      | ✅ Done    | `2bcc076` |
-| 3     | Settings UI — DB status card, storage branching, i18n | ⏳ Pending | —         |
+| Phase | Scope                                                 | Status  | Commit    |
+| ----- | ----------------------------------------------------- | ------- | --------- |
+| 1     | SQLite store, migration, tests                        | ✅ Done | `a19fc4f` |
+| 2     | IPC bridge, renderer types, export/vacuum/status      | ✅ Done | `2bcc076` |
+| 3     | Settings UI — DB status card, storage branching, i18n | ✅ Done | (pending) |
 
 > Note: [memory-system-architecture.md §5](memory-system-architecture.md) still lists the
 > storage root as `~/.open-cowork/memory/`. That is **stale** — the code default is
@@ -372,6 +372,42 @@ Key points:
 - Atomic file export (temp+bak+rename); `vacuumExperienceDbQueued` always resolves with
   `{ success, error? }`.
 - 202 tests passing.
+
+**Phase 3 (pending commit):** Settings UI — DB-status card, storage branching, i18n.
+
+- `SettingsMemory.tsx` — section renamed "Raw File Viewer" → "Memory Storage"; the right pane
+  branches on `MemoryDebugFileInfo.storage`: `file` → existing raw-JSON pane (unchanged),
+  `sqlite` → new `ExperienceDbStatusCard`. The `memory.db` list entry shows a `SQLite` badge.
+- `handleSelectFile` / `refreshFiles` — selecting the `memory.db` entry calls `getExperienceDbStatus`
+  instead of `readFile` (which the backend refuses on the binary DB). Selection is sequenced via a
+  `selectionRequestRef` token (bumped on every select/refresh/deselect) so in-flight status/file
+  reads whose selection has changed are discarded — no stale content or status messages.
+- `ExperienceDbStatusCard` — renders schema version · journaling mode (data-driven via
+  `db.pragma('journal_mode')`, `—` on read failure) · size · session/chunk counts · embedding model
+  - dim · integrity · per-workspace breakdown; actions `[Export JSON]` + `[Vacuum]`.
+    `[Rebuild all]` is intentionally NOT duplicated here — it lives in the Maintenance block below.
+    All fields are defensively normalized (`workspaceBreakdown ?? []`, `Number.isFinite(sizeBytes)`,
+    count coalescing) so a partial IPC payload degrades gracefully instead of throwing.
+- `handleVacuumExperienceDb` / `handleExportExperienceJson` — capture the selection token so a
+  selection change mid-action doesn't clobber the new entry's status; export uses an
+  `error`/`canceled`-explicit branch so a failure is never silently misclassified as a cancel.
+- `memory-service.ts` — `getExperienceDbStatus` now also reports `journalMode` (read via PRAGMA,
+  `null` on failure); field added to `ExperienceDbStatus` in both `memory-types.ts` and
+  `renderer/types/index.ts`.
+- i18n — 23 new keys added to all four locales (`en/zh/ru/hu`); `filesTitle`/`filesDescription`
+  updated; busy-state strings use `…` to match existing `memory.*` convention.
+- 216 tests passing; strengthened `getExperienceDbStatus` shape test to assert `journalMode === 'wal'`.
+
+#### Manual QA checklist (Phase 3 — no renderer component-test infra exists)
+
+- [ ] Settings → Memory → "Memory Storage": four entries listed; `memory.db` shows a `SQLite` badge.
+- [ ] Click `core_memory.json` → raw-JSON pane; click `memory.db` → **DB-status card** (schema/mode/size/counts/model/integrity/workspace breakdown).
+- [ ] Rapidly switch `memory.db` ↔ a JSON file mid-load → only the latest selection's content/status shows (stale-guard).
+- [ ] Hit **Refresh** while a load is in-flight → no stale content; clearing a missing selection resets the pane.
+- [ ] `[Export JSON]` → save dialog; cancel it → no error shown; complete it → success message with path.
+- [ ] `[Vacuum]` → success message persists (status reload is silent); card size updates.
+- [ ] Select `memory.db` when no DB exists yet (fresh install, pre-ingestion) → card shows the not-created-yet message, not "select again".
+- [ ] Switch UI language (en/zh/ru/hu) → card labels translate; no raw keys shown.
 
 ## 14. Risks
 
