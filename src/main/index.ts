@@ -4433,8 +4433,15 @@ ipcMain.handle('memory.isLocalModelDownloaded', () => {
 // True when stored local embeddings predate a format change (e.g. the prefix fix)
 // and need a rebuild for good search quality. Gated to the local provider in the
 // service so remote users aren't prompted to re-embed (which costs API calls).
+// `modelStale` is the separate §7 condition: stored vectors were embedded with a
+// different model than the one now configured, so semantic scoring is degraded to
+// lexical-only until a rebuild. Provider-agnostic (unlike `stale`) — switching model
+// invalidates the index regardless of who computed it.
 ipcMain.handle('memory.isEmbeddingFormatStale', () => {
-  return { stale: memoryService?.isEmbeddingFormatStale() ?? false };
+  return {
+    stale: memoryService?.isEmbeddingFormatStale() ?? false,
+    modelStale: memoryService?.isEmbeddingModelStale() ?? false,
+  };
 });
 
 // Combined status: on-disk cache presence (dependency-free) + in-process runtime

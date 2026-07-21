@@ -198,6 +198,9 @@ export function SettingsMemory() {
   const [checkResult, setCheckResult] = useState<MemoryModelCheckResult | null>(null);
   // True when stored local embeddings predate a format change (e.g. the prefix fix).
   const [embeddingFormatStale, setEmbeddingFormatStale] = useState(false);
+  // Separate §7 condition: stored vectors were embedded with a different model than
+  // the one now configured, so retrieval has silently degraded to lexical-only.
+  const [embeddingModelStale, setEmbeddingModelStale] = useState(false);
 
   // Experience DB (memory.db) status card — populated when the sqlite entry is selected.
   const [experienceDbStatus, setExperienceDbStatus] = useState<ExperienceDbStatus | null>(null);
@@ -210,10 +213,12 @@ export function SettingsMemory() {
 
   const refreshEmbeddingFormatStale = useCallback(async () => {
     try {
-      const { stale } = await window.electronAPI.memory.isEmbeddingFormatStale();
+      const { stale, modelStale } = await window.electronAPI.memory.isEmbeddingFormatStale();
       setEmbeddingFormatStale(stale);
+      setEmbeddingModelStale(modelStale);
     } catch {
       setEmbeddingFormatStale(false);
+      setEmbeddingModelStale(false);
     }
   }, []);
 
@@ -970,10 +975,12 @@ export function SettingsMemory() {
                 />
               </LabeledField>
             </div>
-            {embeddingFormatStale && (
+            {(embeddingFormatStale || embeddingModelStale) && (
               <div className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-900/60 dark:bg-amber-950/30 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs text-amber-700 dark:text-amber-300">
-                  {t('memory.embeddingFormatStaleWarning')}
+                  {embeddingModelStale
+                    ? t('memory.rebuildOnProviderChange')
+                    : t('memory.embeddingFormatStaleWarning')}
                 </p>
                 <button
                   type="button"

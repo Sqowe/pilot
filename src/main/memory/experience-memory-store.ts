@@ -354,12 +354,6 @@ export class ExperienceMemoryStore {
       getChunksBySessionId: db.prepare<[string]>(
         `SELECT * FROM memory_chunks WHERE session_id = ? ORDER BY rowid ASC`
       ),
-      getSessionsForWorkspace: db.prepare<[string, string]>(
-        `SELECT * FROM memory_sessions WHERE source_workspace = ? OR source_workspace IS NULL OR source_workspace = ?`
-      ),
-      getChunksForWorkspace: db.prepare<[string, string]>(
-        `SELECT * FROM memory_chunks WHERE source_workspace = ? OR source_workspace IS NULL OR source_workspace = ?`
-      ),
       getAllSessionsLight: db.prepare(
         `SELECT id, session_id, source_workspace, source_workspace_label,
                 source_session_id, source_session_title, source_session_date,
@@ -380,7 +374,6 @@ export class ExperienceMemoryStore {
       deleteChunksBySessionId: db.prepare<[string]>(
         `DELETE FROM memory_chunks WHERE session_id = ?`
       ),
-      deleteChunkById: db.prepare<[string]>(`DELETE FROM memory_chunks WHERE id = ?`),
       deleteSessionsByWorkspace: db.prepare<[string]>(
         `DELETE FROM memory_sessions WHERE source_workspace = ?`
       ),
@@ -506,12 +499,20 @@ export class ExperienceMemoryStore {
     const stmts = this.getStmts();
 
     const doReplace = this.db.transaction(() => {
-      const session = this._replaceSessionInner(stmts, sessionId, sessionInput, chunkInputs);
-      // Stamp meta inside the same transaction.
+      // Stamp meta BEFORE inserting rows: _replaceSessionInner stamps each row's
+      // embedding_model, and the caller-supplied model is the authoritative value
+      // for the vectors being written now. Writing meta afterwards would leave every
+      // row tagged with the *previous* ingest's model (and NULL on a fresh store).
       // Explicitly set or clear embedding_model so meta never stays stale.
       setMemoryMeta(this.db, 'embedding_model', meta.embeddingModel ?? '');
       setMemoryMeta(this.db, 'embedding_format_version', String(meta.embeddingFormatVersion));
-      return session;
+      return this._replaceSessionInner(
+        stmts,
+        sessionId,
+        sessionInput,
+        chunkInputs,
+        meta.embeddingModel ?? null
+      );
     });
 
     const session = doReplace();
@@ -532,11 +533,18 @@ export class ExperienceMemoryStore {
     return session;
   }
 
+  /**
+   * @param embeddingModel Model tag to stamp on rows carrying a vector. Pass the
+   *   caller's active model when known; `undefined` falls back to the value already
+   *   recorded in memory_meta (correct for `replaceSession`, which has no fresh
+   *   model information of its own).
+   */
   private _replaceSessionInner(
     stmts: ReturnType<typeof ExperienceMemoryStore.buildStatements>,
     sessionId: string,
     sessionInput: Omit<SessionMemoryItem, 'id'> & { id?: string },
-    chunkInputs: Array<Omit<ChunkMemoryItem, 'id'> & { id?: string }>
+    chunkInputs: Array<Omit<ChunkMemoryItem, 'id'> & { id?: string }>,
+    embeddingModel?: string | null
   ): SessionMemoryItem {
     // Normalize workspace keys at the persistence boundary so SQL filtering,
     // stats grouping, and removeBySourceWorkspace all use the same canonical form.
@@ -549,8 +557,12 @@ export class ExperienceMemoryStore {
     // the delete and insert target the same row, regardless of what sessionInput carries.
     const canonicalSessionId = sessionId;
 
-    // Resolve the active embedding model from meta for per-row stamping.
-    const activeEmbeddingModel = getMemoryMeta(this.db, 'embedding_model') || null;
+    // Resolve the model to stamp on rows: prefer the caller's active model, else
+    // fall back to whatever meta already records.
+    const activeEmbeddingModel =
+      embeddingModel !== undefined
+        ? embeddingModel || null
+        : getMemoryMeta(this.db, 'embedding_model') || null;
 
     // Remove existing session and its chunks.
     stmts.deleteChunksBySessionId.run(canonicalSessionId);

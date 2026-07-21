@@ -793,6 +793,80 @@ describe('MemoryService', () => {
     fs.rmSync(symlinkPath, { force: true });
   });
 
+  describe('isEmbeddingModelStale — §7 model staleness gate', () => {
+    function setEmbeddingModel(model: string, useEmbedding = true): void {
+      configStore.update({
+        memoryEnabled: true,
+        memoryRuntime: {
+          llm: { inheritFromActive: true, apiKey: '', baseUrl: '', model: '', timeoutMs: 180000 },
+          embedding: {
+            inheritFromActive: true,
+            apiKey: '',
+            baseUrl: '',
+            model,
+            timeoutMs: 180000,
+          },
+          useEmbedding,
+          maxNavSteps: 2,
+          ingestionConcurrency: 2,
+          storageRoot: path.join(storageRoot, 'memory-root'),
+        },
+      });
+    }
+
+    async function ingestOnce(): Promise<void> {
+      await service.enqueueIngestion({
+        session: makeSession('session-a', 'Gateway fixes', '/repo/a'),
+        prompt: 'fix gateway token rotation',
+        messages: makeMessages('session-a', [
+          { role: 'user', text: 'fix gateway token rotation', timestamp: 1 },
+          { role: 'assistant', text: 'done, gateway token rotation fixed', timestamp: 2 },
+        ]),
+      });
+    }
+
+    it('is false when the active model matches the model the vectors were built with', async () => {
+      setEmbeddingModel('model-A');
+      await ingestOnce();
+
+      expect(service.isEmbeddingModelStale()).toBe(false);
+    });
+
+    it('is true once the configured embedding model changes under existing vectors', async () => {
+      setEmbeddingModel('model-A');
+      await ingestOnce();
+      setEmbeddingModel('model-B');
+
+      expect(service.isEmbeddingModelStale()).toBe(true);
+    });
+
+    it('is false when embeddings are disabled, whatever the store holds', async () => {
+      setEmbeddingModel('model-A');
+      await ingestOnce();
+      setEmbeddingModel('model-B', /* useEmbedding */ false);
+
+      expect(service.isEmbeddingModelStale()).toBe(false);
+    });
+
+    it('is false on an empty store — nothing to invalidate', () => {
+      setEmbeddingModel('model-B');
+
+      expect(service.isEmbeddingModelStale()).toBe(false);
+    });
+
+    it('is false when the store predates model recording (unknown, not mismatched)', async () => {
+      setEmbeddingModel('model-A');
+      await ingestOnce();
+      // Simulate a store migrated before embedding_model was recorded.
+      const memDb = new Database(path.join(storageRoot, 'memory-root', 'memory.db'));
+      memDb.prepare(`DELETE FROM memory_meta WHERE key = 'embedding_model'`).run();
+      memDb.close();
+      setEmbeddingModel('model-B');
+
+      expect(service.isEmbeddingModelStale()).toBe(false);
+    });
+  });
+
   it('rejects arbitrary local files even if storageRoot is configured too broadly', () => {
     const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'open-cowork-memory-broad-root-'));
     const outsideFile = path.join(outsideDir, 'arbitrary.json');

@@ -178,6 +178,8 @@ export class MemoryService {
   private stateStore: MemorySessionStateStore | null = null;
   private experienceStore: ExperienceMemoryStore | null = null;
   private memoryDb: MemoryDb | null = null;
+  /** Debounces the §7 lexical-fallback warning, which is hit on every prompt. */
+  private loggedModelStaleWarning = false;
   private retrievalMetricsBySession = new Map<
     string,
     import('./memory-types').MemoryRetrievalMetrics
@@ -1166,10 +1168,26 @@ export class MemoryService {
       return { context: '', metrics: emptyMetrics };
     }
     const store = this.getExperienceStore();
-    if (!store.sessions.length && !store.chunks.length) {
+    // Cheap COUNT(*) — the `sessions`/`chunks` getters would SELECT * and decode
+    // every embedding BLOB and transcript just to test emptiness.
+    const counts = store.getCounts();
+    if (!counts.sessionCount && !counts.chunkCount) {
       return { context: '', metrics: emptyMetrics };
     }
-    const queryEmbedding = await this.embedText(prompt, 'query');
+    // §7 staleness gate: if the stored vectors were built with a different model,
+    // fall back to lexical-only retrieval rather than comparing across embedding
+    // spaces. Skipping embedText also avoids the pointless embedding call.
+    const modelStale = this.isEmbeddingModelStale();
+    if (modelStale && !this.loggedModelStaleWarning) {
+      // Log once per staleness episode — this runs on every prompt.
+      this.loggedModelStaleWarning = true;
+      logWarn(
+        '[MemoryService] Stored embeddings were built with a different model than the active one — falling back to lexical-only retrieval. Rebuild memory to restore semantic search.'
+      );
+    } else if (!modelStale) {
+      this.loggedModelStaleWarning = false;
+    }
+    const queryEmbedding = modelStale ? [] : await this.embedText(prompt, 'query');
     const runtimeConfig = this.getAppConfig().memoryRuntime;
     const retrieval = store.retrieveProgressive(prompt, {
       chunkTopK: 10,
@@ -1368,6 +1386,40 @@ export class MemoryService {
     const store = this.getExperienceStore();
     // Format version is now read from memory_meta (SQLite) rather than the JSON file.
     return store.getEmbeddingFormatVersion() < EMBEDDING_FORMAT_VERSION && store.hasEmbeddings();
+  }
+
+  /**
+   * True when the stored vectors were embedded with a different model than the one
+   * now configured. Cosine similarity is only meaningful within a single embedding
+   * space, so a mismatch means the persisted vectors are noise against a fresh query
+   * vector — worse than having no vectors at all.
+   *
+   * The store is homogeneous per install (design D5), so memory_meta's
+   * `embedding_model` is authoritative and this stays O(1) — no per-row scan.
+   * Unknown on either side (no active model configured, or a store written before
+   * the model was recorded) is treated as *not* stale: we degrade retrieval only on
+   * positive evidence of a mismatch.
+   *
+   * See docs/design/memory-storage-sqlite-migration.md §7.
+   */
+  isEmbeddingModelStale(): boolean {
+    const runtime = this.getAppConfig().memoryRuntime;
+    if (!runtime.useEmbedding) {
+      return false;
+    }
+    const activeModel = runtime.embedding?.model ?? null;
+    if (!activeModel) {
+      return false;
+    }
+    const store = this.getExperienceStore();
+    if (!store.hasEmbeddings()) {
+      return false;
+    }
+    const storedModel = store.getEmbeddingModel();
+    if (!storedModel) {
+      return false;
+    }
+    return storedModel !== activeModel;
   }
 
   private async embedText(text: string, kind: EmbeddingKind = 'document'): Promise<number[]> {

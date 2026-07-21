@@ -865,6 +865,108 @@ describe('ExperienceMemoryStore — SQLite backend', () => {
   // getPath()
   // -------------------------------------------------------------------------
 
+  // -------------------------------------------------------------------------
+  // Per-row embedding_model stamping (design D4/D5, §7)
+  // -------------------------------------------------------------------------
+
+  describe('per-row embedding_model stamping', () => {
+    const vec = [0.1, 0.2, 0.3];
+
+    function rowModels(table: 'memory_sessions' | 'memory_chunks') {
+      return (
+        memDb.raw
+          .prepare(`SELECT session_id, embedding_model, embedding_dim FROM ${table}`)
+          .all() as Array<{ session_id: string; embedding_model: string | null }>
+      ).map((r) => [r.session_id, r.embedding_model] as const);
+    }
+
+    it('stamps the model supplied to replaceSessionWithMeta on the very first ingest', () => {
+      store.replaceSessionWithMeta(
+        's1',
+        makeSession({ sessionId: 's1', embedding: vec }),
+        [makeChunk('s1', { embedding: vec })],
+        { embeddingModel: 'model-A', embeddingFormatVersion: 2 }
+      );
+
+      // Regression: rows used to be stamped from meta *before* meta was updated,
+      // leaving the first ingest NULL and every later ingest one model behind.
+      expect(rowModels('memory_sessions')).toEqual([['s1', 'model-A']]);
+      expect(rowModels('memory_chunks')).toEqual([['s1', 'model-A']]);
+      expect(store.getEmbeddingModel()).toBe('model-A');
+    });
+
+    it('stamps the new model on a later ingest after a model switch', () => {
+      store.replaceSessionWithMeta(
+        's1',
+        makeSession({ sessionId: 's1', embedding: vec }),
+        [makeChunk('s1', { embedding: vec })],
+        { embeddingModel: 'model-A', embeddingFormatVersion: 2 }
+      );
+      store.replaceSessionWithMeta(
+        's2',
+        makeSession({ sessionId: 's2', embedding: vec }),
+        [makeChunk('s2', { embedding: vec })],
+        { embeddingModel: 'model-B', embeddingFormatVersion: 2 }
+      );
+
+      expect(rowModels('memory_sessions').sort()).toEqual([
+        ['s1', 'model-A'],
+        ['s2', 'model-B'],
+      ]);
+      expect(store.getEmbeddingModel()).toBe('model-B');
+    });
+
+    it('leaves embedding_model NULL on rows with no vector', () => {
+      store.replaceSessionWithMeta(
+        's1',
+        makeSession({ sessionId: 's1', embedding: [] }),
+        [makeChunk('s1', { embedding: [] })],
+        { embeddingModel: 'model-A', embeddingFormatVersion: 2 }
+      );
+
+      expect(rowModels('memory_sessions')).toEqual([['s1', null]]);
+      expect(rowModels('memory_chunks')).toEqual([['s1', null]]);
+    });
+
+    it('records the embedding dimension alongside the model', () => {
+      store.replaceSessionWithMeta(
+        's1',
+        makeSession({ sessionId: 's1', embedding: new Array(768).fill(0.01) }),
+        [],
+        { embeddingModel: 'model-A', embeddingFormatVersion: 2 }
+      );
+
+      const row = memDb.raw
+        .prepare(`SELECT embedding_dim FROM memory_sessions WHERE session_id = 's1'`)
+        .get() as { embedding_dim: number };
+      expect(row.embedding_dim).toBe(768);
+    });
+
+    it('replaceSession (no meta) falls back to the model already in meta', () => {
+      store.setEmbeddingModel('model-A');
+      store.replaceSession('s1', makeSession({ sessionId: 's1', embedding: vec }), []);
+
+      expect(rowModels('memory_sessions')).toEqual([['s1', 'model-A']]);
+    });
+
+    it('clears meta embedding_model when the caller reports no active model', () => {
+      store.replaceSessionWithMeta('s1', makeSession({ sessionId: 's1', embedding: vec }), [], {
+        embeddingModel: 'model-A',
+        embeddingFormatVersion: 2,
+      });
+      store.replaceSessionWithMeta('s2', makeSession({ sessionId: 's2', embedding: vec }), [], {
+        embeddingModel: null,
+        embeddingFormatVersion: 2,
+      });
+
+      expect(store.getEmbeddingModel()).toBeNull();
+      expect(rowModels('memory_sessions').sort()).toEqual([
+        ['s1', 'model-A'],
+        ['s2', null],
+      ]);
+    });
+  });
+
   describe('getPath()', () => {
     it('returns the db file path', () => {
       expect(store.getPath()).toBe(dbPath);
