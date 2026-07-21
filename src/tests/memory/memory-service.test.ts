@@ -403,11 +403,11 @@ describe('MemoryService', () => {
 
     const files = service.listFiles();
     const experienceFile = files.find((item) => item.kind === 'experience');
-    expect(experienceFile?.filePath).toContain('experience_memory.json');
+    expect(experienceFile?.filePath).toContain('memory.db');
 
-    const experience = service.readFile(experienceFile!.filePath);
-    expect(JSON.stringify(experience.parsed)).toContain('gateway token rotation');
-    expect(JSON.stringify(experience.parsed)).toContain('remote gateway');
+    const experience = service.exportExperienceJson();
+    expect(JSON.stringify(experience)).toContain('gateway token rotation');
+    expect(JSON.stringify(experience)).toContain('remote gateway');
   });
 
   it('builds progressive prompt context and supports search/read/debug inspection', async () => {
@@ -452,7 +452,7 @@ describe('MemoryService', () => {
     expect(results.some((item) => item.kind === 'experience_chunk')).toBe(true);
 
     const detail = service.read(results[0].id);
-    expect(detail?.sourceFile).toContain('experience_memory.json');
+    expect(detail?.sourceFile).toContain('memory.db');
     expect(detail?.summary || detail?.rawText).toContain('gateway token rotation');
 
     const inspected = service.inspectSession('session-a', '/repo/a');
@@ -571,7 +571,101 @@ describe('MemoryService', () => {
     expect(overview.coreCount).toBeGreaterThan(0);
     expect(overview.experienceSessionCount).toBe(1);
     expect(overview.sourceWorkspaceCount).toBe(1);
-    expect(overview.experienceFilePath).toContain('experience_memory.json');
+    expect(overview.experienceFilePath).toContain('memory.db');
+  });
+
+  it('rebuildAll closes the DB handle before deleting files (no write-after-unlink)', async () => {
+    // Ingest a session so memory.db gets created and opened.
+    const sessionId = 'sess-rebuild-close';
+    const session = makeSession(sessionId, 'Close test', '/repo/close');
+    insertSession(rawDb, {
+      id: sessionId,
+      title: session.title,
+      cwd: session.cwd,
+      createdAt: session.createdAt,
+    });
+    await service.enqueueIngestion({
+      session,
+      prompt: 'close test',
+      messages: makeMessages(sessionId, [
+        { role: 'user', text: 'close test', timestamp: 1 },
+        { role: 'assistant', text: 'ok', timestamp: 2 },
+      ]),
+    });
+
+    // rebuildAll should succeed without throwing (if handle wasn't closed first,
+    // on Windows this would throw EBUSY; on POSIX we verify the file is recreated).
+    const storageRoot = service.getOverview().storageRoot;
+    const dbPath = path.join(storageRoot, 'memory.db');
+    await expect(service.rebuildAll()).resolves.toMatchObject({ success: true });
+
+    // After rebuild the DB must exist again (re-created by ensureStores).
+    expect(fs.existsSync(dbPath)).toBe(true);
+  });
+
+  it('exportExperienceJson includes embeddingFormatVersion and decoded embeddings', async () => {
+    const sessionId = 'sess-export';
+    const session = makeSession(sessionId, 'Export test', '/repo/export');
+    insertSession(rawDb, {
+      id: sessionId,
+      title: session.title,
+      cwd: session.cwd,
+      createdAt: session.createdAt,
+    });
+    await service.enqueueIngestion({
+      session,
+      prompt: 'export test',
+      messages: makeMessages(sessionId, [
+        { role: 'user', text: 'export test data', timestamp: 1 },
+        { role: 'assistant', text: 'acknowledged', timestamp: 2 },
+      ]),
+    });
+
+    const exported = service.exportExperienceJson();
+    // Must include the top-level meta fields for legacy-compatible restore.
+    expect(typeof exported.embeddingFormatVersion).toBe('number');
+    expect(Array.isArray(exported.sessions)).toBe(true);
+    expect(Array.isArray(exported.chunks)).toBe(true);
+  });
+
+  it('readFile throws when given the memory.db path', () => {
+    const dbPath = path.join(service.getOverview().storageRoot, 'memory.db');
+    // Trigger store init so memory.db gets created.
+    service.getOverview();
+    expect(() => service.readFile(dbPath)).toThrow('memory.db is a binary SQLite file');
+  });
+
+  it('getExperienceDbStatus returns expected shape after ingestion', async () => {
+    const sessionId = 'sess-status';
+    const session = makeSession(sessionId, 'Status test', '/repo/status');
+    insertSession(rawDb, {
+      id: sessionId,
+      title: session.title,
+      cwd: session.cwd,
+      createdAt: session.createdAt,
+    });
+    await service.enqueueIngestion({
+      session,
+      prompt: 'status test',
+      messages: makeMessages(sessionId, [
+        { role: 'user', text: 'status check', timestamp: 1 },
+        { role: 'assistant', text: 'ok', timestamp: 2 },
+      ]),
+    });
+
+    const status = service.getExperienceDbStatus();
+    expect(status.schemaVersion).toBeGreaterThanOrEqual(1);
+    expect(status.sessionCount).toBeGreaterThanOrEqual(1);
+    expect(status.integrityOk).toBe(true);
+    expect(status.sizeBytes).toBeGreaterThan(0);
+    expect(Array.isArray(status.workspaceBreakdown)).toBe(true);
+  });
+
+  it('vacuumExperienceDb succeeds without throwing', async () => {
+    // Trigger store init.
+    service.getOverview();
+    expect(() => service.vacuumExperienceDb()).not.toThrow();
+    expect(service.vacuumExperienceDb()).toEqual({ success: true });
   });
 
   it('does not resurrect deleted experience memory when deletion happens during queued ingestion', async () => {

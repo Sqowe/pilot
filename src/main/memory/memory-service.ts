@@ -17,6 +17,9 @@ import { MemoryNavigator } from './memory-navigator';
 import { DEFAULT_MEMORY_PROMPTS, type MemoryPromptSet } from './memory-prompts';
 import { MemoryRetriever } from './memory-retriever';
 import { MemorySessionStateStore } from './memory-state-store';
+import { openMemoryDb, getMemoryMeta, type MemoryDb } from './memory-db';
+import { runExperienceMemoryMigration } from './memory-db-migration';
+import type { ExperienceDbStatus } from './memory-types';
 import type {
   ChunkMemoryItem,
   MemoryDebugFileContent,
@@ -44,13 +47,17 @@ import {
   normalizeWorkspaceKey,
   parseCoreCombinedKey,
   safeRemoveFile,
+  blobToEmbedding,
 } from './memory-utils';
 import { createMemoryTools } from './memory-tools';
 
 interface MemoryPaths {
   storageRoot: string;
   coreFilePath: string;
+  /** Legacy JSON path — still used as the migration source and .bak location. */
   experienceFilePath: string;
+  /** SQLite database path — the live store after migration. */
+  experienceDbPath: string;
   stateFilePath: string;
   artifactsDir: string;
 }
@@ -142,6 +149,21 @@ function escapeMemoryContextText(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** Decode a BLOB buffer to a number[] for JSON export. Returns [] on invalid input. */
+function blobToEmbeddingForExport(blob: Buffer): number[] {
+  return blobToEmbedding(blob);
+}
+
+/** Parse a JSON string column, returning `fallback` on error. */
+function safeParseJson<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 export class MemoryService {
   private readonly queue = new MemoryIngestionQueue();
   private readonly deletedSessionIds = new Set<string>();
@@ -155,6 +177,7 @@ export class MemoryService {
   private coreStore: CoreMemoryStore | null = null;
   private stateStore: MemorySessionStateStore | null = null;
   private experienceStore: ExperienceMemoryStore | null = null;
+  private memoryDb: MemoryDb | null = null;
   private retrievalMetricsBySession = new Map<
     string,
     import('./memory-types').MemoryRetrievalMetrics
@@ -189,7 +212,7 @@ export class MemoryService {
       getCoreEntries: () => this.getCoreStore().getEntries(),
       getCoreFilePath: () => this.getPaths().coreFilePath,
       getExperienceStore: () => this.getExperienceStore(),
-      getExperienceFilePath: () => this.getPaths().experienceFilePath,
+      getExperienceFilePath: () => this.getPaths().experienceDbPath,
       getSessionTitle: (sessionId) => this.getSessionTitle(sessionId),
     });
     this.tools = createMemoryTools(this);
@@ -264,6 +287,8 @@ export class MemoryService {
     const stateRecords = this.getStateStore().getAll();
     const currentWorkspace = normalizeWorkspaceKey(cwd);
     const topSourceWorkspaces = experienceStore.getStatsBySourceWorkspace();
+    const { sessionCount: expSessionCount, chunkCount: expChunkCount } =
+      experienceStore.getCounts();
 
     const activeFailures = stateRecords
       .filter((record) => Boolean(record.lastError) && !record.lastErrorDismissedAt)
@@ -273,11 +298,11 @@ export class MemoryService {
       enabled: this.isEnabled(),
       storageRoot: paths.storageRoot,
       coreFilePath: paths.coreFilePath,
-      experienceFilePath: paths.experienceFilePath,
+      experienceFilePath: paths.experienceDbPath,
       stateFilePath: paths.stateFilePath,
       coreCount: coreEntries.length,
-      experienceSessionCount: experienceStore.sessions.length,
-      experienceChunkCount: experienceStore.chunks.length,
+      experienceSessionCount: expSessionCount,
+      experienceChunkCount: expChunkCount,
       sourceWorkspaceCount: topSourceWorkspaces.filter((item) => item.workspaceKey !== '(none)')
         .length,
       failedSessionCount: activeFailures.length,
@@ -292,12 +317,11 @@ export class MemoryService {
       currentWorkspace: currentWorkspace
         ? {
             workspaceKey: currentWorkspace,
-            experienceSessionCount: experienceStore.sessions.filter(
-              (item) => item.sourceWorkspace === currentWorkspace
-            ).length,
-            experienceChunkCount: experienceStore.chunks.filter(
-              (item) => item.sourceWorkspace === currentWorkspace
-            ).length,
+            experienceSessionCount:
+              topSourceWorkspaces.find((s) => s.workspaceKey === currentWorkspace)?.sessionCount ??
+              0,
+            experienceChunkCount:
+              topSourceWorkspaces.find((s) => s.workspaceKey === currentWorkspace)?.chunkCount ?? 0,
           }
         : undefined,
       topSourceWorkspaces,
@@ -318,13 +342,14 @@ export class MemoryService {
       },
       {
         kind: 'experience',
-        label: 'experience_memory.json',
-        filePath: paths.experienceFilePath,
-        exists: fs.existsSync(paths.experienceFilePath),
-        sizeBytes: getFileSizeBytes(paths.experienceFilePath),
-        updatedAt: getFileTimestampMs(paths.experienceFilePath),
-        sessionCount: experienceStore.sessions.length,
-        chunkCount: experienceStore.chunks.length,
+        label: 'memory.db',
+        filePath: paths.experienceDbPath,
+        exists: fs.existsSync(paths.experienceDbPath),
+        sizeBytes: getFileSizeBytes(paths.experienceDbPath),
+        updatedAt: getFileTimestampMs(paths.experienceDbPath),
+        sessionCount: experienceStore.getCounts().sessionCount,
+        chunkCount: experienceStore.getCounts().chunkCount,
+        storage: 'sqlite',
       },
       {
         kind: 'state',
@@ -346,6 +371,13 @@ export class MemoryService {
   }
 
   readFile(filePath: string): MemoryDebugFileContent {
+    // Refuse binary db reads — use getExperienceDbStatus() / exportExperienceJson() instead.
+    const paths = this.getPaths();
+    if (path.resolve(filePath) === path.resolve(paths.experienceDbPath)) {
+      throw new Error(
+        'memory.db is a binary SQLite file — use getExperienceDbStatus() or exportExperienceJson() to inspect it'
+      );
+    }
     const normalizedPath = this.resolveReadablePath(filePath);
     const stat = fs.statSync(normalizedPath);
     if (stat?.isDirectory()) {
@@ -501,10 +533,14 @@ export class MemoryService {
   async rebuildAll(): Promise<{ success: boolean; workspaceCount: number; sessionCount: number }> {
     const paths = this.getPaths();
     safeRemoveFile(paths.coreFilePath);
-    safeRemoveFile(paths.experienceFilePath);
+    // Close the DB handle BEFORE deleting the file — required on Windows (file
+    // lock) and avoids writing to an unlinked file on POSIX.
+    this.resetStores();
+    safeRemoveFile(paths.experienceDbPath);
+    safeRemoveFile(`${paths.experienceDbPath}-wal`);
+    safeRemoveFile(`${paths.experienceDbPath}-shm`);
     safeRemoveFile(paths.stateFilePath);
     fs.rmSync(paths.artifactsDir, { recursive: true, force: true });
-    this.resetStores();
 
     const sessionRows = this.db.sessions
       .getAll()
@@ -527,9 +563,135 @@ export class MemoryService {
 
     const store = this.getExperienceStore();
     store.removeBySourceWorkspace(workspaceKey);
+    // save() is a no-op for the SQLite store; kept for interface compat.
     store.save();
     this.getStateStore().deleteBySourceWorkspace(workspaceKey);
     return { success: true, workspaceKey };
+  }
+
+  /** Returns status metadata for the experience memory.db (counts, model, integrity). */
+  getExperienceDbStatus(): ExperienceDbStatus {
+    this.ensureStores(); // guarantees memoryDb is open
+    const paths = this.getPaths();
+    const store = this.getExperienceStore();
+    const db = this.memoryDb!.raw;
+
+    const { sessionCount, chunkCount } = store.getCounts();
+    const embeddingModel = store.getEmbeddingModel();
+    // Derive embeddingDim from a representative row rather than meta
+    // (meta never stores dim; per-row columns are the authoritative source).
+    const dimRow = db
+      .prepare(`SELECT embedding_dim FROM memory_sessions WHERE embedding_dim IS NOT NULL LIMIT 1`)
+      .get() as { embedding_dim: number } | undefined;
+    const embeddingDim =
+      dimRow?.embedding_dim ??
+      (
+        db
+          .prepare(
+            `SELECT embedding_dim FROM memory_chunks WHERE embedding_dim IS NOT NULL LIMIT 1`
+          )
+          .get() as { embedding_dim: number } | undefined
+      )?.embedding_dim ??
+      null;
+    const schemaVersionRaw = parseInt(getMemoryMeta(db, 'schema_version') ?? '1', 10);
+    const schemaVersion = Number.isFinite(schemaVersionRaw) ? schemaVersionRaw : 1;
+    const sizeBytes = getFileSizeBytes(paths.experienceDbPath);
+
+    let integrityOk = true;
+    try {
+      // Use quick_check (O(1)) rather than full integrity_check (O(N)) to avoid
+      // blocking the event loop on large databases. Full integrity_check can be
+      // triggered explicitly via vacuumExperienceDb() or a dedicated debug command.
+      const result = db.pragma('quick_check') as Array<{ quick_check: string }>;
+      integrityOk = result.length === 1 && result[0].quick_check === 'ok';
+    } catch {
+      integrityOk = false;
+    }
+
+    const workspaceBreakdown = store.getStatsBySourceWorkspace();
+
+    return {
+      schemaVersion,
+      sessionCount,
+      chunkCount,
+      embeddingModel: embeddingModel ?? null,
+      embeddingDim: Number.isFinite(embeddingDim) ? embeddingDim : null,
+      sizeBytes,
+      integrityOk,
+      workspaceBreakdown,
+    };
+  }
+
+  /** Dump the SQLite experience store back to the { sessions, chunks } JSON shape.
+   * Includes decoded embeddings so the export is a full-fidelity backup.
+   */
+  exportExperienceJson(): {
+    sessions: unknown[];
+    chunks: unknown[];
+    embeddingFormatVersion?: number;
+    embeddingModel?: string;
+  } {
+    this.ensureStores(); // guarantees memoryDb is open
+    const db = this.memoryDb!.raw;
+    const sessionRows = db.prepare(`SELECT * FROM memory_sessions`).all() as Array<
+      Record<string, unknown> & { embedding: Buffer | null }
+    >;
+    const chunkRows = db.prepare(`SELECT * FROM memory_chunks`).all() as Array<
+      Record<string, unknown> & { embedding: Buffer | null }
+    >;
+
+    const sessions = sessionRows.map((r) => ({
+      id: r.id,
+      session_id: r.session_id,
+      source_workspace: r.source_workspace ?? null,
+      source_workspace_label: r.source_workspace_label ?? '',
+      source_session_id: r.source_session_id,
+      source_session_title: r.source_session_title ?? '',
+      source_session_date: r.source_session_date ?? '',
+      summary: r.summary,
+      keywords: safeParseJson(r.keywords as string, []),
+      chunk_ids: safeParseJson(r.chunk_ids as string, []),
+      raw_session: safeParseJson(r.raw_session as string | null, []),
+      session_date: r.session_date ?? '',
+      created_at: r.created_at ?? '',
+      ingested_at: r.ingested_at ?? '',
+      embedding: r.embedding ? blobToEmbeddingForExport(r.embedding) : [],
+    }));
+
+    const chunks = chunkRows.map((r) => ({
+      id: r.id,
+      session_id: r.session_id,
+      source_workspace: r.source_workspace ?? null,
+      source_workspace_label: r.source_workspace_label ?? '',
+      source_session_id: r.source_session_id,
+      source_session_title: r.source_session_title ?? '',
+      source_session_date: r.source_session_date ?? '',
+      summary: r.summary,
+      details: r.details,
+      keywords: safeParseJson(r.keywords as string, []),
+      source_turns: safeParseJson(r.source_turns as string, []),
+      raw_text: r.raw_text ?? '',
+      session_date: r.session_date ?? '',
+      created_at: r.created_at ?? '',
+      ingested_at: r.ingested_at ?? '',
+      embedding: r.embedding ? blobToEmbeddingForExport(r.embedding) : [],
+    }));
+
+    return {
+      sessions,
+      chunks,
+      // Include top-level meta so the export is a legacy-compatible full-fidelity
+      // backup: restoring this JSON won't falsely trigger a v1→v2 rebuild prompt.
+      embeddingFormatVersion: this.getExperienceStore().getEmbeddingFormatVersion(),
+      embeddingModel: this.getExperienceStore().getEmbeddingModel() ?? undefined,
+    };
+  }
+
+  /** Run VACUUM on memory.db to reclaim freed pages after large deletes. */
+  vacuumExperienceDb(): { success: boolean } {
+    this.ensureStores(); // guarantees memoryDb is open
+    this.memoryDb!.raw.exec('VACUUM');
+    return { success: true };
   }
 
   clearCoreMemory(): { success: boolean } {
@@ -825,6 +987,7 @@ export class MemoryService {
     extracted: Awaited<ReturnType<ExperienceMemoryExtractor['extractSession']>>;
   }): Promise<void> {
     const store = this.getExperienceStore();
+    const embeddingConfig = this.getAppConfig().memoryRuntime;
     const existing = store.getSession(input.sessionId);
     const ingestedAt = isoNow();
     const sourceWorkspaceLabel = this.resolveWorkspaceLabel(input.sourceWorkspace);
@@ -855,7 +1018,8 @@ export class MemoryService {
     const sessionSearchable = [input.extracted.sessionSummary, ...input.extracted.sessionKeywords]
       .join(' ')
       .trim();
-    store.replaceSession(
+    const sessionEmbedding = await this.embedText(sessionSearchable, 'document');
+    store.replaceSessionWithMeta(
       input.sessionId,
       {
         sessionId: input.sessionId,
@@ -873,10 +1037,18 @@ export class MemoryService {
         sessionDate: input.sessionDate,
         createdAt: existing?.createdAt || new Date(input.sessionCreatedAt).toISOString(),
         ingestedAt,
-        embedding: await this.embedText(sessionSearchable, 'document'),
+        embedding: sessionEmbedding,
       },
-      chunkInputs
+      chunkInputs,
+      {
+        embeddingModel:
+          embeddingConfig.useEmbedding && embeddingConfig.embedding?.model
+            ? embeddingConfig.embedding.model
+            : null,
+        embeddingFormatVersion: EMBEDDING_FORMAT_VERSION,
+      }
     );
+    // save() is a no-op for the SQLite store.
     store.save();
   }
 
@@ -1108,6 +1280,7 @@ export class MemoryService {
       return false;
     }
     const store = this.getExperienceStore();
+    // Format version is now read from memory_meta (SQLite) rather than the JSON file.
     return store.getEmbeddingFormatVersion() < EMBEDDING_FORMAT_VERSION && store.hasEmbeddings();
   }
 
@@ -1238,6 +1411,7 @@ export class MemoryService {
       storageRoot,
       coreFilePath: path.join(storageRoot, 'core_memory.json'),
       experienceFilePath: path.join(storageRoot, 'experience_memory.json'),
+      experienceDbPath: path.join(storageRoot, 'memory.db'),
       stateFilePath: path.join(storageRoot, 'session_state.json'),
       artifactsDir,
     };
@@ -1250,20 +1424,48 @@ export class MemoryService {
       this.currentPathsKey === pathsKey &&
       this.coreStore &&
       this.stateStore &&
-      this.experienceStore
+      this.experienceStore &&
+      this.memoryDb
     ) {
       return;
     }
     fs.mkdirSync(paths.storageRoot, { recursive: true });
     fs.mkdirSync(paths.artifactsDir, { recursive: true });
     assertSafeMemoryPaths(paths.storageRoot, paths.artifactsDir);
+
+    // Close previous db handle if storageRoot changed.
+    if (this.memoryDb) {
+      try {
+        this.memoryDb.close();
+      } catch {
+        /* ignore */
+      }
+      this.memoryDb = null;
+    }
+
+    const memDb = openMemoryDb(paths.storageRoot);
+    // Resolve the active embedding model for migration tagging.
+    const embeddingModel = this.getAppConfig().memoryRuntime.useEmbedding
+      ? (this.getAppConfig().memoryRuntime.embedding?.model ?? null)
+      : null;
+    runExperienceMemoryMigration(memDb.raw, paths.experienceFilePath, embeddingModel);
+
     this.currentPathsKey = pathsKey;
+    this.memoryDb = memDb;
     this.coreStore = new CoreMemoryStore(paths.coreFilePath);
     this.stateStore = new MemorySessionStateStore(paths.stateFilePath);
-    this.experienceStore = new ExperienceMemoryStore(paths.experienceFilePath);
+    this.experienceStore = new ExperienceMemoryStore(memDb.raw, paths.experienceDbPath);
   }
 
   private resetStores(): void {
+    if (this.memoryDb) {
+      try {
+        this.memoryDb.close();
+      } catch {
+        /* ignore */
+      }
+      this.memoryDb = null;
+    }
     this.currentPathsKey = null;
     this.coreStore = null;
     this.stateStore = null;
@@ -1287,15 +1489,10 @@ export class MemoryService {
 
   private resolveFileKind(filePath: string): MemoryDebugFileInfo['kind'] {
     const paths = this.getPaths();
-    if (filePath === paths.coreFilePath) {
-      return 'core';
-    }
-    if (filePath === paths.experienceFilePath) {
+    if (filePath === paths.coreFilePath) return 'core';
+    if (filePath === paths.experienceFilePath || filePath === paths.experienceDbPath)
       return 'experience';
-    }
-    if (filePath === paths.stateFilePath) {
-      return 'state';
-    }
+    if (filePath === paths.stateFilePath) return 'state';
     return 'artifacts';
   }
 
@@ -1308,11 +1505,28 @@ export class MemoryService {
     }
 
     const normalizedPath = fs.realpathSync(requestedPath);
-    const allowedFiles = new Set(
-      [paths.coreFilePath, paths.experienceFilePath, paths.stateFilePath]
+    // Build the explicit allowlist: core + state JSON files, plus any
+    // experience_memory.json.bak* files (migration can create timestamped variants).
+    const bakCandidates = fs.existsSync(paths.storageRoot)
+      ? fs
+          .readdirSync(paths.storageRoot)
+          .filter((f) => f.startsWith('experience_memory.json.bak'))
+          .map((f) => path.join(paths.storageRoot, f))
+          .filter((f) => fs.existsSync(f))
+          .map((f) => fs.realpathSync(f))
+      : [];
+    const allowedFiles = new Set([
+      // core + state JSON files
+      ...[paths.coreFilePath, paths.stateFilePath]
         .filter((candidate) => fs.existsSync(candidate))
-        .map((candidate) => fs.realpathSync(candidate))
-    );
+        .map((candidate) => fs.realpathSync(candidate)),
+      // legacy experience JSON (present when migration hasn't run yet or failed)
+      ...(fs.existsSync(paths.experienceFilePath)
+        ? [fs.realpathSync(paths.experienceFilePath)]
+        : []),
+      // migration .bak artefacts (plain + timestamped)
+      ...bakCandidates,
+    ]);
     const artifactsRoot = fs.existsSync(paths.artifactsDir)
       ? fs.realpathSync(paths.artifactsDir)
       : path.resolve(paths.artifactsDir);

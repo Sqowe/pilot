@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type Database from 'better-sqlite3';
 import type {
   ChunkMemoryItem,
   FocusedChunkItem,
@@ -9,168 +10,243 @@ import type {
   SessionMemoryItem,
 } from './memory-types';
 import {
+  blobToEmbedding,
   cosineSimilarity,
+  embeddingToBlob,
   lexicalScore,
-  loadJsonFile,
   normalizeWorkspaceKey,
-  saveJsonFile,
 } from './memory-utils';
-import { EMBEDDING_FORMAT_VERSION } from '../../shared/local-embedding-types';
+import { getMemoryMeta, setMemoryMeta } from './memory-db';
 
-interface ExperienceMemoryFile {
-  sessions: Array<Record<string, unknown>>;
-  chunks: Array<Record<string, unknown>>;
-  /** How the stored embeddings were computed. Absent → pre-stamp (treat as 1). */
-  embeddingFormatVersion?: number;
+// ---------------------------------------------------------------------------
+// Row shapes returned by better-sqlite3
+// ---------------------------------------------------------------------------
+
+interface SessionRow {
+  id: string;
+  session_id: string;
+  source_workspace: string | null;
+  source_workspace_label: string | null;
+  source_session_id: string | null;
+  source_session_title: string | null;
+  source_session_date: string | null;
+  summary: string;
+  keywords: string;
+  chunk_ids: string;
+  raw_session: string | null;
+  session_date: string | null;
+  created_at: string | null;
+  ingested_at: string | null;
+  embedding: Buffer | null;
+  embedding_model: string | null;
+  embedding_dim: number | null;
 }
 
-function toStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : [];
+interface ChunkRow {
+  id: string;
+  session_id: string;
+  source_workspace: string | null;
+  source_workspace_label: string | null;
+  source_session_id: string | null;
+  source_session_title: string | null;
+  source_session_date: string | null;
+  summary: string;
+  details: string;
+  keywords: string;
+  source_turns: string;
+  raw_text: string;
+  session_date: string | null;
+  created_at: string | null;
+  ingested_at: string | null;
+  embedding: Buffer | null;
+  embedding_model: string | null;
+  embedding_dim: number | null;
 }
 
-function toNumberArray(value: unknown): number[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is number => typeof item === 'number')
-    : [];
+// Lightweight row for lexical pre-filtering — no BLOB embedding decoding.
+interface ChunkRowLight {
+  id: string;
+  session_id: string;
+  source_workspace: string | null;
+  source_workspace_label: string | null;
+  source_session_id: string | null;
+  source_session_title: string | null;
+  source_session_date: string | null;
+  summary: string;
+  details: string;
+  keywords: string;
+  source_turns: string;
+  raw_text: string;
+  session_date: string | null;
+  created_at: string | null;
+  ingested_at: string | null;
+  // embedding intentionally omitted
 }
 
-function normalizeWorkspace(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? normalizeWorkspaceKey(value) : null;
+interface SessionRowLight {
+  id: string;
+  session_id: string;
+  source_workspace: string | null;
+  source_workspace_label: string | null;
+  source_session_id: string | null;
+  source_session_title: string | null;
+  source_session_date: string | null;
+  summary: string;
+  keywords: string;
+  chunk_ids: string;
+  raw_session: string | null;
+  session_date: string | null;
+  created_at: string | null;
+  ingested_at: string | null;
+  // embedding intentionally omitted
 }
 
-function normalizeChunk(item: Record<string, unknown>): ChunkMemoryItem | null {
-  if (typeof item.id !== 'string' || typeof item.session_id !== 'string') {
-    return null;
+function rowLightToChunkNoEmbed(
+  row: ChunkRowLight
+): Omit<ChunkMemoryItem, 'embedding'> & { embedding: never[] } {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    sourceWorkspace: row.source_workspace ?? null,
+    sourceWorkspaceLabel: row.source_workspace_label ?? undefined,
+    sourceSessionId: row.source_session_id ?? row.session_id,
+    sourceSessionTitle: row.source_session_title ?? undefined,
+    sourceSessionDate: row.source_session_date ?? undefined,
+    summary: row.summary,
+    details: row.details,
+    keywords: parseJsonArray(row.keywords),
+    sourceTurns: parseNumberArray(row.source_turns),
+    rawText: row.raw_text,
+    sessionDate: row.session_date ?? '',
+    createdAt: row.created_at ?? '',
+    ingestedAt: row.ingested_at ?? '',
+    embedding: [],
+  };
+}
+
+function rowLightToSessionNoEmbed(
+  row: SessionRowLight
+): Omit<SessionMemoryItem, 'embedding'> & { embedding: never[] } {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    sourceWorkspace: row.source_workspace ?? null,
+    sourceWorkspaceLabel: row.source_workspace_label ?? undefined,
+    sourceSessionId: row.source_session_id ?? row.session_id,
+    sourceSessionTitle: row.source_session_title ?? undefined,
+    sourceSessionDate: row.source_session_date ?? undefined,
+    summary: row.summary,
+    keywords: parseJsonArray(row.keywords),
+    chunkIds: parseJsonArray(row.chunk_ids),
+    rawSession: parseRawSession(row.raw_session),
+    sessionDate: row.session_date ?? '',
+    createdAt: row.created_at ?? '',
+    ingestedAt: row.ingested_at ?? '',
+    embedding: [],
+  };
+}
+
+function parseJsonArray(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : [];
+  } catch {
+    return [];
   }
-  const sessionId = item.session_id;
-  return {
-    id: item.id,
-    sessionId,
-    sourceWorkspace: normalizeWorkspace(item.source_workspace),
-    sourceWorkspaceLabel:
-      typeof item.source_workspace_label === 'string' ? item.source_workspace_label : undefined,
-    sourceSessionId:
-      typeof item.source_session_id === 'string' ? item.source_session_id : sessionId,
-    sourceSessionTitle:
-      typeof item.source_session_title === 'string' ? item.source_session_title : undefined,
-    sourceSessionDate:
-      typeof item.source_session_date === 'string' ? item.source_session_date : undefined,
-    summary: typeof item.summary === 'string' ? item.summary : '',
-    details:
-      typeof item.details === 'string'
-        ? item.details
-        : typeof item.summary === 'string'
-          ? item.summary
-          : '',
-    keywords: toStringArray(item.keywords),
-    sourceTurns: Array.isArray(item.source_turns)
-      ? item.source_turns.filter((turn): turn is number => typeof turn === 'number')
-      : [],
-    rawText: typeof item.raw_text === 'string' ? item.raw_text : '',
-    sessionDate: typeof item.session_date === 'string' ? item.session_date : '',
-    createdAt: typeof item.created_at === 'string' ? item.created_at : '',
-    ingestedAt: typeof item.ingested_at === 'string' ? item.ingested_at : '',
-    embedding: toNumberArray(item.embedding),
-  };
 }
 
-function normalizeSession(item: Record<string, unknown>): SessionMemoryItem | null {
-  if (typeof item.id !== 'string' || typeof item.session_id !== 'string') {
-    return null;
+function parseNumberArray(value: string | null): number[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is number => typeof item === 'number')
+      : [];
+  } catch {
+    return [];
   }
-  const sessionId = item.session_id;
-  const rawSession = Array.isArray(item.raw_session)
-    ? item.raw_session
-        .map((turn): MemoryTranscriptTurn | null => {
-          if (!turn || typeof turn !== 'object') {
-            return null;
-          }
-          const normalized: MemoryTranscriptTurn = {
-            role:
-              typeof (turn as { role?: unknown }).role === 'string'
-                ? (turn as { role: string }).role
-                : 'unknown',
-            content:
-              typeof (turn as { content?: unknown }).content === 'string'
-                ? (turn as { content: string }).content
-                : '',
-          };
-          if (typeof (turn as { messageId?: unknown }).messageId === 'string') {
-            normalized.messageId = (turn as { messageId: string }).messageId;
-          }
-          if (typeof (turn as { timestamp?: unknown }).timestamp === 'number') {
-            normalized.timestamp = (turn as { timestamp: number }).timestamp;
-          }
-          return normalized;
-        })
-        .filter((turn): turn is MemoryTranscriptTurn => Boolean(turn))
-    : [];
+}
 
+function parseRawSession(value: string | null): MemoryTranscriptTurn[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((turn): MemoryTranscriptTurn | null => {
+        if (!turn || typeof turn !== 'object') return null;
+        const t = turn as Record<string, unknown>;
+        const normalized: MemoryTranscriptTurn = {
+          role: typeof t.role === 'string' ? t.role : 'unknown',
+          content: typeof t.content === 'string' ? t.content : '',
+        };
+        if (typeof t.messageId === 'string') normalized.messageId = t.messageId;
+        if (typeof t.timestamp === 'number') normalized.timestamp = t.timestamp;
+        return normalized;
+      })
+      .filter((t): t is MemoryTranscriptTurn => t !== null);
+  } catch {
+    return [];
+  }
+}
+
+/** Safely decode a BLOB embedding, returning [] on corruption rather than throwing. */
+function safeDecodeEmbedding(blob: Buffer | null): number[] {
+  if (!blob || blob.byteLength === 0) return [];
+  try {
+    return blobToEmbedding(blob);
+  } catch {
+    return [];
+  }
+}
+
+function rowToSession(row: SessionRow): SessionMemoryItem {
   return {
-    id: item.id,
-    sessionId,
-    sourceWorkspace: normalizeWorkspace(item.source_workspace),
-    sourceWorkspaceLabel:
-      typeof item.source_workspace_label === 'string' ? item.source_workspace_label : undefined,
-    sourceSessionId:
-      typeof item.source_session_id === 'string' ? item.source_session_id : sessionId,
-    sourceSessionTitle:
-      typeof item.source_session_title === 'string' ? item.source_session_title : undefined,
-    sourceSessionDate:
-      typeof item.source_session_date === 'string' ? item.source_session_date : undefined,
-    summary: typeof item.summary === 'string' ? item.summary : '',
-    keywords: toStringArray(item.keywords),
-    chunkIds: toStringArray(item.chunk_ids),
-    rawSession,
-    sessionDate: typeof item.session_date === 'string' ? item.session_date : '',
-    createdAt: typeof item.created_at === 'string' ? item.created_at : '',
-    ingestedAt: typeof item.ingested_at === 'string' ? item.ingested_at : '',
-    embedding: toNumberArray(item.embedding),
+    id: row.id,
+    sessionId: row.session_id,
+    sourceWorkspace: row.source_workspace ?? null,
+    sourceWorkspaceLabel: row.source_workspace_label ?? undefined,
+    sourceSessionId: row.source_session_id ?? row.session_id,
+    sourceSessionTitle: row.source_session_title ?? undefined,
+    sourceSessionDate: row.source_session_date ?? undefined,
+    summary: row.summary,
+    keywords: parseJsonArray(row.keywords),
+    chunkIds: parseJsonArray(row.chunk_ids),
+    rawSession: parseRawSession(row.raw_session),
+    sessionDate: row.session_date ?? '',
+    createdAt: row.created_at ?? '',
+    ingestedAt: row.ingested_at ?? '',
+    embedding: safeDecodeEmbedding(row.embedding),
   };
 }
 
-function chunkToFileRecord(item: ChunkMemoryItem): Record<string, unknown> {
+function rowToChunk(row: ChunkRow): ChunkMemoryItem {
   return {
-    id: item.id,
-    session_id: item.sessionId,
-    source_workspace: item.sourceWorkspace ?? null,
-    source_workspace_label: item.sourceWorkspaceLabel ?? '',
-    source_session_id: item.sourceSessionId,
-    source_session_title: item.sourceSessionTitle ?? '',
-    source_session_date: item.sourceSessionDate ?? '',
-    summary: item.summary,
-    details: item.details,
-    keywords: item.keywords,
-    source_turns: item.sourceTurns,
-    raw_text: item.rawText,
-    session_date: item.sessionDate,
-    created_at: item.createdAt,
-    ingested_at: item.ingestedAt,
-    embedding: item.embedding,
+    id: row.id,
+    sessionId: row.session_id,
+    sourceWorkspace: row.source_workspace ?? null,
+    sourceWorkspaceLabel: row.source_workspace_label ?? undefined,
+    sourceSessionId: row.source_session_id ?? row.session_id,
+    sourceSessionTitle: row.source_session_title ?? undefined,
+    sourceSessionDate: row.source_session_date ?? undefined,
+    summary: row.summary,
+    details: row.details,
+    keywords: parseJsonArray(row.keywords),
+    sourceTurns: parseNumberArray(row.source_turns),
+    rawText: row.raw_text,
+    sessionDate: row.session_date ?? '',
+    createdAt: row.created_at ?? '',
+    ingestedAt: row.ingested_at ?? '',
+    embedding: safeDecodeEmbedding(row.embedding),
   };
 }
 
-function sessionToFileRecord(item: SessionMemoryItem): Record<string, unknown> {
-  return {
-    id: item.id,
-    session_id: item.sessionId,
-    source_workspace: item.sourceWorkspace ?? null,
-    source_workspace_label: item.sourceWorkspaceLabel ?? '',
-    source_session_id: item.sourceSessionId,
-    source_session_title: item.sourceSessionTitle ?? '',
-    source_session_date: item.sourceSessionDate ?? '',
-    summary: item.summary,
-    keywords: item.keywords,
-    chunk_ids: item.chunkIds,
-    raw_session: item.rawSession,
-    session_date: item.sessionDate,
-    created_at: item.createdAt,
-    ingested_at: item.ingestedAt,
-    embedding: item.embedding,
-  };
-}
+// ---------------------------------------------------------------------------
+// Scoring helpers (unchanged from the JSON store)
+// ---------------------------------------------------------------------------
 
 function workspaceBoost(currentWorkspace: string | null, sourceWorkspace?: string | null): number {
   if (!currentWorkspace) {
@@ -193,65 +269,200 @@ function recencyBoost(
   decayDays = 90
 ): number {
   const timestamp = Date.parse(ingestedAt);
-  if (!Number.isFinite(timestamp)) {
-    return 0;
-  }
+  if (!Number.isFinite(timestamp)) return 0;
   const ageDays = Math.max(0, (now - timestamp) / 86_400_000);
-  // Linear decay from ceiling to floor over exactly decayDays
-  const boost = floor + (ceiling - floor) * Math.max(0, 1 - ageDays / decayDays);
-  return boost;
+  return floor + (ceiling - floor) * Math.max(0, 1 - ageDays / decayDays);
 }
 
+function keywordOverlap(a: string[], b: string[]): number {
+  if (!a.length || !b.length) return 0;
+  const setB = new Set(b.map((k) => k.toLowerCase()));
+  let matches = 0;
+  for (const keyword of a) {
+    if (setB.has(keyword.toLowerCase())) matches++;
+  }
+  return matches / Math.max(a.length, b.length);
+}
+
+// ---------------------------------------------------------------------------
+// ExperienceMemoryStore — SQLite-backed, same public API as the JSON store
+// ---------------------------------------------------------------------------
+
 export class ExperienceMemoryStore {
-  readonly sessions: SessionMemoryItem[];
-  readonly chunks: ChunkMemoryItem[];
-  private readonly chunkIndex = new Map<string, ChunkMemoryItem>();
-  private readonly sessionIndex = new Map<string, SessionMemoryItem>();
-  /** Embedding format the persisted vectors were written with (1 = pre-stamp). */
-  private readonly embeddingFormatVersion: number;
+  private readonly db: Database.Database;
+  private readonly dbPath: string;
 
-  constructor(private readonly filePath: string) {
-    const raw = loadJsonFile<ExperienceMemoryFile>(filePath, {
-      sessions: [],
-      chunks: [],
-    });
-    this.embeddingFormatVersion =
-      typeof raw.embeddingFormatVersion === 'number' ? raw.embeddingFormatVersion : 1;
-    this.sessions = (raw.sessions || [])
-      .map((item) => normalizeSession(item))
-      .filter((item): item is SessionMemoryItem => Boolean(item));
-    this.chunks = (raw.chunks || [])
-      .map((item) => normalizeChunk(item))
-      .filter((item): item is ChunkMemoryItem => Boolean(item));
+  // Prepared statements (lazy-initialised once on first use)
+  private stmts: ReturnType<typeof ExperienceMemoryStore.buildStatements> | null = null;
 
-    for (const item of this.sessions) {
-      this.sessionIndex.set(item.sessionId, item);
-    }
-    for (const item of this.chunks) {
-      this.chunkIndex.set(item.id, item);
-    }
+  // Light-row cache: avoids full-table scans on every retrieveProgressive() call.
+  // Invalidated on every write (replaceSession, removeSession, removeBySourceWorkspace, clear).
+  // NOTE: This cache assumes this ExperienceMemoryStore instance is the only writer
+  // to the database. The data_version pragma is checked to detect unexpected external
+  // writes and invalidate accordingly.
+  private lightCache: {
+    chunks: ReturnType<typeof rowLightToChunkNoEmbed>[];
+    sessions: ReturnType<typeof rowLightToSessionNoEmbed>[];
+    dataVersion: number;
+  } | null = null;
+
+  private invalidateCache(): void {
+    this.lightCache = null;
   }
 
+  private getLightRows(): {
+    chunks: ReturnType<typeof rowLightToChunkNoEmbed>[];
+    sessions: ReturnType<typeof rowLightToSessionNoEmbed>[];
+  } {
+    // Check SQLite data_version to detect external writes (e.g., another process).
+    const currentVersion =
+      (this.db.pragma('data_version') as Array<{ data_version: number }>)[0]?.data_version ?? 0;
+    if (this.lightCache && this.lightCache.dataVersion !== currentVersion) {
+      this.lightCache = null;
+    }
+    if (!this.lightCache) {
+      const stmts = this.getStmts();
+      this.lightCache = {
+        chunks: (stmts.getAllChunksLight.all() as ChunkRowLight[]).map(rowLightToChunkNoEmbed),
+        sessions: (stmts.getAllSessionsLight.all() as SessionRowLight[]).map(
+          rowLightToSessionNoEmbed
+        ),
+        dataVersion: currentVersion,
+      };
+    }
+    return this.lightCache;
+  }
+
+  constructor(db: Database.Database, dbPath: string) {
+    this.db = db;
+    this.dbPath = dbPath;
+  }
+
+  private getStmts() {
+    if (!this.stmts) {
+      this.stmts = ExperienceMemoryStore.buildStatements(this.db);
+    }
+    return this.stmts;
+  }
+
+  private static buildStatements(db: Database.Database) {
+    return {
+      getSessionBySessionId: db.prepare<[string]>(
+        `SELECT * FROM memory_sessions WHERE session_id = ?`
+      ),
+      getChunkById: db.prepare<[string]>(`SELECT * FROM memory_chunks WHERE id = ?`),
+      getChunksBySessionId: db.prepare<[string]>(
+        `SELECT * FROM memory_chunks WHERE session_id = ? ORDER BY rowid ASC`
+      ),
+      getSessionsForWorkspace: db.prepare<[string, string]>(
+        `SELECT * FROM memory_sessions WHERE source_workspace = ? OR source_workspace IS NULL OR source_workspace = ?`
+      ),
+      getChunksForWorkspace: db.prepare<[string, string]>(
+        `SELECT * FROM memory_chunks WHERE source_workspace = ? OR source_workspace IS NULL OR source_workspace = ?`
+      ),
+      getAllSessionsLight: db.prepare(
+        `SELECT id, session_id, source_workspace, source_workspace_label,
+                source_session_id, source_session_title, source_session_date,
+                summary, keywords, chunk_ids, raw_session,
+                session_date, created_at, ingested_at
+           FROM memory_sessions`
+      ),
+      getAllChunksLight: db.prepare(
+        `SELECT id, session_id, source_workspace, source_workspace_label,
+                source_session_id, source_session_title, source_session_date,
+                summary, details, keywords, source_turns, raw_text,
+                session_date, created_at, ingested_at
+           FROM memory_chunks`
+      ),
+      deleteSessionBySessionId: db.prepare<[string]>(
+        `DELETE FROM memory_sessions WHERE session_id = ?`
+      ),
+      deleteChunksBySessionId: db.prepare<[string]>(
+        `DELETE FROM memory_chunks WHERE session_id = ?`
+      ),
+      deleteChunkById: db.prepare<[string]>(`DELETE FROM memory_chunks WHERE id = ?`),
+      deleteSessionsByWorkspace: db.prepare<[string]>(
+        `DELETE FROM memory_sessions WHERE source_workspace = ?`
+      ),
+      deleteChunksByWorkspace: db.prepare<[string]>(
+        `DELETE FROM memory_chunks WHERE source_workspace = ?`
+      ),
+      countSessions: db.prepare<[]>(`SELECT COUNT(*) as n FROM memory_sessions`),
+      countChunks: db.prepare<[]>(`SELECT COUNT(*) as n FROM memory_chunks`),
+      countSessionsWithEmbedding: db.prepare<[]>(
+        `SELECT COUNT(*) as n FROM memory_sessions WHERE embedding IS NOT NULL AND length(embedding) > 0`
+      ),
+      countChunksWithEmbedding: db.prepare<[]>(
+        `SELECT COUNT(*) as n FROM memory_chunks WHERE embedding IS NOT NULL AND length(embedding) > 0`
+      ),
+      statsGroupByWorkspace: db.prepare(`
+        SELECT 'session' as kind, source_workspace, COUNT(*) as cnt FROM memory_sessions GROUP BY source_workspace
+        UNION ALL
+        SELECT 'chunk' as kind, source_workspace, COUNT(*) as cnt FROM memory_chunks GROUP BY source_workspace
+      `),
+      insertSession: db.prepare(`
+        INSERT OR REPLACE INTO memory_sessions (
+          id, session_id, source_workspace, source_workspace_label,
+          source_session_id, source_session_title, source_session_date,
+          summary, keywords, chunk_ids, raw_session,
+          session_date, created_at, ingested_at,
+          embedding, embedding_model, embedding_dim
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `),
+      insertChunk: db.prepare(`
+        INSERT OR REPLACE INTO memory_chunks (
+          id, session_id, source_workspace, source_workspace_label,
+          source_session_id, source_session_title, source_session_date,
+          summary, details, keywords, source_turns, raw_text,
+          session_date, created_at, ingested_at,
+          embedding, embedding_model, embedding_dim
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public API — identical to the former JSON store
+  // ---------------------------------------------------------------------------
+
   getPath(): string {
-    return this.filePath;
+    return this.dbPath;
   }
 
   getSession(sessionId: string): SessionMemoryItem | undefined {
-    return this.sessionIndex.get(sessionId);
+    const row = this.getStmts().getSessionBySessionId.get(sessionId) as SessionRow | undefined;
+    return row ? rowToSession(row) : undefined;
   }
 
   getChunk(chunkId: string): ChunkMemoryItem | undefined {
-    return this.chunkIndex.get(chunkId);
+    const row = this.getStmts().getChunkById.get(chunkId) as ChunkRow | undefined;
+    return row ? rowToChunk(row) : undefined;
   }
 
   getChunksBySession(sessionId: string): ChunkMemoryItem[] {
     const session = this.getSession(sessionId);
     if (!session) {
+      // Preserve prior behavior: missing session returns empty array.
       return [];
     }
-    return session.chunkIds
-      .map((chunkId) => this.chunkIndex.get(chunkId))
-      .filter((item): item is ChunkMemoryItem => Boolean(item));
+    if (!session.chunkIds.length) {
+      return [];
+    }
+    // Preserve session.chunkIds ordering (stable, insertion-derived) to match
+    // the prior JSON store's behaviour.
+    const rows = (this.getStmts().getChunksBySessionId.all(sessionId) as ChunkRow[]).map(
+      rowToChunk
+    );
+    const byId = new Map(rows.map((c) => [c.id, c]));
+    const ordered = session.chunkIds
+      .map((id) => byId.get(id))
+      .filter((c): c is ChunkMemoryItem => c !== undefined);
+    // Append any rows not referenced in chunkIds (shouldn't happen, but be safe).
+    const referenced = new Set(session.chunkIds);
+    for (const row of rows) {
+      if (!referenced.has(row.id)) ordered.push(row);
+    }
+    return ordered;
   }
 
   getStatsBySourceWorkspace(): Array<{
@@ -259,25 +470,53 @@ export class ExperienceMemoryStore {
     sessionCount: number;
     chunkCount: number;
   }> {
+    const rows = this.getStmts().statsGroupByWorkspace.all() as Array<{
+      kind: string;
+      source_workspace: string | null;
+      cnt: number;
+    }>;
+
     const stats = new Map<
       string,
       { workspaceKey: string; sessionCount: number; chunkCount: number }
     >();
-    for (const session of this.sessions) {
-      const key = session.sourceWorkspace || '(none)';
-      const current = stats.get(key) || { workspaceKey: key, sessionCount: 0, chunkCount: 0 };
-      current.sessionCount += 1;
-      stats.set(key, current);
-    }
-    for (const chunk of this.chunks) {
-      const key = chunk.sourceWorkspace || '(none)';
-      const current = stats.get(key) || { workspaceKey: key, sessionCount: 0, chunkCount: 0 };
-      current.chunkCount += 1;
-      stats.set(key, current);
+    for (const row of rows) {
+      const key = row.source_workspace ?? '(none)';
+      const entry = stats.get(key) ?? { workspaceKey: key, sessionCount: 0, chunkCount: 0 };
+      if (row.kind === 'session') entry.sessionCount += row.cnt;
+      else entry.chunkCount += row.cnt;
+      stats.set(key, entry);
     }
     return [...stats.values()].sort(
       (a, b) => b.sessionCount + b.chunkCount - (a.sessionCount + a.chunkCount)
     );
+  }
+
+  /**
+   * Atomically replace a session+chunks AND stamp embedding meta in the same
+   * SQLite transaction, so a crash can never leave embeddings present with
+   * stale/missing meta.
+   */
+  replaceSessionWithMeta(
+    sessionId: string,
+    sessionInput: Omit<SessionMemoryItem, 'id'> & { id?: string },
+    chunkInputs: Array<Omit<ChunkMemoryItem, 'id'> & { id?: string }>,
+    meta: { embeddingModel: string | null; embeddingFormatVersion: number }
+  ): SessionMemoryItem {
+    const stmts = this.getStmts();
+
+    const doReplace = this.db.transaction(() => {
+      const session = this._replaceSessionInner(stmts, sessionId, sessionInput, chunkInputs);
+      // Stamp meta inside the same transaction.
+      // Explicitly set or clear embedding_model so meta never stays stale.
+      setMemoryMeta(this.db, 'embedding_model', meta.embeddingModel ?? '');
+      setMemoryMeta(this.db, 'embedding_format_version', String(meta.embeddingFormatVersion));
+      return session;
+    });
+
+    const session = doReplace();
+    this.invalidateCache();
+    return session;
   }
 
   replaceSession(
@@ -285,88 +524,188 @@ export class ExperienceMemoryStore {
     sessionInput: Omit<SessionMemoryItem, 'id'> & { id?: string },
     chunkInputs: Array<Omit<ChunkMemoryItem, 'id'> & { id?: string }>
   ): SessionMemoryItem {
-    this.removeSession(sessionId);
+    const stmts = this.getStmts();
+    const session = this.db.transaction(() =>
+      this._replaceSessionInner(stmts, sessionId, sessionInput, chunkInputs)
+    )();
+    this.invalidateCache();
+    return session;
+  }
 
-    const chunks = chunkInputs.map((item) => {
+  private _replaceSessionInner(
+    stmts: ReturnType<typeof ExperienceMemoryStore.buildStatements>,
+    sessionId: string,
+    sessionInput: Omit<SessionMemoryItem, 'id'> & { id?: string },
+    chunkInputs: Array<Omit<ChunkMemoryItem, 'id'> & { id?: string }>
+  ): SessionMemoryItem {
+    // Normalize workspace keys at the persistence boundary so SQL filtering,
+    // stats grouping, and removeBySourceWorkspace all use the same canonical form.
+    // Guard against null/undefined — normalizeWorkspaceKey returns null for falsy input.
+    const normalizedWorkspace = sessionInput.sourceWorkspace
+      ? normalizeWorkspaceKey(sessionInput.sourceWorkspace)
+      : null;
+
+    // Enforce sessionId consistency: always use the argument sessionId so that
+    // the delete and insert target the same row, regardless of what sessionInput carries.
+    const canonicalSessionId = sessionId;
+
+    // Resolve the active embedding model from meta for per-row stamping.
+    const activeEmbeddingModel = getMemoryMeta(this.db, 'embedding_model') || null;
+
+    // Remove existing session and its chunks.
+    stmts.deleteChunksBySessionId.run(canonicalSessionId);
+    stmts.deleteSessionBySessionId.run(canonicalSessionId);
+
+    // Insert new chunks — enforce chunk.sessionId = canonicalSessionId.
+    const chunks: ChunkMemoryItem[] = chunkInputs.map((item) => {
       const chunk: ChunkMemoryItem = {
         ...item,
-        id: item.id || randomUUID(),
+        id: item.id ?? randomUUID(),
+        sessionId: canonicalSessionId,
+        sourceWorkspace: item.sourceWorkspace ? normalizeWorkspaceKey(item.sourceWorkspace) : null,
       };
-      this.chunks.push(chunk);
-      this.chunkIndex.set(chunk.id, chunk);
+      const emb = chunk.embedding.length ? embeddingToBlob(chunk.embedding) : null;
+      const embDim = chunk.embedding.length || null;
+      stmts.insertChunk.run(
+        chunk.id,
+        chunk.sessionId,
+        chunk.sourceWorkspace ?? null,
+        chunk.sourceWorkspaceLabel ?? null,
+        chunk.sourceSessionId,
+        chunk.sourceSessionTitle ?? null,
+        chunk.sourceSessionDate ?? null,
+        chunk.summary,
+        chunk.details,
+        JSON.stringify(chunk.keywords),
+        JSON.stringify(chunk.sourceTurns),
+        chunk.rawText,
+        chunk.sessionDate,
+        chunk.createdAt,
+        chunk.ingestedAt,
+        emb,
+        emb ? activeEmbeddingModel : null, // embedding_model per-row
+        embDim
+      );
       return chunk;
     });
 
+    // Insert new session — enforce session.sessionId = canonicalSessionId.
     const session: SessionMemoryItem = {
       ...sessionInput,
-      id: sessionInput.id || randomUUID(),
-      chunkIds: chunks.map((chunk) => chunk.id),
+      id: sessionInput.id ?? randomUUID(),
+      sessionId: canonicalSessionId,
+      sourceWorkspace: normalizedWorkspace,
+      chunkIds: chunks.map((c) => c.id),
     };
-    this.sessions.push(session);
-    this.sessionIndex.set(session.sessionId, session);
+    const emb = session.embedding.length ? embeddingToBlob(session.embedding) : null;
+    const embDim = session.embedding.length || null;
+    stmts.insertSession.run(
+      session.id,
+      session.sessionId,
+      session.sourceWorkspace ?? null,
+      session.sourceWorkspaceLabel ?? null,
+      session.sourceSessionId,
+      session.sourceSessionTitle ?? null,
+      session.sourceSessionDate ?? null,
+      session.summary,
+      JSON.stringify(session.keywords),
+      JSON.stringify(session.chunkIds),
+      JSON.stringify(session.rawSession),
+      session.sessionDate,
+      session.createdAt,
+      session.ingestedAt,
+      emb,
+      emb ? activeEmbeddingModel : null, // embedding_model per-row
+      embDim
+    );
+
     return session;
   }
 
   removeSession(sessionId: string): void {
-    const existing = this.sessionIndex.get(sessionId);
-    if (!existing) {
-      return;
-    }
-    this.sessionIndex.delete(sessionId);
-    const nextSessions = this.sessions.filter((item) => item.sessionId !== sessionId);
-    this.sessions.splice(0, this.sessions.length, ...nextSessions);
-
-    const chunkIds = new Set(existing.chunkIds);
-    for (const chunkId of chunkIds) {
-      this.chunkIndex.delete(chunkId);
-    }
-    const nextChunks = this.chunks.filter((item) => !chunkIds.has(item.id));
-    this.chunks.splice(0, this.chunks.length, ...nextChunks);
+    const stmts = this.getStmts();
+    this.db.transaction(() => {
+      stmts.deleteChunksBySessionId.run(sessionId);
+      stmts.deleteSessionBySessionId.run(sessionId);
+    })();
+    this.invalidateCache();
   }
 
   removeBySourceWorkspace(sourceWorkspace: string): void {
     const normalized = normalizeWorkspaceKey(sourceWorkspace);
-    if (!normalized) {
-      return;
-    }
-    for (const session of [...this.sessions]) {
-      if (session.sourceWorkspace === normalized) {
-        this.removeSession(session.sessionId);
-      }
-    }
+    if (!normalized) return;
+    const stmts = this.getStmts();
+    this.db.transaction(() => {
+      // Delete chunks first (no FK cascade — memory.db is a standalone file).
+      stmts.deleteChunksByWorkspace.run(normalized);
+      stmts.deleteSessionsByWorkspace.run(normalized);
+    })();
+    this.invalidateCache();
   }
 
   clear(): void {
-    this.sessions.splice(0, this.sessions.length);
-    this.chunks.splice(0, this.chunks.length);
-    this.sessionIndex.clear();
-    this.chunkIndex.clear();
-    this.save();
+    this.db.transaction(() => {
+      this.db.exec(`DELETE FROM memory_chunks`);
+      this.db.exec(`DELETE FROM memory_sessions`);
+    })();
+    this.invalidateCache();
+    // No save() needed — already committed.
   }
 
+  /**
+   * No-op: mutations are committed immediately in SQLite.
+   * Kept for interface compatibility with callers that call store.save().
+   */
   save(): void {
-    saveJsonFile(this.filePath, {
-      sessions: this.sessions.map(sessionToFileRecord),
-      chunks: this.chunks.map(chunkToFileRecord),
-      // Stamp the current format. A rebuild re-saves with EMBEDDING_FORMAT_VERSION,
-      // clearing any stale flag. Note: this is the in-memory value being persisted,
-      // not this.embeddingFormatVersion (which reflects what was loaded).
-      embeddingFormatVersion: EMBEDDING_FORMAT_VERSION,
-    });
+    // intentional no-op
   }
 
-  /** Embedding format version the currently-loaded vectors were written with. */
+  /** Embedding format version the stored vectors were written with. */
   getEmbeddingFormatVersion(): number {
-    return this.embeddingFormatVersion;
+    const raw = getMemoryMeta(this.db, 'embedding_format_version');
+    if (!raw) return 1; // pre-migration installs treated as version 1
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? n : 1;
   }
 
-  /** True if any stored session/chunk actually carries an embedding vector. */
-  hasEmbeddings(): boolean {
-    return (
-      this.chunks.some((c) => c.embedding.length > 0) ||
-      this.sessions.some((s) => s.embedding.length > 0)
-    );
+  /** Stamp the current embedding format version into memory_meta. */
+  setEmbeddingFormatVersion(version: number): void {
+    setMemoryMeta(this.db, 'embedding_format_version', String(version));
   }
+
+  /** Store the active embedding model name in memory_meta. */
+  setEmbeddingModel(model: string): void {
+    setMemoryMeta(this.db, 'embedding_model', model);
+  }
+
+  /** The active embedding model recorded in memory_meta, or null. */
+  getEmbeddingModel(): string | null {
+    const val = getMemoryMeta(this.db, 'embedding_model');
+    // Empty string is used as a sentinel for "explicitly cleared" (no model).
+    return val && val.length > 0 ? val : null;
+  }
+
+  /** True if any stored session or chunk carries an embedding vector. */
+  hasEmbeddings(): boolean {
+    const sessions = (this.getStmts().countSessionsWithEmbedding.get() as { n: number }).n;
+    if (sessions > 0) return true;
+    const chunks = (this.getStmts().countChunksWithEmbedding.get() as { n: number }).n;
+    return chunks > 0;
+  }
+
+  /**
+   * Count of sessions and chunks (cheap — no full table scan on large sets).
+   * Used by memory-service.getOverview() and getExperienceDbStatus().
+   */
+  getCounts(): { sessionCount: number; chunkCount: number } {
+    const sessionCount = (this.getStmts().countSessions.get() as { n: number }).n;
+    const chunkCount = (this.getStmts().countChunks.get() as { n: number }).n;
+    return { sessionCount, chunkCount };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Progressive retrieval
+  // ---------------------------------------------------------------------------
 
   retrieveProgressive(
     query: string,
@@ -384,6 +723,10 @@ export class ExperienceMemoryStore {
   ): ProgressiveRetrievalResult {
     const chunkTopK = options?.chunkTopK ?? 10;
     const sessionTopK = options?.sessionTopK ?? 5;
+    // Normalize the workspace key exactly once — scoring must use the same
+    // normalized value to match the prior in-memory store behavior.
+    // NOTE: We load ALL rows (no SQL workspace filter) and apply workspaceBoost
+    // in JS scoring — exactly matching the prior JSON store semantics.
     const currentWorkspace = normalizeWorkspaceKey(options?.currentWorkspace || null);
     const queryEmbedding = options?.queryEmbedding;
     const scoringConfig = {
@@ -394,9 +737,129 @@ export class ExperienceMemoryStore {
       supersessionKeywordThreshold: options?.supersessionKeywordThreshold ?? 0.5,
     };
 
+    // Step 1: Load lightweight rows from cache (avoids full-table scan on repeated queries).
+    const { chunks: chunkLightItems, sessions: sessionLightItems } = this.getLightRows();
+
+    // Step 2: Lexical-score all rows (no embeddings yet) to identify survivors.
+    const chunkTextSelector = (item: ReturnType<typeof rowLightToChunkNoEmbed>) =>
+      [
+        item.summary,
+        item.details,
+        item.rawText,
+        ...item.keywords,
+        item.sourceWorkspace || '',
+        item.sourceSessionTitle || '',
+      ].join(' ');
+    const sessionTextSelector = (item: ReturnType<typeof rowLightToSessionNoEmbed>) =>
+      [
+        item.summary,
+        ...item.keywords,
+        item.sourceWorkspace || '',
+        item.sourceSessionTitle || '',
+      ].join(' ');
+
+    // Step 2: Pre-filter candidates.
+    // When queryEmbedding is present, we keep all rows as candidates (semantic
+    // similarity can surface items with zero lexical overlap). When only lexical
+    // scoring is available, filter to items with positive lexical evidence.
+    const PRE_FILTER_MULTIPLIER = 5;
+
+    let chunkPreFilter: ReturnType<typeof rowLightToChunkNoEmbed>[];
+    let sessionPreFilter: ReturnType<typeof rowLightToSessionNoEmbed>[];
+
+    if (queryEmbedding?.length) {
+      // With embeddings: sort by lexical score descending and cap at SEMANTIC_CAP
+      // to bound BLOB fetches and prevent OOM on large stores. Items near the top
+      // by lexical score are most likely relevant; purely semantic matches without
+      // any lexical signal are deprioritized but not excluded within the cap window.
+      const SEMANTIC_CAP = Math.max(chunkTopK, sessionTopK) * PRE_FILTER_MULTIPLIER;
+
+      const scoredChunks = chunkLightItems
+        .map((item) => ({ item, lex: lexicalScore(query, chunkTextSelector(item)) }))
+        .sort((a, b) => b.lex - a.lex);
+      const scoredSessions = sessionLightItems
+        .map((item) => ({ item, lex: lexicalScore(query, sessionTextSelector(item)) }))
+        .sort((a, b) => b.lex - a.lex);
+
+      // Semantic fallback: when the top lexical score is 0 (pure semantic query),
+      // expand the candidate window to the larger of SEMANTIC_CAP or total row count
+      // so high-similarity zero-lexical items are not excluded.
+      const chunkTopLex = scoredChunks[0]?.lex ?? 0;
+      const sessionTopLex = scoredSessions[0]?.lex ?? 0;
+      const chunkCap =
+        chunkTopLex === 0 ? Math.max(SEMANTIC_CAP, scoredChunks.length) : SEMANTIC_CAP;
+      const sessionCap =
+        sessionTopLex === 0 ? Math.max(SEMANTIC_CAP, scoredSessions.length) : SEMANTIC_CAP;
+
+      chunkPreFilter = scoredChunks.slice(0, chunkCap).map((x) => x.item);
+      sessionPreFilter = scoredSessions.slice(0, sessionCap).map((x) => x.item);
+    } else {
+      // Lexical-only: only keep items with positive evidence.
+      chunkPreFilter = chunkLightItems
+        .map((item) => ({ item, lex: lexicalScore(query, chunkTextSelector(item)) }))
+        .filter((x) => x.lex > 0)
+        .sort((a, b) => b.lex - a.lex)
+        .slice(0, chunkTopK * PRE_FILTER_MULTIPLIER)
+        .map((x) => x.item);
+      sessionPreFilter = sessionLightItems
+        .map((item) => ({ item, lex: lexicalScore(query, sessionTextSelector(item)) }))
+        .filter((x) => x.lex > 0)
+        .sort((a, b) => b.lex - a.lex)
+        .slice(0, sessionTopK * PRE_FILTER_MULTIPLIER)
+        .map((x) => x.item);
+    }
+
+    // Batch IN-clause helper: splits ids into chunks of <=900 to stay under
+    // SQLite's SQLITE_MAX_VARIABLE_NUMBER (default 999).
+    const batchFetchEmbeddings = (
+      table: 'memory_chunks' | 'memory_sessions',
+      idCol: string,
+      ids: string[]
+    ): Map<string, number[]> => {
+      const BATCH = 900;
+      const result = new Map<string, number[]>();
+      for (let i = 0; i < ids.length; i += BATCH) {
+        const batch = ids.slice(i, i + BATCH);
+        const placeholders = batch.map(() => '?').join(',');
+        const rows = this.db
+          .prepare(`SELECT ${idCol}, embedding FROM ${table} WHERE ${idCol} IN (${placeholders})`)
+          .all(...batch) as Array<{ [key: string]: string | Buffer | null }>;
+        for (const r of rows) {
+          const key = r[idCol] as string;
+          const emb = r.embedding as Buffer | null;
+          result.set(key, safeDecodeEmbedding(emb));
+        }
+      }
+      return result;
+    };
+
+    // Step 3: Batch-load embeddings for the candidate set.
+    const candidateChunks: ChunkMemoryItem[] = (() => {
+      if (!queryEmbedding?.length) {
+        return chunkPreFilter.map((item) => ({ ...item, embedding: [] as number[] }));
+      }
+      const ids = chunkPreFilter.map((c) => c.id);
+      if (!ids.length) return [];
+      const embMap = batchFetchEmbeddings('memory_chunks', 'id', ids);
+      return chunkPreFilter.map((item) => ({ ...item, embedding: embMap.get(item.id) ?? [] }));
+    })();
+
+    const candidateSessions: SessionMemoryItem[] = (() => {
+      if (!queryEmbedding?.length) {
+        return sessionPreFilter.map((item) => ({ ...item, embedding: [] as number[] }));
+      }
+      const sessionIds = sessionPreFilter.map((s) => s.sessionId);
+      if (!sessionIds.length) return [];
+      const embMap = batchFetchEmbeddings('memory_sessions', 'session_id', sessionIds);
+      return sessionPreFilter.map((item) => ({
+        ...item,
+        embedding: embMap.get(item.sessionId) ?? [],
+      }));
+    })();
+
     const rankedChunks = this.rankItems(
       query,
-      this.chunks,
+      candidateChunks,
       chunkTopK,
       queryEmbedding,
       currentWorkspace,
@@ -411,9 +874,10 @@ export class ExperienceMemoryStore {
         ].join(' '),
       scoringConfig
     );
+
     const rankedSessions = this.rankItems(
       query,
-      this.sessions,
+      candidateSessions,
       sessionTopK,
       queryEmbedding,
       currentWorkspace,
@@ -501,6 +965,10 @@ export class ExperienceMemoryStore {
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Private scoring — identical logic to the former JSON store
+  // ---------------------------------------------------------------------------
+
   private rankItems<
     T extends {
       embedding: number[];
@@ -547,8 +1015,6 @@ export class ExperienceMemoryStore {
       .filter((item) => item.evidenceScore > 0)
       .sort((a, b) => b.score - a.score);
 
-    // Apply supersession penalty: if a newer item from the same workspace covers
-    // the same keywords, penalize older items on that topic.
     if (scoringConfig.supersessionPenalty > 0) {
       for (let i = 0; i < scored.length; i++) {
         const item = scored[i];
@@ -559,7 +1025,6 @@ export class ExperienceMemoryStore {
         );
         if (!Number.isFinite(itemTimestamp)) continue;
 
-        // Check if any genuinely newer item on the same topic exists
         let superseded = false;
         for (let j = 0; j < scored.length; j++) {
           if (i === j) continue;
@@ -568,13 +1033,11 @@ export class ExperienceMemoryStore {
             (other.record as { sessionDate?: string }).sessionDate || other.record.ingestedAt
           );
           if (!Number.isFinite(otherTimestamp)) continue;
-          // Only penalize if the other item is genuinely newer
           if (otherTimestamp <= itemTimestamp) continue;
 
           const otherKeywords = (other.record as { keywords?: string[] }).keywords || [];
           if (!otherKeywords.length) continue;
 
-          // Only supersede within same workspace (using normalized keys)
           const itemWs = normalizeWorkspaceKey(item.record.sourceWorkspace || null);
           const otherWs = normalizeWorkspaceKey(other.record.sourceWorkspace || null);
           if (itemWs && otherWs && itemWs === otherWs) {
@@ -591,17 +1054,31 @@ export class ExperienceMemoryStore {
       }
     }
 
-    // Re-sort after penalty and take top K
     return scored.sort((a, b) => b.score - a.score).slice(0, topK);
   }
-}
 
-function keywordOverlap(a: string[], b: string[]): number {
-  if (!a.length || !b.length) return 0;
-  const setB = new Set(b.map((k) => k.toLowerCase()));
-  let matches = 0;
-  for (const keyword of a) {
-    if (setB.has(keyword.toLowerCase())) matches++;
+  // ---------------------------------------------------------------------------
+  // Legacy accessors used by getOverview() — kept for compatibility
+  // These iterate all rows; prefer getCounts() for cheap count queries.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * @deprecated Use getCounts().sessionCount for large stores.
+   * Returns full rows including embeddings to preserve prior contract.
+   */
+  get sessions(): SessionMemoryItem[] {
+    return (
+      this.db.prepare(`SELECT * FROM memory_sessions ORDER BY rowid ASC`).all() as SessionRow[]
+    ).map(rowToSession);
   }
-  return matches / Math.max(a.length, b.length);
+
+  /**
+   * @deprecated Use getCounts().chunkCount for large stores.
+   * Returns full rows including embeddings to preserve prior contract.
+   */
+  get chunks(): ChunkMemoryItem[] {
+    return (
+      this.db.prepare(`SELECT * FROM memory_chunks ORDER BY rowid ASC`).all() as ChunkRow[]
+    ).map(rowToChunk);
+  }
 }
