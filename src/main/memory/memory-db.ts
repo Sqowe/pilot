@@ -28,17 +28,22 @@ function validateIdentifier(name: string): string {
   return name;
 }
 
-const ALLOWED_COLUMN_TYPES = [
-  'TEXT NOT NULL DEFAULT',
-  'INTEGER DEFAULT',
-  'INTEGER NOT NULL DEFAULT',
-  'TEXT',
-  'INTEGER',
-  'REAL',
-  'BLOB',
-] as const;
+/**
+ * A whole column definition: type, optional NOT NULL, optional DEFAULT with a
+ * literal — anchored end to end so nothing can trail a matched prefix.
+ *
+ * The previous version prefix-matched an allowlist and then interpolated the
+ * remainder verbatim, so anything following e.g. `TEXT NOT NULL DEFAULT` passed
+ * through unchecked. Every call site is a hardcoded constant, so that was defence
+ * in depth rather than a live injection path — but a guard should mean what its
+ * name implies. DEFAULT literals are limited to a single-quoted string with no
+ * embedded quote, a number, or NULL.
+ */
+const COLUMN_DEFINITION_RE =
+  /^(TEXT|INTEGER|REAL|BLOB)( NOT NULL)?( DEFAULT ('[^']*'|-?\d+(\.\d+)?|NULL))?$/i;
 
-function ensureColumn(
+/** Exported for tests — the additive-migration helper used by `initSchema`. */
+export function ensureColumn(
   db: Database.Database,
   table: string,
   column: string,
@@ -51,15 +56,11 @@ function ensureColumn(
   if (!definition.startsWith(prefix)) {
     throw new Error(`Column definition must start with column name: ${definition}`);
   }
-  const typeSuffix = definition.slice(prefix.length).trim().toUpperCase();
-  const matched = ALLOWED_COLUMN_TYPES.find(
-    (t) => typeSuffix === t || typeSuffix.startsWith(t + ' ')
-  );
-  if (!matched) {
-    throw new Error(`Unsupported column type in definition: ${typeSuffix}`);
+  const typeSuffix = definition.slice(prefix.length).trim();
+  if (!COLUMN_DEFINITION_RE.test(typeSuffix)) {
+    throw new Error(`Unsupported column definition: ${typeSuffix}`);
   }
-  const originalSuffix = definition.slice(prefix.length).trim();
-  const safeDefinition = `${column} ${originalSuffix}`;
+  const safeDefinition = `${column} ${typeSuffix}`;
 
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (rows.some((r) => r.name === column)) return;

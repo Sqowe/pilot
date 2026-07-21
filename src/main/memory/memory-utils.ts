@@ -496,6 +496,16 @@ export function blobToEmbedding(blob: Buffer): number[] {
     // Corrupted or unexpected BLOB — return empty rather than partial vector.
     return [];
   }
+  // `new Float32Array(buffer, byteOffset, …)` throws RangeError unless byteOffset is
+  // a multiple of 4. better-sqlite3 hands back byteOffset 0 today, but a Buffer that
+  // is pooled or produced by .subarray() need not be aligned, and callers such as
+  // exportExperienceJson decode without a try/catch. Copy into a fresh ArrayBuffer in
+  // that case — always offset 0, so alignment is guaranteed rather than assumed.
+  if (blob.byteOffset % 4 !== 0) {
+    const copy = new Uint8Array(blob.byteLength);
+    copy.set(blob);
+    return Array.from(new Float32Array(copy.buffer));
+  }
   const f32 = new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4);
   return Array.from(f32);
 }

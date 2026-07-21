@@ -15,7 +15,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { ExperienceMemoryStore } from '../../main/memory/experience-memory-store';
-import { openMemoryDb, type MemoryDb } from '../../main/memory/memory-db';
+import { ensureColumn, openMemoryDb, type MemoryDb } from '../../main/memory/memory-db';
 import { embeddingToBlob, blobToEmbedding, cosineSimilarity } from '../../main/memory/memory-utils';
 import type { ChunkMemoryItem, SessionMemoryItem } from '../../main/memory/memory-types';
 
@@ -116,6 +116,86 @@ describe('ExperienceMemoryStore — SQLite backend', () => {
       const blob = embeddingToBlob([]);
       expect(blob.byteLength).toBe(0);
       expect(blobToEmbedding(blob)).toEqual([]);
+    });
+
+    it('decodes a Buffer whose byteOffset is not 4-byte aligned', () => {
+      // `new Float32Array(buffer, byteOffset, …)` throws RangeError on an unaligned
+      // offset. better-sqlite3 returns byteOffset 0 today, so this is unreachable via
+      // the DB — but exportExperienceJson decodes without a try/catch, so the helper
+      // must cope rather than assume.
+      const original = [0.25, -0.5, 0.75];
+      const source = embeddingToBlob(original);
+      const pool = Buffer.alloc(source.byteLength + 2);
+      source.copy(pool, 2);
+      const misaligned = pool.subarray(2);
+
+      expect(misaligned.byteOffset % 4).not.toBe(0);
+      const decoded = blobToEmbedding(misaligned);
+      expect(decoded).toHaveLength(3);
+      for (let i = 0; i < original.length; i++) {
+        expect(decoded[i]).toBeCloseTo(original[i], 5);
+      }
+    });
+
+    it('returns [] for a blob whose length is not a multiple of 4', () => {
+      expect(blobToEmbedding(Buffer.alloc(6))).toEqual([]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // ensureColumn definition validation (§16.5)
+  // -------------------------------------------------------------------------
+
+  describe('ensureColumn definition validation', () => {
+    it('accepts the definition forms the schema actually uses', () => {
+      expect(() =>
+        ensureColumn(memDb.raw, 'memory_sessions', 'probe_a', 'probe_a TEXT')
+      ).not.toThrow();
+      expect(() =>
+        ensureColumn(memDb.raw, 'memory_sessions', 'probe_b', 'probe_b INTEGER')
+      ).not.toThrow();
+      expect(() =>
+        ensureColumn(memDb.raw, 'memory_sessions', 'probe_c', "probe_c TEXT NOT NULL DEFAULT ''")
+      ).not.toThrow();
+      expect(() =>
+        ensureColumn(memDb.raw, 'memory_sessions', 'probe_d', 'probe_d INTEGER DEFAULT 0')
+      ).not.toThrow();
+    });
+
+    it('rejects trailing SQL after an otherwise valid prefix', () => {
+      // The previous prefix-match accepted exactly this: the suffix starts with
+      // `TEXT NOT NULL DEFAULT `, so the allowlist matched, and the remainder was
+      // then interpolated verbatim into a db.exec() — which runs multiple statements.
+      // Verified against the old implementation: it dropped memory_chunks.
+      expect(() =>
+        ensureColumn(
+          memDb.raw,
+          'memory_sessions',
+          'probe_bad',
+          "probe_bad TEXT NOT NULL DEFAULT ''; DROP TABLE memory_chunks; --"
+        )
+      ).toThrow(/Unsupported column definition/);
+
+      // The table it would have dropped is still there.
+      expect(() => memDb.raw.prepare(`SELECT 1 FROM memory_chunks`).get()).not.toThrow();
+    });
+
+    it('rejects an unknown column type', () => {
+      expect(() =>
+        ensureColumn(memDb.raw, 'memory_sessions', 'probe_x', 'probe_x VARCHAR(255)')
+      ).toThrow(/Unsupported column definition/);
+    });
+
+    it('rejects a definition that does not start with the column name', () => {
+      expect(() => ensureColumn(memDb.raw, 'memory_sessions', 'probe_y', 'other TEXT')).toThrow(
+        /must start with column name/
+      );
+    });
+
+    it('rejects an invalid table or column identifier', () => {
+      expect(() =>
+        ensureColumn(memDb.raw, 'memory_sessions; DROP TABLE x', 'probe_z', 'probe_z TEXT')
+      ).toThrow(/Invalid SQL identifier/);
     });
   });
 
