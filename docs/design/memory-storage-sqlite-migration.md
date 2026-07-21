@@ -1,6 +1,6 @@
 # Experience Memory → SQLite Storage Migration — Design
 
-**Status:** Shipped — Phases 1–3 ✅, post-review fixes ✅. Follow-ups tracked in §16.
+**Status:** Shipped — Phases 1–3 ✅, post-review fixes ✅, §16 follow-ups all settled ✅.
 **Date:** 2026-07-03
 **Updated:** 2026-07-21
 **Owner:** @obodnikov
@@ -170,6 +170,8 @@ CREATE TABLE IF NOT EXISTS memory_meta (key TEXT PRIMARY KEY, value TEXT);  -- s
 - Write: `Buffer.from(new Float32Array(embedding).buffer)`.
 - Read: `new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4)` → pass to
   `cosineSimilarity` (accept `Float32Array | number[]`; add a small overload — see §8).
+  **As built:** the signature was widened, but `blobToEmbedding` returns `number[]`, so the view is
+  never handed to the scorer. That was measured and settled as won't-do — see §16.4.
 - ~4 KB per 768-dim vector as Float32 BLOB vs. ~18 KB as JSON text → **~4× smaller on disk**.
 
 ## 7. Homogeneous store & staleness (D5)
@@ -502,8 +504,10 @@ each was verified against a running store before being fixed.
 
 ## 16. Follow-ups
 
-Gaps found by the post-ship review, in rough priority order. None block the migration.
-Items are struck off here as they land rather than moved, so the reasoning stays with the entry.
+Gaps found by the post-ship review. Items are resolved in place rather than deleted, so the
+reasoning stays attached to the entry — including the ones closed **without** code (§16.4 measured
+and declined, §16.7 not actionable). All seven are now settled: 1, 2, 3, 5, 6 shipped; 4 won't do;
+7 reframed as a constraint for a feature that does not exist yet.
 
 1. ✅ **DONE (`69a1204`) — `searchExperience` loaded full rows for a lexical scan.** It iterated
    the deprecated `store.sessions` / `store.chunks` getters, decoding every embedding BLOB and
@@ -560,9 +564,42 @@ Items are struck off here as they land rather than moved, so the reasoning stays
    or pooled `Buffer` reaching that path would have thrown mid-export. Fixed at the source rather
    than by adding a second `try/catch`: on an unaligned offset the bytes are copied into a fresh
    `ArrayBuffer`, which is offset 0 by construction.
-4. **The `Float32Array` widening on `cosineSimilarity` is dead in production.** `blobToEmbedding`
-   returns `Array.from(f32)`, so nothing passes a `Float32Array` outside tests — §8's intent was
-   to hand the view straight to the scorer and skip the `number[]` materialization per candidate.
+4. ❌ **WON'T DO — hand the `Float32Array` view straight to the scorer.** `blobToEmbedding`
+   returns `Array.from(f32)`, so the widened `cosineSimilarity` signature is never exercised in
+   production. §8's intent was to skip that per-candidate `number[]` materialization. Measured
+   before deciding — 500 candidates × 768 dims, per query:
+
+   | Operation                            | Time         |
+   | ------------------------------------ | ------------ |
+   | decode: `Array.from(view)` — today   | **3.984 ms** |
+   | decode: view, no copy — proposed     | **0.015 ms** |
+   | score: `number[] × number[]` — today | 0.238 ms     |
+   | score: `Float32Array × Float32Array` | **0.767 ms** |
+
+   Net ≈ **3.4 ms/query saved at 500 candidates**. Two things that changes:
+   - **§8's premise is half wrong.** The whole win is in not copying (3.984 → 0.015 ms). Scoring a
+     `Float32Array` is ~3× _slower_ than scoring a `number[]` — every read converts float32→float64
+     — so handing the view to the scorer gives back ~15% of the gain it just won.
+   - **The absolute number is small where the path actually runs.** `SEMANTIC_CAP` defaults to
+     `max(chunkTopK, sessionTopK) × 5` = **50** candidates, i.e. ~0.34 ms/query — below perception.
+     500 only occurs in the semantic-fallback branch (all lexical scores zero). For scale: §16.2
+     removed ~1 s of transcript parsing from this same path, so this is ~0.3% of that.
+
+   Against that: widening the item types to `number[] | Float32Array` reaches into the export and
+   migration paths, and `JSON.stringify(new Float32Array([0.1]))` yields `{"0":0.1}` rather than
+   `[0.1]` — a leak would silently corrupt exports. Trading a sub-millisecond win for a
+   silent-data-corruption class of bug is a bad deal.
+
+   The widened `cosineSimilarity` signature **stays**: it is correct and covered by parity tests,
+   and unlike the deprecated getters it is not a footgun — merely unused.
+
+   **If this path ever does become a bottleneck**, the arithmetic is the better target, not the
+   copy: §14 states embeddings are normalized unit vectors, so cosine degenerates to a dot product
+   and two of the three accumulator loops plus both `sqrt` calls disappear. That needs the
+   normalization claim verified **per provider** first (true for OpenAI; depends on the pooling /
+   normalize settings for local EmbeddingGemma), but it touches neither the types, the export, nor
+   the migration.
+
 5. ✅ **DONE (`5fcfd1b`) — `ensureColumn`'s validator did not actually validate.** It
    prefix-matched `ALLOWED_COLUMN_TYPES` and then interpolated the remainder verbatim into a
    `db.exec()`, which executes multiple statements. So
