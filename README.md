@@ -496,15 +496,29 @@ This avoids injecting too much irrelevant context while ensuring important detai
 
 Memory data lives at `~/Library/Application Support/sqowe-pilot/memory/` (macOS):
 
-| File                     | Contents                                             |
-| ------------------------ | ---------------------------------------------------- |
-| `core_memory.json`       | Stable user profile (interests, preferences, skills) |
-| `experience_memory.json` | Session summaries, chunks, and embeddings            |
-| `session_state.json`     | Tracks which sessions have been ingested             |
+| File                 | Contents                                             |
+| -------------------- | ---------------------------------------------------- |
+| `core_memory.json`   | Stable user profile (interests, preferences, skills) |
+| `memory.db`          | Session summaries, chunks, and embeddings (SQLite)   |
+| `session_state.json` | Tracks which sessions have been ingested             |
+
+Experience memory used to be a single `experience_memory.json`, which was rewritten in full on
+every ingest and re-parsed in full on every read. It now lives in a SQLite database. **The
+migration is automatic**: on first launch the JSON is copied into `memory.db` in one transaction
+and then renamed to `experience_memory.json.bak`, which is kept as a rollback artefact. No action
+is required, and nothing is deleted.
+
+Because `memory.db` is a binary file, **Settings → Memory → Memory Storage** shows a status card
+for it instead of a raw dump — schema version, size, session/chunk counts, embedding model,
+integrity, and a per-workspace breakdown — with **Export JSON** (a full-fidelity backup in the old
+`{ sessions, chunks }` shape) and **Vacuum** (reclaim space after clearing). The other entries are
+still plain JSON and open in the raw viewer as before.
 
 ### Local Embeddings (Default)
 
 By default, memory embeddings run **fully offline and in-process** via ONNX (EmbeddingGemma-300M through transformers.js) — no Python, no API key, and no data leaves your machine. The model downloads once on first use. Switch to a remote embedding provider in **Settings → Memory** if you prefer.
+
+**Switching the embedding model invalidates stored vectors.** Similarity is only meaningful within a single model's embedding space, so comparing a fresh query against vectors built by a different model returns noise rather than matches. Sqowe Pilot detects the mismatch and falls back to keyword-only retrieval — degraded, but never wrong — and shows a prompt to rebuild. Rebuilding re-embeds every record with the active model; until then, search keeps working without semantic ranking.
 
 ### Configuration
 
