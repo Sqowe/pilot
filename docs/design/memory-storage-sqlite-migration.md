@@ -22,6 +22,7 @@
 | 3     | Settings UI — DB status card, storage branching, i18n           | ✅ Done | `36a40f8` |
 | 3.1   | Post-review fixes — §7 staleness gate, per-row model stamping   | ✅ Done | `5dd814d` |
 | 3.2   | Search path narrowed to text-only rows; deprecated getters gone | ✅ Done | `69a1204` |
+| 3.3   | Lazy transcript hydration — §1 goal #2 fully closed             | ✅ Done | `03a56c8` |
 
 > Note: [memory-system-architecture.md §5](memory-system-architecture.md)'s storage-root
 > default is now **fixed** (`app.getPath('userData')/memory`). Its storage-layout tree is
@@ -521,10 +522,35 @@ Items are struck off here as they land rather than moved, so the reasoning stays
    With `buildPromptPrefix` already fixed in `5dd814d`, this removed the getters' last caller, so
    **both deprecated getters are now deleted** — the footgun is retired, not merely annotated.
 
-2. **Light rows still parse `raw_session`.** `rowLightToSessionNoEmbed` JSON-parses the full
-   transcript for every session on each cache rebuild, but `rawSession` is only needed for
-   `rawSessionCandidates` — i.e. the top-K ranked sessions, at the very end. Lazy-loading it by
-   id would remove the largest remaining per-scan cost and close §1's goal #2 properly.
+2. ✅ **DONE (`03a56c8`) — light rows parsed `raw_session` for every session.** The cache is
+   dropped on every write, so each ingest made the _next prompt_ re-parse every transcript in the
+   store — on the main process, inside the latency budget of every message (§3 puts that at ~1 s
+   at ~100 MB). This was the last piece of §1's goal #2 still outstanding.
+
+   `raw_session` never participated in scoring — the session text selector covers summary,
+   keywords, workspace and title only — and fed exactly one consumer, `rawSessionCandidates`,
+   built from the ranked sessions at the very end. So the column left the light scan entirely and
+   `fetchRawSessions` now pulls transcripts by id **after** ranking, bounded by `sessionTopK`
+   (default 5) rather than by store size. The ranked records are hydrated in place, so both
+   `rankedSessions[].rawSession` and `rawSessionCandidates` keep their previous contents.
+   Side benefit: the cache no longer holds every parsed transcript in memory.
+
+   > Testing note: five of the six new tests are contract tests that pass **both** before and
+   > after — behaviour is unchanged by design, so they cannot detect a regression. The sixth is
+   > deliberately white-box: it asserts no unfiltered scan of `memory_sessions` mentions
+   > `raw_session`, and that the transcript is fetched by id. It was verified to fail when the
+   > column is put back into the light scan. Without it, a revert to eager parsing would be
+   > completely silent — the pattern is worth reusing for the remaining perf items here.
+
+   **Discovered while doing this, still open:** `rawSessionCandidates`, `rankedChunks` and
+   `rankedSessions` are declared on `ProgressiveRetrievalResult` and populated, but **no
+   production code reads any of them** — `rankedChunks`/`rankedSessions` are used only as test
+   handles, and the nav loop's `get_raw_session` fetches transcripts on demand via `getSession()`
+   ([memory-service.ts:1251](../../src/main/memory/memory-service.ts)). The lazy hydration above
+   therefore fills a field nobody consumes. Left in place rather than deleted, since removing
+   fields from a public result type is a judgement call about reserved API, not a cleanup —
+   worth a decision of its own.
+
 3. **`blobToEmbedding` guards `byteLength % 4` but not `byteOffset % 4`.** A non-4-aligned
    `Buffer` throws `RangeError: start offset of Float32Array should be a multiple of 4`.
    Verified unreachable today — better-sqlite3 returns `byteOffset === 0` for every BLOB (probed
