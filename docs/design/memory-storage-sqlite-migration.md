@@ -1,6 +1,6 @@
 # Experience Memory → SQLite Storage Migration — Design
 
-**Status:** In Progress — Phase 1 ✅ shipped, Phase 2 ✅ shipped, Phase 3 (UI) pending
+**Status:** Shipped — Phases 1–3 ✅, post-review fixes ✅. Follow-ups tracked in §16.
 **Date:** 2026-07-03
 **Updated:** 2026-07-21
 **Owner:** @obodnikov
@@ -15,16 +15,16 @@
 
 ## Rollout status
 
-| Phase | Scope                                                 | Status  | Commit    |
-| ----- | ----------------------------------------------------- | ------- | --------- |
-| 1     | SQLite store, migration, tests                        | ✅ Done | `a19fc4f` |
-| 2     | IPC bridge, renderer types, export/vacuum/status      | ✅ Done | `2bcc076` |
-| 3     | Settings UI — DB status card, storage branching, i18n | ✅ Done | (pending) |
+| Phase | Scope                                                         | Status  | Commit    |
+| ----- | ------------------------------------------------------------- | ------- | --------- |
+| 1     | SQLite store, migration, tests                                | ✅ Done | `a19fc4f` |
+| 2     | IPC bridge, renderer types, export/vacuum/status              | ✅ Done | `2bcc076` |
+| 3     | Settings UI — DB status card, storage branching, i18n         | ✅ Done | `36a40f8` |
+| 3.1   | Post-review fixes — §7 staleness gate, per-row model stamping | ✅ Done | `5dd814d` |
 
-> Note: [memory-system-architecture.md §5](memory-system-architecture.md) still lists the
-> storage root as `~/.open-cowork/memory/`. That is **stale** — the code default is
-> `path.join(app.getPath('userData'), 'memory')` ([memory-service.ts:1211](../../src/main/memory/memory-service.ts)),
-> i.e. `<userData>/sqowe-pilot/memory/` post-rebrand. Fix that doc alongside this work.
+> Note: [memory-system-architecture.md §5](memory-system-architecture.md)'s storage-root
+> default is now **fixed** (`app.getPath('userData')/memory`). Its storage-layout tree is
+> still stale, though: it lists `experience_memory.json` and has no `memory.db` entry.
 
 ---
 
@@ -175,14 +175,40 @@ Cosine is only meaningful within one embedding space, and there is **no default 
 each install's dimension is whatever the user configured (1536 OpenAI, 1024 bge-m3, 768 local,
 Ollama-various, or none). So at any moment the store holds **one** model's vectors.
 
-- On load/query, assert every candidate row's `embedding_model` equals the active embedding
-  config. On mismatch → treat as a stale index: fall back to lexical-only retrieval and surface
+- On load/query, assert the stored `embedding_model` equals the active embedding config.
+  On mismatch → treat as a stale index: fall back to lexical-only retrieval and surface
   the existing "rebuild memory index" prompt
   (`rebuildAll` / `rebuildWorkspace`, [memory-service.ts](../../src/main/memory/memory-service.ts);
   [local-embeddings-default.md §8](local-embeddings-default.md)).
 - This makes the implicit "changing the model invalidates the index" rule **explicit and safe**,
   and lets the future MCP reader refuse to semantic-search vectors built with a different model
   instead of returning garbage.
+
+### As built (`5dd814d`)
+
+Shipped as `MemoryService.isEmbeddingModelStale()`, with two deliberate departures from the
+sketch above:
+
+- **Reads `memory_meta.embedding_model`, not every candidate row.** Under D5 the store is
+  homogeneous, so meta is authoritative and the check is O(1) instead of a per-query scan.
+  It is also _more_ robust: installs migrated before `5dd814d` have per-row tags that lag by
+  one ingest (the bug that commit fixed), so a row-level assert would false-positive on them.
+  Per-row `embedding_model`/`embedding_dim` remain correct-going-forward and stay the
+  substrate for the future MCP reader, which can afford the row-level check.
+- **Unknown ≠ stale.** If no model is configured, or the store predates model recording,
+  the gate returns `false`. Retrieval degrades only on _positive_ evidence of a mismatch —
+  silently dropping to lexical-only on missing metadata would be worse than the risk it avoids.
+
+Gate point: `buildPromptPrefix` skips `embedText()` entirely when stale, so no query vector is
+computed and `retrieveProgressive` scores lexically. The warning logs once per staleness episode
+(this path runs on every prompt). The existing amber Settings banner now fires on either
+condition and reuses the already-translated `memory.rebuildOnProviderChange` string, so the
+feature added **no new i18n keys**. IPC `memory.isEmbeddingFormatStale` gained an additive
+`modelStale` field rather than a second channel.
+
+Unlike `isEmbeddingFormatStale` (deliberately gated to the local provider, since only its
+computation changed), this gate is **provider-agnostic**: switching model invalidates the index
+no matter who computed the vectors.
 
 ## 8. Retrieval path changes
 
@@ -197,6 +223,19 @@ Swap the internals:
   the candidate set via `WHERE source_workspace = ? OR source_workspace IS NULL` (∪ global), then
   runs the **existing** JS scoring — `cosineSimilarity` + `lexicalScore` + `workspaceBoost` +
   `recencyBoost` + supersession penalty — over that subset. Scoring math is unchanged.
+
+  > **As built — the SQL workspace pre-filter was NOT adopted.** It would have changed results.
+  > `workspaceBoost` is a _boost_, not a filter: a `WHERE source_workspace = ?` restriction
+  > drops cross-workspace rows that the JSON store ranked (merely with a lower score), so the
+  > filter is not retrieval-preserving. The shipped path loads **all** rows as embedding-free
+  > "light rows" into a process cache (invalidated on write, and on `PRAGMA data_version`
+  > change for external writers) and applies the unchanged JS scoring over them. Pinned by
+  > `retrieveProgressive` tests asserting cross-workspace results still surface.
+  >
+  > What this does buy: BLOBs are off the scan path entirely (they are batch-fetched by id,
+  > in ≤900-id `IN` batches, only for the pre-filtered candidate window), which is the bulk of
+  > the bytes. What it does not: see §16 — light rows still parse `raw_session`.
+
 - **Save → upsert.** `replaceSession` / `removeSession` / `removeBySourceWorkspace` become
   transactional `INSERT … ON CONFLICT` / `DELETE`, eliminating whole-file rewrites.
 - **Lexical (optional, phase 2 of this migration).** Move the lexical half to `memory_chunks_fts`
@@ -326,14 +365,24 @@ Key points:
 
 ## 12. Testing
 
-- Unit: BLOB round-trip (Float32 fidelity), `cosineSimilarity` parity `number[]` vs `Float32Array`.
-- Migration: JSON fixture → backfill → assert row counts, embeddings, workspace scoping, and
+- ✅ Unit: BLOB round-trip (Float32 fidelity), `cosineSimilarity` parity `number[]` vs `Float32Array`.
+- ✅ Migration: JSON fixture → backfill → assert row counts, embeddings, workspace scoping, and
   `.bak` creation; idempotent re-run is a no-op; simulated mid-transaction crash leaves the JSON
   intact.
-- Retrieval parity: same query yields the same ranked ids/scores from JSON store vs `memory.db`
-  (reuse the eval harness).
-- Staleness: rows tagged with a non-active `embedding_model` fall back to lexical-only + rebuild
-  prompt.
+- ⚠️ Retrieval parity: same query yields the same ranked ids/scores from JSON store vs `memory.db`
+  (reuse the eval harness). **Not done as a back-to-back A/B** — the JSON store was removed in the
+  same commit that added the SQLite one (`a19fc4f`), so there is no longer a reference
+  implementation to diff against. Mitigated instead by: the scoring functions being moved
+  verbatim (`workspaceBoost` / `recencyBoost` / `keywordOverlap` / `rankItems` are unchanged
+  code), and by behavioural tests pinning the semantics most at risk from the storage swap —
+  cross-workspace results still surfacing, `chunkIds` ordering preserved, semantic-only matches
+  surviving the lexical pre-filter. Worth accepting as-is; reconstructing the JSON store purely
+  to A/B it would cost more than it now proves.
+- ✅ Staleness: covered at the service level (`isEmbeddingModelStale`) rather than per-row, per
+  the §7 "As built" note — match, mismatch, embeddings-disabled, empty store, and the
+  pre-recording install all asserted.
+- ✅ Per-row `embedding_model`/`embedding_dim` stamping (added in `5dd814d` after the review;
+  its absence is what let the stamping bug ship).
 
 ## 13. Rollout / sequencing
 
@@ -342,7 +391,7 @@ Key points:
    of the new build. No user action; `.bak` retained one release cycle, then a follow-up prunes it.
    **Done:** `memory-db-migration.ts` runs on `ensureStores()`, idempotent, crash-safe.
 3. ⏳ Repoint the (future) read-only memory MCP reader at `memory.db` — it becomes simpler and
-   race-free vs. reading a JSON mid-rewrite. (Pending — phase 3+ work.)
+   race-free vs. reading a JSON mid-rewrite. (Pending — tracked as §16.7.)
 
 ### As-built notes (2026-07-21)
 
@@ -373,7 +422,7 @@ Key points:
   `{ success, error? }`.
 - 202 tests passing.
 
-**Phase 3 (pending commit):** Settings UI — DB-status card, storage branching, i18n.
+**Phase 3 (commit `36a40f8`):** Settings UI — DB-status card, storage branching, i18n.
 
 - `SettingsMemory.tsx` — section renamed "Raw File Viewer" → "Memory Storage"; the right pane
   branches on `MemoryDebugFileInfo.storage`: `file` → existing raw-JSON pane (unchanged),
@@ -409,19 +458,76 @@ Key points:
 - [ ] Select `memory.db` when no DB exists yet (fresh install, pre-ingestion) → card shows the not-created-yet message, not "select again".
 - [ ] Switch UI language (en/zh/ru/hu) → card labels translate; no raw keys shown.
 
+**Phase 3.1 (commit `5dd814d`):** post-review fixes. Found by a code review of phases 1–3;
+each was verified against a running store before being fixed.
+
+- **Per-row `embedding_model` was stamped one ingest behind.** `replaceSessionWithMeta` wrote
+  `memory_meta` _after_ `_replaceSessionInner` had already read it to tag each row, so the first
+  ingest on a fresh store wrote `NULL` and every later ingest carried the _previous_ model.
+  Reproduced: ingesting `model-A` then `model-B` left rows `[s1=null, s2=model-A]`. Meta is now
+  stamped before the inserts, and the active model is passed down explicitly; `replaceSession`
+  still falls back to meta, since it carries no fresh model of its own. No user-visible breakage
+  had occurred — nothing read the column yet — but it is the substrate for D4/§7.
+- **§7 model-staleness gate implemented** (see §7 "As built"). This was the one substantive part
+  of the design that phases 1–3 omitted.
+- **`buildPromptPrefix` emptiness check used the deprecated `sessions`/`chunks` getters**, which
+  `SELECT *` and decode every embedding BLOB and transcript — on _every prompt_, defeating the
+  migration's read-path goal. Now `getCounts()`.
+- **Dead code removed:** `getSessionsForWorkspace`, `getChunksForWorkspace`, `deleteChunkById` —
+  prepared statements left behind by the §8 deviation above, never called.
+- 11 new tests (3089 → **3100 passing**): per-row stamping (first ingest, post-switch, vector-less
+  rows, `embedding_dim`, `replaceSession` fallback, clearing) and `isEmbeddingModelStale`
+  (match, mismatch, embeddings-disabled, empty store, pre-recording install).
+
 ## 14. Risks
 
-| Risk                                        | Mitigation                                                                                                                              |
-| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Backfill data loss                          | Rename (not delete) JSON to `.bak`; single transaction; idempotent guard.                                                               |
-| Float32 precision vs stored float64 JSON    | Embeddings are normalized unit vectors; Float32 is standard for on-disk vectors and ample for cosine ranking. Validate parity in tests. |
-| `better-sqlite3` native/ABI after `npm` ops | Same existing constraint as `cowork.db`; `npm run rebuild` already documented.                                                          |
-| Retrieval regression                        | Eval-harness parity gate before enabling.                                                                                               |
-| Custom `storageRoot` edge cases             | `memory.db` resolves via the same `getPaths()` logic + `assertSafeMemoryPaths`.                                                         |
+| Risk                                        | Mitigation                                                                                                                                 |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Backfill data loss                          | Rename (not delete) JSON to `.bak`; single transaction; idempotent guard.                                                                  |
+| Float32 precision vs stored float64 JSON    | Embeddings are normalized unit vectors; Float32 is standard for on-disk vectors and ample for cosine ranking. Validate parity in tests.    |
+| `better-sqlite3` native/ABI after `npm` ops | Same existing constraint as `cowork.db`; `npm run rebuild` already documented.                                                             |
+| Retrieval regression                        | Eval-harness parity gate before enabling. **Not executed as designed** — see §12; scoring code moved verbatim + behavioural tests instead. |
+| Custom `storageRoot` edge cases             | `memory.db` resolves via the same `getPaths()` logic + `assertSafeMemoryPaths`.                                                            |
 
 ## 15. Open questions
 
 1. Prune `experience_memory.json.bak` after N releases, or keep until the user runs export?
-2. FTS5 lexical in the same PR (phase 2) or a follow-up? (Recommend follow-up.)
+2. FTS5 lexical in the same PR (phase 2) or a follow-up? (Resolved: **follow-up** — not built;
+   `memory_chunks_fts` is absent from the shipped schema and lexical scoring stays in JS.)
 3. Should `getStatsBySourceWorkspace` power a lightweight "memory by workspace" UI now that it's a
    cheap `GROUP BY`?
+
+## 16. Follow-ups
+
+Known gaps left open after `5dd814d`, in rough priority order. None block the migration.
+
+1. **`memory-retriever.ts` `searchExperience` still loads full rows.** It iterates the
+   deprecated `store.sessions` / `store.chunks` getters
+   ([memory-retriever.ts:173/184](../../src/main/memory/memory-retriever.ts)), decoding every
+   embedding BLOB and transcript for a search that is **purely lexical**. Same class of waste as
+   the `buildPromptPrefix` emptiness check fixed in `5dd814d`, but it needs a new light-row
+   accessor on the store rather than a one-line swap. User-triggered (not per-prompt), so lower
+   severity. Fixing it would let both deprecated getters be deleted outright.
+2. **Light rows still parse `raw_session`.** `rowLightToSessionNoEmbed` JSON-parses the full
+   transcript for every session on each cache rebuild, but `rawSession` is only needed for
+   `rawSessionCandidates` — i.e. the top-K ranked sessions, at the very end. Lazy-loading it by
+   id would remove the largest remaining per-scan cost and close §1's goal #2 properly.
+3. **`blobToEmbedding` guards `byteLength % 4` but not `byteOffset % 4`.** A non-4-aligned
+   `Buffer` throws `RangeError: start offset of Float32Array should be a multiple of 4`.
+   Verified unreachable today — better-sqlite3 returns `byteOffset === 0` for every BLOB (probed
+   over 200 rows of varying size) — so this is hardening, not a live bug. Note the asymmetry: the
+   store wraps decoding in `safeDecodeEmbedding`, but `exportExperienceJson`'s
+   `blobToEmbeddingForExport` has no try/catch.
+4. **The `Float32Array` widening on `cosineSimilarity` is dead in production.** `blobToEmbedding`
+   returns `Array.from(f32)`, so nothing passes a `Float32Array` outside tests — §8's intent was
+   to hand the view straight to the scorer and skip the `number[]` materialization per candidate.
+5. **`ensureColumn`'s type validator is weaker than it looks**
+   ([memory-db.ts:41](../../src/main/memory/memory-db.ts)): it prefix-matches
+   `ALLOWED_COLUMN_TYPES` then interpolates the original suffix verbatim, so anything trailing a
+   matched prefix passes through. All call sites are hardcoded constants — no injection path —
+   but the guard doesn't deliver the assurance its name implies.
+6. **`memory-system-architecture.md` §5's storage tree** still lists `experience_memory.json`
+   with no `memory.db` (its storage-root default is already fixed).
+7. **Repoint the future read-only memory MCP reader at `memory.db`** (was §13 step 3). It becomes
+   simpler and race-free versus reading a JSON file mid-rewrite, and it can afford the per-row
+   `embedding_model` assert that §7's O(1) service-level gate skips.
