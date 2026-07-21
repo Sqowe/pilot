@@ -63,6 +63,29 @@ interface ChunkRow {
   embedding_dim: number | null;
 }
 
+/**
+ * Rows shaped for lexical search (`MemoryRetriever.searchExperience`): exactly the
+ * fields that path reads, and nothing else — no `embedding` BLOB and no
+ * `raw_session` transcript, neither of which lexical search touches.
+ */
+export interface ExperienceSessionSearchRow {
+  sessionId: string;
+  sourceWorkspace: string | null;
+  sourceWorkspaceLabel?: string;
+  sourceSessionId: string;
+  sourceSessionTitle?: string;
+  summary: string;
+  keywords: string[];
+  createdAt: string;
+  ingestedAt: string;
+}
+
+export interface ExperienceChunkSearchRow extends ExperienceSessionSearchRow {
+  id: string;
+  details: string;
+  rawText: string;
+}
+
 // Lightweight row for lexical pre-filtering — no BLOB embedding decoding.
 interface ChunkRowLight {
   id: string;
@@ -367,6 +390,32 @@ export class ExperienceMemoryStore {
                 summary, details, keywords, source_turns, raw_text,
                 session_date, created_at, ingested_at
            FROM memory_chunks`
+      ),
+      // Search rows: no embedding BLOB, no raw_session transcript.
+      // The `ForWorkspace` variants push what is a *hard* filter in the search path
+      // into SQL. Note the absence of `OR source_workspace IS NULL`: a scoped search
+      // deliberately excludes global rows (see getSearchRows).
+      searchSessions: db.prepare(
+        `SELECT session_id, source_workspace, source_workspace_label, source_session_id,
+                source_session_title, summary, keywords, created_at, ingested_at
+           FROM memory_sessions`
+      ),
+      searchSessionsForWorkspace: db.prepare<[string]>(
+        `SELECT session_id, source_workspace, source_workspace_label, source_session_id,
+                source_session_title, summary, keywords, created_at, ingested_at
+           FROM memory_sessions WHERE source_workspace = ?`
+      ),
+      searchChunks: db.prepare(
+        `SELECT id, session_id, source_workspace, source_workspace_label, source_session_id,
+                source_session_title, summary, details, keywords, raw_text,
+                created_at, ingested_at
+           FROM memory_chunks`
+      ),
+      searchChunksForWorkspace: db.prepare<[string]>(
+        `SELECT id, session_id, source_workspace, source_workspace_label, source_session_id,
+                source_session_title, summary, details, keywords, raw_text,
+                created_at, ingested_at
+           FROM memory_chunks WHERE source_workspace = ?`
       ),
       deleteSessionBySessionId: db.prepare<[string]>(
         `DELETE FROM memory_sessions WHERE session_id = ?`
@@ -1070,27 +1119,92 @@ export class ExperienceMemoryStore {
   }
 
   // ---------------------------------------------------------------------------
-  // Legacy accessors used by getOverview() — kept for compatibility
-  // These iterate all rows; prefer getCounts() for cheap count queries.
+  // Lexical search support
   // ---------------------------------------------------------------------------
 
   /**
-   * @deprecated Use getCounts().sessionCount for large stores.
-   * Returns full rows including embeddings to preserve prior contract.
+   * Rows for lexical search, carrying neither embeddings nor transcripts — the
+   * search path scores text only, so decoding either would be pure waste.
+   *
+   * `sourceWorkspace` is a **hard filter** here, unlike the soft `workspaceBoost`
+   * that `retrieveProgressive` applies, so it is pushed down into SQL.
+   *
+   * IMPORTANT: a non-null `sourceWorkspace` deliberately **excludes** rows whose
+   * `source_workspace` is NULL (global rows). That is the pre-existing search
+   * semantics, and `WHERE source_workspace = ?` reproduces it exactly, since
+   * `NULL = 'x'` is NULL rather than true. Do **not** add the `OR source_workspace
+   * IS NULL` union from §8 — that belongs to the retrieval path, not this one, and
+   * would silently widen search results.
    */
-  get sessions(): SessionMemoryItem[] {
-    return (
-      this.db.prepare(`SELECT * FROM memory_sessions ORDER BY rowid ASC`).all() as SessionRow[]
-    ).map(rowToSession);
-  }
+  getSearchRows(sourceWorkspace: string | null): {
+    sessions: ExperienceSessionSearchRow[];
+    chunks: ExperienceChunkSearchRow[];
+  } {
+    const stmts = this.getStmts();
+    // Normalize to the canonical stored form. If a non-empty key normalizes away,
+    // fall back to the raw value so it still matches nothing — same as the prior
+    // JS `item.sourceWorkspace !== sourceWorkspace` comparison.
+    const key = sourceWorkspace
+      ? (normalizeWorkspaceKey(sourceWorkspace) ?? sourceWorkspace)
+      : null;
 
-  /**
-   * @deprecated Use getCounts().chunkCount for large stores.
-   * Returns full rows including embeddings to preserve prior contract.
-   */
-  get chunks(): ChunkMemoryItem[] {
-    return (
-      this.db.prepare(`SELECT * FROM memory_chunks ORDER BY rowid ASC`).all() as ChunkRow[]
-    ).map(rowToChunk);
+    const sessionRows = (
+      key ? stmts.searchSessionsForWorkspace.all(key) : stmts.searchSessions.all()
+    ) as Array<{
+      session_id: string;
+      source_workspace: string | null;
+      source_workspace_label: string | null;
+      source_session_id: string | null;
+      source_session_title: string | null;
+      summary: string;
+      keywords: string;
+      created_at: string | null;
+      ingested_at: string | null;
+    }>;
+
+    const chunkRows = (
+      key ? stmts.searchChunksForWorkspace.all(key) : stmts.searchChunks.all()
+    ) as Array<{
+      id: string;
+      session_id: string;
+      source_workspace: string | null;
+      source_workspace_label: string | null;
+      source_session_id: string | null;
+      source_session_title: string | null;
+      summary: string;
+      details: string;
+      keywords: string;
+      raw_text: string;
+      created_at: string | null;
+      ingested_at: string | null;
+    }>;
+
+    return {
+      sessions: sessionRows.map((row) => ({
+        sessionId: row.session_id,
+        sourceWorkspace: row.source_workspace ?? null,
+        sourceWorkspaceLabel: row.source_workspace_label ?? undefined,
+        sourceSessionId: row.source_session_id ?? row.session_id,
+        sourceSessionTitle: row.source_session_title ?? undefined,
+        summary: row.summary,
+        keywords: parseJsonArray(row.keywords),
+        createdAt: row.created_at ?? '',
+        ingestedAt: row.ingested_at ?? '',
+      })),
+      chunks: chunkRows.map((row) => ({
+        id: row.id,
+        sessionId: row.session_id,
+        sourceWorkspace: row.source_workspace ?? null,
+        sourceWorkspaceLabel: row.source_workspace_label ?? undefined,
+        sourceSessionId: row.source_session_id ?? row.session_id,
+        sourceSessionTitle: row.source_session_title ?? undefined,
+        summary: row.summary,
+        details: row.details,
+        keywords: parseJsonArray(row.keywords),
+        rawText: row.raw_text,
+        createdAt: row.created_at ?? '',
+        ingestedAt: row.ingested_at ?? '',
+      })),
+    };
   }
 }

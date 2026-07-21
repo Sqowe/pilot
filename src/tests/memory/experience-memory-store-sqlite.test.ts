@@ -967,6 +967,90 @@ describe('ExperienceMemoryStore — SQLite backend', () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // getSearchRows — lexical-search row shape + SQL workspace push-down
+  // -------------------------------------------------------------------------
+
+  describe('getSearchRows', () => {
+    beforeEach(() => {
+      store.replaceSession(
+        'ws-a',
+        makeSession({ sessionId: 'ws-a', sourceWorkspace: '/repo/a', embedding: [0.1, 0.2] }),
+        [makeChunk('ws-a', { sourceWorkspace: '/repo/a', embedding: [0.3, 0.4] })]
+      );
+      store.replaceSession(
+        'ws-b',
+        makeSession({ sessionId: 'ws-b', sourceWorkspace: '/repo/b', embedding: [0.5, 0.6] }),
+        [makeChunk('ws-b', { sourceWorkspace: '/repo/b' })]
+      );
+      store.replaceSession('global', makeSession({ sessionId: 'global', sourceWorkspace: null }), [
+        makeChunk('global', { sourceWorkspace: null }),
+      ]);
+    });
+
+    it('returns every row when no workspace is given', () => {
+      const { sessions, chunks } = store.getSearchRows(null);
+
+      expect(sessions.map((s) => s.sessionId).sort()).toEqual(['global', 'ws-a', 'ws-b']);
+      expect(chunks).toHaveLength(3);
+    });
+
+    it('scoped search EXCLUDES global (NULL workspace) rows', () => {
+      // Regression guard: `WHERE source_workspace = ?` must NOT be widened with
+      // `OR source_workspace IS NULL`. That union belongs to retrieveProgressive;
+      // adding it here would silently broaden search results.
+      const { sessions, chunks } = store.getSearchRows('/repo/a');
+
+      expect(sessions.map((s) => s.sessionId)).toEqual(['ws-a']);
+      expect(chunks.map((c) => c.sessionId)).toEqual(['ws-a']);
+    });
+
+    it('returns nothing for a workspace with no rows', () => {
+      const { sessions, chunks } = store.getSearchRows('/repo/unknown');
+
+      expect(sessions).toEqual([]);
+      expect(chunks).toEqual([]);
+    });
+
+    it('normalizes the workspace key before filtering', () => {
+      const { sessions } = store.getSearchRows('/repo/a/');
+
+      expect(sessions.map((s) => s.sessionId)).toEqual(['ws-a']);
+    });
+
+    it('carries neither embeddings nor transcripts — the point of the narrow shape', () => {
+      const { sessions, chunks } = store.getSearchRows(null);
+
+      for (const row of [...sessions, ...chunks]) {
+        expect('embedding' in row).toBe(false);
+        expect('rawSession' in row).toBe(false);
+      }
+    });
+
+    it('exposes the fields the search path actually maps', () => {
+      const { sessions, chunks } = store.getSearchRows('/repo/a');
+
+      expect(sessions[0]).toMatchObject({
+        sessionId: 'ws-a',
+        sourceWorkspace: '/repo/a',
+        sourceSessionId: 'ws-a',
+        summary: 'A test session summary',
+        keywords: ['test', 'session'],
+      });
+      expect(chunks[0]).toMatchObject({
+        sessionId: 'ws-a',
+        sourceWorkspace: '/repo/a',
+        summary: 'A test chunk summary',
+        details: 'Chunk details here',
+        rawText: 'raw chunk text',
+        keywords: ['chunk', 'test'],
+      });
+      expect(typeof chunks[0].id).toBe('string');
+      expect(chunks[0].createdAt).toBe('2024-01-01T00:00:00');
+      expect(chunks[0].ingestedAt).toBe('2024-01-01T00:00:00');
+    });
+  });
+
   describe('getPath()', () => {
     it('returns the db file path', () => {
       expect(store.getPath()).toBe(dbPath);
