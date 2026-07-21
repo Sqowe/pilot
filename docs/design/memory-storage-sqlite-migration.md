@@ -15,12 +15,13 @@
 
 ## Rollout status
 
-| Phase | Scope                                                         | Status  | Commit    |
-| ----- | ------------------------------------------------------------- | ------- | --------- |
-| 1     | SQLite store, migration, tests                                | ✅ Done | `a19fc4f` |
-| 2     | IPC bridge, renderer types, export/vacuum/status              | ✅ Done | `2bcc076` |
-| 3     | Settings UI — DB status card, storage branching, i18n         | ✅ Done | `36a40f8` |
-| 3.1   | Post-review fixes — §7 staleness gate, per-row model stamping | ✅ Done | `5dd814d` |
+| Phase | Scope                                                           | Status  | Commit    |
+| ----- | --------------------------------------------------------------- | ------- | --------- |
+| 1     | SQLite store, migration, tests                                  | ✅ Done | `a19fc4f` |
+| 2     | IPC bridge, renderer types, export/vacuum/status                | ✅ Done | `2bcc076` |
+| 3     | Settings UI — DB status card, storage branching, i18n           | ✅ Done | `36a40f8` |
+| 3.1   | Post-review fixes — §7 staleness gate, per-row model stamping   | ✅ Done | `5dd814d` |
+| 3.2   | Search path narrowed to text-only rows; deprecated getters gone | ✅ Done | `69a1204` |
 
 > Note: [memory-system-architecture.md §5](memory-system-architecture.md)'s storage-root
 > default is now **fixed** (`app.getPath('userData')/memory`). Its storage-layout tree is
@@ -499,15 +500,27 @@ each was verified against a running store before being fixed.
 
 ## 16. Follow-ups
 
-Known gaps left open after `5dd814d`, in rough priority order. None block the migration.
+Gaps found by the post-ship review, in rough priority order. None block the migration.
+Items are struck off here as they land rather than moved, so the reasoning stays with the entry.
 
-1. **`memory-retriever.ts` `searchExperience` still loads full rows.** It iterates the
-   deprecated `store.sessions` / `store.chunks` getters
-   ([memory-retriever.ts:173/184](../../src/main/memory/memory-retriever.ts)), decoding every
-   embedding BLOB and transcript for a search that is **purely lexical**. Same class of waste as
-   the `buildPromptPrefix` emptiness check fixed in `5dd814d`, but it needs a new light-row
-   accessor on the store rather than a one-line swap. User-triggered (not per-prompt), so lower
-   severity. Fixing it would let both deprecated getters be deleted outright.
+1. ✅ **DONE (`69a1204`) — `searchExperience` loaded full rows for a lexical scan.** It iterated
+   the deprecated `store.sessions` / `store.chunks` getters, decoding every embedding BLOB and
+   parsing every `raw_session` transcript to score text it then ignored — the same full-parse cost
+   §1's goal #2 set out to remove, on every user-triggered search.
+
+   Fixed by `ExperienceMemoryStore.getSearchRows(sourceWorkspace)`, which selects only the columns
+   the search path maps (no `embedding`, no `raw_session`) and **pushes the workspace filter into
+   SQL**. That push-down is available here precisely because scoping is a _hard_ filter in search,
+   unlike the soft `workspaceBoost` that forced §8 to reject the same optimization for retrieval.
+
+   > ⚠️ The SQL deliberately omits `OR source_workspace IS NULL`. A scoped **search** excludes
+   > global rows — the pre-existing JS semantics (`null !== key`), which `WHERE source_workspace = ?`
+   > reproduces since `NULL = 'x'` is NULL, not true. Copying §8's union into this path would
+   > silently widen results. Pinned by an explicit regression test.
+
+   With `buildPromptPrefix` already fixed in `5dd814d`, this removed the getters' last caller, so
+   **both deprecated getters are now deleted** — the footgun is retired, not merely annotated.
+
 2. **Light rows still parse `raw_session`.** `rowLightToSessionNoEmbed` JSON-parses the full
    transcript for every session on each cache rebuild, but `rawSession` is only needed for
    `rawSessionCandidates` — i.e. the top-K ranked sessions, at the very end. Lazy-loading it by
