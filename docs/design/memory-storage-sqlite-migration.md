@@ -1,8 +1,10 @@
 # Experience Memory → SQLite Storage Migration — Design
 
-**Status:** Proposed (not started)
+**Status:** In Progress — Phase 1 ✅ shipped, Phase 2 ✅ shipped, Phase 3 (UI) pending
 **Date:** 2026-07-03
+**Updated:** 2026-07-21
 **Owner:** @obodnikov
+**Branch:** `feat/memory2sql-migration`
 **Related:** [memory-system-architecture.md](memory-system-architecture.md),
 [local-embeddings-default.md](local-embeddings-default.md),
 [experience-memory-store.ts](../../src/main/memory/experience-memory-store.ts),
@@ -10,6 +12,14 @@
 [memory-service.ts](../../src/main/memory/memory-service.ts),
 [memory-lens-panel.md](memory-lens-panel.md)
 **Prior discussion:** conversation of 2026-07-03 (MCP-access + storage sizing thread)
+
+## Rollout status
+
+| Phase | Scope                                                 | Status     | Commit    |
+| ----- | ----------------------------------------------------- | ---------- | --------- |
+| 1     | SQLite store, migration, tests                        | ✅ Done    | `a19fc4f` |
+| 2     | IPC bridge, renderer types, export/vacuum/status      | ✅ Done    | `2bcc076` |
+| 3     | Settings UI — DB status card, storage branching, i18n | ⏳ Pending | —         |
 
 > Note: [memory-system-architecture.md §5](memory-system-architecture.md) still lists the
 > storage root as `~/.open-cowork/memory/`. That is **stale** — the code default is
@@ -327,11 +337,41 @@ Key points:
 
 ## 13. Rollout / sequencing
 
-1. Land and stabilize the local-embeddings branch first (don't destabilize an in-flight change).
-2. Ship this migration behind the existing memory init path; backfill runs once on first launch of
-   the new build. No user action; `.bak` retained one release cycle, then a follow-up prunes it.
-3. Repoint the (future) read-only memory MCP reader at `memory.db` — it becomes simpler and
-   race-free vs. reading a JSON mid-rewrite.
+1. ✅ Land and stabilize the local-embeddings branch first (done — shipped 2026-07-04).
+2. ✅ Ship this migration behind the existing memory init path; backfill runs once on first launch
+   of the new build. No user action; `.bak` retained one release cycle, then a follow-up prunes it.
+   **Done:** `memory-db-migration.ts` runs on `ensureStores()`, idempotent, crash-safe.
+3. ⏳ Repoint the (future) read-only memory MCP reader at `memory.db` — it becomes simpler and
+   race-free vs. reading a JSON mid-rewrite. (Pending — phase 3+ work.)
+
+### As-built notes (2026-07-21)
+
+**Phase 1 (commit `a19fc4f`):** SQLite store, migration, tests.
+
+- `memory-db.ts` — schema, WAL, `busy_timeout=5000`, `ensureColumn`, unique index on `session_id`.
+- `memory-db-migration.ts` — `INSERT OR REPLACE`, workspace normalization on insert,
+  timestamped `.bak` (never overwrites existing backup), crash-safe single transaction.
+- `experience-memory-store.ts` — full internal rewrite; same public API; light-row cache with
+  `data_version` invalidation; batch IN-clause embedding fetch (900-id batches);
+  `safeDecodeEmbedding` for BLOB resilience; semantic fallback at zero lexical score;
+  `replaceSessionWithMeta` for atomic session+meta commit.
+- `memory-utils.ts` — `cosineSimilarity` accepts `Float32Array`; `embeddingToBlob`/`blobToEmbedding`
+  with `byteLength % 4` validation.
+- `memory-service.ts` — `experienceDbPath` in `MemoryPaths`; db handle lifecycle (open, close before
+  rebuild); migration on init; `getExperienceDbStatus` / `exportExperienceJson` /
+  `vacuumExperienceDb` / `exportExperienceJsonToFile`; `readFile` blocks binary db;
+  `resolveReadablePath` allows `.bak*` artefacts; `rebuildAll` closes db before deleting files.
+- 199 tests passing.
+
+**Phase 2 (commit `2bcc076`):** IPC bridge, renderer types.
+
+- Three new `ipcMain.handle` registrations: `memory.getExperienceDbStatus`,
+  `memory.exportExperienceMemoryToFile`, `memory.vacuumExperienceDb`.
+- `ExperienceDbStatus` and `ExperienceExportResult` discriminated union in `renderer/types/index.ts`.
+- `storage` discriminator on `MemoryDebugFileInfo`.
+- Atomic file export (temp+bak+rename); `vacuumExperienceDbQueued` always resolves with
+  `{ success, error? }`.
+- 202 tests passing.
 
 ## 14. Risks
 
