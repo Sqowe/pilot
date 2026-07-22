@@ -54,8 +54,9 @@ they're meaningful.
 | `memoryRuntime.useEmbedding`         | on              | Use embeddings for semantic recall.          |
 | `memoryRuntime.embedding.provider`   | `local`         | Embedding provider (`local` = offline ONNX). |
 | `memoryRuntime.llm`                  | inherits active | Model for extraction/recall.                 |
-| `memoryRuntime.maxNavSteps`          | varies          | Progressive-retrieval depth.                 |
-| `memoryRuntime.ingestionConcurrency` | varies          | Extraction parallelism.                      |
+| `memoryRuntime.maxNavSteps`          | 2               | Progressive-retrieval depth (0–4).           |
+| `memoryRuntime.ingestionConcurrency` | 4               | Extraction parallelism.                      |
+| `memoryRuntime.storageRoot`          | app data folder | Where `memory.db` and the JSON files live.   |
 
 ## Schedules
 
