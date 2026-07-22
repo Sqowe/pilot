@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Settings → Memory now reports **embedding coverage** — how many stored chunks actually
+  carry a vector. A chunk without one is found by keyword but not by meaning, and until now
+  nothing said so: the page reported successful ingestion, which was true and beside the
+  point. The card turns amber when records are missing vectors and red, with the reason,
+  when an embedding call failed.
+- **Backfill embeddings**, an action on that card, computes the missing vectors for records
+  already in the database. Unlike **Rebuild all** it runs no LLM extraction and deletes
+  nothing — the text a vector is built from is already stored, so only the embedding calls
+  are needed. It also picks up records whose vectors came from a previously-configured
+  model. Progress is reported per record, and an interrupted run resumes where it stopped.
+
 ### Changed
 
 - Experience memory now lives in a SQLite database (`memory.db`) instead of a single
@@ -38,6 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Embeddings are no longer skipped because of which **chat** provider happens to be selected.
+  The embedding path checked the provider against a fixed list of the six original built-in
+  providers; once native catalog providers (minimax, zai, deepseek and the rest) were added,
+  any of them being active caused embeddings to be silently abandoned and the chunk stored
+  without a vector. A configuration that names its own embedding endpoint and model is now
+  honoured regardless of the active chat provider — it does not depend on it — and every
+  other case is judged by the provider's actual API protocol rather than by its name.
+  A provider that genuinely cannot embed now says so instead of failing quietly.
+- Settings → Memory refreshes its counters when the tab is reopened. Previously the page
+  read them once and kept showing that snapshot for as long as Settings stayed open.
 - Changing the embedding model no longer silently degrades search results. Similarity is
   only meaningful within one model's embedding space, so previously a model switch left
   stored vectors being compared against queries from a different space — returning noise

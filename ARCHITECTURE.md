@@ -407,18 +407,32 @@ changes stay decoupled from the chat DB. The JSON→SQLite backfill runs once on
 `ensureStores()`, is idempotent, and renames the source to `.bak` only after the
 transaction commits.
 
-Two consequences worth knowing before touching this area:
+Four consequences worth knowing before touching this area:
 
 - **Vectors are homogeneous per install.** Cosine similarity is only meaningful within one
   embedding space, so the store holds exactly one model's vectors at a time. A model change
   is detected via `memory_meta.embedding_model` and degrades retrieval to lexical-only until
-  a rebuild, rather than silently comparing across spaces.
+  the vectors are recomputed, rather than silently comparing across spaces.
 - **The retrieval scan is text-only.** Embedding BLOBs are fetched by id for the candidate
   window, and transcripts for the ranked top-K — neither is loaded during the scan. Reaching
   for a `SELECT *` helper on this path reintroduces the whole-file parse the migration removed.
+- **The embedding provider gate is protocol-based, never id-based.** `ProviderType` is an
+  open `string` (native catalog ids like `minimax`), so any check written as a list of
+  provider names goes stale the moment the catalog grows — which is exactly how embeddings
+  came to be skipped for weeks with nothing but a rotated-away log line to show for it.
+  Resolve the route protocol with `resolvePiRouteProtocol`, as `complete()` does. An
+  embedding config that carries its own `baseUrl` and `model` is self-contained and is not
+  gated at all: the active chat provider contributes nothing to that request.
+- **The embedded text must stay derivable from stored columns.** Chunk vectors are built
+  from `summary + details + keywords`, sessions from `summary + keywords` — via the shared
+  `buildChunkEmbeddingText` / `buildSessionEmbeddingText`. This is what lets `backfillEmbeddings`
+  recompute vectors with no LLM extraction. Composing that text from anything not persisted,
+  or before the keyword fallback resolves, silently splits the two paths into slightly
+  different embedding spaces.
 
 Design: [docs/design/memory-storage-sqlite-migration.md](docs/design/memory-storage-sqlite-migration.md),
-[docs/design/memory-system-architecture.md](docs/design/memory-system-architecture.md).
+[docs/design/memory-system-architecture.md](docs/design/memory-system-architecture.md),
+[docs/design/embedding-provider-gate-and-coverage.md](docs/design/embedding-provider-gate-and-coverage.md).
 
 ### 4.7 Shared Bash Engine & Pi Extension (`src/shared/bash-restrictions/`, `pi-extensions/`)
 

@@ -518,7 +518,11 @@ still plain JSON and open in the raw viewer as before.
 
 By default, memory embeddings run **fully offline and in-process** via ONNX (EmbeddingGemma-300M through transformers.js) — no Python, no API key, and no data leaves your machine. The model downloads once on first use. Switch to a remote embedding provider in **Settings → Memory** if you prefer.
 
-**Switching the embedding model invalidates stored vectors.** Similarity is only meaningful within a single model's embedding space, so comparing a fresh query against vectors built by a different model returns noise rather than matches. Sqowe Pilot detects the mismatch and falls back to keyword-only retrieval — degraded, but never wrong — and shows a prompt to rebuild. Rebuilding re-embeds every record with the active model; until then, search keeps working without semantic ranking.
+**Switching the embedding model invalidates stored vectors.** Similarity is only meaningful within a single model's embedding space, so comparing a fresh query against vectors built by a different model returns noise rather than matches. Sqowe Pilot detects the mismatch and falls back to keyword-only retrieval — degraded, but never wrong — and shows a prompt to rebuild. Until then, search keeps working without semantic ranking.
+
+**Embedding coverage** is shown in **Settings → Memory**: how many stored chunks actually carry a vector. Records without one are still found by keyword, just not by meaning — a distinction that is otherwise invisible, since ingestion itself succeeds either way. The card turns amber when records are missing vectors, and red with the reason when an embedding call failed.
+
+**Backfill embeddings**, on that card, fills the gaps. It computes vectors for records already in the database — including ones embedded with a previously-configured model — and is much cheaper than **Rebuild all**: the text a vector is built from is already stored, so no LLM extraction runs and nothing is deleted. Progress is reported per record, and an interrupted run resumes where it stopped. Reach for Rebuild all only when the extracted summaries themselves need redoing.
 
 ### Configuration
 
