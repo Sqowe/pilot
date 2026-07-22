@@ -1251,12 +1251,7 @@ RULES:
     if (!fs.existsSync(builtinSkillPath)) return;
 
     try {
-      const sourceInsideAsar = /\.asar[/\\]/.test(builtinSkillsPath);
-      if (sourceInsideAsar) {
-        this.copyDirectorySync(builtinSkillPath, targetPath);
-      } else {
-        fs.symlinkSync(builtinSkillPath, targetPath, 'dir');
-      }
+      fs.symlinkSync(builtinSkillPath, targetPath, 'dir');
       log(`[ClaudeAgentRunner] Restored built-in skill after policy change: ${skillName}`);
     } catch (err) {
       logWarn(`[ClaudeAgentRunner] Failed to restore built-in skill ${skillName}:`, err);
@@ -2654,7 +2649,6 @@ RULES:
         // preserved and never overwritten.
         const builtinSkillsPath = getBuiltinSkillsPath();
         if (builtinSkillsPath && fs.existsSync(builtinSkillsPath)) {
-          const sourceInsideAsar = /\.asar[/\\]/.test(builtinSkillsPath);
           const builtinSkills = fs.readdirSync(builtinSkillsPath);
           // Populate the set of built-in skill names for conflict resolution
           // Uses same validation as populateBuiltinSkillNames() and skill-conflict-detector
@@ -2752,27 +2746,22 @@ RULES:
               }
             }
 
-            // Install fresh copy from bundled source
-            if (sourceInsideAsar) {
+            // Install from the bundled source. The source is a real directory both
+            // in development and in the packaged app (extraResources keeps skills
+            // out of the asar archive), so a symlink is enough — the runtime entry
+            // then tracks the bundled one with no copying. Copy only if the symlink
+            // cannot be created, e.g. on Windows without developer mode.
+            try {
+              fs.symlinkSync(builtinSkillPath, userSkillPath, 'dir');
+              log(`[ClaudeAgentRunner] Linked built-in skill: ${skillName}`);
+            } catch (err) {
+              logWarn(`[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`, err);
               this.copyDirectorySync(builtinSkillPath, userSkillPath);
-              log(`[ClaudeAgentRunner] Copied built-in skill from asar: ${skillName}`);
-            } else {
-              // In dev mode, symlink for instant updates during development
-              try {
-                fs.symlinkSync(builtinSkillPath, userSkillPath, 'dir');
-                log(`[ClaudeAgentRunner] Linked built-in skill: ${skillName}`);
-              } catch (err) {
-                logWarn(
-                  `[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`,
-                  err
-                );
-                this.copyDirectorySync(builtinSkillPath, userSkillPath);
-              }
             }
 
             // Write the content hash stamp (only for copies, not symlinks)
             // Symlinks always point to the source so they're inherently up-to-date
-            if (sourceInsideAsar || !fs.lstatSync(userSkillPath).isSymbolicLink()) {
+            if (!fs.lstatSync(userSkillPath).isSymbolicLink()) {
               try {
                 fs.writeFileSync(builtinHashFile, builtinHash, 'utf-8');
               } catch (hashErr) {

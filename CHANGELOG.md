@@ -20,7 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`src/main/skills/builtin-skills-path.ts`). The candidate each copy labelled "development"
   resolved to the parent of the project directory and never matched; the fallbacks reading
   from inside `app.asar` are gone with it, as nothing has been packaged that way since skills
-  moved to `extraResources`.
+  moved to `extraResources`. The two branches that copied a skill instead of linking it when
+  the source sat inside the archive went the same way — they could no longer be reached, and
+  the comment beside one of them claimed the link was made only during development, when in
+  fact installed builds link too.
 
 ## [1.0.6] - 2026-07-22
 
