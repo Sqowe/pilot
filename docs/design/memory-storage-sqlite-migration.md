@@ -669,13 +669,13 @@ print('chunks with embedding:', sum(1 for c in d['chunks'] if c.get('embedding')
 
 ### A. Migration against real data — the highest risk
 
-| #   | Step                                                                                                                                              | Expected                                                                    |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| A1  | Launch the build, then **open Settings → Memory** (or send a message) — see §9: the migration is lazy, so nothing happens until memory is touched | `memory.db` appears; `experience_memory.json` → `.bak`                      |
-| A2  | Compare the DB-status card against the §0 baseline                                                                                                | session/chunk counts match exactly                                          |
-| A3  | Same card                                                                                                                                         | integrity `ok`; embedding model and dim populated; workspace breakdown sane |
-| A4  | Restart the app                                                                                                                                   | no re-migration: `migrated_at` unchanged, no second `.bak`                  |
-| A5  | `Export JSON`, diff against `.bak`                                                                                                                | same ids, same vector dimensions                                            |
+| #   | Step                                                                                                                                              | Expected                                                                                                                                    |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | Launch the build, then **open Settings → Memory** (or send a message) — see §9: the migration is lazy, so nothing happens until memory is touched | `memory.db` appears; `experience_memory.json` → `.bak`                                                                                      |
+| A2  | Compare the DB-status card against the §0 baseline                                                                                                | session/chunk counts match exactly                                                                                                          |
+| A3  | Same card — it shows schema version, journal mode, size, counts, embedding model + dim, integrity, per-workspace breakdown (and nothing else)     | integrity `ok`; embedding model and dim populated; workspace breakdown sane                                                                 |
+| A4  | Restart the app, then open Settings → Memory again                                                                                                | no re-migration: card counts unchanged, `memory_meta.migrated_at` unchanged (via `sqlite3` — it is **not** on the card), exactly one `.bak` |
+| A5  | `Export JSON`, diff against `.bak`                                                                                                                | same ids, same vector dimensions                                                                                                            |
 
 **Rollback if anything is wrong:** quit the app → delete `memory.db*` → rename `.bak` back to
 `experience_memory.json`.
