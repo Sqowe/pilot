@@ -51,6 +51,22 @@ export interface MemoryModelCheckResult {
   embedding: { ok: boolean; error?: string; skipped?: boolean };
 }
 
+/**
+ * Thrown by `embed()` when the resolved embedding provider cannot serve an
+ * embeddings API (e.g. an Anthropic-protocol provider). Callers are expected to
+ * degrade to lexical-only retrieval, but must surface the reason rather than
+ * silently storing chunks without vectors.
+ */
+export class EmbeddingUnsupportedError extends Error {
+  constructor(public readonly provider: string) {
+    super(
+      `Provider "${provider}" has no embeddings API. Set an explicit embedding endpoint ` +
+        `(Settings → Memory → Embedding → Custom: model + base URL), or switch to the built-in local model.`
+    );
+    this.name = 'EmbeddingUnsupportedError';
+  }
+}
+
 export interface MemoryLLMClientLike {
   complete(request: MemoryCompletionRequest): Promise<MemoryCompletionResponse>;
   /** `kind` selects the local model's query/document prefix; ignored by remote providers. */
@@ -306,18 +322,29 @@ export class MemoryLLMClient implements MemoryLLMClientLike {
 
     const provider = embedConfig.provider;
     const protocol = embedConfig.customProtocol;
-    const isOpenAiCompatible =
-      provider === 'openai' ||
-      provider === 'openrouter' ||
-      provider === 'ollama' ||
-      (provider === 'custom' && protocol === 'openai');
 
-    if (!isOpenAiCompatible) {
-      logWarn(
-        '[MemoryLLMClient] Embedding requested for unsupported provider; returning empty embedding:',
-        provider
-      );
-      return [];
+    // A Custom-mode override that carries its own baseUrl *and* model is
+    // self-contained: the request goes to that endpoint, with that key, for that
+    // model. The active chat provider contributes nothing to it, so its id must
+    // not gate the call. (normalizeModelConfig resolves `provider: undefined` to
+    // the active provider — see line 93 — which previously blocked valid setups
+    // such as an OpenRouter embedding endpoint used alongside a native-catalog
+    // chat provider.)
+    const override = appConfig.memoryRuntime.embedding;
+    const isSelfContainedOverride =
+      override?.inheritFromActive === false &&
+      Boolean(override.baseUrl?.trim()) &&
+      Boolean(override.model?.trim());
+
+    // ProviderType is an open string (native catalog ids like 'minimax', 'zai',
+    // 'deepseek'), so matching against the 6 legacy builtin ids is not enough —
+    // resolve the route protocol the same way complete() does.
+    const isOpenAiCompatible = resolvePiRouteProtocol(provider, protocol) === 'openai';
+
+    if (!isSelfContainedOverride && !isOpenAiCompatible) {
+      // Thrown, not swallowed: a silent [] made this failure invisible for weeks.
+      // Callers degrade to lexical-only, but they record the reason first.
+      throw new EmbeddingUnsupportedError(provider);
     }
 
     const resolved =
@@ -383,10 +410,12 @@ export class MemoryLLMClient implements MemoryLLMClientLike {
     try {
       const vector = await this.embed('ping', 'query');
       if (!vector.length) {
-        // embed() returns [] (rather than throwing) for unsupported providers.
+        // An unsupported provider now throws (EmbeddingUnsupportedError) and is
+        // reported by the catch below with its specific reason. Reaching here
+        // means the endpoint answered but returned no vector.
         return {
           ok: false,
-          error: 'Embedding returned an empty vector — provider or model not supported.',
+          error: 'Embedding returned an empty vector — the endpoint answered but produced nothing.',
         };
       }
       return { ok: true };

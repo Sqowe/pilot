@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const completeSimpleMock = vi.hoisted(() => vi.fn());
+// Controllable so the embed gate can be exercised against non-openai protocols
+// (native catalog providers such as 'minimax' route over anthropic).
+const resolvePiRouteProtocolMock = vi.hoisted(() => vi.fn(() => 'openai'));
 
 // `completeSimple` moved to the `/compat` entrypoint in pi-ai 0.80.0.
 vi.mock('@earendil-works/pi-ai/compat', () => ({
@@ -23,7 +26,7 @@ vi.mock('../../main/claude/pi-model-resolution', () => ({
     api: 'openai-completions',
     baseUrl: 'https://example.test/v1',
   }),
-  resolvePiRouteProtocol: () => 'openai',
+  resolvePiRouteProtocol: resolvePiRouteProtocolMock,
   resolvePiModelString: () => 'openai/test-model',
   buildSyntheticPiModel: () => ({
     id: 'test-model',
@@ -72,7 +75,7 @@ vi.mock('../../main/memory/local-embedding-provider', () => ({
 }));
 
 import type { AppConfig } from '../../main/config/config-store';
-import { MemoryLLMClient } from '../../main/memory/memory-llm-client';
+import { EmbeddingUnsupportedError, MemoryLLMClient } from '../../main/memory/memory-llm-client';
 
 function makeConfig(timeoutMs: number): AppConfig {
   return {
@@ -151,6 +154,9 @@ describe('MemoryLLMClient', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     completeSimpleMock.mockReset();
+    // vitest.config sets mockReset: true, which drops the implementation too —
+    // restore the default so the embed gate sees an OpenAI-compatible protocol.
+    resolvePiRouteProtocolMock.mockReturnValue('openai');
   });
 
   afterEach(() => {
@@ -185,6 +191,83 @@ describe('MemoryLLMClient', () => {
     const error = await completion;
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe('Memory LLM request timed out after 5000ms');
+  });
+
+  describe('embed() — remote provider gate', () => {
+    /** Custom mode as the Settings UI writes it: inheritFromActive false, provider undefined. */
+    function makeCustomModeConfig(overrides: {
+      activeProvider: string;
+      model?: string;
+      baseUrl?: string;
+    }): AppConfig {
+      const config = makeConfig(180000);
+      config.provider = overrides.activeProvider;
+      config.memoryRuntime.useEmbedding = true;
+      config.memoryRuntime.embedding = {
+        inheritFromActive: false,
+        provider: undefined,
+        model: overrides.model ?? '',
+        baseUrl: overrides.baseUrl ?? '',
+        apiKey: 'sk-embed',
+        timeoutMs: 180000,
+      };
+      return config;
+    }
+
+    it('embeds through a self-contained Custom override even when the active provider cannot embed', async () => {
+      // The regression: a native-catalog chat provider (minimax → anthropic
+      // protocol) leaked into the embedding path via normalizeModelConfig's
+      // `input?.provider || activeProvider` fallback and silently blocked a
+      // fully-specified OpenRouter embedding endpoint.
+      resolvePiRouteProtocolMock.mockReturnValue('anthropic');
+      const client = new MemoryLLMClient(() =>
+        makeCustomModeConfig({
+          activeProvider: 'minimax',
+          model: 'BAAI/bge-m3',
+          baseUrl: 'https://openrouter.ai/api/v1',
+        })
+      );
+
+      await expect(client.embed('hello')).resolves.toEqual([0.1]);
+    });
+
+    it('throws EmbeddingUnsupportedError when the resolved provider has no embeddings API', async () => {
+      resolvePiRouteProtocolMock.mockReturnValue('anthropic');
+      // Inherit mode: no self-contained override to fall back on.
+      const config = makeConfig(180000);
+      config.provider = 'minimax';
+      config.memoryRuntime.useEmbedding = true;
+      config.memoryRuntime.embedding = { inheritFromActive: true, timeoutMs: 180000 };
+
+      const client = new MemoryLLMClient(() => config);
+
+      await expect(client.embed('hello')).rejects.toThrow(EmbeddingUnsupportedError);
+      await expect(client.embed('hello')).rejects.toThrow(/minimax/);
+    });
+
+    it('accepts a native catalog provider whose route protocol is openai', async () => {
+      // ProviderType is an open string — the gate must not match on the 6 legacy ids.
+      resolvePiRouteProtocolMock.mockReturnValue('openai');
+      const config = makeConfig(180000);
+      config.provider = 'deepseek';
+      config.memoryRuntime.useEmbedding = true;
+      config.memoryRuntime.embedding = { inheritFromActive: true, timeoutMs: 180000 };
+
+      const client = new MemoryLLMClient(() => config);
+
+      await expect(client.embed('hello')).resolves.toEqual([0.1]);
+    });
+
+    it('still gates a Custom override that is missing its base URL', async () => {
+      // Without a baseUrl the request would go to the active provider's endpoint,
+      // so the override is not self-contained and the gate must still apply.
+      resolvePiRouteProtocolMock.mockReturnValue('anthropic');
+      const client = new MemoryLLMClient(() =>
+        makeCustomModeConfig({ activeProvider: 'minimax', model: 'BAAI/bge-m3' })
+      );
+
+      await expect(client.embed('hello')).rejects.toThrow(EmbeddingUnsupportedError);
+    });
   });
 
   describe('embed() — local provider', () => {
@@ -385,7 +468,7 @@ describe('MemoryLLMClient', () => {
       expect(embedSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('treats an empty embedding vector as a failure (unsupported provider)', async () => {
+    it('treats an empty embedding vector as a failure (endpoint produced nothing)', async () => {
       const client = new MemoryLLMClient(() => makeConfigWithEmbedding(true));
       vi.spyOn(client, 'complete').mockResolvedValue({ text: 'ok' });
       vi.spyOn(client, 'embed').mockResolvedValue([]);
