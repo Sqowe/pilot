@@ -38,6 +38,7 @@ import { SessionManager } from './session/session-manager';
 import { SkillsManager } from './skills/skills-manager';
 import { PluginCatalogService } from './skills/plugin-catalog-service';
 import { PluginRuntimeService } from './skills/plugin-runtime-service';
+import { getBuiltinSkillsPath } from './skills/builtin-skills-path';
 import { MemoryService } from './memory/memory-service';
 import { MemoryLLMClient } from './memory/memory-llm-client';
 import { isLocalModelDownloaded } from './memory/local-embedding-cache';
@@ -2663,23 +2664,7 @@ ipcMain.handle('skills.getSessionPinnedSkills', async (_event, sessionId: string
 
 ipcMain.handle('skills.getBuiltinStatus', async () => {
   try {
-    const appPath = app.getAppPath();
-    const unpackedPath = appPath.replace(/\.asar$/, '.asar.unpacked');
-    const possiblePaths = [
-      join(__dirname, '..', '..', '..', '.claude', 'skills'),
-      join(process.resourcesPath || '', 'skills'),
-      ...(fs.existsSync(join(unpackedPath, '.claude', 'skills'))
-        ? [join(unpackedPath, '.claude', 'skills')]
-        : []),
-      join(appPath, '.claude', 'skills'),
-    ];
-    let builtinSkillsPath = '';
-    for (const p of possiblePaths) {
-      if (fs.existsSync(p)) {
-        builtinSkillsPath = p;
-        break;
-      }
-    }
+    const builtinSkillsPath = getBuiltinSkillsPath();
     if (!builtinSkillsPath) return [];
 
     const runtimeSkillsDir = join(app.getPath('userData'), 'claude', 'skills');
@@ -2990,22 +2975,7 @@ ipcMain.handle('skills.getConflicts', async () => {
     const { normalizeSkillConflictConfig } = await import('../shared/skill-conflict-types');
 
     // Gather skill source directories
-    const appPath = app.getAppPath();
-    const unpackedPath = appPath.replace(/\.asar$/, '.asar.unpacked');
-    const builtinPaths = [
-      join(__dirname, '..', '..', '..', '.claude', 'skills'),
-      join(process.resourcesPath || '', 'skills'),
-      join(unpackedPath, '.claude', 'skills'),
-      join(appPath, '.claude', 'skills'),
-    ];
-    let builtinDir = '';
-    for (const p of builtinPaths) {
-      if (fs.existsSync(p)) {
-        builtinDir = p;
-        break;
-      }
-    }
-
+    const builtinDir = getBuiltinSkillsPath();
     const userDir = join(app.getPath('home'), '.claude', 'skills');
     const rawConfiguredPath = configStore.get('globalSkillsPath');
     const configuredPath = typeof rawConfiguredPath === 'string' ? rawConfiguredPath.trim() : '';

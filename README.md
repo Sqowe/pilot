@@ -202,7 +202,7 @@ You need an API key to power the agent. We support **OpenRouter**, **Anthropic**
 
 ## 🧰 Skills Library
 
-Sqowe Pilot ships with built-in skills under `.claude/skills/`, and supports user-added or custom skills, including:
+Sqowe Pilot ships with built-in skills under `resources/skills/`, and supports user-added or custom skills, including:
 
 - `pptx` for PowerPoint generation
 - `docx` for Word document processing
@@ -227,10 +227,10 @@ If you've modified a built-in skill and want to prevent it from being overwritte
 
 ```bash
 # macOS
-touch ~/Library/Application\ Support/sqowe-pilot/.claude/skills/docx/.user-modified
+touch ~/Library/Application\ Support/sqowe-pilot/claude/skills/docx/.user-modified
 
 # Windows
-type nul > "%APPDATA%\sqowe-pilot\.claude\skills\docx\.user-modified"
+type nul > "%APPDATA%\sqowe-pilot\claude\skills\docx\.user-modified"
 ```
 
 When the marker is present, the auto-update will skip that skill and log a warning instead. To resume receiving updates, simply delete the `.user-modified` file.
@@ -644,7 +644,7 @@ Currently, Sqowe Pilot provides pre-built installers for Windows and macOS only.
 Sqowe Pilot offers multi-level protection: basic path-based restrictions on all platforms, and enhanced VM-level isolation using WSL2 (Windows) or Lima (macOS). When a VM is available, all commands execute inside an isolated Linux environment, protecting your host system.
 
 **What are Skills and how do I create custom ones?**
-Skills are built-in workflows for specific tasks like generating PPTX, DOCX, PDF, or XLSX files. Sqowe Pilot ships with default skills under `.claude/skills/` and includes a `skill-creator` tool to help you build your own custom skills.
+Skills are built-in workflows for specific tasks like generating PPTX, DOCX, PDF, or XLSX files. Sqowe Pilot ships with default skills under `resources/skills/` and includes a `skill-creator` tool to help you build your own custom skills.
 
 **What is MCP and how does it work?**
 MCP (Model Context Protocol) lets AI connect to external tools and services. Sqowe Pilot supports MCP connectors for browsers, Notion, and other desktop apps — extending the AI's capabilities beyond just file management and code.

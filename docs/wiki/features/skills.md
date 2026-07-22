@@ -1,4 +1,4 @@
-<!-- sources: src/renderer/components/settings/SettingsSkills.tsx, src/main/skills/skills-manager.ts, .claude/skills/, README, docs/design/archive/skill-features-implementation-plan.md -->
+<!-- sources: src/renderer/components/settings/SettingsSkills.tsx, src/main/skills/skills-manager.ts, resources/skills/, README, docs/design/archive/skill-features-implementation-plan.md -->
 
 # Skills
 

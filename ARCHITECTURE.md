@@ -114,7 +114,7 @@ sqowe-pilot/
 │   ├── design/                # ACTIVE design notes: in-progress features + cross-cutting findings
 │   │   └── archive/          # Design docs for COMPLETED/shipped features (as-built record)
 │   └── chats/                 # Exported conversation logs (context)
-├── .claude/skills/             # Dev-time skills (docx, pdf, pptx, etc.)
+├── resources/skills/           # Skills shipped with the app (docx, pdf, pptx, etc.)
 ├── adaptations/                # Issue tracking + patch notes
 ├── dist-electron/              # Compiled main process output
 ├── dist-mcp/                   # Bundled MCP servers
@@ -588,7 +588,7 @@ the dedicated rule files listed below.
 - **Bash engine is one source of truth** — engine + settings live in `src/shared/bash-restrictions/`; the app and the `pi-extensions/` add-on both consume it. Edit once, never fork; the extension must never enter the Electron main bundle
 - **Renderer must never import Node/Electron directly** — all access via `window.electronAPI`
 - **Security changes require explicit confirmation** — path containment, permission hooks, sandbox boundaries
-- **Builtin skill scripts use `uv run`** — all `.claude/skills/*/scripts/*.py` with third-party imports must have PEP 723 inline metadata; after upstream sync run `scripts/reapply-skill-deps.py`
+- **Builtin skill scripts use `uv run`** — all `resources/skills/*/scripts/*.py` with third-party imports must have PEP 723 inline metadata; after upstream sync run `scripts/reapply-skill-deps.py`
 - **Check `docs/chats/` for prior decisions** before proposing architectural changes
 - If any rule conflict or ambiguity is detected, **stop and ask for clarification**
 

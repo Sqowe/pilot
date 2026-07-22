@@ -27,7 +27,7 @@ on a given platform, check that platform's block:
 | `tools/`      | —   | ✅  | —     | GUI helper binaries (e.g. `cliclick`) to avoid relying on user-installed Homebrew                                                                  |
 | `wsl-agent/`  | ✅  | —   | —     | Compiled sandbox agent for WSL2 (`dist-wsl-agent`)                                                                                                 |
 | `lima-agent/` | —   | ✅  | —     | Compiled sandbox agent for Lima (`dist-lima-agent`)                                                                                                |
-| `skills/`     | ✅  | ✅  | ✅    | `.claude/skills` — extracted (not asar'd) to avoid symlink issues                                                                                  |
+| `skills/`     | ✅  | ✅  | ✅    | `resources/skills` — extracted (not asar'd) to avoid symlink issues                                                                                |
 
 **Rules:**
 

@@ -135,6 +135,7 @@ import { SandboxSync } from '../sandbox/sandbox-sync';
 import { extractArtifactsFromText, buildArtifactTraceSteps } from '../utils/artifact-parser';
 import { getDefaultShell } from '../utils/shell-resolver';
 import { PluginRuntimeService } from '../skills/plugin-runtime-service';
+import { getBuiltinSkillsPath } from '../skills/builtin-skills-path';
 import type { SkillsAdapter } from '../skills/skills-adapter';
 import { SAFE_SKILL_ID_REGEX, isValidSkillId } from '../../shared/skill-pinning-constants';
 import { normalizeSkillConflictConfig } from '../../shared/skill-conflict-types';
@@ -882,7 +883,7 @@ RULES:
   /** Fallback skill path resolution when SkillsAdapter is not provided. */
   private legacySkillPaths(): string[] {
     const paths: string[] = [];
-    const builtin = this.getBuiltinSkillsPath();
+    const builtin = getBuiltinSkillsPath();
     if (builtin && fs.existsSync(builtin)) paths.push(builtin);
     const global = this.getConfiguredGlobalSkillsDir();
     if (global && fs.existsSync(global)) paths.push(global);
@@ -974,54 +975,6 @@ RULES:
     return Array.from(mergedPaths);
   }
 
-  /**
-   * Get the built-in skills directory (shipped with the app)
-   */
-  private getBuiltinSkillsPath(): string {
-    // In development, skills are in the project's .claude/skills directory
-    // In production, they're extracted via extraResources to resources/skills
-    const appPath = app.getAppPath();
-    const unpackedPath = appPath.replace(/\.asar$/, '.asar.unpacked');
-
-    const possiblePaths = [
-      // Development: relative to this file
-      path.join(__dirname, '..', '..', '..', '.claude', 'skills'),
-      // Production: extraResources extracts .claude/skills → resources/skills
-      // This is the preferred production path (real directory, no asar issues)
-      path.join(process.resourcesPath || '', 'skills'),
-      // Legacy: in app.asar.unpacked (for older builds with asarUnpack)
-      ...(this.physicalDirExists(path.join(unpackedPath, '.claude', 'skills'))
-        ? [path.join(unpackedPath, '.claude', 'skills')]
-        : []),
-      // Last resort: read from inside the asar archive (Electron intercepts this)
-      path.join(appPath, '.claude', 'skills'),
-    ];
-
-    for (const p of possiblePaths) {
-      if (fs.existsSync(p)) {
-        log('[ClaudeAgentRunner] Found built-in skills at:', p);
-        return p;
-      }
-    }
-
-    logWarn('[ClaudeAgentRunner] No built-in skills directory found');
-    return '';
-  }
-
-  /**
-   * Check if a directory physically exists on disk, bypassing Electron's
-   * asar interception.
-   */
-  private physicalDirExists(dirPath: string): boolean {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const originalFs = require('original-fs') as typeof import('fs');
-      return originalFs.existsSync(dirPath) && originalFs.statSync(dirPath).isDirectory();
-    } catch {
-      return false;
-    }
-  }
-
   private getAppClaudeDir(): string {
     return path.join(app.getPath('userData'), 'claude');
   }
@@ -1103,7 +1056,7 @@ RULES:
 
       if (resolution === 'emit-conflict') {
         // Determine the actual conflicting source for the event payload
-        const builtinSkillsPath = this.getBuiltinSkillsPath();
+        const builtinSkillsPath = getBuiltinSkillsPath();
         const conflictPath = builtinSkillsPath
           ? path.join(builtinSkillsPath, skillName)
           : targetPath;
@@ -1292,7 +1245,7 @@ RULES:
       // ENOENT — target doesn't exist, proceed with restore
     }
 
-    const builtinSkillsPath = this.getBuiltinSkillsPath();
+    const builtinSkillsPath = getBuiltinSkillsPath();
     if (!builtinSkillsPath) return;
     const builtinSkillPath = path.join(builtinSkillsPath, skillName);
     if (!fs.existsSync(builtinSkillPath)) return;
@@ -1312,7 +1265,7 @@ RULES:
 
   /** Populate the built-in skill names set from the bundled skills directory. */
   private populateBuiltinSkillNames(): void {
-    const builtinSkillsPath = this.getBuiltinSkillsPath();
+    const builtinSkillsPath = getBuiltinSkillsPath();
     if (!builtinSkillsPath || !fs.existsSync(builtinSkillsPath)) return;
     try {
       const entries = fs.readdirSync(builtinSkillsPath);
@@ -1466,7 +1419,7 @@ RULES:
       }
 
       if (resolution === 'emit-conflict') {
-        const builtinSkillsPath = this.getBuiltinSkillsPath();
+        const builtinSkillsPath = getBuiltinSkillsPath();
         const conflictPath = builtinSkillsPath
           ? path.join(builtinSkillsPath, skillName)
           : targetPath;
@@ -2144,7 +2097,7 @@ RULES:
           }
 
           // Copy skills to sandbox ~/.claude/skills/
-          const builtinSkillsPath = this.getBuiltinSkillsPath();
+          const builtinSkillsPath = getBuiltinSkillsPath();
           try {
             const distro = sandbox.wslStatus!.distro!;
             const sandboxSkillsPath = `${sandboxPath}/.claude/skills`;
@@ -2296,7 +2249,7 @@ RULES:
           }
 
           // Copy skills to sandbox ~/.claude/skills/
-          const builtinSkillsPath = this.getBuiltinSkillsPath();
+          const builtinSkillsPath = getBuiltinSkillsPath();
           try {
             const sandboxSkillsPath = `${sandboxPath}/.claude/skills`;
 
@@ -2699,7 +2652,7 @@ RULES:
         // hash differs (or no stamp exists), the runtime copy is replaced with the
         // bundled version. User-modified skills (marked with `.user-modified`) are
         // preserved and never overwritten.
-        const builtinSkillsPath = this.getBuiltinSkillsPath();
+        const builtinSkillsPath = getBuiltinSkillsPath();
         if (builtinSkillsPath && fs.existsSync(builtinSkillsPath)) {
           const sourceInsideAsar = /\.asar[/\\]/.test(builtinSkillsPath);
           const builtinSkills = fs.readdirSync(builtinSkillsPath);
