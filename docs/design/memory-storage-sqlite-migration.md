@@ -1,6 +1,7 @@
 # Experience Memory → SQLite Storage Migration — Design
 
 **Status:** Shipped — Phases 1–3 ✅, post-review fixes ✅, §16 follow-ups all settled ✅.
+Manual verification (§17) in progress: A1–A3 passed on a real store 2026-07-22; A4–A5 and B–F pending.
 **Date:** 2026-07-03
 **Updated:** 2026-07-21
 **Owner:** @obodnikov
@@ -172,7 +173,13 @@ CREATE TABLE IF NOT EXISTS memory_meta (key TEXT PRIMARY KEY, value TEXT);  -- s
   `cosineSimilarity` (accept `Float32Array | number[]`; add a small overload — see §8).
   **As built:** the signature was widened, but `blobToEmbedding` returns `number[]`, so the view is
   never handed to the scorer. That was measured and settled as won't-do — see §16.4.
-- ~4 KB per 768-dim vector as Float32 BLOB vs. ~18 KB as JSON text → **~4× smaller on disk**.
+- ~4 KB per 768-dim vector as Float32 BLOB vs. ~18 KB as JSON text → **~4× smaller for the
+  embedding column**. Note this is a claim about that column only, _not_ about total file size.
+  Measured on a real store (2026-07-22, 117 sessions / 443 chunks): `memory.db` came out 35.0 MB
+  against a 36.4 MB JSON — barely 4% smaller, because the bulk is transcript text, which is stored
+  as-is either way (`sessions.raw_session` 23.4 MB, `chunks.raw_text` 5.4 MB, all embeddings
+  0.1 MB). Expect the disk win to be negligible unless a store is embedding-dense. The migration's
+  value is in the access pattern (§1), not in file size.
 
 ## 7. Homogeneous store & staleness (D5)
 
@@ -251,7 +258,14 @@ Swap the internals:
 
 ## 9. Migration / backfill
 
-One-time, idempotent, on app start (after `storageRoot` is resolved, before memory serves reads):
+One-time and idempotent, run after `storageRoot` is resolved and before memory serves any read:
+
+> **As built — this is lazy, not eager.** It runs from `ensureStores()`, which is called on the
+> _first actual memory access_ (`getExperienceStore()` / `getOverview()` / `listFiles()`), not
+> during app startup. `new MemoryService(...)` opens nothing. So after installing a build that
+> migrates, `memory.db` does not appear until something touches memory — opening Settings → Memory
+> or sending a message. A check for the file straight after launch will find nothing and look like
+> a failed migration; it is not. (This wording cost a live debugging round on 2026-07-22.)
 
 1. If `memory.db` exists and `memory_meta.schema_version` is current → no-op.
 2. Else create schema, then stream `experience_memory.json` through the existing normalizers
@@ -625,3 +639,124 @@ and declined, §16.7 not actionable). All seven are now settled: 1, 2, 3, 5, 6 s
    rather than the JSON — it is simpler and race-free versus reading a file mid-rewrite — and have
    it assert per-row `embedding_model`, which it can afford and which §7's O(1) service-level gate
    deliberately skips.
+
+## 17. Verification plan (manual)
+
+Scope: what the automated suite **cannot** reach. The 3119 unit/integration tests already cover
+BLOB round-trip, migration idempotency on fixtures, workspace scoping, lazy hydration and the
+column-definition guard — re-checking those by hand buys nothing. What follows targets real data,
+real UI, and real latency.
+
+Run order matters: **§0 first**, then A. B–F are independent.
+
+### 0. Back up first (mandatory)
+
+The backfill runs once, against a real store.
+
+```bash
+cp -R ~/Library/Application\ Support/sqowe-pilot/memory \
+      ~/Desktop/memory-backup-$(date +%Y%m%d)
+```
+
+Record the baseline to compare against:
+
+```bash
+python3 -c "
+import json,os; p=os.path.expanduser('~/Library/Application Support/sqowe-pilot/memory/experience_memory.json')
+d=json.load(open(p)); print('sessions:', len(d['sessions']), 'chunks:', len(d['chunks']))
+print('chunks with embedding:', sum(1 for c in d['chunks'] if c.get('embedding')))"
+```
+
+### A. Migration against real data — the highest risk
+
+| #   | Step                                                                                                                                              | Expected                                                                    |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| A1  | Launch the build, then **open Settings → Memory** (or send a message) — see §9: the migration is lazy, so nothing happens until memory is touched | `memory.db` appears; `experience_memory.json` → `.bak`                      |
+| A2  | Compare the DB-status card against the §0 baseline                                                                                                | session/chunk counts match exactly                                          |
+| A3  | Same card                                                                                                                                         | integrity `ok`; embedding model and dim populated; workspace breakdown sane |
+| A4  | Restart the app                                                                                                                                   | no re-migration: `migrated_at` unchanged, no second `.bak`                  |
+| A5  | `Export JSON`, diff against `.bak`                                                                                                                | same ids, same vector dimensions                                            |
+
+**Rollback if anything is wrong:** quit the app → delete `memory.db*` → rename `.bak` back to
+`experience_memory.json`.
+
+Useful for A2/A3 — aggregates only, no content:
+
+```bash
+DB=~/Library/Application\ Support/sqowe-pilot/memory/memory.db
+sqlite3 "$DB" "SELECT key, value FROM memory_meta;"
+sqlite3 "$DB" "SELECT COALESCE(embedding_model,'(none)'), COALESCE(embedding_dim,-1), COUNT(*) \
+               FROM memory_chunks GROUP BY 1,2;"
+sqlite3 "$DB" "PRAGMA quick_check;"
+```
+
+Logs are under `<userData>/logs/`, **not** `~/Library/Logs/`:
+
+```bash
+grep -h "MemoryMigration" ~/Library/Application\ Support/sqowe-pilot/logs/*.log | tail -20
+```
+
+### B. Retrieval parity — this is what `.bak` is for
+
+There was never a back-to-back A/B against the JSON store (§12), so the `.bak` is the only
+reference for "what memory used to know". Keep it until this block passes.
+
+- **B1.** Ask 3–5 questions whose answers are definitely in old memory → the right sessions surface.
+- **B2.** Search in Settings → Memory for a term from an old session → it is found.
+- **B3.** **The NULL trap.** In a workspace-scoped search, a record with `source_workspace = null`
+  (global) must **not** appear. This is the one place the implementation deliberately diverges from
+  §8, and the failure would be silent.
+- **B4.** Open a session from another workspace → `read_workspace_chat` returns the full transcript
+  (lazy hydration, §16.2, on real data).
+
+### C. Model-staleness gate (§7) — new behaviour
+
+- **C1.** Settings → Memory → change the embedding model → save.
+- **C2.** The amber rebuild banner appears.
+- **C3.** **Without** rebuilding, ask a question → memory still returns lexical matches, no semantic
+  ranking. The log shows `falling back to lexical-only retrieval` **once**, not per prompt.
+- **C4.** `Rebuild all` → banner clears, semantic ranking returns.
+- **C5.** Restore the original model (otherwise the index is left rebuilt on a model you did not want).
+
+### D. Settings UI
+
+Covered by the Phase 3 checklist in §13 — badge, pane switching, selection race, export cancel,
+vacuum, four locales. Not duplicated here.
+
+### E. Latency — checking our own claims
+
+- **E1.** End a session (triggers ingest) → no UI stall. This used to be a synchronous whole-file
+  `writeFileSync`.
+- **E2.** Send a prompt immediately after that ingest → no perceptible pause. This is precisely the
+  case where the cache has been dropped and every transcript used to be re-parsed (§16.2).
+- **E3.** `Vacuum` after `Clear workspace` → the size on the card drops.
+
+### F. Edge cases
+
+- **F1.** Fresh profile (rename the `memory` folder away) → app starts; the card shows the
+  not-created-yet message rather than an error.
+- **F2.** Change `storageRoot` in settings → `memory.db` moves with the rest of memory (the whole
+  point of §5's decision not to fold it into `cowork.db`).
+- **F3.** Disable memory → ingestion and auto-recall stop; existing data is untouched.
+
+**If time is short:** all of A, plus B1 and B3. A because it is irreversible; B3 because it is the
+one deliberate divergence from the design and it fails silently.
+
+### First run — results (2026-07-22)
+
+A1–A3 executed against a real 36.4 MB store. Migration faithful: `.bak` holds 117 sessions / 443
+chunks, `memory.db` reports the same; 23 chunks + 6 sessions carry 1024-dim vectors in both, so
+nothing was dropped. `quick_check` → `ok`, `migrated_from = experience_memory.json`.
+
+Two things this surfaced, neither caused by the migration:
+
+- **Only ~5% of the store has embeddings** (23/443 chunks, 6/117 sessions). Pre-existing, and
+  invisible while the data sat in one large JSON. `embedText` swallows provider failures and
+  returns `[]` ([memory-service.ts](../../src/main/memory/memory-service.ts)), so a misconfigured
+  or unreachable embedding provider silently ingests sessions with no vector. Worth confirming
+  whether a `Rebuild all` restores coverage; if it comes back 23/443, embeddings are failing _now_
+  and that is its own investigation.
+- **The disk win is ~4%, not ~4×** — see the note in §6. Nothing is wrong; the store is
+  transcript-dominated, not embedding-dominated.
+
+A4 (restart, no re-migration) and A5 (export vs `.bak`) not yet run.
