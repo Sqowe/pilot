@@ -10,7 +10,7 @@ structure, boundaries, and where to find authoritative coding rules. This docume
 does NOT define coding rules — it points to them (see Section 8).
 
 Target audience: AI coding assistants and new human contributors.
-Last updated: 2026-07-21.
+Last updated: 2026-07-22.
 
 > **Rebrand complete:** the product was renamed **Open Cowork → "Sqowe Pilot"**. All
 > surfaces now carry the new name — renderer UI, i18n, default system prompts, icons,
