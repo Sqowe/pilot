@@ -12,7 +12,11 @@ import { ExperienceMemoryStore } from './experience-memory-store';
 import { MemoryIngestionQueue } from './memory-ingestion-queue';
 import type { MemoryLLMClientLike } from './memory-llm-client';
 import { MemoryLLMClient, type MemoryLLMClientOptions } from './memory-llm-client';
-import { EMBEDDING_FORMAT_VERSION, type EmbeddingKind } from '../../shared/local-embedding-types';
+import {
+  EMBEDDING_FORMAT_VERSION,
+  type EmbeddingKind,
+  type MemoryBackfillProgress,
+} from '../../shared/local-embedding-types';
 import { MemoryNavigator } from './memory-navigator';
 import { DEFAULT_MEMORY_PROMPTS, type MemoryPromptSet } from './memory-prompts';
 import { MemoryRetriever } from './memory-retriever';
@@ -164,6 +168,24 @@ function safeParseJson<T>(value: string | null | undefined, fallback: T): T {
   }
 }
 
+/**
+ * The exact text a chunk's vector is computed from. Shared by ingestion and by
+ * backfillEmbeddings() so both produce identical vectors for identical rows —
+ * every argument is a persisted column, which is why a backfill needs no LLM call.
+ */
+export function buildChunkEmbeddingText(
+  summary: string,
+  details: string,
+  keywords: string[]
+): string {
+  return [summary, details, ...keywords].join(' ').trim();
+}
+
+/** Session counterpart of {@link buildChunkEmbeddingText} (sessions have no `details`). */
+export function buildSessionEmbeddingText(summary: string, keywords: string[]): string {
+  return [summary, ...keywords].join(' ').trim();
+}
+
 export class MemoryService {
   private readonly queue = new MemoryIngestionQueue();
   private readonly deletedSessionIds = new Set<string>();
@@ -180,6 +202,12 @@ export class MemoryService {
   private memoryDb: MemoryDb | null = null;
   /** Debounces the §7 lexical-fallback warning, which is hit on every prompt. */
   private loggedModelStaleWarning = false;
+  /**
+   * Last embedding failure, surfaced via getOverview(). Process-lifetime only —
+   * it exists so a degraded embedding path is visible in Settings instead of
+   * living solely in a log file that rotates away within a day.
+   */
+  private lastEmbeddingError: { message: string; at: number } | null = null;
   private retrievalMetricsBySession = new Map<
     string,
     import('./memory-types').MemoryRetrievalMetrics
@@ -291,6 +319,12 @@ export class MemoryService {
     const topSourceWorkspaces = experienceStore.getStatsBySourceWorkspace();
     const { sessionCount: expSessionCount, chunkCount: expChunkCount } =
       experienceStore.getCounts();
+    const embeddingEnabled = Boolean(this.getAppConfig().memoryRuntime?.useEmbedding);
+    // Only pay for the coverage count when embeddings are on — with them off,
+    // zero coverage is the expected state and the card is not rendered.
+    const embeddedChunkCount = embeddingEnabled
+      ? experienceStore.getEmbeddedCounts().chunkCount
+      : 0;
 
     const activeFailures = stateRecords
       .filter((record) => Boolean(record.lastError) && !record.lastErrorDismissedAt)
@@ -316,6 +350,10 @@ export class MemoryService {
       }, null),
       latestError: activeFailures[0]?.lastError || null,
       latestErrorAt: activeFailures[0]?.lastErrorAt || activeFailures[0]?.updatedAt || null,
+      embeddingEnabled,
+      embeddedChunkCount,
+      embeddingError: this.lastEmbeddingError?.message ?? null,
+      embeddingErrorAt: this.lastEmbeddingError?.at ?? null,
       currentWorkspace: currentWorkspace
         ? {
             workspaceKey: currentWorkspace,
@@ -757,6 +795,118 @@ export class MemoryService {
     }
   }
 
+  /**
+   * Model tag stamped on rows carrying a vector. Must stay identical to the rule
+   * in persistBundle, or a backfill would immediately consider its own output stale.
+   */
+  private activeEmbeddingModel(): string | null {
+    const runtime = this.getAppConfig().memoryRuntime;
+    return runtime.useEmbedding && runtime.embedding?.model ? runtime.embedding.model : null;
+  }
+
+  /** How many rows a backfill would touch, for the confirmation prompt. */
+  countEmbeddingBackfill(): { sessionCount: number; chunkCount: number } {
+    if (!this.getAppConfig().memoryRuntime.useEmbedding) {
+      return { sessionCount: 0, chunkCount: 0 };
+    }
+    return this.getExperienceStore().countRowsNeedingEmbedding(this.activeEmbeddingModel());
+  }
+
+  /**
+   * Compute vectors for stored rows that lack one (or carry one from a different
+   * model), leaving all extracted content untouched.
+   *
+   * This is emphatically *not* rebuildAll: no LLM extraction runs, no session is
+   * re-read, and core memory is not deleted. It is possible only because the
+   * embedded text is derived purely from persisted columns — see
+   * {@link buildChunkEmbeddingText}.
+   *
+   * Embeddings are computed sequentially, matching the ingestion path.
+   */
+  async backfillEmbeddings(onProgress?: (p: MemoryBackfillProgress) => void): Promise<{
+    success: boolean;
+    embedded: number;
+    failed: number;
+    error?: string;
+  }> {
+    if (!this.getAppConfig().memoryRuntime.useEmbedding) {
+      return { success: false, embedded: 0, failed: 0, error: 'Embeddings are disabled.' };
+    }
+
+    const store = this.getExperienceStore();
+    const model = this.activeEmbeddingModel();
+    const { sessions, chunks } = store.listRowsNeedingEmbedding(model);
+    const total = sessions.length + chunks.length;
+    let processed = 0;
+    const report = (): void => {
+      processed += 1;
+      onProgress?.({ processed, total });
+    };
+
+    let embedded = 0;
+    let failed = 0;
+    let consecutiveFailures = 0;
+    // A misconfigured provider fails every call. Give up rather than grind through
+    // hundreds of doomed requests, but tolerate the odd transient network error.
+    const MAX_CONSECUTIVE_FAILURES = 5;
+    const abort = () => ({
+      success: false,
+      embedded,
+      failed,
+      error:
+        this.lastEmbeddingError?.message ??
+        `Embedding failed ${MAX_CONSECUTIVE_FAILURES} times in a row.`,
+    });
+
+    onProgress?.({ processed: 0, total });
+
+    for (const chunk of chunks) {
+      const text = buildChunkEmbeddingText(chunk.summary, chunk.details, chunk.keywords);
+      if (!text) {
+        report();
+        continue;
+      }
+      const vector = await this.embedText(text, 'document');
+      if (vector.length) {
+        store.updateChunkEmbedding(chunk.id, vector, model);
+        embedded += 1;
+        consecutiveFailures = 0;
+      } else {
+        failed += 1;
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) return abort();
+      }
+      report();
+    }
+
+    for (const session of sessions) {
+      const text = buildSessionEmbeddingText(session.summary, session.keywords);
+      if (!text) {
+        report();
+        continue;
+      }
+      const vector = await this.embedText(text, 'document');
+      if (vector.length) {
+        store.updateSessionEmbedding(session.id, vector, model);
+        embedded += 1;
+        consecutiveFailures = 0;
+      } else {
+        failed += 1;
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) return abort();
+      }
+      report();
+    }
+
+    // Re-stamp only after a clean pass: the store is now homogeneous on `model`
+    // at the current format version (design D5).
+    if (embedded > 0) {
+      store.setEmbeddingModel(model ?? '');
+      store.setEmbeddingFormatVersion(EMBEDDING_FORMAT_VERSION);
+    }
+    return { success: true, embedded, failed };
+  }
+
   /** Run VACUUM on memory.db, serialized to avoid SQLITE_BUSY.
    * Always resolves — errors are returned as { success: false, error }.
    * Does NOT use the ingestion queue to avoid unhandled-rejection leaks
@@ -1083,7 +1233,15 @@ export class MemoryService {
     const chunkInputs: Array<Omit<ChunkMemoryItem, 'id'>> = [];
     for (const chunk of input.extracted.chunks) {
       const rawText = this.extractRawText(input.fullTurns, chunk.sourceTurns);
-      const searchableText = [chunk.summary, chunk.details, ...chunk.keywords].join(' ').trim();
+      // Keywords are resolved BEFORE the embedded text is built, so that text is
+      // exactly reconstructible from the persisted columns. That is what lets
+      // backfillEmbeddings() re-embed a row without re-running LLM extraction —
+      // build the string the other way round and the two paths silently diverge
+      // for every chunk whose extractor returned no keywords.
+      const keywords = chunk.keywords.length
+        ? chunk.keywords
+        : extractKeywords(buildChunkEmbeddingText(chunk.summary, chunk.details, []));
+      const searchableText = buildChunkEmbeddingText(chunk.summary, chunk.details, keywords);
       chunkInputs.push({
         sessionId: input.sessionId,
         sourceWorkspace: input.sourceWorkspace,
@@ -1093,7 +1251,7 @@ export class MemoryService {
         sourceSessionDate: input.sessionDate,
         summary: chunk.summary,
         details: chunk.details,
-        keywords: chunk.keywords.length ? chunk.keywords : extractKeywords(searchableText),
+        keywords,
         sourceTurns: chunk.sourceTurns,
         rawText,
         sessionDate: input.sessionDate,
@@ -1103,9 +1261,14 @@ export class MemoryService {
       });
     }
 
-    const sessionSearchable = [input.extracted.sessionSummary, ...input.extracted.sessionKeywords]
-      .join(' ')
-      .trim();
+    // Same ordering rule as the chunk loop above — see the comment there.
+    const sessionKeywords = input.extracted.sessionKeywords.length
+      ? input.extracted.sessionKeywords
+      : extractKeywords(buildSessionEmbeddingText(input.extracted.sessionSummary, []));
+    const sessionSearchable = buildSessionEmbeddingText(
+      input.extracted.sessionSummary,
+      sessionKeywords
+    );
     const sessionEmbedding = await this.embedText(sessionSearchable, 'document');
     store.replaceSessionWithMeta(
       input.sessionId,
@@ -1117,9 +1280,7 @@ export class MemoryService {
         sourceSessionTitle: input.sessionTitle,
         sourceSessionDate: input.sessionDate,
         summary: input.extracted.sessionSummary,
-        keywords: input.extracted.sessionKeywords.length
-          ? input.extracted.sessionKeywords
-          : extractKeywords(sessionSearchable),
+        keywords: sessionKeywords,
         chunkIds: [],
         rawSession: input.fullTurns,
         sessionDate: input.sessionDate,
@@ -1427,8 +1588,14 @@ export class MemoryService {
       return [];
     }
     try {
-      return await this.llmClient.embed(text, kind);
+      const vector = await this.llmClient.embed(text, kind);
+      if (vector.length) {
+        this.lastEmbeddingError = null;
+      }
+      return vector;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.lastEmbeddingError = { message, at: Date.now() };
       logWarn('[MemoryService] Embedding failed, falling back to lexical retrieval:', error);
       return [];
     }

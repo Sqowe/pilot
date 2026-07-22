@@ -42,7 +42,10 @@ import { MemoryService } from './memory/memory-service';
 import { MemoryLLMClient } from './memory/memory-llm-client';
 import { isLocalModelDownloaded } from './memory/local-embedding-cache';
 import { getLocalModelRuntimeStatus } from './memory/local-embedding-state';
-import type { LocalEmbeddingProgress } from '../shared/local-embedding-types';
+import type {
+  LocalEmbeddingProgress,
+  MemoryBackfillProgress,
+} from '../shared/local-embedding-types';
 import { MemoryExtension } from './memory/memory-extension';
 import { CORE_MEMORY_UPDATE_SYSTEM_PROMPT } from './memory/memory-prompts';
 import { AgentRuntimeExtensionManager } from './extensions/agent-runtime-extension-manager';
@@ -4757,6 +4760,45 @@ ipcMain.handle('memory.vacuumExperienceDb', () => {
   if (!memoryService)
     return Promise.resolve({ success: false, error: 'Memory service not initialized' });
   return memoryService.vacuumExperienceDbQueued();
+});
+
+/**
+ * Compute vectors for stored rows that lack one. Unlike memory.rebuildAll this
+ * runs no LLM extraction and deletes nothing — see MemoryService.backfillEmbeddings.
+ */
+ipcMain.handle('memory.backfillEmbeddings', async () => {
+  if (!memoryService) {
+    return { success: false, embedded: 0, failed: 0, error: 'Memory service not initialized' };
+  }
+  // Throttled like the local-model download progress above: the backfill emits one
+  // event per row, and a fast provider would otherwise flood the IPC channel.
+  let lastEmitMs = 0;
+  const emit = (p: MemoryBackfillProgress): void => {
+    const now = Date.now();
+    const isFinal = p.processed === 0 || p.processed === p.total;
+    if (!isFinal && now - lastEmitMs < 100) return;
+    lastEmitMs = now;
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('memory.backfillProgress', p);
+      }
+    }
+  };
+  try {
+    return await memoryService.backfillEmbeddings(emit);
+  } catch (err) {
+    return {
+      success: false,
+      embedded: 0,
+      failed: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+});
+
+ipcMain.handle('memory.countEmbeddingBackfill', () => {
+  if (!memoryService) return { sessionCount: 0, chunkCount: 0 };
+  return memoryService.countEmbeddingBackfill();
 });
 
 ipcMain.handle('memory.setEnabled', (_event, enabled: boolean) => {

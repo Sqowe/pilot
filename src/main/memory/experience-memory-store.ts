@@ -440,6 +440,39 @@ export class ExperienceMemoryStore {
       countChunksWithEmbedding: db.prepare<[]>(
         `SELECT COUNT(*) as n FROM memory_chunks WHERE embedding IS NOT NULL AND length(embedding) > 0`
       ),
+      // Backfill selection: a row needs (re-)embedding when it has no vector at
+      // all, or when its vector came from a different model than the active one.
+      // Cosine similarity is only meaningful within one embedding space, so a
+      // model change invalidates the vector as surely as its absence — see
+      // MemoryService.isEmbeddingModelStale (design D5: the store is homogeneous).
+      countChunksNeedingEmbedding: db.prepare<[string | null]>(
+        `SELECT COUNT(*) as n FROM memory_chunks
+         WHERE embedding IS NULL OR length(embedding) = 0
+            OR embedding_model IS NOT ?`
+      ),
+      countSessionsNeedingEmbedding: db.prepare<[string | null]>(
+        `SELECT COUNT(*) as n FROM memory_sessions
+         WHERE embedding IS NULL OR length(embedding) = 0
+            OR embedding_model IS NOT ?`
+      ),
+      selectChunksNeedingEmbedding: db.prepare<[string | null]>(
+        `SELECT id, summary, details, keywords FROM memory_chunks
+         WHERE embedding IS NULL OR length(embedding) = 0
+            OR embedding_model IS NOT ?
+         ORDER BY ingested_at`
+      ),
+      selectSessionsNeedingEmbedding: db.prepare<[string | null]>(
+        `SELECT id, summary, keywords FROM memory_sessions
+         WHERE embedding IS NULL OR length(embedding) = 0
+            OR embedding_model IS NOT ?
+         ORDER BY ingested_at`
+      ),
+      updateChunkEmbedding: db.prepare<[Buffer, string | null, number, string]>(
+        `UPDATE memory_chunks SET embedding = ?, embedding_model = ?, embedding_dim = ? WHERE id = ?`
+      ),
+      updateSessionEmbedding: db.prepare<[Buffer, string | null, number, string]>(
+        `UPDATE memory_sessions SET embedding = ?, embedding_model = ?, embedding_dim = ? WHERE id = ?`
+      ),
       statsGroupByWorkspace: db.prepare(`
         SELECT 'session' as kind, source_workspace, COUNT(*) as cnt FROM memory_sessions GROUP BY source_workspace
         UNION ALL
@@ -765,6 +798,96 @@ export class ExperienceMemoryStore {
     const sessionCount = (this.getStmts().countSessions.get() as { n: number }).n;
     const chunkCount = (this.getStmts().countChunks.get() as { n: number }).n;
     return { sessionCount, chunkCount };
+  }
+
+  /**
+   * Count of sessions and chunks that actually carry an embedding vector.
+   * Drives the embedding-coverage card in Settings → Memory: a chunk stored
+   * without a vector is invisible to semantic search, and nothing else reports it.
+   */
+  getEmbeddedCounts(): { sessionCount: number; chunkCount: number } {
+    const sessionCount = (this.getStmts().countSessionsWithEmbedding.get() as { n: number }).n;
+    const chunkCount = (this.getStmts().countChunksWithEmbedding.get() as { n: number }).n;
+    return { sessionCount, chunkCount };
+  }
+
+  /**
+   * How many rows would a backfill touch: those with no vector, plus those whose
+   * vector predates the currently-active embedding model.
+   */
+  countRowsNeedingEmbedding(activeModel: string | null): {
+    sessionCount: number;
+    chunkCount: number;
+  } {
+    const stmts = this.getStmts();
+    return {
+      sessionCount: (stmts.countSessionsNeedingEmbedding.get(activeModel) as { n: number }).n,
+      chunkCount: (stmts.countChunksNeedingEmbedding.get(activeModel) as { n: number }).n,
+    };
+  }
+
+  /**
+   * Rows a backfill must re-embed, carrying only the columns the embedded text is
+   * built from — no vectors, no transcripts. `keywords` is the stored JSON array.
+   */
+  listRowsNeedingEmbedding(activeModel: string | null): {
+    sessions: Array<{ id: string; summary: string; keywords: string[] }>;
+    chunks: Array<{ id: string; summary: string; details: string; keywords: string[] }>;
+  } {
+    const stmts = this.getStmts();
+    const parseKeywords = (raw: string): string[] => {
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        return Array.isArray(parsed) ? (parsed as string[]) : [];
+      } catch {
+        return [];
+      }
+    };
+    const sessions = (
+      stmts.selectSessionsNeedingEmbedding.all(activeModel) as Array<{
+        id: string;
+        summary: string;
+        keywords: string;
+      }>
+    ).map((r) => ({ id: r.id, summary: r.summary, keywords: parseKeywords(r.keywords) }));
+    const chunks = (
+      stmts.selectChunksNeedingEmbedding.all(activeModel) as Array<{
+        id: string;
+        summary: string;
+        details: string;
+        keywords: string;
+      }>
+    ).map((r) => ({
+      id: r.id,
+      summary: r.summary,
+      details: r.details,
+      keywords: parseKeywords(r.keywords),
+    }));
+    return { sessions, chunks };
+  }
+
+  /** Write a freshly-computed vector onto an existing row, leaving its content untouched. */
+  updateChunkEmbedding(id: string, embedding: number[], model: string | null): void {
+    if (!embedding.length) return;
+    this.getStmts().updateChunkEmbedding.run(
+      embeddingToBlob(embedding),
+      model,
+      embedding.length,
+      id
+    );
+    this.invalidateCache();
+  }
+
+  /** Write a freshly-computed vector onto an existing row, leaving its content untouched. */
+  updateSessionEmbedding(id: string, embedding: number[], model: string | null): void {
+    if (!embedding.length) return;
+    this.getStmts().updateSessionEmbedding.run(
+      embeddingToBlob(embedding),
+      model,
+      embedding.length,
+      id
+    );
+    this.invalidateCache();
   }
 
   // ---------------------------------------------------------------------------

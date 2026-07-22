@@ -32,6 +32,7 @@ import type {
   ExperienceDbStatus,
   ExperienceExportResult,
   LocalEmbeddingProgress,
+  MemoryBackfillProgress,
   LocalModelStatus,
   MemoryModelCheckResult,
   MemoryRuntimeConfig,
@@ -683,6 +684,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('memory.exportExperienceMemoryToFile'),
     vacuumExperienceDb: (): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('memory.vacuumExperienceDb'),
+    backfillEmbeddings: (): Promise<{
+      success: boolean;
+      embedded: number;
+      failed: number;
+      error?: string;
+    }> => ipcRenderer.invoke('memory.backfillEmbeddings'),
+    countEmbeddingBackfill: (): Promise<{ sessionCount: number; chunkCount: number }> =>
+      ipcRenderer.invoke('memory.countEmbeddingBackfill'),
+    onBackfillProgress: (callback: (p: MemoryBackfillProgress) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, p: MemoryBackfillProgress) => {
+        try {
+          callback(p);
+        } catch (err) {
+          console.error('[preload] onBackfillProgress callback threw:', err);
+        }
+      };
+      ipcRenderer.on('memory.backfillProgress', listener);
+      return () => ipcRenderer.removeListener('memory.backfillProgress', listener);
+    },
     onLocalEmbeddingProgress: (callback: (p: LocalEmbeddingProgress) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, p: LocalEmbeddingProgress) => {
         try {
@@ -1093,6 +1113,14 @@ declare global {
         >;
         exportExperienceMemoryToFile: () => Promise<ExperienceExportResult>;
         vacuumExperienceDb: () => Promise<{ success: boolean; error?: string }>;
+        backfillEmbeddings: () => Promise<{
+          success: boolean;
+          embedded: number;
+          failed: number;
+          error?: string;
+        }>;
+        countEmbeddingBackfill: () => Promise<{ sessionCount: number; chunkCount: number }>;
+        onBackfillProgress: (callback: (p: MemoryBackfillProgress) => void) => () => void;
         onLocalEmbeddingProgress: (callback: (p: LocalEmbeddingProgress) => void) => () => void;
       };
     };

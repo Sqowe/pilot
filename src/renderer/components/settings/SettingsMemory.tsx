@@ -163,7 +163,13 @@ function cloneRuntimeConfig(runtime?: MemoryRuntimeConfig): MemoryRuntimeConfig 
   };
 }
 
-export function SettingsMemory() {
+/**
+ * `isActive` follows the SettingsSkills/SettingsConnectors convention: SettingsPanel
+ * keeps visited tabs mounted (hidden via CSS), so without it the overview would stay
+ * frozen at whatever it was when the tab was first opened. The embedding-coverage
+ * card in particular reports a live condition and must not show a stale snapshot.
+ */
+export function SettingsMemory({ isActive = true }: { isActive?: boolean } = {}) {
   const { t, i18n } = useTranslation();
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const sessions = useAppStore((state) => state.sessions);
@@ -205,6 +211,11 @@ export function SettingsMemory() {
   // Experience DB (memory.db) status card — populated when the sqlite entry is selected.
   const [experienceDbStatus, setExperienceDbStatus] = useState<ExperienceDbStatus | null>(null);
   const [isVacuuming, setIsVacuuming] = useState(false);
+  const [isBackfilling, setIsBackfilling] = useState(false);
+  const [backfillProgress, setBackfillProgress] = useState<{
+    processed: number;
+    total: number;
+  } | null>(null);
   const [isExporting, setIsExporting] = useState(false);
 
   // Selection request sequencing: bumped on each selection/refresh so that in-flight
@@ -223,8 +234,24 @@ export function SettingsMemory() {
   }, []);
 
   useEffect(() => {
+    if (!isActive) {
+      return;
+    }
     void refreshEmbeddingFormatStale();
-  }, [refreshEmbeddingFormatStale]);
+  }, [refreshEmbeddingFormatStale, isActive]);
+
+  // Backfill progress arrives from the main process per row (throttled there).
+  // Subscribed unconditionally rather than only while running, so a backfill
+  // started before this tab was opened still reports itself.
+  useEffect(() => {
+    return window.electronAPI.memory.onBackfillProgress((p) => {
+      setBackfillProgress(p);
+      // Track the running flag from the events themselves, so a panel mounted
+      // mid-run reports correctly and does not stay stuck on "running" at the end
+      // (the handler's own finally only fires in the tab that started the run).
+      setIsBackfilling(p.processed < p.total);
+    });
+  }, []);
 
   const enabled = overview?.enabled ?? appConfig?.memoryEnabled ?? true;
 
@@ -317,7 +344,13 @@ export function SettingsMemory() {
     }
   };
 
+  // Re-reads whenever the tab becomes visible again, so counters that move in the
+  // background (ingestion, embedding coverage) are current rather than a snapshot
+  // from when the panel was first opened.
   useEffect(() => {
+    if (!isActive) {
+      return;
+    }
     let cancelled = false;
     const load = async () => {
       try {
@@ -339,7 +372,7 @@ export function SettingsMemory() {
     return () => {
       cancelled = true;
     };
-  }, [currentWorkspace]);
+  }, [currentWorkspace, isActive]);
 
   const handleToggle = async () => {
     setIsBusy(true);
@@ -480,6 +513,40 @@ export function SettingsMemory() {
       if (stillCurrent()) setStatus(error instanceof Error ? error.message : String(error));
     } finally {
       setIsVacuuming(false);
+    }
+  };
+
+  const handleBackfillEmbeddings = async () => {
+    const counts = await window.electronAPI.memory.countEmbeddingBackfill();
+    const total = counts.chunkCount + counts.sessionCount;
+    if (!total) {
+      setStatus(t('memory.backfillNothingToDo'));
+      return;
+    }
+    if (!window.confirm(t('memory.backfillConfirm', { count: total }))) {
+      return;
+    }
+    setIsBackfilling(true);
+    setStatus(null);
+    try {
+      const result = await window.electronAPI.memory.backfillEmbeddings();
+      if (result.success) {
+        setStatus(t('memory.backfillDone', { embedded: result.embedded, failed: result.failed }));
+      } else {
+        setStatus(`${t('memory.backfillFailed')}${result.error ? `: ${result.error}` : ''}`);
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBackfilling(false);
+      setBackfillProgress(null);
+      // Redraw regardless of outcome: on success the coverage card must show the new
+      // numbers, on failure it must show the recorded reason.
+      await Promise.all([
+        refreshOverview(),
+        refreshEmbeddingFormatStale(),
+        refreshExperienceDbStatus({ silent: true }),
+      ]);
     }
   };
 
@@ -810,6 +877,72 @@ export function SettingsMemory() {
                   : undefined
               }
             />
+            {/* Embedding coverage is deliberately its own card rather than part of
+                "Ingestion status": a chunk stored without a vector was ingested
+                successfully, it is just invisible to semantic search. Folding the
+                two together would report a failure that did not happen — and hide
+                one that did. */}
+            {overview?.embeddingEnabled ? (
+              <InfoCard
+                label={t('memory.embeddingCoverage')}
+                status={
+                  overview.embeddingError
+                    ? 'error'
+                    : overview.embeddedChunkCount < overview.experienceChunkCount
+                      ? 'warning'
+                      : 'healthy'
+                }
+                value={t('memory.embeddingCoverageValue', {
+                  embedded: overview.embeddedChunkCount,
+                  total: overview.experienceChunkCount,
+                  percent: overview.experienceChunkCount
+                    ? Math.round(
+                        (overview.embeddedChunkCount / overview.experienceChunkCount) * 100
+                      )
+                    : 0,
+                })}
+                secondary={
+                  // While a backfill runs, progress is the only thing worth saying:
+                  // the coverage number above is a snapshot and cannot move on its own.
+                  isBackfilling && backfillProgress
+                    ? t('memory.backfillProgress', {
+                        processed: backfillProgress.processed,
+                        total: backfillProgress.total,
+                      })
+                    : overview.embeddingError
+                      ? [
+                          overview.embeddingError,
+                          overview.embeddingErrorAt
+                            ? t('memory.lastFailure', {
+                                time: new Date(overview.embeddingErrorAt).toLocaleString(
+                                  i18n.language
+                                ),
+                              })
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join('\n')
+                      : overview.embeddedChunkCount < overview.experienceChunkCount
+                        ? t('memory.embeddingCoverageHint')
+                        : undefined
+                }
+                // Offered only when there is something to fix. Unlike "Rebuild all"
+                // this runs no LLM extraction and deletes nothing — it just computes
+                // the missing vectors from text already in the database.
+                action={
+                  overview.embeddedChunkCount < overview.experienceChunkCount
+                    ? {
+                        label: isBackfilling
+                          ? t('memory.backfillRunning')
+                          : t('memory.backfillAction'),
+                        onClick: () => {
+                          if (!isBackfilling) void handleBackfillEmbeddings();
+                        },
+                      }
+                    : undefined
+                }
+              />
+            ) : null}
           </div>
         </div>
       </SettingsContentSection>

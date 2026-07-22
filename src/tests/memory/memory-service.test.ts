@@ -1104,4 +1104,196 @@ describe('MemoryService', () => {
 
     fs.rmSync(outsideDir, { recursive: true, force: true });
   });
+
+  describe('backfillEmbeddings', () => {
+    /** Records every text it is asked to embed, so the two paths can be compared. */
+    class RecordingLLMClient extends MockMemoryLLMClient {
+      readonly embedded: string[] = [];
+      /** When set, extraction returns chunks with no keywords (exercises the fallback). */
+      constructor(private readonly withoutKeywords = false) {
+        super();
+      }
+      async complete(request: MemoryCompletionRequest): Promise<{ text: string }> {
+        if (this.withoutKeywords && request.systemPrompt.includes('memory extraction system')) {
+          return {
+            text: JSON.stringify({
+              session_summary: 'gateway token rotation summary',
+              session_keywords: [],
+              chunks: [
+                {
+                  summary: 'gateway rotation change',
+                  details: 'details about the gateway token rotation change',
+                  keywords: [],
+                  source_turns: [1, 2],
+                },
+              ],
+            }),
+          };
+        }
+        return super.complete(request);
+      }
+      async embed(text: string): Promise<number[]> {
+        this.embedded.push(text);
+        return super.embed(text);
+      }
+    }
+
+    // `root` isolates a run in its own memory.db — the memory tables live under
+    // storageRoot, not in the shared cowork.db handle these tests hold as rawDb.
+    function setEmbedding(
+      useEmbedding: boolean,
+      model = 'text-embedding-3-small',
+      root = 'memory-root'
+    ): void {
+      configStore.update({
+        memoryEnabled: true,
+        memoryRuntime: {
+          llm: { inheritFromActive: true, apiKey: '', baseUrl: '', model: '', timeoutMs: 180000 },
+          embedding: {
+            inheritFromActive: true,
+            apiKey: '',
+            baseUrl: '',
+            model,
+            timeoutMs: 180000,
+          },
+          useEmbedding,
+          maxNavSteps: 2,
+          ingestionConcurrency: 2,
+          storageRoot: path.join(storageRoot, root),
+        },
+      });
+    }
+
+    async function ingest(target: MemoryService): Promise<void> {
+      await target.enqueueIngestion({
+        session: makeSession('session-a', 'Gateway fixes', '/repo/a'),
+        prompt: 'fix gateway token rotation',
+        messages: makeMessages('session-a', [
+          { role: 'user', text: 'fix gateway token rotation', timestamp: 1 },
+          { role: 'assistant', text: 'done, gateway token rotation fixed', timestamp: 2 },
+        ]),
+      });
+    }
+
+    it('embeds stored rows without re-running extraction, and reports coverage', async () => {
+      setEmbedding(false);
+      await ingest(service);
+
+      let overview = service.getOverview('/repo/a');
+      const chunkCountBefore = overview.experienceChunkCount;
+      expect(chunkCountBefore).toBeGreaterThan(0);
+
+      setEmbedding(true);
+      const pending = service.countEmbeddingBackfill();
+      expect(pending.chunkCount).toBe(chunkCountBefore);
+      expect(pending.sessionCount).toBe(1);
+
+      const result = await service.backfillEmbeddings();
+
+      expect(result.success).toBe(true);
+      expect(result.failed).toBe(0);
+      expect(result.embedded).toBe(pending.chunkCount + pending.sessionCount);
+
+      overview = service.getOverview('/repo/a');
+      // Content is untouched — a backfill adds vectors, it does not re-extract.
+      expect(overview.experienceChunkCount).toBe(chunkCountBefore);
+      expect(overview.embeddedChunkCount).toBe(chunkCountBefore);
+    });
+
+    it('embeds exactly the text ingestion would have embedded', async () => {
+      // The invariant the whole feature rests on: the embedded text is derivable
+      // from persisted columns. If it drifts, backfilled vectors land in a slightly
+      // different space than freshly-ingested ones and retrieval degrades silently.
+      setEmbedding(true, 'text-embedding-3-small', 'root-direct');
+      const direct = new RecordingLLMClient();
+      await ingest(new MemoryService(db, { llmClient: direct }));
+
+      setEmbedding(false, 'text-embedding-3-small', 'root-backfill');
+      const viaBackfill = new RecordingLLMClient();
+      const backfillService = new MemoryService(db, { llmClient: viaBackfill });
+      await ingest(backfillService);
+      expect(viaBackfill.embedded).toEqual([]); // embeddings were off
+
+      setEmbedding(true, 'text-embedding-3-small', 'root-backfill');
+      await backfillService.backfillEmbeddings();
+
+      expect(direct.embedded.length).toBeGreaterThan(0);
+      expect(viaBackfill.embedded.sort()).toEqual(direct.embedded.sort());
+    });
+
+    it('embeds the same text even when the extractor returned no keywords', async () => {
+      // Regression guard for the ordering bug: keywords must be resolved before the
+      // embedded text is built, otherwise the stored (derived) keywords make the
+      // reconstructed text differ from what ingestion actually embedded.
+      setEmbedding(true, 'text-embedding-3-small', 'root-direct-nokw');
+      const direct = new RecordingLLMClient(true);
+      await ingest(new MemoryService(db, { llmClient: direct }));
+
+      setEmbedding(false, 'text-embedding-3-small', 'root-backfill-nokw');
+      const viaBackfill = new RecordingLLMClient(true);
+      const backfillService = new MemoryService(db, { llmClient: viaBackfill });
+      await ingest(backfillService);
+
+      setEmbedding(true, 'text-embedding-3-small', 'root-backfill-nokw');
+      await backfillService.backfillEmbeddings();
+
+      // Keep the test non-vacuous: the derived keywords must actually be part of
+      // the embedded text, otherwise both paths would agree trivially and this
+      // would stop guarding anything.
+      const summaryAndDetails =
+        'gateway rotation change details about the gateway token rotation change';
+      const chunkText = direct.embedded.find((text) => text.startsWith(summaryAndDetails));
+      expect(chunkText).toBeDefined();
+      expect(chunkText!.length).toBeGreaterThan(summaryAndDetails.length);
+
+      expect(viaBackfill.embedded.sort()).toEqual(direct.embedded.sort());
+    });
+
+    it('reports progress from 0 to total, one step per row', async () => {
+      setEmbedding(false);
+      await ingest(service);
+      setEmbedding(true);
+
+      const pending = service.countEmbeddingBackfill();
+      const total = pending.chunkCount + pending.sessionCount;
+      const seen: Array<{ processed: number; total: number }> = [];
+
+      await service.backfillEmbeddings((p) => seen.push({ ...p }));
+
+      // An initial 0/total so the UI can show the scale before the first row lands.
+      expect(seen[0]).toEqual({ processed: 0, total });
+      expect(seen[seen.length - 1]).toEqual({ processed: total, total });
+      expect(seen).toHaveLength(total + 1);
+      // Monotonic, no gaps — the count is what the card renders.
+      seen.forEach((p, i) => expect(p.processed).toBe(i));
+    });
+
+    it('does nothing when embeddings are disabled', async () => {
+      setEmbedding(false);
+      await ingest(service);
+
+      expect(service.countEmbeddingBackfill()).toEqual({ sessionCount: 0, chunkCount: 0 });
+      const result = await service.backfillEmbeddings();
+      expect(result.success).toBe(false);
+      expect(result.embedded).toBe(0);
+    });
+
+    it('leaves rows alone once they carry a vector from the active model', async () => {
+      setEmbedding(true);
+      await ingest(service);
+
+      expect(service.countEmbeddingBackfill()).toEqual({ sessionCount: 0, chunkCount: 0 });
+      const result = await service.backfillEmbeddings();
+      expect(result.embedded).toBe(0);
+    });
+
+    it('selects rows again after the embedding model changes', async () => {
+      setEmbedding(true, 'model-A');
+      await ingest(service);
+      expect(service.countEmbeddingBackfill().chunkCount).toBe(0);
+
+      setEmbedding(true, 'model-B');
+      expect(service.countEmbeddingBackfill().chunkCount).toBeGreaterThan(0);
+    });
+  });
 });

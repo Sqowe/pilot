@@ -24,6 +24,16 @@ export type EmbeddingKind = 'query' | 'document';
  */
 export const EMBEDDING_FORMAT_VERSION = 2;
 
+/**
+ * Progress of an embedding backfill. Reported per row, not per byte: the work is
+ * a sequence of independent embedding calls, and `processed / total` is the only
+ * honest measure of how far along it is.
+ */
+export interface MemoryBackfillProgress {
+  processed: number;
+  total: number;
+}
+
 export interface LocalEmbeddingProgress {
   status: 'downloading' | 'ready' | 'error';
   /** File being downloaded (present during 'downloading'). */

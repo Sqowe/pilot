@@ -266,6 +266,13 @@ export interface MemoryOverview {
   latestIngestionAt: number | null;
   latestError: string | null;
   latestErrorAt: number | null;
+  /** `memoryRuntime.useEmbedding` — when false the coverage fields are not meaningful. */
+  embeddingEnabled: boolean;
+  /** Chunks carrying a vector. Below `experienceChunkCount` means degraded semantic search. */
+  embeddedChunkCount: number;
+  /** Last embedding failure this process saw, or null. Not persisted across restarts. */
+  embeddingError: string | null;
+  embeddingErrorAt: number | null;
   currentWorkspace?: {
     workspaceKey: string;
     experienceSessionCount: number;
