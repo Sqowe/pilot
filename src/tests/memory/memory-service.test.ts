@@ -1287,6 +1287,28 @@ describe('MemoryService', () => {
       expect(result.embedded).toBe(0);
     });
 
+    it('selects every row when the stored embedding format is behind', async () => {
+      // A format change alters the text vectors are built from without changing
+      // the model, so per-row model comparison sees nothing to do. Under the local
+      // provider no model tag is stored at all, so without this the "rebuild"
+      // banner would trigger a backfill that selected zero rows.
+      setEmbedding(true);
+      await ingest(service);
+      expect(service.countEmbeddingBackfill().chunkCount).toBe(0);
+
+      // isEmbeddingFormatStale has its own gating (local provider only); what is
+      // under test here is that a backfill honours it.
+      vi.spyOn(service, 'isEmbeddingFormatStale').mockReturnValue(true);
+
+      const pending = service.countEmbeddingBackfill();
+      expect(pending.chunkCount).toBeGreaterThan(0);
+      expect(pending.sessionCount).toBeGreaterThan(0);
+
+      const result = await service.backfillEmbeddings();
+      expect(result.success).toBe(true);
+      expect(result.embedded).toBe(pending.chunkCount + pending.sessionCount);
+    });
+
     it('selects rows again after the embedding model changes', async () => {
       setEmbedding(true, 'model-A');
       await ingest(service);

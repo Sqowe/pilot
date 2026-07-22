@@ -809,7 +809,10 @@ export class MemoryService {
     if (!this.getAppConfig().memoryRuntime.useEmbedding) {
       return { sessionCount: 0, chunkCount: 0 };
     }
-    return this.getExperienceStore().countRowsNeedingEmbedding(this.activeEmbeddingModel());
+    return this.getExperienceStore().countRowsNeedingEmbedding(
+      this.activeEmbeddingModel(),
+      this.isEmbeddingFormatStale()
+    );
   }
 
   /**
@@ -835,7 +838,13 @@ export class MemoryService {
 
     const store = this.getExperienceStore();
     const model = this.activeEmbeddingModel();
-    const { sessions, chunks } = store.listRowsNeedingEmbedding(model);
+    // A stale format version means the *text* the vectors were built from has
+    // changed (the EmbeddingGemma prefixes), which no per-row model comparison
+    // can detect — every row has to be recomputed.
+    const { sessions, chunks } = store.listRowsNeedingEmbedding(
+      model,
+      this.isEmbeddingFormatStale()
+    );
     const total = sessions.length + chunks.length;
     let processed = 0;
     const report = (): void => {

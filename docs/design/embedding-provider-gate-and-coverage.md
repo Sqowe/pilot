@@ -89,13 +89,13 @@ had no vectors.
 
 ## 3. Decisions
 
-| #   | Decision                   | Choice                                                                                                                                                                                       |
-| --- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | Self-contained overrides   | A Custom-mode config carrying both `baseUrl` and `model` bypasses the provider gate entirely. The active chat provider contributes nothing to such a request and must not veto it.           |
-| D2  | Gate for every other case  | Resolve the route protocol via `resolvePiRouteProtocol()` and require `'openai'` — the same helper `complete()` already uses. No more hardcoded id lists.                                    |
-| D3  | Fail loudly                | `embed()` throws `EmbeddingUnsupportedError` instead of returning `[]`. Callers still degrade to lexical-only, but record the reason first.                                                  |
-| D4  | Coverage gets its own card | Not folded into "Ingestion status". A chunk stored without a vector was ingested successfully — reporting it as an ingestion failure would be false, and would keep the real problem hidden. |
-| D5  | Backfill, not rebuild      | Re-embedding stored rows needs no LLM extraction, so it gets its own action rather than routing users at `rebuildAll` (which deletes core memory and re-extracts everything).                |
+| #   | Decision                   | Choice                                                                                                                                                                                                                                                                        |
+| --- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | Self-contained overrides   | A Custom-mode config carrying both `baseUrl` and `model` bypasses the provider gate entirely. The active chat provider contributes nothing to such a request and must not veto it.                                                                                            |
+| D2  | Gate for every other case  | Resolve the route protocol via `resolvePiRouteProtocol()` and require `'openai'` — the same helper `complete()` already uses. No more hardcoded id lists.                                                                                                                     |
+| D3  | Fail loudly                | `embed()` throws `EmbeddingUnsupportedError` instead of returning `[]`. Callers still degrade to lexical-only, but record the reason first.                                                                                                                                   |
+| D4  | Coverage gets its own card | Not folded into "Ingestion status". A chunk stored without a vector was ingested successfully — reporting it as an ingestion failure would be false, and would keep the real problem hidden.                                                                                  |
+| D5  | Backfill, not rebuild      | Re-embedding stored rows needs no LLM extraction, so it gets its own action rather than routing users at `rebuildAll` (which deletes core memory and re-extracts everything). Every prompt that used to offer a rebuild for stale vectors now offers this instead — see §6.6. |
 
 ## 4. The gate fix
 
@@ -191,6 +191,14 @@ one. SQLite's `IS NOT` is used rather than `!=` so NULL compares correctly. This
 store homogeneous per install, which `isEmbeddingModelStale` depends on (D5 of the SQLite
 migration design).
 
+A third case had to be added once the staleness banner started using this action (§6.6): when
+`EMBEDDING_FORMAT_VERSION` is behind, the _text_ the vectors were built from has changed — the
+EmbeddingGemma prefixes — while the model has not. No per-row model comparison can see that.
+Worse, format staleness is gated to the local provider, which stores no model tag at all, so
+the model comparison would have selected **zero** rows in exactly the case the banner exists
+for. `listRowsNeedingEmbedding` therefore takes an `includeAll` flag, set from
+`isEmbeddingFormatStale()`, which widens the selection to every row.
+
 `MAX_CONSECUTIVE_FAILURES = 5` aborts a doomed run — a misconfigured provider fails every
 call, and grinding through 500 of them helps nobody — while tolerating a transient blip.
 Meta is re-stamped only if at least one row was embedded.
@@ -220,14 +228,30 @@ A panel mounted mid-run therefore reports correctly, and cannot be left stuck on
 a run it did not start. While a backfill is in flight the progress line replaces the coverage
 hint, since the coverage number above it is a snapshot that is known to be out of date.
 
+### 6.6 The staleness banner and the save prompt now backfill
+
+Both previously ran `rebuildAll`. Neither needed to. A stale model or format invalidates the
+**vectors**, not the extracted summaries — so re-running LLM extraction over every session
+arrives at the same place, having also deleted core memory and dropped any record whose source
+session no longer exists in `cowork.db`. The offer to recompute after a provider/model change
+on save goes through the same path, and no longer needs its own confirmation prompt: the
+backfill already states how many records it will touch.
+
+The banner's two message strings were reworded to talk about recomputing vectors rather than
+rebuilding, and `memory.rebuildOnProviderChange` was renamed `memory.embeddingModelStaleWarning`
+to match `embeddingFormatStaleWarning` — the old name described a confirmation dialog that no
+longer exists. `memory.rebuildNow` had no remaining callers and was removed from all four
+locales. **Rebuild all** stays as an explicit action for the case it is actually for: when the
+extracted summaries themselves need redoing.
+
 ## 7. Tests
 
-| Area                    | Coverage                                                                                                                                                                                                                |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Gate                    | Native provider + self-contained override embeds; inherit-mode over a non-openai protocol throws `EmbeddingUnsupportedError`; native openai-protocol provider passes; Custom override missing `baseUrl` is still gated. |
-| Backfill                | Embeds stored rows without re-extraction; disabled-embeddings no-op; already-current rows untouched; rows reselected after a model change.                                                                              |
-| Text reconstructibility | Backfill embeds byte-identical text to ingestion — asserted both for extractor-supplied keywords and for the derived-keyword fallback, with an explicit non-vacuity assertion.                                          |
-| Panel wiring            | `memory-integration-files.test.ts` asserts the `isActive` prop is wired, so the staleness fix cannot silently regress.                                                                                                  |
+| Area                    | Coverage                                                                                                                                                                                                                                                                                        |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Gate                    | Native provider + self-contained override embeds; inherit-mode over a non-openai protocol throws `EmbeddingUnsupportedError`; native openai-protocol provider passes; Custom override missing `baseUrl` is still gated.                                                                         |
+| Backfill                | Embeds stored rows without re-extraction; disabled-embeddings no-op; already-current rows untouched; rows reselected after a model change; **every** row selected when the stored format version is behind; progress reported once per row, monotonically, from `0 / total` to `total / total`. |
+| Text reconstructibility | Backfill embeds byte-identical text to ingestion — asserted both for extractor-supplied keywords and for the derived-keyword fallback, with an explicit non-vacuity assertion.                                                                                                                  |
+| Panel wiring            | `memory-integration-files.test.ts` asserts the `isActive` prop is wired, so the staleness fix cannot silently regress.                                                                                                                                                                          |
 
 `resolvePiRouteProtocol` is mocked per-test in `memory-llm-client.test.ts`; because
 `vitest.config` sets `mockReset: true`, the default implementation is restored in `beforeEach`.

@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing — the text a vector is built from is already stored, so only the embedding calls
   are needed. It also picks up records whose vectors came from a previously-configured
   model. Progress is reported per record, and an interrupted run resumes where it stopped.
+  The prompts that appear after changing the embedding provider or model now offer this
+  instead of a full rebuild — a model change invalidates the vectors, not the summaries.
 
 ### Changed
 

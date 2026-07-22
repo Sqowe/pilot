@@ -440,31 +440,42 @@ export class ExperienceMemoryStore {
       countChunksWithEmbedding: db.prepare<[]>(
         `SELECT COUNT(*) as n FROM memory_chunks WHERE embedding IS NOT NULL AND length(embedding) > 0`
       ),
-      // Backfill selection: a row needs (re-)embedding when it has no vector at
-      // all, or when its vector came from a different model than the active one.
-      // Cosine similarity is only meaningful within one embedding space, so a
+      // Backfill selection. A row needs (re-)embedding when it has no vector at
+      // all, or when its vector came from a different model than the active one:
+      // cosine similarity is only meaningful within one embedding space, so a
       // model change invalidates the vector as surely as its absence — see
       // MemoryService.isEmbeddingModelStale (design D5: the store is homogeneous).
-      countChunksNeedingEmbedding: db.prepare<[string | null]>(
+      //
+      // The trailing `OR ?` is the includeAll flag (1/0), used when the stored
+      // EMBEDDING_FORMAT_VERSION is behind. A format change alters the text the
+      // vector is built from without changing the model, so per-row model
+      // comparison cannot detect it and every row must be recomputed. Under the
+      // local provider no model tag is stored at all, which is exactly the case
+      // where the model comparison would otherwise select nothing.
+      countChunksNeedingEmbedding: db.prepare<[string | null, number]>(
         `SELECT COUNT(*) as n FROM memory_chunks
          WHERE embedding IS NULL OR length(embedding) = 0
-            OR embedding_model IS NOT ?`
+            OR embedding_model IS NOT ?
+            OR ?`
       ),
-      countSessionsNeedingEmbedding: db.prepare<[string | null]>(
+      countSessionsNeedingEmbedding: db.prepare<[string | null, number]>(
         `SELECT COUNT(*) as n FROM memory_sessions
          WHERE embedding IS NULL OR length(embedding) = 0
-            OR embedding_model IS NOT ?`
+            OR embedding_model IS NOT ?
+            OR ?`
       ),
-      selectChunksNeedingEmbedding: db.prepare<[string | null]>(
+      selectChunksNeedingEmbedding: db.prepare<[string | null, number]>(
         `SELECT id, summary, details, keywords FROM memory_chunks
          WHERE embedding IS NULL OR length(embedding) = 0
             OR embedding_model IS NOT ?
+            OR ?
          ORDER BY ingested_at`
       ),
-      selectSessionsNeedingEmbedding: db.prepare<[string | null]>(
+      selectSessionsNeedingEmbedding: db.prepare<[string | null, number]>(
         `SELECT id, summary, keywords FROM memory_sessions
          WHERE embedding IS NULL OR length(embedding) = 0
             OR embedding_model IS NOT ?
+            OR ?
          ORDER BY ingested_at`
       ),
       updateChunkEmbedding: db.prepare<[Buffer, string | null, number, string]>(
@@ -815,14 +826,18 @@ export class ExperienceMemoryStore {
    * How many rows would a backfill touch: those with no vector, plus those whose
    * vector predates the currently-active embedding model.
    */
-  countRowsNeedingEmbedding(activeModel: string | null): {
+  countRowsNeedingEmbedding(
+    activeModel: string | null,
+    includeAll = false
+  ): {
     sessionCount: number;
     chunkCount: number;
   } {
     const stmts = this.getStmts();
+    const all = includeAll ? 1 : 0;
     return {
-      sessionCount: (stmts.countSessionsNeedingEmbedding.get(activeModel) as { n: number }).n,
-      chunkCount: (stmts.countChunksNeedingEmbedding.get(activeModel) as { n: number }).n,
+      sessionCount: (stmts.countSessionsNeedingEmbedding.get(activeModel, all) as { n: number }).n,
+      chunkCount: (stmts.countChunksNeedingEmbedding.get(activeModel, all) as { n: number }).n,
     };
   }
 
@@ -830,11 +845,15 @@ export class ExperienceMemoryStore {
    * Rows a backfill must re-embed, carrying only the columns the embedded text is
    * built from — no vectors, no transcripts. `keywords` is the stored JSON array.
    */
-  listRowsNeedingEmbedding(activeModel: string | null): {
+  listRowsNeedingEmbedding(
+    activeModel: string | null,
+    includeAll = false
+  ): {
     sessions: Array<{ id: string; summary: string; keywords: string[] }>;
     chunks: Array<{ id: string; summary: string; details: string; keywords: string[] }>;
   } {
     const stmts = this.getStmts();
+    const all = includeAll ? 1 : 0;
     const parseKeywords = (raw: string): string[] => {
       try {
         const parsed = JSON.parse(raw) as unknown;
@@ -844,14 +863,14 @@ export class ExperienceMemoryStore {
       }
     };
     const sessions = (
-      stmts.selectSessionsNeedingEmbedding.all(activeModel) as Array<{
+      stmts.selectSessionsNeedingEmbedding.all(activeModel, all) as Array<{
         id: string;
         summary: string;
         keywords: string;
       }>
     ).map((r) => ({ id: r.id, summary: r.summary, keywords: parseKeywords(r.keywords) }));
     const chunks = (
-      stmts.selectChunksNeedingEmbedding.all(activeModel) as Array<{
+      stmts.selectChunksNeedingEmbedding.all(activeModel, all) as Array<{
         id: string;
         summary: string;
         details: string;

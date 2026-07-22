@@ -655,21 +655,12 @@ export function SettingsMemory({ isActive = true }: { isActive?: boolean } = {})
       await Promise.all([refreshOverview(), refreshEmbeddingFormatStale()]);
       setStatus(t('memory.runtimeSaved'));
 
-      // Prompt for rebuild after saving so the new config is already persisted.
+      // Offer to recompute vectors after saving, so the new config is already
+      // persisted when the backfill reads it. A provider or model change
+      // invalidates the vectors, not the extracted summaries — so this recomputes
+      // embeddings rather than re-running extraction over every session.
       if (embeddingIndexAffected) {
-        if (window.confirm(t('memory.rebuildOnProviderChange'))) {
-          setIsBusy(true);
-          setStatus(null);
-          try {
-            const result = await window.electronAPI.memory.rebuildAll();
-            await Promise.all([refreshOverview(), refreshEmbeddingFormatStale()]);
-            setStatus(t('memory.rebuildAllSuccess', { sessions: result.sessionCount }));
-          } catch (rebuildError) {
-            setStatus(rebuildError instanceof Error ? rebuildError.message : String(rebuildError));
-          } finally {
-            setIsBusy(false);
-          }
-        }
+        await handleBackfillEmbeddings();
       }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
@@ -1112,16 +1103,21 @@ export function SettingsMemory({ isActive = true }: { isActive?: boolean } = {})
               <div className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-900/60 dark:bg-amber-950/30 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs text-amber-700 dark:text-amber-300">
                   {embeddingModelStale
-                    ? t('memory.rebuildOnProviderChange')
+                    ? t('memory.embeddingModelStaleWarning')
                     : t('memory.embeddingFormatStaleWarning')}
                 </p>
+                {/* Backfill, not rebuildAll: both staleness cases need vectors
+                    recomputed, not summaries re-extracted. Rebuilding would delete
+                    core memory, drop records whose source sessions are gone, and
+                    spend an LLM extraction pass on every session to arrive at the
+                    same place. */}
                 <button
                   type="button"
-                  onClick={() => void handleRebuildAll()}
-                  disabled={isBusy}
+                  onClick={() => void handleBackfillEmbeddings()}
+                  disabled={isBusy || isBackfilling}
                   className="shrink-0 rounded-lg border border-amber-400 bg-background px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-60 dark:text-amber-300 dark:hover:bg-amber-900/40"
                 >
-                  {t('memory.rebuildNow')}
+                  {isBackfilling ? t('memory.backfillRunning') : t('memory.backfillAction')}
                 </button>
               </div>
             )}

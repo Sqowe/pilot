@@ -215,8 +215,7 @@
     "checkLlmLabel": "Memória LLM",
     "checkEmbeddingLabel": "Beágyazás",
     "checkSkipped": "letiltva",
-    "embeddingFormatStaleWarning": "A tárolt memória egy régebbi modellformátummal készült beágyazásokat használ. A keresés minősége csökkent, amíg újra nem építi.",
-    "rebuildNow": "Újraépítés most",
+    "embeddingFormatStaleWarning": "A tárolt memória régebbi formátumban lett beágyazva. A keresés minősége csökkent, amíg a vektorok újra nem számolódnak.",
     "rebuildAll": "Teljes memória újraépítése",
     "rebuildAllConfirm": "Ez törli és újraépíti az összes memóriát. Folytatja?",
     "rebuildAllSuccess": "Teljes memória újraépítve ({{sessions}} munkamenet feldolgozva)",
@@ -316,7 +315,7 @@
     "embeddingModelDownloadFailed": "A helyi beágyazási modell letöltése sikertelen. Ellenőrizze a kapcsolatot, vagy váltson egyéni API-szolgáltatóra.",
     "embeddingModelChatError": "Ez chat-modellnek tűnik, nem beágyazási modellnek — nem állít elő beágyazásokat. Használjon beágyazási modellt, például text-embedding-3-small vagy BAAI/bge-m3. A mentés le van tiltva, amíg ezt nem javítja.",
     "embeddingModelPrefixWarning": "Ez a beágyazási modell lekérdezés/dokumentum előtagokat vár, amelyeket itt nem alkalmazunk, ezért gyengébbek lehetnek az eredmények. A távoli szolgáltatóhoz inkább OpenAI text-embedding-* vagy BAAI/bge-m3 ajánlott.",
-    "rebuildOnProviderChange": "Az embedding-szolgáltató vagy modell megváltozott. A meglévő memóriavektorok eltérő formátumot használnak, és rossz keresési eredményeket adnak az újraépítésig. Újraépíti a memóriaindexet most?"
+    "embeddingModelStaleWarning": "A beágyazási szolgáltató vagy modell megváltozott. A meglévő vektorok más térben készültek, ezért a keresés kulcsszavakra vált, amíg újra nem számolódnak."
   },
   "language": {
     "english": "Angol",
