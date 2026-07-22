@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
   EmbeddingProviderType,
+  ExperienceDbStatus,
   LocalEmbeddingProgress,
   MemoryDebugFileContent,
   MemoryDebugFileInfo,
@@ -18,6 +19,19 @@ import { SettingsContentSection } from './shared';
 import { classifyEmbeddingModel } from './embedding-model-validation';
 
 type SearchMode = 'workspace' | 'all' | 'global';
+
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes)) return '—';
+  const KB = 1024;
+  const MB = KB * 1024;
+  const GB = MB * 1024;
+  const TB = GB * 1024;
+  if (bytes < KB) return `${bytes} B`;
+  if (bytes < MB) return `${(bytes / KB).toFixed(1)} KB`;
+  if (bytes < GB) return `${(bytes / MB).toFixed(1)} MB`;
+  if (bytes < TB) return `${(bytes / GB).toFixed(2)} GB`;
+  return `${(bytes / TB).toFixed(2)} TB`;
+}
 
 function formatRelativeTime(timestamp: number, locale?: string): string {
   const now = Date.now();
@@ -149,7 +163,13 @@ function cloneRuntimeConfig(runtime?: MemoryRuntimeConfig): MemoryRuntimeConfig 
   };
 }
 
-export function SettingsMemory() {
+/**
+ * `isActive` follows the SettingsSkills/SettingsConnectors convention: SettingsPanel
+ * keeps visited tabs mounted (hidden via CSS), so without it the overview would stay
+ * frozen at whatever it was when the tab was first opened. The embedding-coverage
+ * card in particular reports a live condition and must not show a stale snapshot.
+ */
+export function SettingsMemory({ isActive = true }: { isActive?: boolean } = {}) {
   const { t, i18n } = useTranslation();
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const sessions = useAppStore((state) => state.sessions);
@@ -184,21 +204,60 @@ export function SettingsMemory() {
   const [checkResult, setCheckResult] = useState<MemoryModelCheckResult | null>(null);
   // True when stored local embeddings predate a format change (e.g. the prefix fix).
   const [embeddingFormatStale, setEmbeddingFormatStale] = useState(false);
+  // Separate §7 condition: stored vectors were embedded with a different model than
+  // the one now configured, so retrieval has silently degraded to lexical-only.
+  const [embeddingModelStale, setEmbeddingModelStale] = useState(false);
+
+  // Experience DB (memory.db) status card — populated when the sqlite entry is selected.
+  const [experienceDbStatus, setExperienceDbStatus] = useState<ExperienceDbStatus | null>(null);
+  const [isVacuuming, setIsVacuuming] = useState(false);
+  const [isBackfilling, setIsBackfilling] = useState(false);
+  const [backfillProgress, setBackfillProgress] = useState<{
+    processed: number;
+    total: number;
+  } | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Selection request sequencing: bumped on each selection/refresh so that in-flight
+  // reads/status fetches whose selection has since changed are discarded (stale-guard).
+  const selectionRequestRef = useRef(0);
 
   const refreshEmbeddingFormatStale = useCallback(async () => {
     try {
-      const { stale } = await window.electronAPI.memory.isEmbeddingFormatStale();
+      const { stale, modelStale } = await window.electronAPI.memory.isEmbeddingFormatStale();
       setEmbeddingFormatStale(stale);
+      setEmbeddingModelStale(modelStale);
     } catch {
       setEmbeddingFormatStale(false);
+      setEmbeddingModelStale(false);
     }
   }, []);
 
   useEffect(() => {
+    if (!isActive) {
+      return;
+    }
     void refreshEmbeddingFormatStale();
-  }, [refreshEmbeddingFormatStale]);
+  }, [refreshEmbeddingFormatStale, isActive]);
+
+  // Backfill progress arrives from the main process per row (throttled there).
+  // Subscribed unconditionally rather than only while running, so a backfill
+  // started before this tab was opened still reports itself.
+  useEffect(() => {
+    return window.electronAPI.memory.onBackfillProgress((p) => {
+      setBackfillProgress(p);
+      // Track the running flag from the events themselves, so a panel mounted
+      // mid-run reports correctly and does not stay stuck on "running" at the end
+      // (the handler's own finally only fires in the tab that started the run).
+      setIsBackfilling(p.processed < p.total);
+    });
+  }, []);
 
   const enabled = overview?.enabled ?? appConfig?.memoryEnabled ?? true;
+
+  const selectedFile =
+    selectedFilePath != null ? (files.find((f) => f.filePath === selectedFilePath) ?? null) : null;
+  const selectedIsSqlite = selectedFile?.storage === 'sqlite';
 
   const groupedResults = useMemo(() => {
     return {
@@ -224,20 +283,74 @@ export function SettingsMemory() {
     setOverview(nextOverview);
   };
 
+  // Fetch the experience DB status card data. When `requestId` is supplied it acts as a
+  // stale-guard: if the selection has since changed (token bumped) the result is discarded.
+  // `silent` skips touching the shared `status` message — used by actions (e.g. vacuum) that
+  // set their own status and don't want it cleared by this refresh.
+  const refreshExperienceDbStatus = async (opts?: { requestId?: number; silent?: boolean }) => {
+    const { requestId, silent = false } = opts ?? {};
+    const isStale = () => requestId != null && requestId !== selectionRequestRef.current;
+    try {
+      const result = await window.electronAPI.memory.getExperienceDbStatus();
+      if (isStale()) return;
+      if (result.success) {
+        setExperienceDbStatus(result.status);
+        // Clear any prior error so a successful reload doesn't leave stale error text.
+        if (!silent) setStatus(null);
+      } else {
+        setExperienceDbStatus(null);
+        if (!silent) {
+          setStatus(
+            `${t('memory.experienceDbStatusError')}${result.error ? `: ${result.error}` : ''}`
+          );
+        }
+      }
+    } catch (error) {
+      if (isStale()) return;
+      setExperienceDbStatus(null);
+      if (!silent) setStatus(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const refreshFiles = async () => {
     const nextFiles = await window.electronAPI.memory.listFiles();
     setFiles(nextFiles);
     const selectedEntry = nextFiles.find((item) => item.filePath === selectedFilePath);
     if (selectedFilePath && selectedEntry?.exists) {
-      const nextContent = await window.electronAPI.memory.readFile(selectedFilePath);
-      setFileContent(nextContent);
+      const requestId = ++selectionRequestRef.current;
+      // Experience memory lives in a binary SQLite DB; the backend refuses raw reads,
+      // so fetch structured status instead of trying to parse the file.
+      if (selectedEntry.storage === 'sqlite') {
+        setFileContent(null); // clear the raw pane when viewing the DB card
+        await refreshExperienceDbStatus({ requestId });
+      } else {
+        setExperienceDbStatus(null); // clear the DB card when viewing a raw file
+        try {
+          const nextContent = await window.electronAPI.memory.readFile(selectedFilePath);
+          if (requestId === selectionRequestRef.current) setFileContent(nextContent);
+        } catch (error) {
+          if (requestId === selectionRequestRef.current) {
+            setStatus(error instanceof Error ? error.message : String(error));
+          }
+        }
+      }
     } else {
+      // Selection no longer valid (file removed/missing): invalidate any in-flight
+      // fetch for the previous entry before resetting the pane.
+      ++selectionRequestRef.current;
       setSelectedFilePath(null);
       setFileContent(null);
+      setExperienceDbStatus(null);
     }
   };
 
+  // Re-reads whenever the tab becomes visible again, so counters that move in the
+  // background (ingestion, embedding coverage) are current rather than a snapshot
+  // from when the panel was first opened.
   useEffect(() => {
+    if (!isActive) {
+      return;
+    }
     let cancelled = false;
     const load = async () => {
       try {
@@ -259,7 +372,7 @@ export function SettingsMemory() {
     return () => {
       cancelled = true;
     };
-  }, [currentWorkspace]);
+  }, [currentWorkspace, isActive]);
 
   const handleToggle = async () => {
     setIsBusy(true);
@@ -341,21 +454,124 @@ export function SettingsMemory() {
   const handleSelectFile = async (filePath: string) => {
     const entry = files.find((item) => item.filePath === filePath);
     if (entry && !entry.exists) {
+      // Supersede any in-flight fetch for the prior entry; nothing to load here.
+      ++selectionRequestRef.current;
       setSelectedFilePath(filePath);
       setFileContent(null);
-      setStatus(t('memory.fileNotCreatedYet'));
+      setExperienceDbStatus(null);
+      setIsBusy(false);
+      setStatus(
+        entry.storage === 'sqlite'
+          ? t('memory.experienceDbNotCreatedYet')
+          : t('memory.fileNotCreatedYet')
+      );
       return;
     }
+    // Bump on each selection so in-flight reads/status fetches for the previous entry
+    // are discarded once they resolve (stale-guard against out-of-order resolution).
+    const requestId = ++selectionRequestRef.current;
+    setSelectedFilePath(filePath);
+    setStatus(null);
     setIsBusy(true);
+    try {
+      // Experience memory lives in a binary SQLite DB (memory.db); the backend refuses
+      // raw reads, so fetch the structured status instead of trying to parse the file.
+      if (entry?.storage === 'sqlite') {
+        setFileContent(null);
+        await refreshExperienceDbStatus({ requestId });
+      } else {
+        setExperienceDbStatus(null);
+        const nextContent = await window.electronAPI.memory.readFile(filePath);
+        if (requestId === selectionRequestRef.current) setFileContent(nextContent);
+      }
+    } catch (error) {
+      if (requestId === selectionRequestRef.current) {
+        setStatus(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (requestId === selectionRequestRef.current) setIsBusy(false);
+    }
+  };
+
+  const handleVacuumExperienceDb = async () => {
+    // Capture the selection token so a selection change mid-vacuum doesn't clobber the
+    // newly-selected entry's status / DB card with this action's result.
+    const requestId = selectionRequestRef.current;
+    const stillCurrent = () => requestId === selectionRequestRef.current;
+    setIsVacuuming(true);
     setStatus(null);
     try {
-      const nextContent = await window.electronAPI.memory.readFile(filePath);
-      setSelectedFilePath(filePath);
-      setFileContent(nextContent);
+      const result = await window.electronAPI.memory.vacuumExperienceDb();
+      if (result.success) {
+        if (stillCurrent()) setStatus(t('memory.vacuumSuccess'));
+        // Silent refresh so this success message isn't cleared by the status reload.
+        await refreshExperienceDbStatus({ requestId, silent: true });
+      } else if (stillCurrent()) {
+        setStatus(`${t('memory.vacuumFailed')}${result.error ? `: ${result.error}` : ''}`);
+      }
+    } catch (error) {
+      if (stillCurrent()) setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsVacuuming(false);
+    }
+  };
+
+  const handleBackfillEmbeddings = async () => {
+    const counts = await window.electronAPI.memory.countEmbeddingBackfill();
+    const total = counts.chunkCount + counts.sessionCount;
+    if (!total) {
+      setStatus(t('memory.backfillNothingToDo'));
+      return;
+    }
+    if (!window.confirm(t('memory.backfillConfirm', { count: total }))) {
+      return;
+    }
+    setIsBackfilling(true);
+    setStatus(null);
+    try {
+      const result = await window.electronAPI.memory.backfillEmbeddings();
+      if (result.success) {
+        setStatus(t('memory.backfillDone', { embedded: result.embedded, failed: result.failed }));
+      } else {
+        setStatus(`${t('memory.backfillFailed')}${result.error ? `: ${result.error}` : ''}`);
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsBusy(false);
+      setIsBackfilling(false);
+      setBackfillProgress(null);
+      // Redraw regardless of outcome: on success the coverage card must show the new
+      // numbers, on failure it must show the recorded reason.
+      await Promise.all([
+        refreshOverview(),
+        refreshEmbeddingFormatStale(),
+        refreshExperienceDbStatus({ silent: true }),
+      ]);
+    }
+  };
+
+  const handleExportExperienceJson = async () => {
+    const requestId = selectionRequestRef.current;
+    const stillCurrent = () => requestId === selectionRequestRef.current;
+    setIsExporting(true);
+    setStatus(null);
+    try {
+      const result = await window.electronAPI.memory.exportExperienceMemoryToFile();
+      if (!stillCurrent()) return;
+      if (result.success) {
+        setStatus(t('memory.exportSuccess', { path: result.path }));
+      } else if ('canceled' in result && result.canceled) {
+        // User dismissed the save dialog — no message.
+      } else {
+        // Failure (carries `error`) or any unexpected shape — surface it rather than
+        // silently misclassifying it as a cancellation.
+        const detail = 'error' in result && result.error ? `: ${result.error}` : '';
+        setStatus(`${t('memory.exportFailed')}${detail}`);
+      }
+    } catch (error) {
+      if (stillCurrent()) setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -439,21 +655,12 @@ export function SettingsMemory() {
       await Promise.all([refreshOverview(), refreshEmbeddingFormatStale()]);
       setStatus(t('memory.runtimeSaved'));
 
-      // Prompt for rebuild after saving so the new config is already persisted.
+      // Offer to recompute vectors after saving, so the new config is already
+      // persisted when the backfill reads it. A provider or model change
+      // invalidates the vectors, not the extracted summaries — so this recomputes
+      // embeddings rather than re-running extraction over every session.
       if (embeddingIndexAffected) {
-        if (window.confirm(t('memory.rebuildOnProviderChange'))) {
-          setIsBusy(true);
-          setStatus(null);
-          try {
-            const result = await window.electronAPI.memory.rebuildAll();
-            await Promise.all([refreshOverview(), refreshEmbeddingFormatStale()]);
-            setStatus(t('memory.rebuildAllSuccess', { sessions: result.sessionCount }));
-          } catch (rebuildError) {
-            setStatus(rebuildError instanceof Error ? rebuildError.message : String(rebuildError));
-          } finally {
-            setIsBusy(false);
-          }
-        }
+        await handleBackfillEmbeddings();
       }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
@@ -661,6 +868,72 @@ export function SettingsMemory() {
                   : undefined
               }
             />
+            {/* Embedding coverage is deliberately its own card rather than part of
+                "Ingestion status": a chunk stored without a vector was ingested
+                successfully, it is just invisible to semantic search. Folding the
+                two together would report a failure that did not happen — and hide
+                one that did. */}
+            {overview?.embeddingEnabled ? (
+              <InfoCard
+                label={t('memory.embeddingCoverage')}
+                status={
+                  overview.embeddingError
+                    ? 'error'
+                    : overview.embeddedChunkCount < overview.experienceChunkCount
+                      ? 'warning'
+                      : 'healthy'
+                }
+                value={t('memory.embeddingCoverageValue', {
+                  embedded: overview.embeddedChunkCount,
+                  total: overview.experienceChunkCount,
+                  percent: overview.experienceChunkCount
+                    ? Math.round(
+                        (overview.embeddedChunkCount / overview.experienceChunkCount) * 100
+                      )
+                    : 0,
+                })}
+                secondary={
+                  // While a backfill runs, progress is the only thing worth saying:
+                  // the coverage number above is a snapshot and cannot move on its own.
+                  isBackfilling && backfillProgress
+                    ? t('memory.backfillProgress', {
+                        processed: backfillProgress.processed,
+                        total: backfillProgress.total,
+                      })
+                    : overview.embeddingError
+                      ? [
+                          overview.embeddingError,
+                          overview.embeddingErrorAt
+                            ? t('memory.lastFailure', {
+                                time: new Date(overview.embeddingErrorAt).toLocaleString(
+                                  i18n.language
+                                ),
+                              })
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join('\n')
+                      : overview.embeddedChunkCount < overview.experienceChunkCount
+                        ? t('memory.embeddingCoverageHint')
+                        : undefined
+                }
+                // Offered only when there is something to fix. Unlike "Rebuild all"
+                // this runs no LLM extraction and deletes nothing — it just computes
+                // the missing vectors from text already in the database.
+                action={
+                  overview.embeddedChunkCount < overview.experienceChunkCount
+                    ? {
+                        label: isBackfilling
+                          ? t('memory.backfillRunning')
+                          : t('memory.backfillAction'),
+                        onClick: () => {
+                          if (!isBackfilling) void handleBackfillEmbeddings();
+                        },
+                      }
+                    : undefined
+                }
+              />
+            ) : null}
           </div>
         </div>
       </SettingsContentSection>
@@ -826,18 +1099,25 @@ export function SettingsMemory() {
                 />
               </LabeledField>
             </div>
-            {embeddingFormatStale && (
+            {(embeddingFormatStale || embeddingModelStale) && (
               <div className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-900/60 dark:bg-amber-950/30 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs text-amber-700 dark:text-amber-300">
-                  {t('memory.embeddingFormatStaleWarning')}
+                  {embeddingModelStale
+                    ? t('memory.embeddingModelStaleWarning')
+                    : t('memory.embeddingFormatStaleWarning')}
                 </p>
+                {/* Backfill, not rebuildAll: both staleness cases need vectors
+                    recomputed, not summaries re-extracted. Rebuilding would delete
+                    core memory, drop records whose source sessions are gone, and
+                    spend an LLM extraction pass on every session to arrive at the
+                    same place. */}
                 <button
                   type="button"
-                  onClick={() => void handleRebuildAll()}
-                  disabled={isBusy}
+                  onClick={() => void handleBackfillEmbeddings()}
+                  disabled={isBusy || isBackfilling}
                   className="shrink-0 rounded-lg border border-amber-400 bg-background px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-60 dark:text-amber-300 dark:hover:bg-amber-900/40"
                 >
-                  {t('memory.rebuildNow')}
+                  {isBackfilling ? t('memory.backfillRunning') : t('memory.backfillAction')}
                 </button>
               </div>
             )}
@@ -1123,7 +1403,14 @@ export function SettingsMemory() {
                       : 'border-border-muted bg-background/80 hover:bg-surface-hover'
                   }`}
                 >
-                  <p className="text-sm font-medium text-text-primary">{file.label}</p>
+                  <p className="text-sm font-medium text-text-primary">
+                    {file.label}
+                    {file.storage === 'sqlite' && (
+                      <span className="ml-2 rounded bg-accent/10 px-1.5 py-0.5 align-middle text-[10px] font-medium uppercase tracking-wide text-accent">
+                        SQLite
+                      </span>
+                    )}
+                  </p>
                   <p className="mt-1 text-xs text-text-muted">{file.filePath}</p>
                   <p className="mt-2 text-[11px] text-text-muted">
                     {file.sizeBytes} bytes
@@ -1142,32 +1429,51 @@ export function SettingsMemory() {
           </div>
 
           <div className="rounded-xl border border-border-muted bg-background/80 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-text-primary">{t('memory.fileContent')}</p>
-                {fileContent?.filePath && (
-                  <p className="mt-1 text-xs text-text-muted">{fileContent.filePath}</p>
-                )}
-              </div>
-              {fileContent?.filePath && (
-                <button
-                  onClick={() => {
-                    void window.electronAPI.showItemInFolder(fileContent.filePath);
-                  }}
-                  className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-text-primary"
-                >
-                  {t('memory.revealInFinder')}
-                </button>
-              )}
-            </div>
-            {fileContent ? (
-              <pre className="mt-3 max-h-[34rem] overflow-auto rounded-lg bg-background-secondary/80 p-3 text-xs leading-5 text-text-secondary whitespace-pre-wrap">
-                {fileContent.parsed
-                  ? JSON.stringify(fileContent.parsed, null, 2)
-                  : fileContent.text || t('memory.emptyFile')}
-              </pre>
+            {selectedIsSqlite ? (
+              <ExperienceDbStatusCard
+                status={experienceDbStatus}
+                exists={selectedFile?.exists ?? false}
+                isVacuuming={isVacuuming}
+                isExporting={isExporting}
+                onVacuum={() => {
+                  void handleVacuumExperienceDb();
+                }}
+                onExport={() => {
+                  void handleExportExperienceJson();
+                }}
+              />
             ) : (
-              <p className="mt-3 text-sm text-text-muted">{t('memory.selectFileHint')}</p>
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-text-primary">
+                      {t('memory.fileContent')}
+                    </p>
+                    {fileContent?.filePath && (
+                      <p className="mt-1 text-xs text-text-muted">{fileContent.filePath}</p>
+                    )}
+                  </div>
+                  {fileContent?.filePath && (
+                    <button
+                      onClick={() => {
+                        void window.electronAPI.showItemInFolder(fileContent.filePath);
+                      }}
+                      className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-text-primary"
+                    >
+                      {t('memory.revealInFinder')}
+                    </button>
+                  )}
+                </div>
+                {fileContent ? (
+                  <pre className="mt-3 max-h-[34rem] overflow-auto rounded-lg bg-background-secondary/80 p-3 text-xs leading-5 text-text-secondary whitespace-pre-wrap">
+                    {fileContent.parsed
+                      ? JSON.stringify(fileContent.parsed, null, 2)
+                      : fileContent.text || t('memory.emptyFile')}
+                  </pre>
+                ) : (
+                  <p className="mt-3 text-sm text-text-muted">{t('memory.selectFileHint')}</p>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -2065,6 +2371,122 @@ function NumberField({
         step={step}
         className="w-20 rounded border border-border bg-background px-2 py-1 text-right text-sm text-text-primary"
       />
+    </div>
+  );
+}
+
+function ExperienceDbStatusCard({
+  status,
+  exists,
+  isVacuuming,
+  isExporting,
+  onVacuum,
+  onExport,
+}: {
+  status: ExperienceDbStatus | null;
+  /** Whether the selected memory.db entry exists on disk. */
+  exists: boolean;
+  isVacuuming: boolean;
+  isExporting: boolean;
+  onVacuum: () => void;
+  onExport: () => void;
+}) {
+  const { t } = useTranslation();
+  // Defensive normalization: the backend type guarantees these fields, but guard the
+  // render boundary against partial/undefined payloads (older schema, IPC mismatch)
+  // so the card degrades gracefully instead of throwing or rendering NaN.
+  const breakdown = status?.workspaceBreakdown ?? [];
+  const sizeLabel =
+    status && typeof status.sizeBytes === 'number' ? formatFileSize(status.sizeBytes) : '—';
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-text-primary">{t('memory.experienceDbTitle')}</p>
+          <p className="mt-1 text-xs text-text-muted">memory.db</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={onExport}
+            disabled={!status || isExporting}
+            className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isExporting ? t('memory.exporting') : t('memory.exportJson')}
+          </button>
+          <button
+            onClick={onVacuum}
+            disabled={!status || isVacuuming}
+            className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isVacuuming ? t('memory.vacuuming') : t('memory.vacuum')}
+          </button>
+        </div>
+      </div>
+
+      {!exists ? (
+        <p className="text-sm text-text-muted">{t('memory.experienceDbNotCreatedYet')}</p>
+      ) : status ? (
+        <div className="space-y-2">
+          <p className="text-[11px] text-text-muted">
+            {t('memory.experienceDbSchema', { version: status.schemaVersion ?? 1 })} ·{' '}
+            {status.journalMode ? status.journalMode.toUpperCase() : '—'} · {sizeLabel}
+          </p>
+          <p className="text-sm text-text-primary">
+            {t('memory.experienceDbCounts', {
+              sessions: status.sessionCount ?? 0,
+              chunks: status.chunkCount ?? 0,
+            })}
+          </p>
+          <p className="text-xs text-text-secondary">
+            <span className="text-text-muted">{t('memory.embeddingModel')}:</span>{' '}
+            {status.embeddingModel ? (
+              <>
+                {status.embeddingModel}
+                {status.embeddingDim != null
+                  ? ` · ${t('memory.dimensionShort')} ${status.embeddingDim}`
+                  : ''}
+              </>
+            ) : (
+              t('memory.noEmbeddingModel')
+            )}
+          </p>
+          <p className="text-xs text-text-secondary">
+            <span className="text-text-muted">{t('memory.integrity')}:</span>{' '}
+            {status.integrityOk ? t('memory.integrityOk') : t('memory.integrityFailed')}
+          </p>
+
+          <div>
+            <p className="text-xs text-text-muted">{t('memory.byWorkspace')}</p>
+            {breakdown.length > 0 ? (
+              <ul className="mt-1 space-y-1">
+                {breakdown.map((ws, idx) => {
+                  const key =
+                    ws.workspaceKey && ws.workspaceKey !== '(none)' ? ws.workspaceKey : '';
+                  const label = key
+                    ? (key.split(/[\\/]/).filter(Boolean).pop() ?? key)
+                    : t('memory.globalWorkspace');
+                  return (
+                    <li
+                      key={`${ws.workspaceKey || '(none)'}-${idx}`}
+                      className="flex items-center justify-between gap-2 text-xs text-text-secondary"
+                      title={ws.workspaceKey || undefined}
+                    >
+                      <span className="truncate">{label}</span>
+                      <span className="shrink-0 text-text-muted">
+                        {ws.sessionCount ?? 0} · {ws.chunkCount ?? 0}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="mt-1 text-xs text-text-muted">{t('memory.noWorkspaces')}</p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-text-muted">{t('memory.experienceDbStatusMissing')}</p>
+      )}
     </div>
   );
 }

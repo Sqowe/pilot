@@ -310,7 +310,7 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
                 {viewedTabs.has('skills') && <SettingsSkills isActive={activeTab === 'skills'} />}
               </div>
               <div className={activeTab === 'memory' ? '' : 'hidden'}>
-                {viewedTabs.has('memory') && <SettingsMemory />}
+                {viewedTabs.has('memory') && <SettingsMemory isActive={activeTab === 'memory'} />}
               </div>
               <div className={activeTab === 'schedule' ? '' : 'hidden'}>
                 {viewedTabs.has('schedule') && (

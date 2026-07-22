@@ -12,11 +12,18 @@ import { ExperienceMemoryStore } from './experience-memory-store';
 import { MemoryIngestionQueue } from './memory-ingestion-queue';
 import type { MemoryLLMClientLike } from './memory-llm-client';
 import { MemoryLLMClient, type MemoryLLMClientOptions } from './memory-llm-client';
-import { EMBEDDING_FORMAT_VERSION, type EmbeddingKind } from '../../shared/local-embedding-types';
+import {
+  EMBEDDING_FORMAT_VERSION,
+  type EmbeddingKind,
+  type MemoryBackfillProgress,
+} from '../../shared/local-embedding-types';
 import { MemoryNavigator } from './memory-navigator';
 import { DEFAULT_MEMORY_PROMPTS, type MemoryPromptSet } from './memory-prompts';
 import { MemoryRetriever } from './memory-retriever';
 import { MemorySessionStateStore } from './memory-state-store';
+import { openMemoryDb, getMemoryMeta, type MemoryDb } from './memory-db';
+import { runExperienceMemoryMigration } from './memory-db-migration';
+import type { ExperienceDbStatus } from './memory-types';
 import type {
   ChunkMemoryItem,
   MemoryDebugFileContent,
@@ -44,13 +51,17 @@ import {
   normalizeWorkspaceKey,
   parseCoreCombinedKey,
   safeRemoveFile,
+  blobToEmbedding,
 } from './memory-utils';
 import { createMemoryTools } from './memory-tools';
 
 interface MemoryPaths {
   storageRoot: string;
   coreFilePath: string;
+  /** Legacy JSON path — still used as the migration source and .bak location. */
   experienceFilePath: string;
+  /** SQLite database path — the live store after migration. */
+  experienceDbPath: string;
   stateFilePath: string;
   artifactsDir: string;
 }
@@ -142,6 +153,39 @@ function escapeMemoryContextText(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** Decode a BLOB buffer to a number[] for JSON export. Returns [] on invalid input. */
+function blobToEmbeddingForExport(blob: Buffer): number[] {
+  return blobToEmbedding(blob);
+}
+
+/** Parse a JSON string column, returning `fallback` on error. */
+function safeParseJson<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * The exact text a chunk's vector is computed from. Shared by ingestion and by
+ * backfillEmbeddings() so both produce identical vectors for identical rows —
+ * every argument is a persisted column, which is why a backfill needs no LLM call.
+ */
+export function buildChunkEmbeddingText(
+  summary: string,
+  details: string,
+  keywords: string[]
+): string {
+  return [summary, details, ...keywords].join(' ').trim();
+}
+
+/** Session counterpart of {@link buildChunkEmbeddingText} (sessions have no `details`). */
+export function buildSessionEmbeddingText(summary: string, keywords: string[]): string {
+  return [summary, ...keywords].join(' ').trim();
+}
+
 export class MemoryService {
   private readonly queue = new MemoryIngestionQueue();
   private readonly deletedSessionIds = new Set<string>();
@@ -155,6 +199,15 @@ export class MemoryService {
   private coreStore: CoreMemoryStore | null = null;
   private stateStore: MemorySessionStateStore | null = null;
   private experienceStore: ExperienceMemoryStore | null = null;
+  private memoryDb: MemoryDb | null = null;
+  /** Debounces the §7 lexical-fallback warning, which is hit on every prompt. */
+  private loggedModelStaleWarning = false;
+  /**
+   * Last embedding failure, surfaced via getOverview(). Process-lifetime only —
+   * it exists so a degraded embedding path is visible in Settings instead of
+   * living solely in a log file that rotates away within a day.
+   */
+  private lastEmbeddingError: { message: string; at: number } | null = null;
   private retrievalMetricsBySession = new Map<
     string,
     import('./memory-types').MemoryRetrievalMetrics
@@ -189,7 +242,7 @@ export class MemoryService {
       getCoreEntries: () => this.getCoreStore().getEntries(),
       getCoreFilePath: () => this.getPaths().coreFilePath,
       getExperienceStore: () => this.getExperienceStore(),
-      getExperienceFilePath: () => this.getPaths().experienceFilePath,
+      getExperienceFilePath: () => this.getPaths().experienceDbPath,
       getSessionTitle: (sessionId) => this.getSessionTitle(sessionId),
     });
     this.tools = createMemoryTools(this);
@@ -264,6 +317,14 @@ export class MemoryService {
     const stateRecords = this.getStateStore().getAll();
     const currentWorkspace = normalizeWorkspaceKey(cwd);
     const topSourceWorkspaces = experienceStore.getStatsBySourceWorkspace();
+    const { sessionCount: expSessionCount, chunkCount: expChunkCount } =
+      experienceStore.getCounts();
+    const embeddingEnabled = Boolean(this.getAppConfig().memoryRuntime?.useEmbedding);
+    // Only pay for the coverage count when embeddings are on — with them off,
+    // zero coverage is the expected state and the card is not rendered.
+    const embeddedChunkCount = embeddingEnabled
+      ? experienceStore.getEmbeddedCounts().chunkCount
+      : 0;
 
     const activeFailures = stateRecords
       .filter((record) => Boolean(record.lastError) && !record.lastErrorDismissedAt)
@@ -273,11 +334,11 @@ export class MemoryService {
       enabled: this.isEnabled(),
       storageRoot: paths.storageRoot,
       coreFilePath: paths.coreFilePath,
-      experienceFilePath: paths.experienceFilePath,
+      experienceFilePath: paths.experienceDbPath,
       stateFilePath: paths.stateFilePath,
       coreCount: coreEntries.length,
-      experienceSessionCount: experienceStore.sessions.length,
-      experienceChunkCount: experienceStore.chunks.length,
+      experienceSessionCount: expSessionCount,
+      experienceChunkCount: expChunkCount,
       sourceWorkspaceCount: topSourceWorkspaces.filter((item) => item.workspaceKey !== '(none)')
         .length,
       failedSessionCount: activeFailures.length,
@@ -289,15 +350,18 @@ export class MemoryService {
       }, null),
       latestError: activeFailures[0]?.lastError || null,
       latestErrorAt: activeFailures[0]?.lastErrorAt || activeFailures[0]?.updatedAt || null,
+      embeddingEnabled,
+      embeddedChunkCount,
+      embeddingError: this.lastEmbeddingError?.message ?? null,
+      embeddingErrorAt: this.lastEmbeddingError?.at ?? null,
       currentWorkspace: currentWorkspace
         ? {
             workspaceKey: currentWorkspace,
-            experienceSessionCount: experienceStore.sessions.filter(
-              (item) => item.sourceWorkspace === currentWorkspace
-            ).length,
-            experienceChunkCount: experienceStore.chunks.filter(
-              (item) => item.sourceWorkspace === currentWorkspace
-            ).length,
+            experienceSessionCount:
+              topSourceWorkspaces.find((s) => s.workspaceKey === currentWorkspace)?.sessionCount ??
+              0,
+            experienceChunkCount:
+              topSourceWorkspaces.find((s) => s.workspaceKey === currentWorkspace)?.chunkCount ?? 0,
           }
         : undefined,
       topSourceWorkspaces,
@@ -318,13 +382,14 @@ export class MemoryService {
       },
       {
         kind: 'experience',
-        label: 'experience_memory.json',
-        filePath: paths.experienceFilePath,
-        exists: fs.existsSync(paths.experienceFilePath),
-        sizeBytes: getFileSizeBytes(paths.experienceFilePath),
-        updatedAt: getFileTimestampMs(paths.experienceFilePath),
-        sessionCount: experienceStore.sessions.length,
-        chunkCount: experienceStore.chunks.length,
+        label: 'memory.db',
+        filePath: paths.experienceDbPath,
+        exists: fs.existsSync(paths.experienceDbPath),
+        sizeBytes: getFileSizeBytes(paths.experienceDbPath),
+        updatedAt: getFileTimestampMs(paths.experienceDbPath),
+        sessionCount: experienceStore.getCounts().sessionCount,
+        chunkCount: experienceStore.getCounts().chunkCount,
+        storage: 'sqlite',
       },
       {
         kind: 'state',
@@ -346,6 +411,13 @@ export class MemoryService {
   }
 
   readFile(filePath: string): MemoryDebugFileContent {
+    // Refuse binary db reads — use getExperienceDbStatus() / exportExperienceJson() instead.
+    const paths = this.getPaths();
+    if (path.resolve(filePath) === path.resolve(paths.experienceDbPath)) {
+      throw new Error(
+        'memory.db is a binary SQLite file — use getExperienceDbStatus() or exportExperienceJson() to inspect it'
+      );
+    }
     const normalizedPath = this.resolveReadablePath(filePath);
     const stat = fs.statSync(normalizedPath);
     if (stat?.isDirectory()) {
@@ -501,10 +573,14 @@ export class MemoryService {
   async rebuildAll(): Promise<{ success: boolean; workspaceCount: number; sessionCount: number }> {
     const paths = this.getPaths();
     safeRemoveFile(paths.coreFilePath);
-    safeRemoveFile(paths.experienceFilePath);
+    // Close the DB handle BEFORE deleting the file — required on Windows (file
+    // lock) and avoids writing to an unlinked file on POSIX.
+    this.resetStores();
+    safeRemoveFile(paths.experienceDbPath);
+    safeRemoveFile(`${paths.experienceDbPath}-wal`);
+    safeRemoveFile(`${paths.experienceDbPath}-shm`);
     safeRemoveFile(paths.stateFilePath);
     fs.rmSync(paths.artifactsDir, { recursive: true, force: true });
-    this.resetStores();
 
     const sessionRows = this.db.sessions
       .getAll()
@@ -527,9 +603,342 @@ export class MemoryService {
 
     const store = this.getExperienceStore();
     store.removeBySourceWorkspace(workspaceKey);
+    // save() is a no-op for the SQLite store; kept for interface compat.
     store.save();
     this.getStateStore().deleteBySourceWorkspace(workspaceKey);
     return { success: true, workspaceKey };
+  }
+
+  /** Returns status metadata for the experience memory.db (counts, model, integrity). */
+  getExperienceDbStatus(): ExperienceDbStatus {
+    this.ensureStores(); // guarantees memoryDb is open
+    const paths = this.getPaths();
+    const store = this.getExperienceStore();
+    const db = this.memoryDb!.raw;
+
+    const { sessionCount, chunkCount } = store.getCounts();
+    const embeddingModel = store.getEmbeddingModel();
+    // Derive embeddingDim from a representative row rather than meta
+    // (meta never stores dim; per-row columns are the authoritative source).
+    const dimRow = db
+      .prepare(`SELECT embedding_dim FROM memory_sessions WHERE embedding_dim IS NOT NULL LIMIT 1`)
+      .get() as { embedding_dim: number } | undefined;
+    const embeddingDim =
+      dimRow?.embedding_dim ??
+      (
+        db
+          .prepare(
+            `SELECT embedding_dim FROM memory_chunks WHERE embedding_dim IS NOT NULL LIMIT 1`
+          )
+          .get() as { embedding_dim: number } | undefined
+      )?.embedding_dim ??
+      null;
+    const schemaVersionRaw = parseInt(getMemoryMeta(db, 'schema_version') ?? '1', 10);
+    const schemaVersion = Number.isFinite(schemaVersionRaw) ? schemaVersionRaw : 1;
+    const sizeBytes = getFileSizeBytes(paths.experienceDbPath);
+
+    let integrityOk = true;
+    try {
+      // Use quick_check (O(1)) rather than full integrity_check (O(N)) to avoid
+      // blocking the event loop on large databases. Full integrity_check can be
+      // triggered explicitly via vacuumExperienceDb() or a dedicated debug command.
+      const result = db.pragma('quick_check') as Array<{ quick_check: string }>;
+      integrityOk = result.length === 1 && result[0].quick_check === 'ok';
+    } catch {
+      integrityOk = false;
+    }
+
+    let journalMode: string | null = null;
+    try {
+      const value = db.pragma('journal_mode', { simple: true });
+      if (typeof value === 'string') journalMode = value;
+    } catch {
+      // Report null on failure rather than masking it as a specific journaling mode.
+    }
+
+    const workspaceBreakdown = store.getStatsBySourceWorkspace();
+
+    return {
+      schemaVersion,
+      sessionCount,
+      chunkCount,
+      embeddingModel: embeddingModel ?? null,
+      embeddingDim: Number.isFinite(embeddingDim) ? embeddingDim : null,
+      sizeBytes,
+      journalMode,
+      integrityOk,
+      workspaceBreakdown,
+    };
+  }
+
+  /** Dump the SQLite experience store back to the { sessions, chunks } JSON shape.
+   * Includes decoded embeddings so the export is a full-fidelity backup.
+   */
+  exportExperienceJson(): {
+    sessions: unknown[];
+    chunks: unknown[];
+    embeddingFormatVersion?: number;
+    embeddingModel?: string;
+  } {
+    this.ensureStores(); // guarantees memoryDb is open
+    const db = this.memoryDb!.raw;
+
+    // Wrap in a deferred read transaction to get a consistent snapshot and
+    // prevent a partially-committed write from producing an inconsistent export.
+    const readSnapshot = db.transaction(() => {
+      const sessionRows = db.prepare(`SELECT * FROM memory_sessions`).all() as Array<
+        Record<string, unknown> & { embedding: Buffer | null }
+      >;
+      const chunkRows = db.prepare(`SELECT * FROM memory_chunks`).all() as Array<
+        Record<string, unknown> & { embedding: Buffer | null }
+      >;
+      return { sessionRows, chunkRows };
+    });
+    const { sessionRows, chunkRows } = readSnapshot();
+
+    const sessions = sessionRows.map((r) => ({
+      id: r.id,
+      session_id: r.session_id,
+      source_workspace: r.source_workspace ?? null,
+      source_workspace_label: r.source_workspace_label ?? '',
+      source_session_id: r.source_session_id,
+      source_session_title: r.source_session_title ?? '',
+      source_session_date: r.source_session_date ?? '',
+      summary: r.summary,
+      keywords: safeParseJson(r.keywords as string, []),
+      chunk_ids: safeParseJson(r.chunk_ids as string, []),
+      raw_session: safeParseJson(r.raw_session as string | null, []),
+      session_date: r.session_date ?? '',
+      created_at: r.created_at ?? '',
+      ingested_at: r.ingested_at ?? '',
+      embedding: r.embedding ? blobToEmbeddingForExport(r.embedding) : [],
+    }));
+
+    const chunks = chunkRows.map((r) => ({
+      id: r.id,
+      session_id: r.session_id,
+      source_workspace: r.source_workspace ?? null,
+      source_workspace_label: r.source_workspace_label ?? '',
+      source_session_id: r.source_session_id,
+      source_session_title: r.source_session_title ?? '',
+      source_session_date: r.source_session_date ?? '',
+      summary: r.summary,
+      details: r.details,
+      keywords: safeParseJson(r.keywords as string, []),
+      source_turns: safeParseJson(r.source_turns as string, []),
+      raw_text: r.raw_text ?? '',
+      session_date: r.session_date ?? '',
+      created_at: r.created_at ?? '',
+      ingested_at: r.ingested_at ?? '',
+      embedding: r.embedding ? blobToEmbeddingForExport(r.embedding) : [],
+    }));
+
+    return {
+      sessions,
+      chunks,
+      // Include top-level meta so the export is a legacy-compatible full-fidelity
+      // backup: restoring this JSON won't falsely trigger a v1→v2 rebuild prompt.
+      embeddingFormatVersion: this.getExperienceStore().getEmbeddingFormatVersion(),
+      embeddingModel: this.getExperienceStore().getEmbeddingModel() ?? undefined,
+    };
+  }
+
+  /**
+   * Write experience memory export to a file path (async, non-blocking disk I/O).
+   * Preferred over exportExperienceJson() for UI-triggered exports —
+   * avoids sending a large payload over IPC.
+   */
+  async exportExperienceJsonToFile(
+    filePath: string
+  ): Promise<{ success: true; path: string } | { success: false; error: string }> {
+    try {
+      const data = this.exportExperienceJson();
+      const json = JSON.stringify(data, null, 2);
+      const { writeFile, rename, unlink } = await import('node:fs/promises');
+      // Use a unique tmp name to avoid collisions with concurrent exports.
+      const tmpPath = `${filePath}.${Date.now()}.tmp`;
+      const bakPath = `${filePath}.bak`;
+      let bakCreated = false;
+      try {
+        await writeFile(tmpPath, json, 'utf8');
+        // Safe overwrite strategy: rename dest → .bak, then tmp → dest, then delete .bak.
+        // If tmp→dest fails, restore .bak. No delete-then-rename gap.
+        try {
+          await rename(filePath, bakPath);
+          bakCreated = true;
+        } catch (bakErr) {
+          // dest does not exist yet — that is fine, skip backup.
+          const code = (bakErr as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT') throw bakErr;
+        }
+        try {
+          await rename(tmpPath, filePath);
+        } catch (moveErr) {
+          // Restore backup if the final move failed.
+          if (bakCreated) {
+            await rename(bakPath, filePath).catch(() => {});
+          }
+          throw moveErr;
+        }
+        // Success: clean up backup.
+        if (bakCreated) {
+          await unlink(bakPath).catch(() => {});
+        }
+      } catch (writeErr) {
+        // Clean up temp file on failure (best-effort).
+        await unlink(tmpPath).catch(() => {});
+        throw writeErr;
+      }
+      return { success: true, path: filePath };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * Model tag stamped on rows carrying a vector. Must stay identical to the rule
+   * in persistBundle, or a backfill would immediately consider its own output stale.
+   */
+  private activeEmbeddingModel(): string | null {
+    const runtime = this.getAppConfig().memoryRuntime;
+    return runtime.useEmbedding && runtime.embedding?.model ? runtime.embedding.model : null;
+  }
+
+  /** How many rows a backfill would touch, for the confirmation prompt. */
+  countEmbeddingBackfill(): { sessionCount: number; chunkCount: number } {
+    if (!this.getAppConfig().memoryRuntime.useEmbedding) {
+      return { sessionCount: 0, chunkCount: 0 };
+    }
+    return this.getExperienceStore().countRowsNeedingEmbedding(
+      this.activeEmbeddingModel(),
+      this.isEmbeddingFormatStale()
+    );
+  }
+
+  /**
+   * Compute vectors for stored rows that lack one (or carry one from a different
+   * model), leaving all extracted content untouched.
+   *
+   * This is emphatically *not* rebuildAll: no LLM extraction runs, no session is
+   * re-read, and core memory is not deleted. It is possible only because the
+   * embedded text is derived purely from persisted columns — see
+   * {@link buildChunkEmbeddingText}.
+   *
+   * Embeddings are computed sequentially, matching the ingestion path.
+   */
+  async backfillEmbeddings(onProgress?: (p: MemoryBackfillProgress) => void): Promise<{
+    success: boolean;
+    embedded: number;
+    failed: number;
+    error?: string;
+  }> {
+    if (!this.getAppConfig().memoryRuntime.useEmbedding) {
+      return { success: false, embedded: 0, failed: 0, error: 'Embeddings are disabled.' };
+    }
+
+    const store = this.getExperienceStore();
+    const model = this.activeEmbeddingModel();
+    // A stale format version means the *text* the vectors were built from has
+    // changed (the EmbeddingGemma prefixes), which no per-row model comparison
+    // can detect — every row has to be recomputed.
+    const { sessions, chunks } = store.listRowsNeedingEmbedding(
+      model,
+      this.isEmbeddingFormatStale()
+    );
+    const total = sessions.length + chunks.length;
+    let processed = 0;
+    const report = (): void => {
+      processed += 1;
+      onProgress?.({ processed, total });
+    };
+
+    let embedded = 0;
+    let failed = 0;
+    let consecutiveFailures = 0;
+    // A misconfigured provider fails every call. Give up rather than grind through
+    // hundreds of doomed requests, but tolerate the odd transient network error.
+    const MAX_CONSECUTIVE_FAILURES = 5;
+    const abort = () => ({
+      success: false,
+      embedded,
+      failed,
+      error:
+        this.lastEmbeddingError?.message ??
+        `Embedding failed ${MAX_CONSECUTIVE_FAILURES} times in a row.`,
+    });
+
+    onProgress?.({ processed: 0, total });
+
+    for (const chunk of chunks) {
+      const text = buildChunkEmbeddingText(chunk.summary, chunk.details, chunk.keywords);
+      if (!text) {
+        report();
+        continue;
+      }
+      const vector = await this.embedText(text, 'document');
+      if (vector.length) {
+        store.updateChunkEmbedding(chunk.id, vector, model);
+        embedded += 1;
+        consecutiveFailures = 0;
+      } else {
+        failed += 1;
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) return abort();
+      }
+      report();
+    }
+
+    for (const session of sessions) {
+      const text = buildSessionEmbeddingText(session.summary, session.keywords);
+      if (!text) {
+        report();
+        continue;
+      }
+      const vector = await this.embedText(text, 'document');
+      if (vector.length) {
+        store.updateSessionEmbedding(session.id, vector, model);
+        embedded += 1;
+        consecutiveFailures = 0;
+      } else {
+        failed += 1;
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) return abort();
+      }
+      report();
+    }
+
+    // Re-stamp only after a clean pass: the store is now homogeneous on `model`
+    // at the current format version (design D5).
+    if (embedded > 0) {
+      store.setEmbeddingModel(model ?? '');
+      store.setEmbeddingFormatVersion(EMBEDDING_FORMAT_VERSION);
+    }
+    return { success: true, embedded, failed };
+  }
+
+  /** Run VACUUM on memory.db, serialized to avoid SQLITE_BUSY.
+   * Always resolves — errors are returned as { success: false, error }.
+   * Does NOT use the ingestion queue to avoid unhandled-rejection leaks
+   * from the queue's internal promise chain.
+   */
+  async vacuumExperienceDbQueued(): Promise<{ success: boolean; error?: string }> {
+    try {
+      this.vacuumExperienceDb();
+      return { success: true };
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  /** Run VACUUM on memory.db to reclaim freed pages after large deletes.
+   * Throws on SQLite error so callers can propagate the failure.
+   */
+  vacuumExperienceDb(): void {
+    this.ensureStores(); // guarantees memoryDb is open
+    this.memoryDb!.raw.exec('VACUUM');
   }
 
   clearCoreMemory(): { success: boolean } {
@@ -825,6 +1234,7 @@ export class MemoryService {
     extracted: Awaited<ReturnType<ExperienceMemoryExtractor['extractSession']>>;
   }): Promise<void> {
     const store = this.getExperienceStore();
+    const embeddingConfig = this.getAppConfig().memoryRuntime;
     const existing = store.getSession(input.sessionId);
     const ingestedAt = isoNow();
     const sourceWorkspaceLabel = this.resolveWorkspaceLabel(input.sourceWorkspace);
@@ -832,7 +1242,15 @@ export class MemoryService {
     const chunkInputs: Array<Omit<ChunkMemoryItem, 'id'>> = [];
     for (const chunk of input.extracted.chunks) {
       const rawText = this.extractRawText(input.fullTurns, chunk.sourceTurns);
-      const searchableText = [chunk.summary, chunk.details, ...chunk.keywords].join(' ').trim();
+      // Keywords are resolved BEFORE the embedded text is built, so that text is
+      // exactly reconstructible from the persisted columns. That is what lets
+      // backfillEmbeddings() re-embed a row without re-running LLM extraction —
+      // build the string the other way round and the two paths silently diverge
+      // for every chunk whose extractor returned no keywords.
+      const keywords = chunk.keywords.length
+        ? chunk.keywords
+        : extractKeywords(buildChunkEmbeddingText(chunk.summary, chunk.details, []));
+      const searchableText = buildChunkEmbeddingText(chunk.summary, chunk.details, keywords);
       chunkInputs.push({
         sessionId: input.sessionId,
         sourceWorkspace: input.sourceWorkspace,
@@ -842,7 +1260,7 @@ export class MemoryService {
         sourceSessionDate: input.sessionDate,
         summary: chunk.summary,
         details: chunk.details,
-        keywords: chunk.keywords.length ? chunk.keywords : extractKeywords(searchableText),
+        keywords,
         sourceTurns: chunk.sourceTurns,
         rawText,
         sessionDate: input.sessionDate,
@@ -852,10 +1270,16 @@ export class MemoryService {
       });
     }
 
-    const sessionSearchable = [input.extracted.sessionSummary, ...input.extracted.sessionKeywords]
-      .join(' ')
-      .trim();
-    store.replaceSession(
+    // Same ordering rule as the chunk loop above — see the comment there.
+    const sessionKeywords = input.extracted.sessionKeywords.length
+      ? input.extracted.sessionKeywords
+      : extractKeywords(buildSessionEmbeddingText(input.extracted.sessionSummary, []));
+    const sessionSearchable = buildSessionEmbeddingText(
+      input.extracted.sessionSummary,
+      sessionKeywords
+    );
+    const sessionEmbedding = await this.embedText(sessionSearchable, 'document');
+    store.replaceSessionWithMeta(
       input.sessionId,
       {
         sessionId: input.sessionId,
@@ -865,18 +1289,24 @@ export class MemoryService {
         sourceSessionTitle: input.sessionTitle,
         sourceSessionDate: input.sessionDate,
         summary: input.extracted.sessionSummary,
-        keywords: input.extracted.sessionKeywords.length
-          ? input.extracted.sessionKeywords
-          : extractKeywords(sessionSearchable),
+        keywords: sessionKeywords,
         chunkIds: [],
         rawSession: input.fullTurns,
         sessionDate: input.sessionDate,
         createdAt: existing?.createdAt || new Date(input.sessionCreatedAt).toISOString(),
         ingestedAt,
-        embedding: await this.embedText(sessionSearchable, 'document'),
+        embedding: sessionEmbedding,
       },
-      chunkInputs
+      chunkInputs,
+      {
+        embeddingModel:
+          embeddingConfig.useEmbedding && embeddingConfig.embedding?.model
+            ? embeddingConfig.embedding.model
+            : null,
+        embeddingFormatVersion: EMBEDDING_FORMAT_VERSION,
+      }
     );
+    // save() is a no-op for the SQLite store.
     store.save();
   }
 
@@ -908,10 +1338,26 @@ export class MemoryService {
       return { context: '', metrics: emptyMetrics };
     }
     const store = this.getExperienceStore();
-    if (!store.sessions.length && !store.chunks.length) {
+    // Cheap COUNT(*) — the `sessions`/`chunks` getters would SELECT * and decode
+    // every embedding BLOB and transcript just to test emptiness.
+    const counts = store.getCounts();
+    if (!counts.sessionCount && !counts.chunkCount) {
       return { context: '', metrics: emptyMetrics };
     }
-    const queryEmbedding = await this.embedText(prompt, 'query');
+    // §7 staleness gate: if the stored vectors were built with a different model,
+    // fall back to lexical-only retrieval rather than comparing across embedding
+    // spaces. Skipping embedText also avoids the pointless embedding call.
+    const modelStale = this.isEmbeddingModelStale();
+    if (modelStale && !this.loggedModelStaleWarning) {
+      // Log once per staleness episode — this runs on every prompt.
+      this.loggedModelStaleWarning = true;
+      logWarn(
+        '[MemoryService] Stored embeddings were built with a different model than the active one — falling back to lexical-only retrieval. Rebuild memory to restore semantic search.'
+      );
+    } else if (!modelStale) {
+      this.loggedModelStaleWarning = false;
+    }
+    const queryEmbedding = modelStale ? [] : await this.embedText(prompt, 'query');
     const runtimeConfig = this.getAppConfig().memoryRuntime;
     const retrieval = store.retrieveProgressive(prompt, {
       chunkTopK: 10,
@@ -1108,7 +1554,42 @@ export class MemoryService {
       return false;
     }
     const store = this.getExperienceStore();
+    // Format version is now read from memory_meta (SQLite) rather than the JSON file.
     return store.getEmbeddingFormatVersion() < EMBEDDING_FORMAT_VERSION && store.hasEmbeddings();
+  }
+
+  /**
+   * True when the stored vectors were embedded with a different model than the one
+   * now configured. Cosine similarity is only meaningful within a single embedding
+   * space, so a mismatch means the persisted vectors are noise against a fresh query
+   * vector — worse than having no vectors at all.
+   *
+   * The store is homogeneous per install (design D5), so memory_meta's
+   * `embedding_model` is authoritative and this stays O(1) — no per-row scan.
+   * Unknown on either side (no active model configured, or a store written before
+   * the model was recorded) is treated as *not* stale: we degrade retrieval only on
+   * positive evidence of a mismatch.
+   *
+   * See docs/design/memory-storage-sqlite-migration.md §7.
+   */
+  isEmbeddingModelStale(): boolean {
+    const runtime = this.getAppConfig().memoryRuntime;
+    if (!runtime.useEmbedding) {
+      return false;
+    }
+    const activeModel = runtime.embedding?.model ?? null;
+    if (!activeModel) {
+      return false;
+    }
+    const store = this.getExperienceStore();
+    if (!store.hasEmbeddings()) {
+      return false;
+    }
+    const storedModel = store.getEmbeddingModel();
+    if (!storedModel) {
+      return false;
+    }
+    return storedModel !== activeModel;
   }
 
   private async embedText(text: string, kind: EmbeddingKind = 'document'): Promise<number[]> {
@@ -1116,8 +1597,14 @@ export class MemoryService {
       return [];
     }
     try {
-      return await this.llmClient.embed(text, kind);
+      const vector = await this.llmClient.embed(text, kind);
+      if (vector.length) {
+        this.lastEmbeddingError = null;
+      }
+      return vector;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.lastEmbeddingError = { message, at: Date.now() };
       logWarn('[MemoryService] Embedding failed, falling back to lexical retrieval:', error);
       return [];
     }
@@ -1238,6 +1725,7 @@ export class MemoryService {
       storageRoot,
       coreFilePath: path.join(storageRoot, 'core_memory.json'),
       experienceFilePath: path.join(storageRoot, 'experience_memory.json'),
+      experienceDbPath: path.join(storageRoot, 'memory.db'),
       stateFilePath: path.join(storageRoot, 'session_state.json'),
       artifactsDir,
     };
@@ -1250,20 +1738,48 @@ export class MemoryService {
       this.currentPathsKey === pathsKey &&
       this.coreStore &&
       this.stateStore &&
-      this.experienceStore
+      this.experienceStore &&
+      this.memoryDb
     ) {
       return;
     }
     fs.mkdirSync(paths.storageRoot, { recursive: true });
     fs.mkdirSync(paths.artifactsDir, { recursive: true });
     assertSafeMemoryPaths(paths.storageRoot, paths.artifactsDir);
+
+    // Close previous db handle if storageRoot changed.
+    if (this.memoryDb) {
+      try {
+        this.memoryDb.close();
+      } catch {
+        /* ignore */
+      }
+      this.memoryDb = null;
+    }
+
+    const memDb = openMemoryDb(paths.storageRoot);
+    // Resolve the active embedding model for migration tagging.
+    const embeddingModel = this.getAppConfig().memoryRuntime.useEmbedding
+      ? (this.getAppConfig().memoryRuntime.embedding?.model ?? null)
+      : null;
+    runExperienceMemoryMigration(memDb.raw, paths.experienceFilePath, embeddingModel);
+
     this.currentPathsKey = pathsKey;
+    this.memoryDb = memDb;
     this.coreStore = new CoreMemoryStore(paths.coreFilePath);
     this.stateStore = new MemorySessionStateStore(paths.stateFilePath);
-    this.experienceStore = new ExperienceMemoryStore(paths.experienceFilePath);
+    this.experienceStore = new ExperienceMemoryStore(memDb.raw, paths.experienceDbPath);
   }
 
   private resetStores(): void {
+    if (this.memoryDb) {
+      try {
+        this.memoryDb.close();
+      } catch {
+        /* ignore */
+      }
+      this.memoryDb = null;
+    }
     this.currentPathsKey = null;
     this.coreStore = null;
     this.stateStore = null;
@@ -1287,15 +1803,10 @@ export class MemoryService {
 
   private resolveFileKind(filePath: string): MemoryDebugFileInfo['kind'] {
     const paths = this.getPaths();
-    if (filePath === paths.coreFilePath) {
-      return 'core';
-    }
-    if (filePath === paths.experienceFilePath) {
+    if (filePath === paths.coreFilePath) return 'core';
+    if (filePath === paths.experienceFilePath || filePath === paths.experienceDbPath)
       return 'experience';
-    }
-    if (filePath === paths.stateFilePath) {
-      return 'state';
-    }
+    if (filePath === paths.stateFilePath) return 'state';
     return 'artifacts';
   }
 
@@ -1308,11 +1819,28 @@ export class MemoryService {
     }
 
     const normalizedPath = fs.realpathSync(requestedPath);
-    const allowedFiles = new Set(
-      [paths.coreFilePath, paths.experienceFilePath, paths.stateFilePath]
+    // Build the explicit allowlist: core + state JSON files, plus any
+    // experience_memory.json.bak* files (migration can create timestamped variants).
+    const bakCandidates = fs.existsSync(paths.storageRoot)
+      ? fs
+          .readdirSync(paths.storageRoot)
+          .filter((f) => f.startsWith('experience_memory.json.bak'))
+          .map((f) => path.join(paths.storageRoot, f))
+          .filter((f) => fs.existsSync(f))
+          .map((f) => fs.realpathSync(f))
+      : [];
+    const allowedFiles = new Set([
+      // core + state JSON files
+      ...[paths.coreFilePath, paths.stateFilePath]
         .filter((candidate) => fs.existsSync(candidate))
-        .map((candidate) => fs.realpathSync(candidate))
-    );
+        .map((candidate) => fs.realpathSync(candidate)),
+      // legacy experience JSON (present when migration hasn't run yet or failed)
+      ...(fs.existsSync(paths.experienceFilePath)
+        ? [fs.realpathSync(paths.experienceFilePath)]
+        : []),
+      // migration .bak artefacts (plain + timestamped)
+      ...bakCandidates,
+    ]);
     const artifactsRoot = fs.existsSync(paths.artifactsDir)
       ? fs.realpathSync(paths.artifactsDir)
       : path.resolve(paths.artifactsDir);

@@ -421,6 +421,8 @@ export interface SessionMemoryItem {
 
 export interface MemoryDebugFileInfo {
   kind: 'core' | 'experience' | 'state' | 'artifacts';
+  /** 'sqlite' for memory.db, 'file' (default) for JSON/dir entries. */
+  storage?: 'file' | 'sqlite';
   label: string;
   filePath: string;
   exists: boolean;
@@ -429,6 +431,28 @@ export interface MemoryDebugFileInfo {
   sessionCount?: number;
   chunkCount?: number;
 }
+
+export interface ExperienceDbStatus {
+  schemaVersion: number;
+  sessionCount: number;
+  chunkCount: number;
+  embeddingModel: string | null;
+  embeddingDim: number | null;
+  sizeBytes: number;
+  journalMode?: string | null;
+  integrityOk: boolean;
+  workspaceBreakdown: Array<{
+    workspaceKey: string;
+    sessionCount: number;
+    chunkCount: number;
+  }>;
+}
+
+/** Result of the file-based experience memory export. */
+export type ExperienceExportResult =
+  | { success: false; canceled: true }
+  | { success: true; path: string }
+  | { success: false; error: string };
 
 export interface MemoryDebugFileContent {
   kind: MemoryDebugFileInfo['kind'];
@@ -451,6 +475,7 @@ export type {
   LocalEmbeddingProgress,
   LocalModelRuntimeStatus,
   LocalModelStatus,
+  MemoryBackfillProgress,
 } from '../../shared/local-embedding-types';
 
 /** Result of the "Check models availability" probe (memory LLM + embedding). */
@@ -502,6 +527,13 @@ export interface MemoryOverview {
   latestIngestionAt: number | null;
   latestError: string | null;
   latestErrorAt: number | null;
+  /** `memoryRuntime.useEmbedding` — when false the coverage fields are not meaningful. */
+  embeddingEnabled: boolean;
+  /** Chunks carrying a vector. Below `experienceChunkCount` means degraded semantic search. */
+  embeddedChunkCount: number;
+  /** Last embedding failure this process saw, or null. Not persisted across restarts. */
+  embeddingError: string | null;
+  embeddingErrorAt: number | null;
   currentWorkspace?: {
     workspaceKey: string;
     experienceSessionCount: number;

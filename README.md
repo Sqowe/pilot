@@ -59,6 +59,7 @@ It provides a sandboxed workspace where AI can manage files, generate profession
 - **Remote Control**: Connect to collaboration platforms like **Feishu (Lark)** and other remote services to automate workflows and cross-platform operations.
 - **GUI Operation**: Control and interact with various desktop GUI applications on your computer. **Recommended model: Gemini-3-Pro** for optimal GUI understanding and control.
 - **Smart File Management**: Read, write, and organize files within your workspace.
+- **Cross-Session Memory**: The agent remembers across conversations — stable preferences are always present, and past sessions are retrieved on demand rather than dumped into every prompt. Stored in SQLite, with embeddings that run offline and in-process by default. Settings → Memory reports how much of the store is actually searchable by meaning, and fills the gaps on request.
 - **Skills System**: Built-in workflows for PPTX, DOCX, PDF, XLSX generation and processing. **Supports custom skill creation and deletion.** Workspace profiles let you disable unused skills per-project, and conflict resolution handles name collisions between custom and built-in skills automatically.
 - **Task Scheduling**: Anacron-style in-app task scheduling with fuzzy time windows (morning/afternoon/evening/night), autonomous execution mode, missed-task catch-up policies, per-run token/time budgets, and full run history tracking.
 - **MCP External Service Support**: Integrate browser, Notion, custom apps and more through **MCP Connectors** to extend AI capabilities. **Per-session toggle** lets you disable unused servers on-the-fly to reclaim context window tokens.
@@ -496,15 +497,33 @@ This avoids injecting too much irrelevant context while ensuring important detai
 
 Memory data lives at `~/Library/Application Support/sqowe-pilot/memory/` (macOS):
 
-| File                     | Contents                                             |
-| ------------------------ | ---------------------------------------------------- |
-| `core_memory.json`       | Stable user profile (interests, preferences, skills) |
-| `experience_memory.json` | Session summaries, chunks, and embeddings            |
-| `session_state.json`     | Tracks which sessions have been ingested             |
+| File                 | Contents                                             |
+| -------------------- | ---------------------------------------------------- |
+| `core_memory.json`   | Stable user profile (interests, preferences, skills) |
+| `memory.db`          | Session summaries, chunks, and embeddings (SQLite)   |
+| `session_state.json` | Tracks which sessions have been ingested             |
+
+Experience memory used to be a single `experience_memory.json`, which was rewritten in full on
+every ingest and re-parsed in full on every read. It now lives in a SQLite database. **The
+migration is automatic**: on first launch the JSON is copied into `memory.db` in one transaction
+and then renamed to `experience_memory.json.bak`, which is kept as a rollback artefact. No action
+is required, and nothing is deleted.
+
+Because `memory.db` is a binary file, **Settings → Memory → Memory Storage** shows a status card
+for it instead of a raw dump — schema version, size, session/chunk counts, embedding model,
+integrity, and a per-workspace breakdown — with **Export JSON** (a full-fidelity backup in the old
+`{ sessions, chunks }` shape) and **Vacuum** (reclaim space after clearing). The other entries are
+still plain JSON and open in the raw viewer as before.
 
 ### Local Embeddings (Default)
 
 By default, memory embeddings run **fully offline and in-process** via ONNX (EmbeddingGemma-300M through transformers.js) — no Python, no API key, and no data leaves your machine. The model downloads once on first use. Switch to a remote embedding provider in **Settings → Memory** if you prefer.
+
+**Switching the embedding model invalidates stored vectors.** Similarity is only meaningful within a single model's embedding space, so comparing a fresh query against vectors built by a different model returns noise rather than matches. Sqowe Pilot detects the mismatch and falls back to keyword-only retrieval — degraded, but never wrong — and offers to recompute the vectors. Until then, search keeps working without semantic ranking.
+
+**Embedding coverage** is shown in **Settings → Memory**: how many stored chunks actually carry a vector. Records without one are still found by keyword, just not by meaning — a distinction that is otherwise invisible, since ingestion itself succeeds either way. The card turns amber when records are missing vectors, and red with the reason when an embedding call failed.
+
+**Backfill embeddings**, on that card, fills the gaps. It computes vectors for records already in the database — including ones embedded with a previously-configured model — and is much cheaper than **Rebuild all**: the text a vector is built from is already stored, so no LLM extraction runs and nothing is deleted. Progress is reported per record, and an interrupted run resumes where it stopped. Reach for Rebuild all only when the extracted summaries themselves need redoing.
 
 ### Configuration
 

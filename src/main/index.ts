@@ -42,7 +42,10 @@ import { MemoryService } from './memory/memory-service';
 import { MemoryLLMClient } from './memory/memory-llm-client';
 import { isLocalModelDownloaded } from './memory/local-embedding-cache';
 import { getLocalModelRuntimeStatus } from './memory/local-embedding-state';
-import type { LocalEmbeddingProgress } from '../shared/local-embedding-types';
+import type {
+  LocalEmbeddingProgress,
+  MemoryBackfillProgress,
+} from '../shared/local-embedding-types';
 import { MemoryExtension } from './memory/memory-extension';
 import { CORE_MEMORY_UPDATE_SYSTEM_PROMPT } from './memory/memory-prompts';
 import { AgentRuntimeExtensionManager } from './extensions/agent-runtime-extension-manager';
@@ -4433,8 +4436,15 @@ ipcMain.handle('memory.isLocalModelDownloaded', () => {
 // True when stored local embeddings predate a format change (e.g. the prefix fix)
 // and need a rebuild for good search quality. Gated to the local provider in the
 // service so remote users aren't prompted to re-embed (which costs API calls).
+// `modelStale` is the separate §7 condition: stored vectors were embedded with a
+// different model than the one now configured, so semantic scoring is degraded to
+// lexical-only until a rebuild. Provider-agnostic (unlike `stale`) — switching model
+// invalidates the index regardless of who computed it.
 ipcMain.handle('memory.isEmbeddingFormatStale', () => {
-  return { stale: memoryService?.isEmbeddingFormatStale() ?? false };
+  return {
+    stale: memoryService?.isEmbeddingFormatStale() ?? false,
+    modelStale: memoryService?.isEmbeddingModelStale() ?? false,
+  };
 });
 
 // Combined status: on-disk cache presence (dependency-free) + in-process runtime
@@ -4697,6 +4707,99 @@ function getMemoryStorageRoot(): string {
   const configured = configStore.getAll().memoryRuntime?.storageRoot?.trim();
   return configured || join(app.getPath('userData'), 'memory');
 }
+
+ipcMain.handle('memory.getExperienceDbStatus', () => {
+  if (!memoryService) return { success: false, error: 'Memory service not initialized' };
+  try {
+    return { success: true, status: memoryService.getExperienceDbStatus() };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+/**
+ * Export experience memory to a user-selected file via save dialog.
+ * Uses atomic temp+rename write so disk I/O does not corrupt the file on crash.
+ * Note: exportExperienceJson() + JSON.stringify() runs on the main thread;
+ * for the current store size (~24 MB) this takes ~100ms and is triggered
+ * only by an explicit user action in the Settings UI.
+ */
+ipcMain.handle('memory.exportExperienceMemoryToFile', async () => {
+  if (!memoryService) return { success: false, error: 'Memory service not initialized' };
+  try {
+    // Prefer focused window; fall back to mainWindow if alive; allow no-parent dialog.
+    const win =
+      BrowserWindow.getFocusedWindow() ??
+      (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined);
+    const defaultExportPath = join(
+      app.getPath('downloads'),
+      `experience_memory_export_${Date.now()}.json`
+    );
+    const dialogOptions = {
+      title: 'Export Experience Memory',
+      defaultPath: defaultExportPath,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    };
+    const dialogResult = await (win
+      ? dialog.showSaveDialog(win, dialogOptions)
+      : dialog.showSaveDialog(dialogOptions));
+    if (dialogResult.canceled || !dialogResult.filePath) {
+      return { success: false, canceled: true };
+    }
+    return memoryService.exportExperienceJsonToFile(dialogResult.filePath);
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+/**
+ * VACUUM memory.db via the ingestion queue to prevent SQLITE_BUSY conflicts
+ * with concurrent memory reads/writes.
+ */
+ipcMain.handle('memory.vacuumExperienceDb', () => {
+  if (!memoryService)
+    return Promise.resolve({ success: false, error: 'Memory service not initialized' });
+  return memoryService.vacuumExperienceDbQueued();
+});
+
+/**
+ * Compute vectors for stored rows that lack one. Unlike memory.rebuildAll this
+ * runs no LLM extraction and deletes nothing — see MemoryService.backfillEmbeddings.
+ */
+ipcMain.handle('memory.backfillEmbeddings', async () => {
+  if (!memoryService) {
+    return { success: false, embedded: 0, failed: 0, error: 'Memory service not initialized' };
+  }
+  // Throttled like the local-model download progress above: the backfill emits one
+  // event per row, and a fast provider would otherwise flood the IPC channel.
+  let lastEmitMs = 0;
+  const emit = (p: MemoryBackfillProgress): void => {
+    const now = Date.now();
+    const isFinal = p.processed === 0 || p.processed === p.total;
+    if (!isFinal && now - lastEmitMs < 100) return;
+    lastEmitMs = now;
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('memory.backfillProgress', p);
+      }
+    }
+  };
+  try {
+    return await memoryService.backfillEmbeddings(emit);
+  } catch (err) {
+    return {
+      success: false,
+      embedded: 0,
+      failed: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+});
+
+ipcMain.handle('memory.countEmbeddingBackfill', () => {
+  if (!memoryService) return { sessionCount: 0, chunkCount: 0 };
+  return memoryService.countEmbeddingBackfill();
+});
 
 ipcMain.handle('memory.setEnabled', (_event, enabled: boolean) => {
   if (!memoryService) {

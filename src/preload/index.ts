@@ -29,7 +29,10 @@ import type {
   MemoryDebugFileInfo,
   MemoryDebugFileContent,
   MemoryInspectSessionResult,
+  ExperienceDbStatus,
+  ExperienceExportResult,
   LocalEmbeddingProgress,
+  MemoryBackfillProgress,
   LocalModelStatus,
   MemoryModelCheckResult,
   MemoryRuntimeConfig,
@@ -666,7 +669,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('memory.removeLocalModel'),
     isLocalModelDownloaded: (): Promise<{ downloaded: boolean }> =>
       ipcRenderer.invoke('memory.isLocalModelDownloaded'),
-    isEmbeddingFormatStale: (): Promise<{ stale: boolean }> =>
+    isEmbeddingFormatStale: (): Promise<{ stale: boolean; modelStale: boolean }> =>
       ipcRenderer.invoke('memory.isEmbeddingFormatStale'),
     getLocalModelStatus: (): Promise<LocalModelStatus> =>
       ipcRenderer.invoke('memory.getLocalModelStatus'),
@@ -674,6 +677,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('memory.warmUpLocalModel', force),
     checkModelAvailability: (draft: MemoryRuntimeConfig): Promise<MemoryModelCheckResult> =>
       ipcRenderer.invoke('memory.checkModelAvailability', draft),
+    getExperienceDbStatus: (): Promise<
+      { success: true; status: ExperienceDbStatus } | { success: false; error: string }
+    > => ipcRenderer.invoke('memory.getExperienceDbStatus'),
+    exportExperienceMemoryToFile: (): Promise<ExperienceExportResult> =>
+      ipcRenderer.invoke('memory.exportExperienceMemoryToFile'),
+    vacuumExperienceDb: (): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('memory.vacuumExperienceDb'),
+    backfillEmbeddings: (): Promise<{
+      success: boolean;
+      embedded: number;
+      failed: number;
+      error?: string;
+    }> => ipcRenderer.invoke('memory.backfillEmbeddings'),
+    countEmbeddingBackfill: (): Promise<{ sessionCount: number; chunkCount: number }> =>
+      ipcRenderer.invoke('memory.countEmbeddingBackfill'),
+    onBackfillProgress: (callback: (p: MemoryBackfillProgress) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, p: MemoryBackfillProgress) => {
+        try {
+          callback(p);
+        } catch (err) {
+          console.error('[preload] onBackfillProgress callback threw:', err);
+        }
+      };
+      ipcRenderer.on('memory.backfillProgress', listener);
+      return () => ipcRenderer.removeListener('memory.backfillProgress', listener);
+    },
     onLocalEmbeddingProgress: (callback: (p: LocalEmbeddingProgress) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, p: LocalEmbeddingProgress) => {
         try {
@@ -1075,10 +1104,23 @@ declare global {
         openFileInEditor: () => Promise<void>;
         removeLocalModel: () => Promise<{ success: boolean; removed: boolean; error?: string }>;
         isLocalModelDownloaded: () => Promise<{ downloaded: boolean }>;
-        isEmbeddingFormatStale: () => Promise<{ stale: boolean }>;
+        isEmbeddingFormatStale: () => Promise<{ stale: boolean; modelStale: boolean }>;
         getLocalModelStatus: () => Promise<LocalModelStatus>;
         warmUpLocalModel: (force?: boolean) => Promise<LocalModelStatus>;
         checkModelAvailability: (draft: MemoryRuntimeConfig) => Promise<MemoryModelCheckResult>;
+        getExperienceDbStatus: () => Promise<
+          { success: true; status: ExperienceDbStatus } | { success: false; error: string }
+        >;
+        exportExperienceMemoryToFile: () => Promise<ExperienceExportResult>;
+        vacuumExperienceDb: () => Promise<{ success: boolean; error?: string }>;
+        backfillEmbeddings: () => Promise<{
+          success: boolean;
+          embedded: number;
+          failed: number;
+          error?: string;
+        }>;
+        countEmbeddingBackfill: () => Promise<{ sessionCount: number; chunkCount: number }>;
+        onBackfillProgress: (callback: (p: MemoryBackfillProgress) => void) => () => void;
         onLocalEmbeddingProgress: (callback: (p: LocalEmbeddingProgress) => void) => () => void;
       };
     };

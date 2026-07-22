@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-07-22
+
+### Added
+
+- Settings → Memory now reports **embedding coverage** — how many stored chunks actually
+  carry a vector. A chunk without one is found by keyword but not by meaning, and until now
+  nothing said so: the page reported successful ingestion, which was true and beside the
+  point. The card turns amber when records are missing vectors and red, with the reason,
+  when an embedding call failed.
+- **Backfill embeddings**, an action on that card, computes the missing vectors for records
+  already in the database. Unlike **Rebuild all** it runs no LLM extraction and deletes
+  nothing — the text a vector is built from is already stored, so only the embedding calls
+  are needed. It also picks up records whose vectors came from a previously-configured
+  model. Progress is reported per record, and an interrupted run resumes where it stopped.
+  The prompts that appear after changing the embedding provider or model now offer this
+  instead of a full rebuild — a model change invalidates the vectors, not the summaries.
+
+### Changed
+
+- Experience memory now lives in a SQLite database (`memory.db`) instead of a single
+  `experience_memory.json`. The JSON store rewrote the whole file on every ingested session
+  and re-parsed it in full on every read, both scaling with total size; at the observed
+  growth (~24 MB in a month) that meant a multi-hundred-millisecond main-process stall per
+  ingest and a ~1 s parse per read. Reads are now indexed queries and writes are row-level
+  upserts. **Migration is automatic and requires no action**: on first launch the JSON is
+  copied across in a single transaction and then renamed to `experience_memory.json.bak`,
+  which is retained as a rollback artefact. Nothing is deleted. Core memory and session
+  state stay JSON by design — they are small enough that indexing buys nothing.
+- Rebuilding memory for a workspace is now crash-safe. It clears and re-ingests inside one
+  transaction, so an interrupted rebuild can no longer leave a workspace cleared but not
+  repopulated.
+- Settings → Memory: "Raw File Viewer" is now "Memory Storage". `memory.db` is binary, so
+  selecting it shows a status card — schema version, journal mode, size, session/chunk
+  counts, embedding model and dimension, integrity check, and a per-workspace breakdown —
+  with **Export JSON** and **Vacuum** actions. Export produces a full-fidelity backup in the
+  original `{ sessions, chunks }` shape, preserving the raw-inspection capability the JSON
+  file used to provide. The other entries are still JSON and open in the raw viewer.
+- Memory search no longer decodes embeddings or conversation transcripts it never uses.
+  Keyword search over past sessions read every stored embedding and full transcript in order
+  to score text; workspace scoping is now applied in SQL rather than in JS.
+- Recall no longer parses every stored transcript on each query. Transcripts are the largest
+  data in the store and were parsed in full to populate just the top few results; they are
+  now fetched only for the sessions that actually rank, bounding the cost by the result count
+  rather than by store size. This runs on every prompt, so the saving is in the latency budget
+  of each message.
+
+### Fixed
+
+- Embeddings are no longer skipped because of which **chat** provider happens to be selected.
+  The embedding path checked the provider against a fixed list of the six original built-in
+  providers; once native catalog providers (minimax, zai, deepseek and the rest) were added,
+  any of them being active caused embeddings to be silently abandoned and the chunk stored
+  without a vector. A configuration that names its own embedding endpoint and model is now
+  honoured regardless of the active chat provider — it does not depend on it — and every
+  other case is judged by the provider's actual API protocol rather than by its name.
+  A provider that genuinely cannot embed now says so instead of failing quietly.
+- Settings → Memory refreshes its counters when the tab is reopened. Previously the page
+  read them once and kept showing that snapshot for as long as Settings stayed open.
+- Changing the embedding model no longer silently degrades search results. Similarity is
+  only meaningful within one model's embedding space, so previously a model switch left
+  stored vectors being compared against queries from a different space — returning noise
+  ranked as though it were relevant. The mismatch is now detected and retrieval falls back
+  to keyword-only until the vectors are recomputed, with a prompt offering to do so.
+
 ## [1.0.5] - 2026-07-20
 
 ### Added
@@ -334,7 +398,8 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.5...HEAD
+[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.6...HEAD
+[1.0.6]: https://github.com/sqowe/pilot/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/sqowe/pilot/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/sqowe/pilot/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/sqowe/pilot/compare/v1.0.2...v1.0.3
