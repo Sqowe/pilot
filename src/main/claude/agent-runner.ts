@@ -4434,7 +4434,13 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
         }
       }
     } finally {
-      this.activeControllers.delete(session.id);
+      // Only drop the entry if it is still ours. A cancelled run can outlive
+      // the Stop press (pi settles asynchronously); by the time it gets here a
+      // newer run may already have registered its own controller, and deleting
+      // that one would leave the new run with nothing left to cancel.
+      if (this.activeControllers.get(session.id) === controller) {
+        this.activeControllers.delete(session.id);
+      }
       this.pathResolver.unregisterSession(session.id);
 
       // Release all runtime API keys set for this run via ref-counted cleanup.
@@ -4498,6 +4504,36 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
   cancel(sessionId: string): void {
     const controller = this.activeControllers.get(sessionId);
     if (controller) controller.abort();
+    // Our own AbortController only silences the event subscription — the pi
+    // agent loop never sees it. Without the calls below the agent keeps making
+    // model requests and running tools after the user pressed Stop, and every
+    // in-flight tool keeps its per-call signal unfired. pi's abort() covers
+    // retry + the agent loop; compaction, branch summary and bash have their
+    // own controllers that abort() does not touch (see pi's dispose(),
+    // node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js:562).
+    const cached = this.piSessions.get(sessionId);
+    if (cached) {
+      for (const [label, stop] of [
+        ['abortCompaction', () => cached.session.abortCompaction()],
+        ['abortBranchSummary', () => cached.session.abortBranchSummary()],
+        ['abortBash', () => cached.session.abortBash()],
+      ] as const) {
+        try {
+          stop();
+        } catch (e) {
+          logWarn(`[ClaudeAgentRunner] ${label} error during cancel:`, e);
+        }
+      }
+      // abort() resolves once the agent is idle; we don't wait for that here
+      // because cancel() must stay synchronous for its callers.
+      try {
+        void cached.session.abort().catch((e) => {
+          logWarn('[ClaudeAgentRunner] pi session abort error:', e);
+        });
+      } catch (e) {
+        logWarn('[ClaudeAgentRunner] pi session abort threw synchronously:', e);
+      }
+    }
     // Clean up permission-waiting state so the flag doesn't leak.
     // This also invalidates any in-flight permission awaits from this run —
     // their finally blocks will see a mismatched runId and become no-ops.
