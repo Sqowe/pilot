@@ -95,7 +95,7 @@ win:
       to: node
     - from: dist-wsl-agent
       to: wsl-agent
-    - from: .claude/skills
+    - from: resources/skills
       to: skills
 
 mac:
@@ -127,7 +127,7 @@ mac:
       to: tools
     - from: dist-lima-agent
       to: lima-agent
-    - from: .claude/skills
+    - from: resources/skills
       to: skills
 
 linux:
@@ -144,7 +144,7 @@ linux:
       to: node
     - from: resources/python/linux-${arch}
       to: python
-    - from: .claude/skills
+    - from: resources/skills
       to: skills
 
 nsis:

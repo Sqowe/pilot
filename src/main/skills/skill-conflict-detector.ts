@@ -94,7 +94,7 @@ function scanSkillDir(dirPath: string): Array<{ name: string; fullPath: string }
 /**
  * Discover all skill sources from the known directories.
  *
- * @param builtinDir - App-bundled skills (e.g., resources/skills or .claude/skills)
+ * @param builtinDir - App-bundled skills (resources/skills, see builtin-skills-path)
  * @param userDir - User's ~/.claude/skills
  * @param configuredDir - User-configured global skills path
  * @param projectDir - Project-level skills (e.g., <cwd>/.skills)

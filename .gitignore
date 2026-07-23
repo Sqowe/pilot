@@ -52,9 +52,9 @@ coverage/
 *.pem
 *.p12
 
-# Claude
+# Claude Code's own workspace config — the skills shipped with the app live in
+# resources/skills/, not here.
 .claude/*
-!.claude/skills/
 
 
 # codex
@@ -103,7 +103,7 @@ website/.vitepress/cache/
 # Temp directories
 .tmp/
 
-# Semantic index cache (per-developer, built by .claude/skills/semantic-index)
+# Semantic index cache (per-developer, built by ~/.claude/skills/semantic-index)
 .index/
 
 # Screenshots (debug/review)

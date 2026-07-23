@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The skills shipped with the app now live in `resources/skills/` instead of `.claude/skills/`.
+  That directory belongs to Claude Code, which loaded the app's own product content as if it
+  were tooling for working on the repository — `skill-creator`, for one, appeared twice. The
+  new location sits next to the other things bundled into the build (`resources/node`,
+  `resources/python`, `resources/tools`). **Installed copies are unaffected**: the packaged
+  layout is still `<Resources>/skills`, and the `.builtin-hash` stamps and `.user-modified`
+  markers under the user data directory keep working, since no skill content changed.
+- Four copies of the built-in-skills directory lookup were replaced by one
+  (`src/main/skills/builtin-skills-path.ts`). The candidate each copy labelled "development"
+  resolved to the parent of the project directory and never matched; the fallbacks reading
+  from inside `app.asar` are gone with it, as nothing has been packaged that way since skills
+  moved to `extraResources`. The two branches that copied a skill instead of linking it when
+  the source sat inside the archive went the same way — they could no longer be reached, and
+  the comment beside one of them claimed the link was made only during development, when in
+  fact installed builds link too.
+
 ## [1.0.6] - 2026-07-22
 
 ### Added

@@ -42,7 +42,7 @@ format (e.g. HTML, JSON) is purely additive.
 
 ## 2. Why Not the Built-in `docx` / `pdf` Skills
 
-The bundled [`.claude/skills/docx`](../../.claude/skills/docx/SKILL.md) and `pdf`
+The bundled [`resources/skills/docx`](../../../resources/skills/docx/SKILL.md) and `pdf`
 skills are **agent-facing instruction sets** — they tell the LLM how to hand-author
 a bespoke document script and validate it with `uv` / `pandoc` / LibreOffice. That
 mechanism is interactive, non-deterministic, slow (seconds–minutes, requires an LLM

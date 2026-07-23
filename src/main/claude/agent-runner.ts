@@ -135,6 +135,7 @@ import { SandboxSync } from '../sandbox/sandbox-sync';
 import { extractArtifactsFromText, buildArtifactTraceSteps } from '../utils/artifact-parser';
 import { getDefaultShell } from '../utils/shell-resolver';
 import { PluginRuntimeService } from '../skills/plugin-runtime-service';
+import { getBuiltinSkillsPath } from '../skills/builtin-skills-path';
 import type { SkillsAdapter } from '../skills/skills-adapter';
 import { SAFE_SKILL_ID_REGEX, isValidSkillId } from '../../shared/skill-pinning-constants';
 import { normalizeSkillConflictConfig } from '../../shared/skill-conflict-types';
@@ -882,7 +883,7 @@ RULES:
   /** Fallback skill path resolution when SkillsAdapter is not provided. */
   private legacySkillPaths(): string[] {
     const paths: string[] = [];
-    const builtin = this.getBuiltinSkillsPath();
+    const builtin = getBuiltinSkillsPath();
     if (builtin && fs.existsSync(builtin)) paths.push(builtin);
     const global = this.getConfiguredGlobalSkillsDir();
     if (global && fs.existsSync(global)) paths.push(global);
@@ -974,54 +975,6 @@ RULES:
     return Array.from(mergedPaths);
   }
 
-  /**
-   * Get the built-in skills directory (shipped with the app)
-   */
-  private getBuiltinSkillsPath(): string {
-    // In development, skills are in the project's .claude/skills directory
-    // In production, they're extracted via extraResources to resources/skills
-    const appPath = app.getAppPath();
-    const unpackedPath = appPath.replace(/\.asar$/, '.asar.unpacked');
-
-    const possiblePaths = [
-      // Development: relative to this file
-      path.join(__dirname, '..', '..', '..', '.claude', 'skills'),
-      // Production: extraResources extracts .claude/skills → resources/skills
-      // This is the preferred production path (real directory, no asar issues)
-      path.join(process.resourcesPath || '', 'skills'),
-      // Legacy: in app.asar.unpacked (for older builds with asarUnpack)
-      ...(this.physicalDirExists(path.join(unpackedPath, '.claude', 'skills'))
-        ? [path.join(unpackedPath, '.claude', 'skills')]
-        : []),
-      // Last resort: read from inside the asar archive (Electron intercepts this)
-      path.join(appPath, '.claude', 'skills'),
-    ];
-
-    for (const p of possiblePaths) {
-      if (fs.existsSync(p)) {
-        log('[ClaudeAgentRunner] Found built-in skills at:', p);
-        return p;
-      }
-    }
-
-    logWarn('[ClaudeAgentRunner] No built-in skills directory found');
-    return '';
-  }
-
-  /**
-   * Check if a directory physically exists on disk, bypassing Electron's
-   * asar interception.
-   */
-  private physicalDirExists(dirPath: string): boolean {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const originalFs = require('original-fs') as typeof import('fs');
-      return originalFs.existsSync(dirPath) && originalFs.statSync(dirPath).isDirectory();
-    } catch {
-      return false;
-    }
-  }
-
   private getAppClaudeDir(): string {
     return path.join(app.getPath('userData'), 'claude');
   }
@@ -1103,7 +1056,7 @@ RULES:
 
       if (resolution === 'emit-conflict') {
         // Determine the actual conflicting source for the event payload
-        const builtinSkillsPath = this.getBuiltinSkillsPath();
+        const builtinSkillsPath = getBuiltinSkillsPath();
         const conflictPath = builtinSkillsPath
           ? path.join(builtinSkillsPath, skillName)
           : targetPath;
@@ -1292,18 +1245,13 @@ RULES:
       // ENOENT — target doesn't exist, proceed with restore
     }
 
-    const builtinSkillsPath = this.getBuiltinSkillsPath();
+    const builtinSkillsPath = getBuiltinSkillsPath();
     if (!builtinSkillsPath) return;
     const builtinSkillPath = path.join(builtinSkillsPath, skillName);
     if (!fs.existsSync(builtinSkillPath)) return;
 
     try {
-      const sourceInsideAsar = /\.asar[/\\]/.test(builtinSkillsPath);
-      if (sourceInsideAsar) {
-        this.copyDirectorySync(builtinSkillPath, targetPath);
-      } else {
-        fs.symlinkSync(builtinSkillPath, targetPath, 'dir');
-      }
+      fs.symlinkSync(builtinSkillPath, targetPath, 'dir');
       log(`[ClaudeAgentRunner] Restored built-in skill after policy change: ${skillName}`);
     } catch (err) {
       logWarn(`[ClaudeAgentRunner] Failed to restore built-in skill ${skillName}:`, err);
@@ -1312,7 +1260,7 @@ RULES:
 
   /** Populate the built-in skill names set from the bundled skills directory. */
   private populateBuiltinSkillNames(): void {
-    const builtinSkillsPath = this.getBuiltinSkillsPath();
+    const builtinSkillsPath = getBuiltinSkillsPath();
     if (!builtinSkillsPath || !fs.existsSync(builtinSkillsPath)) return;
     try {
       const entries = fs.readdirSync(builtinSkillsPath);
@@ -1466,7 +1414,7 @@ RULES:
       }
 
       if (resolution === 'emit-conflict') {
-        const builtinSkillsPath = this.getBuiltinSkillsPath();
+        const builtinSkillsPath = getBuiltinSkillsPath();
         const conflictPath = builtinSkillsPath
           ? path.join(builtinSkillsPath, skillName)
           : targetPath;
@@ -2144,7 +2092,7 @@ RULES:
           }
 
           // Copy skills to sandbox ~/.claude/skills/
-          const builtinSkillsPath = this.getBuiltinSkillsPath();
+          const builtinSkillsPath = getBuiltinSkillsPath();
           try {
             const distro = sandbox.wslStatus!.distro!;
             const sandboxSkillsPath = `${sandboxPath}/.claude/skills`;
@@ -2296,7 +2244,7 @@ RULES:
           }
 
           // Copy skills to sandbox ~/.claude/skills/
-          const builtinSkillsPath = this.getBuiltinSkillsPath();
+          const builtinSkillsPath = getBuiltinSkillsPath();
           try {
             const sandboxSkillsPath = `${sandboxPath}/.claude/skills`;
 
@@ -2699,9 +2647,8 @@ RULES:
         // hash differs (or no stamp exists), the runtime copy is replaced with the
         // bundled version. User-modified skills (marked with `.user-modified`) are
         // preserved and never overwritten.
-        const builtinSkillsPath = this.getBuiltinSkillsPath();
+        const builtinSkillsPath = getBuiltinSkillsPath();
         if (builtinSkillsPath && fs.existsSync(builtinSkillsPath)) {
-          const sourceInsideAsar = /\.asar[/\\]/.test(builtinSkillsPath);
           const builtinSkills = fs.readdirSync(builtinSkillsPath);
           // Populate the set of built-in skill names for conflict resolution
           // Uses same validation as populateBuiltinSkillNames() and skill-conflict-detector
@@ -2799,27 +2746,22 @@ RULES:
               }
             }
 
-            // Install fresh copy from bundled source
-            if (sourceInsideAsar) {
+            // Install from the bundled source. The source is a real directory both
+            // in development and in the packaged app (extraResources keeps skills
+            // out of the asar archive), so a symlink is enough — the runtime entry
+            // then tracks the bundled one with no copying. Copy only if the symlink
+            // cannot be created, e.g. on Windows without developer mode.
+            try {
+              fs.symlinkSync(builtinSkillPath, userSkillPath, 'dir');
+              log(`[ClaudeAgentRunner] Linked built-in skill: ${skillName}`);
+            } catch (err) {
+              logWarn(`[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`, err);
               this.copyDirectorySync(builtinSkillPath, userSkillPath);
-              log(`[ClaudeAgentRunner] Copied built-in skill from asar: ${skillName}`);
-            } else {
-              // In dev mode, symlink for instant updates during development
-              try {
-                fs.symlinkSync(builtinSkillPath, userSkillPath, 'dir');
-                log(`[ClaudeAgentRunner] Linked built-in skill: ${skillName}`);
-              } catch (err) {
-                logWarn(
-                  `[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`,
-                  err
-                );
-                this.copyDirectorySync(builtinSkillPath, userSkillPath);
-              }
             }
 
             // Write the content hash stamp (only for copies, not symlinks)
             // Symlinks always point to the source so they're inherently up-to-date
-            if (sourceInsideAsar || !fs.lstatSync(userSkillPath).isSymbolicLink()) {
+            if (!fs.lstatSync(userSkillPath).isSymbolicLink()) {
               try {
                 fs.writeFileSync(builtinHashFile, builtinHash, 'utf-8');
               } catch (hashErr) {
@@ -4492,7 +4434,13 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
         }
       }
     } finally {
-      this.activeControllers.delete(session.id);
+      // Only drop the entry if it is still ours. A cancelled run can outlive
+      // the Stop press (pi settles asynchronously); by the time it gets here a
+      // newer run may already have registered its own controller, and deleting
+      // that one would leave the new run with nothing left to cancel.
+      if (this.activeControllers.get(session.id) === controller) {
+        this.activeControllers.delete(session.id);
+      }
       this.pathResolver.unregisterSession(session.id);
 
       // Release all runtime API keys set for this run via ref-counted cleanup.
@@ -4556,6 +4504,36 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
   cancel(sessionId: string): void {
     const controller = this.activeControllers.get(sessionId);
     if (controller) controller.abort();
+    // Our own AbortController only silences the event subscription — the pi
+    // agent loop never sees it. Without the calls below the agent keeps making
+    // model requests and running tools after the user pressed Stop, and every
+    // in-flight tool keeps its per-call signal unfired. pi's abort() covers
+    // retry + the agent loop; compaction, branch summary and bash have their
+    // own controllers that abort() does not touch (see pi's dispose(),
+    // node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js:562).
+    const cached = this.piSessions.get(sessionId);
+    if (cached) {
+      for (const [label, stop] of [
+        ['abortCompaction', () => cached.session.abortCompaction()],
+        ['abortBranchSummary', () => cached.session.abortBranchSummary()],
+        ['abortBash', () => cached.session.abortBash()],
+      ] as const) {
+        try {
+          stop();
+        } catch (e) {
+          logWarn(`[ClaudeAgentRunner] ${label} error during cancel:`, e);
+        }
+      }
+      // abort() resolves once the agent is idle; we don't wait for that here
+      // because cancel() must stay synchronous for its callers.
+      try {
+        void cached.session.abort().catch((e) => {
+          logWarn('[ClaudeAgentRunner] pi session abort error:', e);
+        });
+      } catch (e) {
+        logWarn('[ClaudeAgentRunner] pi session abort threw synchronously:', e);
+      }
+    }
     // Clean up permission-waiting state so the flag doesn't leak.
     // This also invalidates any in-flight permission awaits from this run —
     // their finally blocks will see a mismatched runId and become no-ops.
