@@ -81,8 +81,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",
-    "@earendil-works/pi-ai": "0.80.10",
-    "@earendil-works/pi-coding-agent": "0.80.10",
+    "@earendil-works/pi-ai": "0.82.0",
+    "@earendil-works/pi-coding-agent": "0.82.0",
     "@google/genai": "^1.52.0",
     "@huggingface/transformers": "4.2.0",
     "@larksuiteoapi/node-sdk": "^1.66.0",
