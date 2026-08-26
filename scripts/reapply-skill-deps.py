@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SKILLS_DIR = PROJECT_ROOT / ".claude" / "skills"
+SKILLS_DIR = PROJECT_ROOT / "resources" / "skills"
 
 # Map: (skill_name, script_name) -> list of PyPI package names
 DEPENDENCY_MAP = {

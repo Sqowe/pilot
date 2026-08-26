@@ -45,13 +45,13 @@ writeMCPLog(`Platform detected: ${PLATFORM}`, 'Bootstrap');
 // Use platform-appropriate paths:
 // - macOS: ~/Library/Application Support/sqowe-pilot
 // - Windows: %APPDATA%/sqowe-pilot
-const OPEN_COWORK_DATA_DIR =
+const SQOWE_PILOT_DATA_DIR =
   PLATFORM === 'win32'
     ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'sqowe-pilot')
     : path.join(os.homedir(), 'Library', 'Application Support', 'sqowe-pilot');
 
 // Directory for storing GUI operate files (screenshots, etc.)
-const GUI_OPERATE_DIR = path.join(OPEN_COWORK_DATA_DIR, 'gui_operate');
+const GUI_OPERATE_DIR = path.join(SQOWE_PILOT_DATA_DIR, 'gui_operate');
 const SCREENSHOTS_DIR = path.join(GUI_OPERATE_DIR, 'screenshots');
 const SCREENSHOT_REUSE_WINDOW_MS = 5 * 60_000;
 const OPENAI_PLATFORM_BASE_URL = 'https://api.openai.com/v1';
@@ -130,7 +130,7 @@ const APP_NAME_ALIAS_GROUPS: string[][] = [
 ];
 
 // Base directory for storing app-level data
-const GUI_APPS_DIR = path.join(OPEN_COWORK_DATA_DIR, 'gui_apps');
+const GUI_APPS_DIR = path.join(SQOWE_PILOT_DATA_DIR, 'gui_apps');
 const GUI_LAST_APP_FILE = path.join(GUI_APPS_DIR, '_last_app.json');
 
 interface LastAppContext {
@@ -835,7 +835,9 @@ function getResourcesDirCandidates(): string[] {
   const candidates: string[] = [];
 
   // If Electron main process passes resourcesPath into env for spawned MCP servers
-  const envResources = process.env.OPEN_COWORK_RESOURCES_PATH;
+  // (accept the legacy open-cowork name as a fallback for older spawned processes)
+  const envResources =
+    process.env.SQOWE_PILOT_RESOURCES_PATH || process.env.OPEN_COWORK_RESOURCES_PATH;
   if (envResources) candidates.push(envResources);
 
   // Packaged: .../Contents/Resources/mcp -> .../Contents/Resources
@@ -869,7 +871,9 @@ async function resolveCliclickPath(): Promise<string | null> {
   }
 
   // 1) Explicit override (useful for debugging)
-  const envOverride = process.env.OPEN_COWORK_CLICLICK_PATH;
+  // Accept the legacy OPEN_COWORK_* name as a fallback for pre-rebrand shell/CI setups.
+  const envOverride =
+    process.env.SQOWE_PILOT_CLICLICK_PATH || process.env.OPEN_COWORK_CLICLICK_PATH;
   if (envOverride && (await pathExists(envOverride))) {
     cachedCliclickPath = envOverride;
     return envOverride;
@@ -1024,8 +1028,9 @@ async function resolvePythonExec(): Promise<PythonExec | null> {
   }
 
   // 1) Explicit override (useful for debugging)
-  const envPython = process.env.OPEN_COWORK_PYTHON_PATH;
-  const envPythonHome = process.env.OPEN_COWORK_PYTHON_HOME;
+  // Accept the legacy OPEN_COWORK_* names as a fallback for pre-rebrand shell/CI setups.
+  const envPython = process.env.SQOWE_PILOT_PYTHON_PATH || process.env.OPEN_COWORK_PYTHON_PATH;
+  const envPythonHome = process.env.SQOWE_PILOT_PYTHON_HOME || process.env.OPEN_COWORK_PYTHON_HOME;
   if (envPython && (await pathExists(envPython))) {
     writeMCPLog(`[resolvePythonExec] Found explicit override: ${envPython}`, 'Python Resolve');
     const pythonRoot = envPythonHome || path.resolve(envPython, '..', '..');
@@ -3969,7 +3974,7 @@ async function takeScreenshotForDisplay(
     metadata.region = region;
   }
 
-  const disableImageOutput = process.env.OPEN_COWORK_DISABLE_IMAGE_TOOL_OUTPUT === '1';
+  const disableImageOutput = process.env.SQOWE_PILOT_DISABLE_IMAGE_TOOL_OUTPUT === '1';
   if (disableImageOutput) {
     metadata.imageOmitted = true;
     metadata.omitReason = 'provider_does_not_support_image';

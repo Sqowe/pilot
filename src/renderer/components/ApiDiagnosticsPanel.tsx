@@ -256,10 +256,7 @@ export default function ApiDiagnosticsPanel({
               <div key={step.name} className="contents">
                 <PipelineNode step={step} />
                 {i < displaySteps.length - 1 && (
-                  <Connector
-                    leftStatus={step.status}
-                    rightStatus={displaySteps[i + 1].status}
-                  />
+                  <Connector leftStatus={step.status} rightStatus={displaySteps[i + 1].status} />
                 )}
               </div>
             ))}
@@ -277,7 +274,10 @@ export default function ApiDiagnosticsPanel({
           {/* Skipped info */}
           {result?.skippedReason && !isRunning && (
             <div className="mt-3 pt-3 border-t border-border text-sm text-text-muted">
-              {t('api.diagnostic.skipped', 'Diagnostics skipped: another run is already in progress.')}
+              {t(
+                'api.diagnostic.skipped',
+                'Diagnostics skipped: another run is already in progress.'
+              )}
             </div>
           )}
 

@@ -9,11 +9,15 @@ import {
   AlertCircle,
   CheckCircle,
   RefreshCw,
+  ExternalLink,
 } from 'lucide-react';
 import { useApiConfigState } from '../../hooks/useApiConfigState';
 import { ApiConfigSetManager } from '../ApiConfigSetManager';
 import { CommonProviderSetupsCard, GuidanceInlineHint } from '../ProviderGuidance';
 import ApiDiagnosticsPanel from '../ApiDiagnosticsPanel';
+import { ProviderPicker } from '../ProviderPicker';
+import { SearchableCombobox, type StatusDotColor } from '../SearchableCombobox';
+import type { ComboboxItem } from '../SearchableCombobox';
 
 interface ModelOptionItem {
   id: string;
@@ -36,16 +40,17 @@ export function SettingsAPI() {
     maxTokens,
     modelInputPlaceholder,
     modelInputHint,
-    presets,
     currentPreset,
     modelOptions,
     isSaving,
     isLoadingConfig,
+    isCatalogLoading,
     error,
     successMessage,
     isRefreshingModels,
     isDiscoveringLocalOllama,
-    enableThinking,
+    effectiveThinkingLevel,
+    thinkingCapabilities,
     isOllamaMode,
     requiresApiKey,
     protocolGuidanceText,
@@ -60,6 +65,9 @@ export function SettingsAPI() {
     hasUnsavedChanges,
     isMutatingConfigSet,
     canDeleteCurrentConfigSet,
+    providerCatalog,
+    activeCatalogEntry,
+    activeFormShape,
     setApiKey,
     setBaseUrl,
     setModel,
@@ -67,7 +75,7 @@ export function SettingsAPI() {
     setContextWindow,
     setMaxTokens,
     toggleCustomModel,
-    setEnableThinking,
+    setThinkingLevel,
     applyCommonProviderSetup,
     changeProvider,
     changeProtocol,
@@ -97,6 +105,77 @@ export function SettingsAPI() {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Derived display flags
+  // ---------------------------------------------------------------------------
+
+  // formShape flags — native providers use activeFormShape; builtins/custom fall
+  // back to the legacy provider-literal checks that have always been here.
+  const isNative = activeCatalogEntry?.kind === 'native';
+
+  // Protocol selector is only for the 'custom' escape-hatch provider.
+  // Native providers have a fixed routeProtocol derived from the registry;
+  // exposing this selector for them would be misleading.
+  const showProtocol = provider === 'custom';
+
+  const showBaseUrl =
+    activeFormShape != null
+      ? activeFormShape.baseUrl
+      : provider === 'custom' || provider === 'ollama';
+
+  const showContextWindow =
+    activeFormShape != null
+      ? activeFormShape.contextWindow
+      : provider === 'custom' || provider === 'ollama';
+
+  // Source from the catalog entry's formShape (available for ALL providers, not
+  // just native) so cloud builtins (OpenRouter/Anthropic/OpenAI/Gemini) render
+  // the same searchable combobox as native providers instead of a raw OS
+  // <select>. Ollama/Custom keep modelDropdown: false → native select path.
+  const showModelDropdown = activeCatalogEntry?.formShape.modelDropdown ?? false;
+
+  const showManualModelToggle =
+    activeFormShape != null ? activeFormShape.manualModelToggle : shouldShowOllamaManualModelToggle;
+
+  const showCustomSetups = provider === 'custom';
+
+  // Provider key-status dot on the picker trigger: green when a key is set,
+  // amber when the provider needs one and it's missing, none when keyless
+  // (e.g. Ollama). Labelled for accessibility (§13.5).
+  const providerStatusDot: StatusDotColor = apiKey.trim()
+    ? 'green'
+    : requiresApiKey
+      ? 'amber'
+      : 'none';
+  const providerStatusLabel = apiKey.trim()
+    ? t('api.providerPicker.keySet')
+    : requiresApiKey
+      ? t('api.providerPicker.keyMissing')
+      : undefined;
+
+  // Model combobox items
+  const modelComboItems: ComboboxItem[] = (modelOptions as ModelOptionItem[]).map((m) => ({
+    id: m.id,
+    label: m.name,
+  }));
+
+  // When a provider supports manual entry but has no preset/registry models to
+  // pick from (e.g. Custom with no presets, or Ollama before/without detection),
+  // force manual input and disable the Preset/Custom toggle — there is nothing
+  // to switch to.
+  const hasModelOptions = modelOptions.length > 0;
+  const forceManualModel = showManualModelToggle && !hasModelOptions;
+  const effectiveManualModel = useCustomModel || forceManualModel;
+
+  // For the manual-model toggle label: native uses same wording as custom
+  const manualToggleLabel = isOllamaMode
+    ? effectiveManualModel
+      ? t('api.useDetectedModels')
+      : t('api.manualModel')
+    : effectiveManualModel
+      ? t('api.usePreset')
+      : t('api.custom');
+
   return (
     <div className="space-y-5">
       {/* Config Set Switcher */}
@@ -120,34 +199,53 @@ export function SettingsAPI() {
         onDiscardAndContinuePendingAction={discardAndContinuePendingConfigSetAction}
       />
 
-      {/* Provider Selection */}
+      {/* ------------------------------------------------------------------ */}
+      {/* Provider Selection                                                  */}
+      {/* ------------------------------------------------------------------ */}
       <div className="space-y-3 py-5 border-b border-border-muted">
-        <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
-          <Server className="w-4 h-4" />
-          {t('api.provider')}
-        </label>
-        <p className="text-xs leading-5 text-text-muted">{t('api.providerDescription')}</p>
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2">
-          {(['openrouter', 'anthropic', 'openai', 'gemini', 'ollama', 'custom'] as const).map(
-            (p) => (
-              <button
-                key={p}
-                onClick={() => changeProvider(p)}
-                disabled={isLoadingConfig}
-                className={`px-3 py-2 rounded-lg text-sm transition-colors border ${
-                  provider === p
-                    ? 'border-accent bg-accent/10 text-accent font-medium'
-                    : 'border-border-muted text-text-secondary hover:border-border hover:text-text-primary disabled:opacity-50'
-                }`}
-              >
-                {p === 'custom' ? t('api.moreModels') : presets?.[p]?.name || p}
-              </button>
-            )
+        {/* Label row: title left, provider Docs link right-aligned (Option A). */}
+        <div className="flex items-center justify-between gap-2">
+          <label className="flex items-center gap-2 text-sm font-medium text-text-primary">
+            <Server className="w-4 h-4" />
+            {t('api.provider')}
+          </label>
+          {activeCatalogEntry?.docsUrl && (
+            <a
+              href={activeCatalogEntry.docsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors"
+            >
+              <ExternalLink className="w-3 h-3" />
+              {t('api.providerPicker.docs')}
+            </a>
           )}
         </div>
+        <p className="text-xs leading-5 text-text-muted">{t('api.providerDescription')}</p>
+
+        {/* Single searchable provider picker (Option 2). Builtin providers
+            appear as a pinned "Popular" group inside the same list, so there is
+            one control and one always-visible selected state. */}
+        {isCatalogLoading ? (
+          <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-background border border-border text-text-muted text-sm">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>{t('common.loading')}</span>
+          </div>
+        ) : (
+          <ProviderPicker
+            catalog={providerCatalog}
+            value={provider}
+            onChange={changeProvider}
+            statusDot={providerStatusDot}
+            statusDotLabel={providerStatusLabel}
+            disabled={isLoadingConfig}
+          />
+        )}
       </div>
 
-      {/* API Key */}
+      {/* ------------------------------------------------------------------ */}
+      {/* API Key                                                             */}
+      {/* ------------------------------------------------------------------ */}
       <div className="space-y-3 py-5 border-b border-border-muted">
         <label
           htmlFor="api-key-input"
@@ -162,16 +260,29 @@ export function SettingsAPI() {
           type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          placeholder={currentPreset?.keyPlaceholder || t('api.enterApiKey')}
+          placeholder={
+            activeCatalogEntry?.keyPlaceholder ||
+            currentPreset?.keyPlaceholder ||
+            t('api.enterApiKey')
+          }
           className="w-full px-4 py-3 rounded-lg bg-background border border-border text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all"
         />
-        {currentPreset?.keyHint && (
+        {/* Native provider: show env-var hint */}
+        {isNative && activeCatalogEntry?.keyEnvVar && (
+          <p className="text-xs text-text-muted">
+            {t('api.providerPicker.keyEnvHint', { envVar: activeCatalogEntry.keyEnvVar })}
+          </p>
+        )}
+        {/* Builtin: show existing keyHint from presets */}
+        {!isNative && currentPreset?.keyHint && (
           <p className="text-xs text-text-muted">{t(currentPreset.keyHint)}</p>
         )}
       </div>
 
-      {/* Custom Protocol */}
-      {provider === 'custom' && (
+      {/* ------------------------------------------------------------------ */}
+      {/* Custom Protocol (custom provider only)                             */}
+      {/* ------------------------------------------------------------------ */}
+      {showProtocol && (
         <div className="space-y-3 py-5 border-b border-border-muted">
           <label
             id="api-protocol-label"
@@ -206,7 +317,10 @@ export function SettingsAPI() {
         </div>
       )}
 
-      {(provider === 'custom' || provider === 'ollama') && (
+      {/* ------------------------------------------------------------------ */}
+      {/* Base URL (custom + ollama only)                                    */}
+      {/* ------------------------------------------------------------------ */}
+      {showBaseUrl && (
         <div className="space-y-3 py-5 border-b border-border-muted">
           <div className="flex items-center justify-between gap-2">
             <label
@@ -264,7 +378,9 @@ export function SettingsAPI() {
         </div>
       )}
 
-      {/* Model Selection */}
+      {/* ------------------------------------------------------------------ */}
+      {/* Model Selection                                                     */}
+      {/* ------------------------------------------------------------------ */}
       <div className="space-y-3 py-5 border-b border-border-muted">
         <div className="flex items-center justify-between">
           <label
@@ -288,29 +404,26 @@ export function SettingsAPI() {
                 {isRefreshingModels ? t('api.refreshingModels') : t('api.refreshModels')}
               </button>
             )}
-            {shouldShowOllamaManualModelToggle && (
+            {showManualModelToggle && (
               <button
                 type="button"
                 onClick={toggleCustomModel}
-                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors active:scale-95 ${
-                  useCustomModel
+                disabled={forceManualModel}
+                title={forceManualModel ? t('api.noPresetsManualOnly') : undefined}
+                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 ${
+                  effectiveManualModel
                     ? 'bg-accent-muted text-accent'
                     : 'border border-border-muted bg-background text-text-secondary hover:bg-surface-hover'
                 }`}
               >
                 <Edit3 className="w-3 h-3" />
-                {isOllamaMode
-                  ? useCustomModel
-                    ? t('api.useDetectedModels')
-                    : t('api.manualModel')
-                  : useCustomModel
-                    ? t('api.usePreset')
-                    : t('api.custom')}
+                {manualToggleLabel}
               </button>
             )}
           </div>
         </div>
-        {useCustomModel ? (
+
+        {effectiveManualModel ? (
           <input
             id="api-model-input"
             type="text"
@@ -319,7 +432,25 @@ export function SettingsAPI() {
             placeholder={modelInputPlaceholder}
             className="w-full px-4 py-3 rounded-lg bg-background border border-border text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all"
           />
+        ) : showModelDropdown ? (
+          /* Searchable model combobox — native + registry-backed providers.
+             Shown whenever the formShape says modelDropdown=true, regardless
+             of whether options are populated yet (shows placeholder while loading). */
+          <SearchableCombobox
+            items={modelComboItems}
+            value={model}
+            onChange={setModel}
+            placeholder={
+              modelComboItems.length === 0
+                ? t('api.noModelsAvailable')
+                : t('api.selectModelRequired')
+            }
+            searchPlaceholder={t('api.providerPicker.modelSearchPlaceholder')}
+            noResultsLabel={t('api.providerPicker.noResults')}
+            aria-label={t('api.model')}
+          />
         ) : (
+          /* Legacy select for builtin cloud providers with small preset lists */
           <select
             id="api-model-input"
             value={modelOptions.length ? model : ''}
@@ -339,10 +470,11 @@ export function SettingsAPI() {
             )}
           </select>
         )}
-        {useCustomModel && <p className="text-xs text-text-muted">{modelInputHint}</p>}
+
+        {effectiveManualModel && <p className="text-xs text-text-muted">{modelInputHint}</p>}
 
         {/* Context Window & Max Tokens — only for non-registry providers */}
-        {(provider === 'ollama' || provider === 'custom') && (
+        {showContextWindow && (
           <div className="grid grid-cols-2 gap-3 pt-2">
             <div>
               <label
@@ -385,33 +517,50 @@ export function SettingsAPI() {
         )}
       </div>
 
-      {provider === 'custom' && (
+      {/* Common provider setups — custom provider only */}
+      {showCustomSetups && (
         <CommonProviderSetupsCard
           setups={commonProviderSetups}
           onApplySetup={applyCommonProviderSetup}
         />
       )}
 
-      {/* Enable Thinking Mode */}
-      <div className="space-y-3 py-5 border-b border-border-muted">
-        <div className="flex items-start gap-2 text-xs text-text-muted">
-          <input
-            type="checkbox"
-            id="enable-thinking"
-            checked={enableThinking}
-            onChange={(e) => setEnableThinking(e.target.checked)}
-            className="mt-0.5 w-4 h-4 rounded border-border text-accent focus:ring-accent"
-          />
-          <label htmlFor="enable-thinking" className="space-y-0.5 flex-1">
-            <div className="text-text-primary font-medium">{t('api.enableThinking')}</div>
-            <div>{t('api.enableThinkingHint')}</div>
-            {isOllamaMode && (
-              <div className="text-amber-500 dark:text-amber-400 text-xs mt-1">
-                {t('api.enableThinkingOllamaHint')}
-              </div>
-            )}
-          </label>
+      {/* ------------------------------------------------------------------ */}
+      {/* Thinking Level                                                       */}
+      {/* ------------------------------------------------------------------ */}
+      <div className="space-y-2 py-5 border-b border-border-muted">
+        <div className="text-xs font-medium text-text-primary">{t('api.thinkingLevel')}</div>
+        <div className="text-xs text-text-muted mb-2">
+          {thinkingCapabilities.supportsThinking
+            ? t('api.thinkingLevelHint')
+            : t('api.thinkingLevelUnsupportedHint')}
         </div>
+        {thinkingCapabilities.supportsThinking && (
+          <div className="flex flex-wrap gap-1" role="group" aria-label={t('api.thinkingLevel')}>
+            {/* `levels` arrives canonically ordered and always contains 'off'. */}
+            {thinkingCapabilities.levels.map((level) => (
+              <button
+                key={level}
+                type="button"
+                onClick={() => setThinkingLevel(level)}
+                aria-pressed={effectiveThinkingLevel === level}
+                className={[
+                  'px-3 py-1 rounded text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                  effectiveThinkingLevel === level
+                    ? 'bg-accent text-white'
+                    : 'bg-bg-tertiary text-text-muted hover:bg-bg-secondary hover:text-text-primary',
+                ].join(' ')}
+              >
+                {t(`api.thinkingLevelOption.${level}`, { defaultValue: level })}
+              </button>
+            ))}
+          </div>
+        )}
+        {isOllamaMode && (
+          <div className="text-amber-500 dark:text-amber-400 text-xs mt-1">
+            {t('api.thinkingLevelOllamaHint')}
+          </div>
+        )}
       </div>
 
       {/* Error/Success Messages */}
@@ -427,6 +576,7 @@ export function SettingsAPI() {
           {successMessage}
         </div>
       )}
+
       {/* Diagnostics Panel */}
       <ApiDiagnosticsPanel
         result={diagnosticResult}

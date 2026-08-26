@@ -74,11 +74,9 @@ describe('ClaudeAgentRunner pi-coding-agent integration', () => {
   });
 
   it('optionally appends workspace instructions to the system prompt', () => {
-    expect(agentRunnerContent).toContain(
-      "import { loadWorkspaceSystemPrompt } from '../utils/workspace-system-prompt'"
-    );
+    expect(agentRunnerContent).toContain("from '../utils/workspace-system-prompt'");
     expect(agentRunnerContent).toContain('loadWorkspaceSystemPrompt(');
-    expect(agentRunnerContent).toContain("configStore.get('systemPromptFile')");
+    expect(agentRunnerContent).toContain('resolveWorkspaceInstructionsConfig(');
     expect(agentRunnerContent).toContain('<workspace_instructions>');
     expect(agentRunnerContent).toContain('</workspace_instructions>');
   });

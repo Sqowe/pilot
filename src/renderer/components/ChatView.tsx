@@ -13,6 +13,7 @@ import {
 import { useAppStore } from '../store';
 import { useIPC } from '../hooks/useIPC';
 import { GroupedMessages } from './message/GroupedMessages';
+import { SelectionContextMenu } from './message/SelectionContextMenu';
 import { ExportSelectionBar } from './ExportSelectionBar';
 import { ExportOptionsDialog } from './ExportOptionsDialog';
 import type { ExportOptions } from './ExportOptionsDialog';
@@ -60,6 +61,9 @@ export function ChatView() {
   const [exportSelectedIds, setExportSelectedIds] = useState<Set<string>>(new Set());
   const [showExportOptions, setShowExportOptions] = useState(false);
   const [showExportDropdown, setShowExportDropdown] = useState(false);
+  const [selectionMenu, setSelectionMenu] = useState<{ text: string; x: number; y: number } | null>(
+    null
+  );
 
   // Reset export selection state when switching sessions
   useEffect(() => {
@@ -92,6 +96,9 @@ export function ChatView() {
   const pendingCount = pendingTurns.length;
   const isSessionRunning = activeSession?.status === 'running';
   const canStop = isSessionRunning || hasActiveTurn || pendingCount > 0;
+  // Shown in place of the placeholder while the agent is busy; hides as soon
+  // as the user starts typing a follow-up (which will be queued, same as today).
+  const showAgentWorking = canStop && !prompt.trim();
 
   // Track last memory retrieval timestamp for the "memory contributed" badge
   const [lastRetrievalTimestamp, setLastRetrievalTimestamp] = useState<number | undefined>();
@@ -805,7 +812,7 @@ export function ChatView() {
   const handleExportFull = async () => {
     if (!activeSessionId) return;
     try {
-      const result = await window.electronAPI.chat.exportMarkdown({
+      const result = await window.electronAPI.chat.export({
         sessionId: activeSessionId,
       });
       if (result.success && result.path) {
@@ -856,7 +863,7 @@ export function ChatView() {
         });
         return;
       }
-      const result = await window.electronAPI.chat.exportMarkdown({
+      const result = await window.electronAPI.chat.export({
         sessionId: activeSessionId,
         messageIds: uniqueMessageIds,
         options,
@@ -885,6 +892,25 @@ export function ChatView() {
       });
     }
   };
+
+  const handleSelectionContextMenu = useCallback((e: React.MouseEvent) => {
+    const selection = window.getSelection();
+    const raw = selection?.toString() ?? '';
+    // Only open when there is visible (non-whitespace) selected text
+    if (!raw.trim()) return;
+    // Scope to the scroll container — ignore selections made elsewhere in the app
+    if (
+      selection &&
+      selection.rangeCount > 0 &&
+      scrollContainerRef.current &&
+      !scrollContainerRef.current.contains(selection.getRangeAt(0).commonAncestorContainer)
+    ) {
+      return;
+    }
+    e.preventDefault();
+    // Preserve exact selection (leading/trailing whitespace intentional)
+    setSelectionMenu({ text: raw, x: e.clientX, y: e.clientY });
+  }, []);
 
   const handleEnterSelectMode = () => {
     setIsExportSelectMode(true);
@@ -950,6 +976,36 @@ export function ChatView() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isExportSelectMode, handleSelectAll]);
 
+  // Type-to-focus: when the user starts typing anywhere outside an editable
+  // field, redirect focus to the chat input so no keystrokes are lost.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only plain printable characters — ignore shortcuts and control keys.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key.length !== 1) return; // skips Enter, Tab, Arrows, Escape, etc.
+      if (e.isComposing) return; // don't disrupt IME composition
+
+      const el = textareaRef.current;
+      if (!el || el.disabled) return;
+
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName.toLowerCase();
+      if (
+        target === el ||
+        tag === 'input' ||
+        tag === 'textarea' ||
+        tag === 'select' ||
+        target?.isContentEditable
+      ) {
+        return; // already typing in an editable element
+      }
+
+      el.focus(); // Chromium routes the in-flight keystroke to the newly focused field
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   if (!activeSession) {
     return (
       <div className="flex-1 flex items-center justify-center text-text-muted">
@@ -991,7 +1047,7 @@ export function ChatView() {
               <button
                 onClick={() => setShowExportDropdown((prev) => !prev)}
                 className="w-6 h-6 rounded-md flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
-                title={t('chat.exportMarkdown')}
+                title={t('chat.exportChat')}
               >
                 <Download className="w-3.5 h-3.5" />
               </button>
@@ -1035,7 +1091,11 @@ export function ChatView() {
       )}
 
       {/* Messages */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto"
+        onContextMenu={handleSelectionContextMenu}
+      >
         <div
           ref={messagesContainerRef}
           className="w-full max-w-[920px] mx-auto py-8 px-5 lg:px-8 space-y-5"
@@ -1085,6 +1145,16 @@ export function ChatView() {
           <div ref={messagesEndRef} />
         </div>
       </div>
+
+      {/* Selection copy context menu */}
+      {selectionMenu && (
+        <SelectionContextMenu
+          text={selectionMenu.text}
+          x={selectionMenu.x}
+          y={selectionMenu.y}
+          onClose={() => setSelectionMenu(null)}
+        />
+      )}
 
       {/* Export Selection Bar */}
       {isExportSelectMode && (
@@ -1175,32 +1245,56 @@ export function ChatView() {
                 <Plus className="w-5 h-5" />
               </button>
 
-              <textarea
-                ref={textareaRef}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onCompositionStart={() => {
-                  isComposingRef.current = true;
-                }}
-                onCompositionEnd={() => {
-                  isComposingRef.current = false;
-                }}
-                onPaste={handlePaste}
-                onKeyDown={(e) => {
-                  // Enter to send, Shift+Enter for new line
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    if (e.nativeEvent.isComposing || isComposingRef.current || e.keyCode === 229) {
-                      return;
+              <div className="relative flex-1">
+                <textarea
+                  ref={textareaRef}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onCompositionStart={() => {
+                    isComposingRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    isComposingRef.current = false;
+                  }}
+                  onPaste={handlePaste}
+                  onKeyDown={(e) => {
+                    // Enter to send, Shift+Enter for new line
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      if (
+                        e.nativeEvent.isComposing ||
+                        isComposingRef.current ||
+                        e.keyCode === 229
+                      ) {
+                        return;
+                      }
+                      e.preventDefault();
+                      handleSubmit();
                     }
-                    e.preventDefault();
-                    handleSubmit();
-                  }
-                }}
-                placeholder={t('chat.typeMessage')}
-                disabled={isSubmitting}
-                rows={1}
-                className="flex-1 resize-none bg-transparent border-none outline-none text-text-primary placeholder:text-text-muted text-[15px] py-2 min-h-[40px] max-h-[200px] overflow-y-auto leading-6"
-              />
+                  }}
+                  placeholder={canStop ? '' : t('chat.typeMessage')}
+                  disabled={isSubmitting}
+                  rows={1}
+                  className="block w-full resize-none bg-transparent border-none outline-none text-text-primary placeholder:text-text-muted text-[15px] py-2 min-h-[40px] max-h-[200px] overflow-y-auto leading-6"
+                />
+                {showAgentWorking && (
+                  <div
+                    className="absolute inset-0 flex items-center gap-2 py-2 pointer-events-none"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <span
+                      className="inline-flex items-end gap-[3px] h-3.5 shrink-0"
+                      aria-hidden="true"
+                    >
+                      <span className="w-[3px] h-full rounded-full bg-text-muted animate-eq-bounce" />
+                      <span className="w-[3px] h-full rounded-full bg-text-muted animate-eq-bounce [animation-delay:150ms]" />
+                      <span className="w-[3px] h-full rounded-full bg-text-muted animate-eq-bounce [animation-delay:300ms]" />
+                      <span className="w-[3px] h-full rounded-full bg-text-muted animate-eq-bounce [animation-delay:450ms]" />
+                    </span>
+                    <span className="text-text-muted text-[15px]">{t('chat.agentWorking')}</span>
+                  </div>
+                )}
+              </div>
 
               <div className="flex items-center gap-2">
                 {/* Config Set Selector */}

@@ -3,7 +3,7 @@
  * Imports the production function directly to prevent test/implementation drift.
  */
 import { describe, it, expect } from 'vitest';
-import { computeContextUsage } from '../src/renderer/utils/context-usage';
+import { computeContextUsage, findLastTokenUsage } from '../src/renderer/utils/context-usage';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -216,5 +216,61 @@ describe('edge cases', () => {
     });
     expect(result!.outputPercentage).toBe(0);
     expect(result!.maxOutputTokens).toBe(0);
+  });
+});
+
+describe('findLastTokenUsage', () => {
+  it('returns undefined for an empty message array', () => {
+    expect(findLastTokenUsage([])).toBeUndefined();
+  });
+
+  it('returns undefined when no messages have tokenUsage', () => {
+    expect(findLastTokenUsage([{ tokenUsage: undefined }, {}])).toBeUndefined();
+  });
+
+  it('returns the tokenUsage from the only message that has it', () => {
+    const usage = { input: 100, output: 50 };
+    expect(findLastTokenUsage([{ tokenUsage: usage }])).toBe(usage);
+  });
+
+  it('returns the last tokenUsage when multiple messages have it', () => {
+    const first = { input: 100, output: 50 };
+    const last = { input: 200, output: 80 };
+    expect(
+      findLastTokenUsage([{ tokenUsage: first }, { tokenUsage: undefined }, { tokenUsage: last }])
+    ).toBe(last);
+  });
+
+  it('does not skip tokenUsage with input === 0 (presence check, not truthy)', () => {
+    // A truthy check on input would incorrectly skip this entry and fall through
+    // to an earlier message. The fix uses typeof tu.input === 'number' instead.
+    const zeroInput = { input: 0, output: 0, cacheRead: 500 };
+    const earlier = { input: 5000, output: 200 };
+    expect(findLastTokenUsage([{ tokenUsage: earlier }, { tokenUsage: zeroInput }])).toBe(
+      zeroInput
+    );
+  });
+
+  it('scans backwards past trailing messages without tokenUsage', () => {
+    const usage = { input: 100, output: 50 };
+    const result = findLastTokenUsage([{ tokenUsage: usage }, { tokenUsage: undefined }]);
+    expect(result).toBe(usage);
+  });
+
+  it('skips non-assistant messages when role is present', () => {
+    const userUsage = { input: 200, output: 0 };
+    const assistantUsage = { input: 500, output: 100 };
+    const result = findLastTokenUsage([
+      { role: 'assistant', tokenUsage: assistantUsage },
+      { role: 'user', tokenUsage: userUsage },
+    ]);
+    // user message comes last but should be skipped; assistant should be returned
+    expect(result).toBe(assistantUsage);
+  });
+
+  it('returns tokenUsage from messages without a role field (role-agnostic fallback)', () => {
+    // When role is absent, the message is not skipped — backwards compat.
+    const usage = { input: 100, output: 50 };
+    expect(findLastTokenUsage([{ tokenUsage: usage }])).toBe(usage);
   });
 });

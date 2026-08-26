@@ -54,10 +54,12 @@ It provides a sandboxed workspace where AI can manage files, generate profession
 | Sqowe Pilot   | ✓            | ✓              | ✓             |
 
 - **One-Click Install, Ready to Use**: Pre-built installers for Windows and macOS, no environment setup needed—just download and start using.
-- **Flexible Model Support**: Supports **Claude**, **OpenAI-compatible APIs**, and Chinese models like **GLM**, **MiniMax**, **Kimi**. Use your OpenRouter, Anthropic, or other API keys with flexible configuration. More models coming soon!
+- **Flexible Model Support**: Supports **Claude**, **OpenAI-compatible APIs**, and Chinese models like **GLM**, **MiniMax**, **Kimi**. Use your OpenRouter, Anthropic, or other API keys with flexible configuration. A searchable provider/model picker is backed by the live pi-ai registry, and a **per-model Thinking Level** selector exposes exactly the reasoning effort each model supports. More models coming soon!
+- **HTTP Proxy Support**: Route model API requests through a corporate or egress proxy (Settings → API).
 - **Remote Control**: Connect to collaboration platforms like **Feishu (Lark)** and other remote services to automate workflows and cross-platform operations.
 - **GUI Operation**: Control and interact with various desktop GUI applications on your computer. **Recommended model: Gemini-3-Pro** for optimal GUI understanding and control.
 - **Smart File Management**: Read, write, and organize files within your workspace.
+- **Cross-Session Memory**: The agent remembers across conversations — stable preferences are always present, and past sessions are retrieved on demand rather than dumped into every prompt. Stored in SQLite, with embeddings that run offline and in-process by default. Settings → Memory reports how much of the store is actually searchable by meaning, and fills the gaps on request.
 - **Skills System**: Built-in workflows for PPTX, DOCX, PDF, XLSX generation and processing. **Supports custom skill creation and deletion.** Workspace profiles let you disable unused skills per-project, and conflict resolution handles name collisions between custom and built-in skills automatically.
 - **Task Scheduling**: Anacron-style in-app task scheduling with fuzzy time windows (morning/afternoon/evening/night), autonomous execution mode, missed-task catch-up policies, per-run token/time budgets, and full run history tracking.
 - **MCP External Service Support**: Integrate browser, Notion, custom apps and more through **MCP Connectors** to extend AI capabilities. **Per-session toggle** lets you disable unused servers on-the-fly to reclaim context window tokens.
@@ -200,7 +202,7 @@ You need an API key to power the agent. We support **OpenRouter**, **Anthropic**
 
 ## 🧰 Skills Library
 
-Sqowe Pilot ships with built-in skills under `.claude/skills/`, and supports user-added or custom skills, including:
+Sqowe Pilot ships with built-in skills under `resources/skills/`, and supports user-added or custom skills, including:
 
 - `pptx` for PowerPoint generation
 - `docx` for Word document processing
@@ -225,10 +227,10 @@ If you've modified a built-in skill and want to prevent it from being overwritte
 
 ```bash
 # macOS
-touch ~/Library/Application\ Support/sqowe-pilot/.claude/skills/docx/.user-modified
+touch ~/Library/Application\ Support/sqowe-pilot/claude/skills/docx/.user-modified
 
 # Windows
-type nul > "%APPDATA%\sqowe-pilot\.claude\skills\docx\.user-modified"
+type nul > "%APPDATA%\sqowe-pilot\claude\skills\docx\.user-modified"
 ```
 
 When the marker is present, the auto-update will skip that skill and log a warning instead. To resume receiving updates, simply delete the `.user-modified` file.
@@ -495,11 +497,33 @@ This avoids injecting too much irrelevant context while ensuring important detai
 
 Memory data lives at `~/Library/Application Support/sqowe-pilot/memory/` (macOS):
 
-| File                     | Contents                                             |
-| ------------------------ | ---------------------------------------------------- |
-| `core_memory.json`       | Stable user profile (interests, preferences, skills) |
-| `experience_memory.json` | Session summaries, chunks, and embeddings            |
-| `session_state.json`     | Tracks which sessions have been ingested             |
+| File                 | Contents                                             |
+| -------------------- | ---------------------------------------------------- |
+| `core_memory.json`   | Stable user profile (interests, preferences, skills) |
+| `memory.db`          | Session summaries, chunks, and embeddings (SQLite)   |
+| `session_state.json` | Tracks which sessions have been ingested             |
+
+Experience memory used to be a single `experience_memory.json`, which was rewritten in full on
+every ingest and re-parsed in full on every read. It now lives in a SQLite database. **The
+migration is automatic**: on first launch the JSON is copied into `memory.db` in one transaction
+and then renamed to `experience_memory.json.bak`, which is kept as a rollback artefact. No action
+is required, and nothing is deleted.
+
+Because `memory.db` is a binary file, **Settings → Memory → Memory Storage** shows a status card
+for it instead of a raw dump — schema version, size, session/chunk counts, embedding model,
+integrity, and a per-workspace breakdown — with **Export JSON** (a full-fidelity backup in the old
+`{ sessions, chunks }` shape) and **Vacuum** (reclaim space after clearing). The other entries are
+still plain JSON and open in the raw viewer as before.
+
+### Local Embeddings (Default)
+
+By default, memory embeddings run **fully offline and in-process** via ONNX (EmbeddingGemma-300M through transformers.js) — no Python, no API key, and no data leaves your machine. The model downloads once on first use. Switch to a remote embedding provider in **Settings → Memory** if you prefer.
+
+**Switching the embedding model invalidates stored vectors.** Similarity is only meaningful within a single model's embedding space, so comparing a fresh query against vectors built by a different model returns noise rather than matches. Sqowe Pilot detects the mismatch and falls back to keyword-only retrieval — degraded, but never wrong — and offers to recompute the vectors. Until then, search keeps working without semantic ranking.
+
+**Embedding coverage** is shown in **Settings → Memory**: how many stored chunks actually carry a vector. Records without one are still found by keyword, just not by meaning — a distinction that is otherwise invisible, since ingestion itself succeeds either way. The card turns amber when records are missing vectors, and red with the reason when an embedding call failed.
+
+**Backfill embeddings**, on that card, fills the gaps. It computes vectors for records already in the database — including ones embedded with a previously-configured model — and is much cheaper than **Rebuild all**: the text a vector is built from is already stored, so no LLM extraction runs and nothing is deleted. Progress is reported per record, and an interrupted run resumes where it stopped. Reach for Rebuild all only when the extracted summaries themselves need redoing.
 
 ### Configuration
 
@@ -593,9 +617,9 @@ sqowe-pilot/
 
 See our full **[ROADMAP.md](ROADMAP.md)** for detailed plans.
 
-**Completed:** Core installers · Filesystem sandboxing · VM isolation (WSL2/Lima) · Skills (PPTX/DOCX/PDF/XLSX) · Skill conflict resolution · Skill workspace profiles · MCP connectors · Multi-model support · Rich input · i18n · Task scheduling (v2)
+**Completed:** Core installers · Filesystem sandboxing · VM isolation (WSL2/Lima) · Skills (PPTX/DOCX/PDF/XLSX) · Skill conflict resolution · Skill workspace profiles · MCP connectors · Multi-model support · Rich input · i18n · Task scheduling (v2) · Cross-session memory (local embeddings) · Per-model thinking levels · HTTP proxy · Plugin system · Computer use
 
-**Coming next:** Memory optimization · Linux support · Plugin system · Computer use · Stable release
+**Coming next:** Linux support · Stable release
 
 ---
 
@@ -620,7 +644,7 @@ Currently, Sqowe Pilot provides pre-built installers for Windows and macOS only.
 Sqowe Pilot offers multi-level protection: basic path-based restrictions on all platforms, and enhanced VM-level isolation using WSL2 (Windows) or Lima (macOS). When a VM is available, all commands execute inside an isolated Linux environment, protecting your host system.
 
 **What are Skills and how do I create custom ones?**
-Skills are built-in workflows for specific tasks like generating PPTX, DOCX, PDF, or XLSX files. Sqowe Pilot ships with default skills under `.claude/skills/` and includes a `skill-creator` tool to help you build your own custom skills.
+Skills are built-in workflows for specific tasks like generating PPTX, DOCX, PDF, or XLSX files. Sqowe Pilot ships with default skills under `resources/skills/` and includes a `skill-creator` tool to help you build your own custom skills.
 
 **What is MCP and how does it work?**
 MCP (Model Context Protocol) lets AI connect to external tools and services. Sqowe Pilot supports MCP connectors for browsers, Notion, and other desktop apps — extending the AI's capabilities beyond just file management and code.

@@ -11,6 +11,7 @@
  *
  * Dependencies: electron-store, auth-utils, api-model-presets
  */
+import * as fs from 'fs';
 import Store, { type Options as StoreOptions } from 'electron-store';
 import { log, logWarn } from '../utils/logger';
 import {
@@ -32,9 +33,23 @@ import {
 import { API_PROVIDER_PRESETS, PI_AI_CURATED_PRESETS } from '../../shared/api-model-presets';
 import {
   isValidSystemPromptFileChoice,
+  normalizeSystemPromptPriority,
+  DEFAULT_SYSTEM_PROMPT_PRIORITY,
   type SystemPromptFileChoice,
+  type SystemPromptFileName,
 } from '../../shared/system-prompt-file-choices';
 import { sanitizeBashCommandList } from './permission-rules-store';
+import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
+import { THINKING_LEVELS } from '../../shared/thinking-levels';
+import {
+  normalizeProviderId,
+  isValidProviderId,
+  isValidProfileKey,
+  isNativeProfileKey,
+  deriveProfileKey,
+  profileKeyToProviderInfo,
+  BUILTIN_PROVIDER_ID_LIST,
+} from '../../shared/provider-ids';
 // Import normalizePermissionTimeout and DEFAULT_BASH_RESTRICTIONS_SETTINGS from the shared module.
 // defaultConfig.permissionTimeoutSeconds is set to DEFAULT_BASH_RESTRICTIONS_SETTINGS.permissionTimeoutSeconds
 // below so the two values are guaranteed to stay in sync — there is no separate copy to drift.
@@ -49,12 +64,32 @@ import {
 } from '../../shared/skill-conflict-types';
 
 /**
- * Application configuration schema
+ * The 6 legacy builtin provider ids. Use for exhaustive switches over builtins.
  */
-export type ProviderType = 'openrouter' | 'anthropic' | 'custom' | 'openai' | 'gemini' | 'ollama';
+export type BuiltinProviderType =
+  | 'openrouter'
+  | 'anthropic'
+  | 'custom'
+  | 'openai'
+  | 'gemini'
+  | 'ollama';
+/**
+ * Open provider type — accepts any catalog id including native providers
+ * (e.g. 'zai', 'minimax', 'deepseek') and the 6 legacy builtin ids.
+ * Use BuiltinProviderType when you need exhaustive matching over the 6.
+ */
+export type ProviderType = string;
+/**
+ * Superset of ProviderType that additionally allows 'local' for the embedding sub-config only.
+ * The 'local' value must never appear on the main LLM config or any ApiConfigSet provider field.
+ */
+export type EmbeddingProviderType = ProviderType | 'local';
 export type CustomProtocolType = 'anthropic' | 'openai' | 'gemini';
 export type AppTheme = 'dark' | 'light' | 'system';
-export type ProviderProfileKey =
+/**
+ * Builtin profile keys for the 6 legacy providers.
+ */
+export type BuiltinProfileKey =
   | 'openrouter'
   | 'anthropic'
   | 'openai'
@@ -63,6 +98,12 @@ export type ProviderProfileKey =
   | 'custom:anthropic'
   | 'custom:openai'
   | 'custom:gemini';
+/**
+ * Profile key — builtin slot or a native provider slot (`native:<piProvider>`).
+ * Each native provider gets its own credential slot so switching between
+ * providers preserves both saved keys.
+ */
+export type ProviderProfileKey = BuiltinProfileKey | `native:${string}`;
 export type ConfigSetId = string;
 export type CreateSetMode = 'blank' | 'clone';
 
@@ -89,6 +130,8 @@ export interface ApiConfigSet {
   activeProfileKey: ProviderProfileKey;
   profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
   enableThinking: boolean;
+  /** Replaces enableThinking. Always a valid ModelThinkingLevel after normalization. */
+  thinkingLevel: ModelThinkingLevel;
   updatedAt: string;
 }
 
@@ -127,10 +170,20 @@ export interface AppConfig {
   // Colon-separated (macOS/Linux) or semicolon-separated (Windows) list of directories.
   localDevPath?: string;
 
-  // Optional: workspace-level instructions file injected as system prompt tail.
-  // Empty string (default) preserves today's behavior. See
-  // `loadWorkspaceSystemPrompt` for the valid choices and safety model.
+  /**
+   * @deprecated Use `systemPromptFileEnabled` + `systemPromptFilePriority`.
+   * Kept only for migration reading; not written after Phase 4.
+   */
   systemPromptFile?: SystemPromptFileChoice;
+
+  // Master on/off toggle for workspace-instructions auto-discovery.
+  // Replaces the old '' = None sentinel in systemPromptFile.
+  systemPromptFileEnabled: boolean;
+
+  // Ordered list of candidate filenames; the first existing file wins.
+  // Always a full permutation of DEFAULT_SYSTEM_PROMPT_PRIORITY after
+  // normalisation. User may reorder but not add/remove entries.
+  systemPromptFilePriority: SystemPromptFileName[];
 
   // Bash command trust list (prefix patterns with `*` wildcard).
   // Persisted here so the main process has them at startup, before the
@@ -158,9 +211,23 @@ export interface AppConfig {
 
   // Enable thinking mode (show thinking steps)
   enableThinking: boolean;
+  /** Per-model thinking level. Always a valid ModelThinkingLevel after normalization.
+   * Optional in AppConfig (storage) because it may be absent in old on-disk configs
+   * — always present and required in ApiConfigSet after normalization. */
+  thinkingLevel?: ModelThinkingLevel;
 
   // First run flag
   isConfigured: boolean;
+
+  /**
+   * Config schema version — used to distinguish a truly fresh install from an
+   * existing install that was upgraded before this field existed.
+   *
+   * 0 = default (field absent from disk, or written before schema versioning).
+   *     Treated as an existing install during migration.
+   * 1 = migrated to systemPromptFileEnabled / systemPromptFilePriority.
+   */
+  configSchemaVersion: number;
 
   // Scheduler settings (v2)
   schedulerCatchUpPolicy: 'skip' | 'run-once' | 'run-all' | 'ask';
@@ -190,11 +257,17 @@ export interface AppConfig {
   // Workspace orphan detection dismissals.
   // Tracks per-workspace dismissals so we don't re-notify until config files change.
   orphanDismissals: import('../../shared/workspace-orphan-types').WorkspaceOrphanDismissal[];
+
+  // Optional HTTP proxy URL for all outbound API requests (e.g. http://proxy:8080).
+  // Applied via applyConfigHttpProxy() in src/main/utils/http-proxy.ts at startup
+  // and whenever the value changes. Empty string or undefined means no override
+  // (shell/OS proxy env vars are inherited as-is).
+  httpProxy?: string;
 }
 
-export interface MemoryModelRuntimeConfig {
+/** Shared fields for both LLM and embedding memory runtime sub-configs. */
+export interface MemoryModelRuntimeConfigBase {
   inheritFromActive: boolean;
-  provider?: ProviderType;
   customProtocol?: CustomProtocolType;
   apiKey?: string;
   baseUrl?: string;
@@ -202,9 +275,26 @@ export interface MemoryModelRuntimeConfig {
   timeoutMs: number;
 }
 
+/** LLM sub-config: provider is always a ProviderType (never 'local'). */
+export interface MemoryLLMRuntimeConfig extends MemoryModelRuntimeConfigBase {
+  provider?: ProviderType;
+}
+
+/** Embedding sub-config: provider may be 'local' for in-process ONNX inference. */
+export interface MemoryEmbeddingRuntimeConfig extends MemoryModelRuntimeConfigBase {
+  provider?: EmbeddingProviderType;
+}
+
+/**
+ * @deprecated Use MemoryLLMRuntimeConfig or MemoryEmbeddingRuntimeConfig directly.
+ * Kept as a union alias so existing consumers that reference MemoryModelRuntimeConfig
+ * continue to compile during the transition.
+ */
+export type MemoryModelRuntimeConfig = MemoryLLMRuntimeConfig | MemoryEmbeddingRuntimeConfig;
+
 export interface MemoryRuntimeConfig {
-  llm: MemoryModelRuntimeConfig;
-  embedding: MemoryModelRuntimeConfig;
+  llm: MemoryLLMRuntimeConfig;
+  embedding: MemoryEmbeddingRuntimeConfig;
   useEmbedding: boolean;
   maxNavSteps: number;
   ingestionConcurrency: number;
@@ -302,6 +392,7 @@ const defaultConfigSet: ApiConfigSet = {
   activeProfileKey: 'openrouter',
   profiles: defaultProfiles,
   enableThinking: false,
+  thinkingLevel: 'off' as ModelThinkingLevel,
   updatedAt: '1970-01-01T00:00:00.000Z',
 };
 
@@ -320,7 +411,10 @@ const defaultConfig: AppConfig = {
   globalSkillsPath: '',
   localDevPath: '',
   systemPromptFile: '',
+  systemPromptFileEnabled: true,
+  systemPromptFilePriority: [...DEFAULT_SYSTEM_PROMPT_PRIORITY],
   bashTrustedCommands: [],
+
   bashDenylist: [],
   enableDevLogs: false,
   theme: 'light',
@@ -337,15 +431,17 @@ const defaultConfig: AppConfig = {
       timeoutMs: 180000,
     },
     embedding: {
-      inheritFromActive: true,
-      provider: undefined,
+      inheritFromActive: false,
+      provider: 'local' as const,
       customProtocol: undefined,
       apiKey: '',
       baseUrl: '',
+      // Safe fallback model for non-local providers. Ignored when provider === 'local'
+      // since the model ID is hardcoded in local-embedding-provider.ts (design D1).
       model: 'text-embedding-3-small',
       timeoutMs: 180000,
     },
-    useEmbedding: false,
+    useEmbedding: true,
     maxNavSteps: 2,
     ingestionConcurrency: 4,
     storageRoot: '',
@@ -363,6 +459,7 @@ const defaultConfig: AppConfig = {
   },
   enableThinking: false,
   isConfigured: false,
+  configSchemaVersion: 0,
   schedulerCatchUpPolicy: 'ask',
   schedulerConflictPolicy: 'queue',
   schedulerRunHistoryDepth: 10,
@@ -426,7 +523,7 @@ export async function getPiAiModelPresets(): Promise<typeof PROVIDER_PRESETS> {
   }
 }
 
-const PROFILE_KEYS: ProviderProfileKey[] = [
+const BUILTIN_PROFILE_KEYS: BuiltinProfileKey[] = [
   'openrouter',
   'anthropic',
   'openai',
@@ -436,25 +533,40 @@ const PROFILE_KEYS: ProviderProfileKey[] = [
   'custom:openai',
   'custom:gemini',
 ];
+
+/**
+ * PROFILE_KEYS enumerates only the builtin slots.
+ * Native slots (native:*) are dynamic and not enumerable upfront —
+ * they live in the sparse profiles map and are accessed by key.
+ */
+const PROFILE_KEYS: BuiltinProfileKey[] = BUILTIN_PROFILE_KEYS;
 const VALID_THEMES: AppTheme[] = ['dark', 'light', 'system'];
 
+/**
+ * Accepts any non-empty string as a provider id EXCEPT 'local', which is
+ * reserved for EmbeddingProviderType and must never appear on the main LLM
+ * config or any ApiConfigSet provider field.
+ * Provider ids are trimmed at persistence boundaries (see normalizeConfig)
+ * so callers receive canonical values.
+ */
+/** Accepts any valid provider id (non-empty, not 'local', not a prototype key). */
 function isProviderType(value: unknown): value is ProviderType {
-  return (
-    value === 'openrouter' ||
-    value === 'anthropic' ||
-    value === 'custom' ||
-    value === 'openai' ||
-    value === 'gemini' ||
-    value === 'ollama'
-  );
+  return isValidProviderId(value);
+}
+
+/** Type-guard for the 6 legacy builtin provider ids (trims before checking). */
+function isBuiltinProviderType(value: unknown): value is BuiltinProviderType {
+  if (typeof value !== 'string') return false;
+  return (BUILTIN_PROVIDER_ID_LIST as readonly string[]).includes(value.trim());
 }
 
 function isCustomProtocol(value: unknown): value is CustomProtocolType {
   return value === 'anthropic' || value === 'openai' || value === 'gemini';
 }
 
+/** Accepts builtin profile keys and `native:<canonical-id>` keys. */
 function isProfileKey(value: unknown): value is ProviderProfileKey {
-  return typeof value === 'string' && PROFILE_KEYS.includes(value as ProviderProfileKey);
+  return isValidProfileKey(value);
 }
 
 function isAppTheme(value: unknown): value is AppTheme {
@@ -503,18 +615,23 @@ function normalizeCatchUpPolicy(value: unknown): AppConfig['schedulerCatchUpPoli
   return value;
 }
 
-function isMemoryModelRuntimeConfig(value: unknown): value is Partial<MemoryModelRuntimeConfig> {
+function isEmbeddingProviderType(value: unknown): value is EmbeddingProviderType {
+  return isProviderType(value) || value === 'local';
+}
+
+function isMemoryModelRuntimeConfig(
+  value: unknown
+): value is Partial<MemoryModelRuntimeConfigBase> {
   return typeof value === 'object' && value !== null;
 }
 
-function normalizeMemoryModelRuntimeConfig(
+function normalizeMemoryModelRuntimeConfigBase(
   raw: unknown,
-  fallback: MemoryModelRuntimeConfig
-): MemoryModelRuntimeConfig {
+  fallback: MemoryModelRuntimeConfigBase
+): MemoryModelRuntimeConfigBase {
   const value = isMemoryModelRuntimeConfig(raw) ? raw : {};
   return {
     inheritFromActive: toBoolean(value.inheritFromActive, fallback.inheritFromActive),
-    provider: isProviderType(value.provider) ? value.provider : fallback.provider,
     customProtocol: isCustomProtocol(value.customProtocol)
       ? value.customProtocol
       : fallback.customProtocol,
@@ -528,16 +645,70 @@ function normalizeMemoryModelRuntimeConfig(
   };
 }
 
-function normalizeMemoryRuntimeConfig(raw: unknown): MemoryRuntimeConfig {
+function normalizeMemoryLLMRuntimeConfig(
+  raw: unknown,
+  fallback: MemoryLLMRuntimeConfig
+): MemoryLLMRuntimeConfig {
+  const base = normalizeMemoryModelRuntimeConfigBase(raw, fallback);
+  const rawProvider = isMemoryModelRuntimeConfig(raw)
+    ? (raw as Partial<MemoryLLMRuntimeConfig>).provider
+    : undefined;
+  return {
+    ...base,
+    // Memory LLM provider is intentionally constrained to the 6 builtin ids
+    // (§6.2 of native-provider-catalog design). The memory sub-config has its
+    // own UI path and does not participate in the native provider catalog.
+    // ProviderType widening does NOT affect this field — native provider ids
+    // saved here would be coerced to the fallback, which is the correct behavior.
+    provider: isBuiltinProviderType(rawProvider) ? rawProvider : fallback.provider,
+  };
+}
+
+function normalizeMemoryEmbeddingRuntimeConfig(
+  raw: unknown,
+  fallback: MemoryEmbeddingRuntimeConfig
+): MemoryEmbeddingRuntimeConfig {
+  const base = normalizeMemoryModelRuntimeConfigBase(raw, fallback);
+  const rawProvider = isMemoryModelRuntimeConfig(raw)
+    ? (raw as Partial<MemoryEmbeddingRuntimeConfig>).provider
+    : undefined;
+  return {
+    ...base,
+    provider: isEmbeddingProviderType(rawProvider) ? rawProvider : fallback.provider,
+  };
+}
+
+function normalizeMemoryRuntimeConfig(
+  raw: unknown,
+  schemaVersion?: number,
+  isFreshInstall?: boolean
+): MemoryRuntimeConfig {
   const value =
     typeof raw === 'object' && raw !== null ? (raw as Partial<MemoryRuntimeConfig>) : {};
+
+  // Embedding defaults are schema-version and install-type aware:
+  // - Pre-v2 (existing installs before this feature): old defaults — no local embedding.
+  // - v2+ fresh install: new defaults — useEmbedding: true, provider: 'local'.
+  // - v2+ upgrade (was v0 or v1): preserve old behavior — provider: undefined, useEmbedding
+  //   is frozen via migrateToV2(). We must NOT fall back to 'local' for upgraded users who
+  //   never explicitly set a provider, otherwise they'd silently get local embeddings.
+  const isPreV2 = typeof schemaVersion === 'number' && schemaVersion < 2;
+  const isTrulyFreshV2 = !isPreV2 && isFreshInstall === true;
+
+  const embeddingFallback: MemoryEmbeddingRuntimeConfig =
+    isPreV2 || !isTrulyFreshV2
+      ? {
+          ...defaultConfig.memoryRuntime.embedding,
+          provider: undefined,
+          model: 'text-embedding-3-small',
+        }
+      : defaultConfig.memoryRuntime.embedding;
+  const useEmbeddingFallback = isTrulyFreshV2 ? defaultConfig.memoryRuntime.useEmbedding : false;
+
   const result: MemoryRuntimeConfig = {
-    llm: normalizeMemoryModelRuntimeConfig(value.llm, defaultConfig.memoryRuntime.llm),
-    embedding: normalizeMemoryModelRuntimeConfig(
-      value.embedding,
-      defaultConfig.memoryRuntime.embedding
-    ),
-    useEmbedding: toBoolean(value.useEmbedding, defaultConfig.memoryRuntime.useEmbedding),
+    llm: normalizeMemoryLLMRuntimeConfig(value.llm, defaultConfig.memoryRuntime.llm),
+    embedding: normalizeMemoryEmbeddingRuntimeConfig(value.embedding, embeddingFallback),
+    useEmbedding: toBoolean(value.useEmbedding, useEmbeddingFallback),
     maxNavSteps:
       typeof value.maxNavSteps === 'number' && Number.isFinite(value.maxNavSteps)
         ? Math.max(0, Math.min(4, Math.round(value.maxNavSteps)))
@@ -649,41 +820,46 @@ function profileKeyFromProvider(
   provider: ProviderType,
   customProtocol: CustomProtocolType = 'anthropic'
 ): ProviderProfileKey {
-  if (provider !== 'custom') {
-    return provider;
-  }
-  if (customProtocol === 'openai') {
-    return 'custom:openai';
-  }
-  if (customProtocol === 'gemini') {
-    return 'custom:gemini';
-  }
-  return 'custom:anthropic';
+  return deriveProfileKey(provider, customProtocol) as ProviderProfileKey;
 }
 
 function profileKeyToProvider(profileKey: ProviderProfileKey): {
   provider: ProviderType;
   customProtocol: CustomProtocolType;
 } {
-  if (profileKey === 'custom:openai') {
-    return { provider: 'custom', customProtocol: 'openai' };
+  return profileKeyToProviderInfo(profileKey);
+}
+
+// VALID_THINKING_LEVELS is now THINKING_LEVELS from shared/thinking-levels
+
+function normalizeThinkingLevel(value: unknown, fallback: ModelThinkingLevel): ModelThinkingLevel {
+  if (typeof value === 'string' && (THINKING_LEVELS as readonly string[]).includes(value)) {
+    return value as ModelThinkingLevel;
   }
-  if (profileKey === 'custom:gemini') {
-    return { provider: 'custom', customProtocol: 'gemini' };
+  return fallback;
+}
+
+/** Derive a ModelThinkingLevel from either the new thinkingLevel field or the
+ * legacy enableThinking boolean. New field wins when present and valid. */
+function resolveThinkingLevelFromRaw(
+  thinkingLevel: unknown,
+  enableThinking: unknown
+): ModelThinkingLevel {
+  const hasExplicitLevel =
+    typeof thinkingLevel === 'string' &&
+    (THINKING_LEVELS as readonly string[]).includes(thinkingLevel);
+
+  if (hasExplicitLevel) {
+    // 'off' wins only when enableThinking is absent or false.
+    // If enableThinking is explicitly true and thinkingLevel is 'off',
+    // that's legacy/default bleedthrough — honour the boolean intent instead.
+    if (thinkingLevel !== 'off') return thinkingLevel as ModelThinkingLevel;
+    if (typeof enableThinking === 'boolean' && enableThinking) return 'medium';
+    return 'off';
   }
-  if (profileKey === 'custom:anthropic') {
-    return { provider: 'custom', customProtocol: 'anthropic' };
-  }
-  if (profileKey === 'openai') {
-    return { provider: 'openai', customProtocol: 'openai' };
-  }
-  if (profileKey === 'gemini') {
-    return { provider: 'gemini', customProtocol: 'gemini' };
-  }
-  if (profileKey === 'ollama') {
-    return { provider: 'ollama', customProtocol: 'openai' };
-  }
-  return { provider: profileKey, customProtocol: 'anthropic' };
+
+  // No valid stored level — migrate from the legacy boolean.
+  return typeof enableThinking === 'boolean' && enableThinking ? 'medium' : 'off';
 }
 
 function toBoolean(value: unknown, fallback: boolean): boolean {
@@ -728,6 +904,29 @@ function defaultProtocolForProvider(provider: ProviderType): CustomProtocolType 
   return 'anthropic';
 }
 
+/**
+ * Deep-merge a partial memoryRuntime update with the current persisted value.
+ * Only top-level scalar fields and the llm/embedding sub-objects are merged
+ * field-by-field; all other fields fall through to the incoming update or current.
+ * This prevents partial UI saves from resetting unrelated nested keys.
+ */
+function mergeMemoryRuntime(
+  current: MemoryRuntimeConfig,
+  incoming: Partial<MemoryRuntimeConfig>
+): Partial<MemoryRuntimeConfig> {
+  return {
+    ...current,
+    ...incoming,
+    // Merge llm sub-object field-by-field so partial updates don't wipe e.g. apiKey.
+    llm: incoming.llm !== undefined ? { ...current.llm, ...incoming.llm } : current.llm,
+    // Merge embedding sub-object field-by-field for the same reason.
+    embedding:
+      incoming.embedding !== undefined
+        ? { ...current.embedding, ...incoming.embedding }
+        : current.embedding,
+  };
+}
+
 export class ConfigStore {
   private store: Store<AppConfig>;
 
@@ -761,14 +960,99 @@ export class ConfigStore {
   }
 
   private ensureNormalized(): void {
-    const normalized = this.normalizeConfig(this.store.store as Partial<AppConfig>);
+    // Detect a truly fresh install *before* any write below can create the
+    // file. electron-store keeps `defaults` in memory only and does not write
+    // the config file until the first `set`, so an absent file here means a
+    // brand-new install. (Key rotation writes only when migrating an existing
+    // legacy-key file, so it never fires on a fresh install.)
+    const configFileExists = fs.existsSync(this.store.path);
+
+    // Source of truth is the *decrypted* in-memory store, never the on-disk
+    // file: the config file is AES-encrypted and cannot be JSON-parsed. The
+    // store returns each persisted value, or the schema default when a key was
+    // never written. `configSchemaVersion` defaults to 0, so a pre-versioning
+    // install reads 0 and triggers migration; once we stamp 1 it persists in
+    // the encrypted store and migration never re-runs.
+    const rawVersion = this.store.get('configSchemaVersion');
+    const currentVersion =
+      typeof rawVersion === 'number' && rawVersion >= 1 ? (rawVersion >= 2 ? 2 : 1) : 0;
+
+    if (!configFileExists) {
+      // Truly fresh install → new defaults (useEmbedding: true, provider: 'local') apply
+      // naturally from defaultConfig. Just stamp the current schema version.
+      this.store.set({ configSchemaVersion: 2 } as unknown as AppConfig);
+    } else if (currentVersion === 0) {
+      // Existing pre-v1 install → run legacy migration then fall through to v1→v2 below.
+      const migrated = this.migrateFromLegacy(this.store.get('systemPromptFile'));
+      this.store.set({
+        ...migrated,
+        configSchemaVersion: 1,
+      } as unknown as AppConfig);
+      // Fall through to v1→v2 migration — use dot-path sets to preserve all
+      // other memoryRuntime fields (llm, ingestionConcurrency, storageRoot, etc.).
+      this.migrateToV2();
+      this.store.set({ configSchemaVersion: 2 } as unknown as AppConfig);
+    } else if (currentVersion === 1) {
+      // Existing v1 install → freeze current embedding behavior so the new
+      // defaults (useEmbedding: true, provider: 'local') never apply to them.
+      // Use dot-path sets to preserve all other memoryRuntime fields.
+      this.migrateToV2();
+      this.store.set({ configSchemaVersion: 2 } as unknown as AppConfig);
+    }
+
+    const normalized = this.normalizeConfig(
+      this.store.store as Partial<AppConfig>,
+      !configFileExists
+    );
     this.store.set(normalized);
   }
 
   /**
-   * Auto-fix model IDs that don't match pi-ai registry format.
-   * Non-destructive: only applies known safe transformations at read time.
+   * Derive `systemPromptFileEnabled` / `systemPromptFilePriority` from the
+   * decrypted legacy `systemPromptFile` value for a pre-migration config
+   * (configSchemaVersion 0). Called once from `ensureNormalized`; the result is
+   * written back alongside `configSchemaVersion: 1` so it never runs again.
+   *
+   * A specific whitelisted file → enable it and hoist it to position 0.
+   * '' (None), a value defaulted to '' (key never set), or an invalid value →
+   * disabled with the default order, preserving pre-feature behavior.
    */
+  private migrateFromLegacy(legacy: unknown): {
+    systemPromptFileEnabled: boolean;
+    systemPromptFilePriority: SystemPromptFileName[];
+  } {
+    if (typeof legacy === 'string' && legacy !== '' && isValidSystemPromptFileChoice(legacy)) {
+      return {
+        systemPromptFileEnabled: true,
+        systemPromptFilePriority: normalizeSystemPromptPriority([legacy]),
+      };
+    }
+    return {
+      systemPromptFileEnabled: false,
+      systemPromptFilePriority: [...DEFAULT_SYSTEM_PROMPT_PRIORITY],
+    };
+  }
+
+  /**
+   * Freeze useEmbedding for existing (v1) installs so the new default (true)
+   * doesn't silently enable embeddings for users who never opted in.
+   *
+   * embedding.provider is intentionally NOT touched here — normalization is now
+   * schema-version-aware (see normalizeMemoryRuntimeConfig). For pre-v2 configs,
+   * the old defaults (provider: undefined, useEmbedding: false) are used as
+   * fallbacks regardless of what defaultConfig says. So writing provider is
+   * unnecessary and could clobber an existing custom provider value.
+   *
+   * Only sets memoryRuntime.useEmbedding (dot-path, non-destructive) and stamps
+   * configSchemaVersion: 2 in the caller.
+   */
+  private migrateToV2(): void {
+    const rawMemory = this.store.get('memoryRuntime');
+    const { useEmbedding } = computeV2Migration(rawMemory);
+    // Dot-path write: only useEmbedding is frozen; all other fields are untouched.
+    this.store.set('memoryRuntime.useEmbedding' as unknown as keyof AppConfig, useEmbedding);
+  }
+
   private normalizeModelIds(config: AppConfig): void {
     // Fix legacy "gemini/gemini-*" → "gemini-*" for gemini profiles
     // (pi-ai google provider uses bare model IDs, not prefixed)
@@ -803,6 +1087,14 @@ export class ConfigStore {
 
   private getDefaultProfile(profileKey: ProviderProfileKey): ProviderProfile {
     const fallback = defaultProfiles[profileKey];
+    // Native provider slots (native:*) are dynamic and have no static default
+    // in `defaultProfiles`. Return an empty profile so callers never crash on a
+    // missing key — the base URL and model come from the pi-ai registry at
+    // runtime, not from a persisted default. baseUrl is '' (never undefined):
+    // electron-store persists via JSON and rejects `undefined` values.
+    if (!fallback) {
+      return { apiKey: '', baseUrl: '', model: '' };
+    }
     return {
       apiKey: fallback.apiKey,
       baseUrl: fallback.baseUrl,
@@ -827,7 +1119,9 @@ export class ConfigStore {
       profileKey === 'ollama' ? normalizeOllamaBaseUrl(rawBaseUrl) || fallback.baseUrl : rawBaseUrl;
     const result: ProviderProfile = {
       apiKey: typeof profile?.apiKey === 'string' ? profile.apiKey : '',
-      baseUrl,
+      // Coerce to '' — never undefined. electron-store persists via JSON and
+      // rejects undefined values (native providers have no default baseUrl).
+      baseUrl: baseUrl ?? '',
       model,
     };
     // Preserve optional numeric fields so callers don't silently lose user-set values
@@ -847,6 +1141,17 @@ export class ConfigStore {
     for (const key of PROFILE_KEYS) {
       cloned[key] = this.normalizeProfile(key, profiles?.[key]);
     }
+    // Preserve native provider slots (native:<id>), which are dynamic and not
+    // enumerated in PROFILE_KEYS. Without this, native credentials are dropped
+    // on every normalize and native config sets can't persist their API keys.
+    if (profiles) {
+      for (const key of Object.keys(profiles)) {
+        if (isNativeProfileKey(key) && !(key in cloned)) {
+          const nativeKey = key as ProviderProfileKey;
+          cloned[nativeKey] = this.normalizeProfile(nativeKey, profiles[nativeKey]);
+        }
+      }
+    }
     return cloned;
   }
 
@@ -856,8 +1161,9 @@ export class ConfigStore {
     activeProfileKey: ProviderProfileKey;
     profiles: Record<ProviderProfileKey, ProviderProfile>;
     enableThinking: boolean;
+    thinkingLevel: ModelThinkingLevel;
   } {
-    const provider = isProviderType(raw.provider) ? raw.provider : defaultConfig.provider;
+    const provider = normalizeProviderId(raw.provider) ?? defaultConfig.provider;
     const customProtocol: CustomProtocolType = isCustomProtocol(raw.customProtocol)
       ? raw.customProtocol
       : defaultProtocolForProvider(provider);
@@ -927,12 +1233,14 @@ export class ConfigStore {
       activeProfileKey = derivedProfileKey;
     }
 
+    const thinkingLevel = resolveThinkingLevelFromRaw(raw.thinkingLevel, raw.enableThinking);
     return {
       provider,
       customProtocol,
       activeProfileKey,
       profiles,
-      enableThinking: toBoolean(raw.enableThinking, defaultConfig.enableThinking),
+      enableThinking: thinkingLevel !== 'off',
+      thinkingLevel,
     };
   }
 
@@ -947,12 +1255,17 @@ export class ConfigStore {
     contextWindow?: number;
     maxTokens?: number;
     enableThinking: boolean;
+    thinkingLevel: ModelThinkingLevel;
   } {
     const profiles = this.cloneProfiles(configSet.profiles);
     const activeProfileKey = isProfileKey(configSet.activeProfileKey)
       ? configSet.activeProfileKey
       : profileKeyFromProvider(configSet.provider, configSet.customProtocol);
     const activeProfile = profiles[activeProfileKey] || this.getDefaultProfile(activeProfileKey);
+    const thinkingLevel = resolveThinkingLevelFromRaw(
+      configSet.thinkingLevel,
+      configSet.enableThinking
+    );
 
     return {
       provider: configSet.provider,
@@ -964,7 +1277,8 @@ export class ConfigStore {
       model: activeProfile.model,
       contextWindow: activeProfile.contextWindow,
       maxTokens: activeProfile.maxTokens,
-      enableThinking: toBoolean(configSet.enableThinking, false),
+      enableThinking: thinkingLevel !== 'off',
+      thinkingLevel,
     };
   }
 
@@ -978,10 +1292,11 @@ export class ConfigStore {
       activeProfileKey: ProviderProfileKey;
       profiles: Record<ProviderProfileKey, ProviderProfile>;
       enableThinking: boolean;
+      thinkingLevel: ModelThinkingLevel;
       isSystem?: boolean;
     }
   ): ApiConfigSet {
-    const provider = isProviderType(rawSet?.provider) ? rawSet.provider : fallback.provider;
+    const provider = normalizeProviderId(rawSet?.provider) ?? fallback.provider;
     const customProtocol: CustomProtocolType = isCustomProtocol(rawSet?.customProtocol)
       ? rawSet.customProtocol
       : defaultProtocolForProvider(provider);
@@ -1001,6 +1316,24 @@ export class ConfigStore {
     const name = toNonEmptyString(rawSet?.name) || fallback.name;
     const updatedAt = toNonEmptyString(rawSet?.updatedAt) || nowISO();
 
+    // Only treat rawSet.thinkingLevel as 'present' when it's a recognized valid level.
+    // Invalid/unknown strings (e.g. future levels from a newer pi-ai) fall through to
+    // the enableThinking migration or the fallback, preserving user intent.
+    const rawThinkingLevelValid =
+      rawSet?.thinkingLevel !== undefined &&
+      (THINKING_LEVELS as readonly string[]).includes(rawSet.thinkingLevel as string);
+    const thinkingLevel = resolveThinkingLevelFromRaw(
+      rawThinkingLevelValid ? rawSet!.thinkingLevel : undefined,
+      rawSet?.enableThinking
+    );
+    // fallback.thinkingLevel may be undefined (intentionally absent from defaults);
+    // coalesce to 'off' so resolvedThinkingLevel is always a valid ModelThinkingLevel.
+    const fallbackThinkingLevel: ModelThinkingLevel =
+      fallback.thinkingLevel ?? (fallback.enableThinking ? 'medium' : 'off');
+    const resolvedThinkingLevel: ModelThinkingLevel =
+      rawThinkingLevelValid || rawSet?.enableThinking !== undefined
+        ? thinkingLevel
+        : fallbackThinkingLevel;
     return {
       id,
       name,
@@ -1009,7 +1342,8 @@ export class ConfigStore {
       customProtocol,
       activeProfileKey,
       profiles,
-      enableThinking: toBoolean(rawSet?.enableThinking, fallback.enableThinking),
+      enableThinking: resolvedThinkingLevel !== 'off',
+      thinkingLevel: resolvedThinkingLevel,
       updatedAt,
     };
   }
@@ -1020,6 +1354,7 @@ export class ConfigStore {
     activeProfileKey: ProviderProfileKey;
     profiles: Record<ProviderProfileKey, ProviderProfile>;
     enableThinking: boolean;
+    thinkingLevel: ModelThinkingLevel;
   }): ApiConfigSet {
     return this.normalizeConfigSet(
       {
@@ -1031,6 +1366,7 @@ export class ConfigStore {
         activeProfileKey: legacy.activeProfileKey,
         profiles: legacy.profiles,
         enableThinking: legacy.enableThinking,
+        thinkingLevel: legacy.thinkingLevel,
         updatedAt: nowISO(),
       },
       {
@@ -1042,6 +1378,7 @@ export class ConfigStore {
         activeProfileKey: legacy.activeProfileKey,
         profiles: legacy.profiles,
         enableThinking: legacy.enableThinking,
+        thinkingLevel: legacy.thinkingLevel,
       }
     );
   }
@@ -1054,6 +1391,7 @@ export class ConfigStore {
       activeProfileKey: ProviderProfileKey;
       profiles: Record<ProviderProfileKey, ProviderProfile>;
       enableThinking: boolean;
+      thinkingLevel: ModelThinkingLevel;
     }
   ): ApiConfigSet[] {
     const list = Array.isArray(rawSets) ? rawSets : [];
@@ -1083,6 +1421,7 @@ export class ConfigStore {
         activeProfileKey: legacy.activeProfileKey,
         profiles: legacy.profiles,
         enableThinking: legacy.enableThinking,
+        thinkingLevel: legacy.thinkingLevel,
         isSystem: Boolean(rawSet.isSystem),
       });
       normalizedSet.id = nextId;
@@ -1103,18 +1442,20 @@ export class ConfigStore {
     activeProfileKey: ProviderProfileKey;
     profiles: Record<ProviderProfileKey, ProviderProfile>;
     enableThinking: boolean;
+    thinkingLevel: ModelThinkingLevel;
   }): boolean {
     if (
       legacy.provider !== defaultConfig.provider ||
       legacy.customProtocol !== (defaultConfig.customProtocol || 'anthropic') ||
       legacy.activeProfileKey !== defaultConfig.activeProfileKey ||
-      legacy.enableThinking !== defaultConfig.enableThinking
+      (legacy.thinkingLevel ?? (legacy.enableThinking ? 'medium' : 'off')) !==
+        (defaultConfig.thinkingLevel ?? 'off')
     ) {
       return true;
     }
 
-    const activeProfile = legacy.profiles[legacy.activeProfileKey];
     const fallbackActive = this.getDefaultProfile(legacy.activeProfileKey);
+    const activeProfile = legacy.profiles[legacy.activeProfileKey] ?? fallbackActive;
     return Boolean(
       activeProfile.apiKey.trim() ||
       (activeProfile.baseUrl || '') !== (fallbackActive.baseUrl || '') ||
@@ -1130,6 +1471,7 @@ export class ConfigStore {
       activeProfileKey: ProviderProfileKey;
       profiles: Record<ProviderProfileKey, ProviderProfile>;
       enableThinking: boolean;
+      thinkingLevel: ModelThinkingLevel;
     }
   ): boolean {
     if (!this.hasLegacySignal(legacy)) {
@@ -1145,19 +1487,24 @@ export class ConfigStore {
     }
 
     const projected = this.projectFromConfigSet(onlySet);
-    const legacyActive = legacy.profiles[legacy.activeProfileKey];
+    const legacyActive =
+      legacy.profiles[legacy.activeProfileKey] ?? this.getDefaultProfile(legacy.activeProfileKey);
     return !(
       projected.provider === legacy.provider &&
       projected.customProtocol === legacy.customProtocol &&
       projected.activeProfileKey === legacy.activeProfileKey &&
-      projected.enableThinking === legacy.enableThinking &&
+      projected.thinkingLevel ===
+        (legacy.thinkingLevel ?? (legacy.enableThinking ? 'medium' : 'off')) &&
       projected.apiKey === legacyActive.apiKey &&
       (projected.baseUrl || '') === (legacyActive.baseUrl || '') &&
       projected.model === legacyActive.model
     );
   }
 
-  private normalizeConfig(rawConfig: Partial<AppConfig> | undefined): AppConfig {
+  private normalizeConfig(
+    rawConfig: Partial<AppConfig> | undefined,
+    isFreshInstall?: boolean
+  ): AppConfig {
     const raw = rawConfig || {};
     const legacy = this.normalizeLegacyProjection(raw);
     const normalizedFromRaw = this.normalizeConfigSets(raw.configSets, legacy);
@@ -1200,15 +1547,36 @@ export class ConfigStore {
       systemPromptFile: isValidSystemPromptFileChoice(raw.systemPromptFile)
         ? raw.systemPromptFile
         : defaultConfig.systemPromptFile,
+      // By the time normalizeConfig runs, ensureNormalized has already:
+      //   - parsed the on-disk JSON for authoritative key presence
+      //   - run migrateFromLegacy (for version-0 installs)
+      //   - stamped configSchemaVersion: 1 and written the migrated values
+      // So we can read the new fields directly without migration logic here.
+      systemPromptFileEnabled: toBoolean(
+        raw.systemPromptFileEnabled,
+        defaultConfig.systemPromptFileEnabled
+      ),
+      systemPromptFilePriority: normalizeSystemPromptPriority(raw.systemPromptFilePriority),
       bashTrustedCommands: toStringArray(raw.bashTrustedCommands),
       bashDenylist: toStringArray(raw.bashDenylist),
       enableDevLogs: toBoolean(raw.enableDevLogs, defaultConfig.enableDevLogs),
       theme: isAppTheme(raw.theme) ? raw.theme : defaultConfig.theme,
       sandboxEnabled: toBoolean(raw.sandboxEnabled, defaultConfig.sandboxEnabled),
       memoryEnabled: toBoolean(raw.memoryEnabled, defaultConfig.memoryEnabled),
-      memoryRuntime: normalizeMemoryRuntimeConfig(raw.memoryRuntime),
+      memoryRuntime: normalizeMemoryRuntimeConfig(
+        raw.memoryRuntime,
+        typeof raw.configSchemaVersion === 'number' ? raw.configSchemaVersion : 0,
+        isFreshInstall
+      ),
       enableThinking: projected.enableThinking,
+      thinkingLevel: projected.thinkingLevel,
       isConfigured: toBoolean(raw.isConfigured, defaultConfig.isConfigured),
+      configSchemaVersion:
+        typeof raw.configSchemaVersion === 'number' && raw.configSchemaVersion >= 2
+          ? 2
+          : raw.configSchemaVersion === 1
+            ? 1
+            : 0,
       schedulerCatchUpPolicy: normalizeCatchUpPolicy(raw.schedulerCatchUpPolicy),
       schedulerConflictPolicy: isValidConflictPolicy(raw.schedulerConflictPolicy)
         ? raw.schedulerConflictPolicy
@@ -1219,6 +1587,9 @@ export class ConfigStore {
       notificationsEnabled: toBoolean(raw.notificationsEnabled, defaultConfig.notificationsEnabled),
       skillConflictConfig: normalizeSkillConflictConfig(raw.skillConflictConfig),
       orphanDismissals: normalizeOrphanDismissals(raw.orphanDismissals),
+      ...(typeof raw.httpProxy === 'string' && raw.httpProxy.trim()
+        ? { httpProxy: raw.httpProxy.trim() }
+        : {}),
     };
     this.normalizeModelIds(result);
     return result;
@@ -1255,6 +1626,7 @@ export class ConfigStore {
       activeProfileKey: projected.activeProfileKey,
       profiles: projected.profiles,
       enableThinking: projected.enableThinking,
+      thinkingLevel: projected.thinkingLevel,
       activeConfigSetId: activeConfigSet.id,
       configSets: nextConfigSets,
     };
@@ -1322,6 +1694,7 @@ export class ConfigStore {
       activeProfileKey,
       profiles,
       enableThinking: false,
+      thinkingLevel: 'off' as ModelThinkingLevel,
       updatedAt: nowISO(),
     };
   }
@@ -1513,6 +1886,7 @@ export class ConfigStore {
         activeProfileKey: current.activeProfileKey,
         profiles: this.cloneProfiles(current.profiles),
         enableThinking: current.enableThinking,
+        thinkingLevel: current.thinkingLevel ?? 'off',
       });
       nextConfigSets = normalizedSets;
     }
@@ -1545,13 +1919,22 @@ export class ConfigStore {
       updates.apiKey !== undefined ||
       updates.baseUrl !== undefined ||
       updates.model !== undefined ||
-      updates.enableThinking !== undefined;
+      updates.enableThinking !== undefined ||
+      updates.thinkingLevel !== undefined;
 
     if (mutatesActiveSet) {
       if (updates.profiles) {
         for (const key of PROFILE_KEYS) {
           if (updates.profiles[key]) {
             nextProfiles[key] = this.normalizeProfile(key, updates.profiles[key]);
+          }
+        }
+        // Native slots (native:<id>) aren't in PROFILE_KEYS — apply them too so
+        // native credential updates sent via top-level `profiles` aren't dropped.
+        for (const key of Object.keys(updates.profiles)) {
+          if (isNativeProfileKey(key) && updates.profiles[key as ProviderProfileKey]) {
+            const nativeKey = key as ProviderProfileKey;
+            nextProfiles[nativeKey] = this.normalizeProfile(nativeKey, updates.profiles[nativeKey]);
           }
         }
       }
@@ -1598,14 +1981,22 @@ export class ConfigStore {
         nextActiveProfile
       );
 
+      const resolvedThinkingLevel: ModelThinkingLevel =
+        updates.thinkingLevel !== undefined
+          ? normalizeThinkingLevel(updates.thinkingLevel, targetSet.thinkingLevel ?? 'off')
+          : updates.enableThinking !== undefined
+            ? updates.enableThinking
+              ? 'medium'
+              : 'off'
+            : (targetSet.thinkingLevel ?? (targetSet.enableThinking ? 'medium' : 'off'));
       const updatedSet: ApiConfigSet = {
         ...targetSet,
         provider: nextProvider,
         customProtocol: nextCustomProtocol,
         activeProfileKey: nextActiveProfileKey,
         profiles: nextProfiles,
-        enableThinking:
-          updates.enableThinking !== undefined ? updates.enableThinking : targetSet.enableThinking,
+        enableThinking: resolvedThinkingLevel !== 'off',
+        thinkingLevel: resolvedThinkingLevel,
         updatedAt: nowISO(),
       };
 
@@ -1615,7 +2006,7 @@ export class ConfigStore {
     }
 
     const projectedConfig = this.composeProjectedConfig(current, nextConfigSets, activeConfigSetId);
-    this.saveConfig({
+    const mergedForSave: AppConfig = {
       ...projectedConfig,
       claudeCodePath:
         updates.claudeCodePath !== undefined ? updates.claudeCodePath : current.claudeCodePath,
@@ -1631,6 +2022,43 @@ export class ConfigStore {
         updates.systemPromptFile !== undefined
           ? updates.systemPromptFile
           : current.systemPromptFile,
+      // When the legacy field is updated with a valid value, keep new fields
+      // in sync. Invalid legacy values (off-whitelist) are ignored for new-field
+      // sync — they normalize the legacy field to '' but leave enabled/priority
+      // unchanged, so a bad IPC payload cannot toggle discovery state.
+      systemPromptFileEnabled: (() => {
+        if (updates.systemPromptFileEnabled !== undefined) {
+          return toBoolean(updates.systemPromptFileEnabled, current.systemPromptFileEnabled);
+        }
+        if (
+          updates.systemPromptFile !== undefined &&
+          updates.systemPromptFilePriority === undefined
+        ) {
+          if (!isValidSystemPromptFileChoice(updates.systemPromptFile)) {
+            // Invalid legacy value — leave enabled state unchanged.
+            return current.systemPromptFileEnabled;
+          }
+          // '' → disabled; whitelisted filename → enabled.
+          return updates.systemPromptFile !== '';
+        }
+        return current.systemPromptFileEnabled;
+      })(),
+      systemPromptFilePriority: (() => {
+        if (updates.systemPromptFilePriority !== undefined) {
+          return normalizeSystemPromptPriority(updates.systemPromptFilePriority);
+        }
+        if (updates.systemPromptFile !== undefined) {
+          if (!isValidSystemPromptFileChoice(updates.systemPromptFile)) {
+            // Invalid legacy value — leave priority unchanged.
+            return current.systemPromptFilePriority;
+          }
+          if (updates.systemPromptFile !== '') {
+            // Hoist the newly-selected valid legacy file to position 0.
+            return normalizeSystemPromptPriority([updates.systemPromptFile]);
+          }
+        }
+        return current.systemPromptFilePriority;
+      })(),
       bashTrustedCommands:
         updates.bashTrustedCommands !== undefined
           ? toStringArray(updates.bashTrustedCommands)
@@ -1648,10 +2076,19 @@ export class ConfigStore {
         updates.memoryEnabled !== undefined ? updates.memoryEnabled : current.memoryEnabled,
       memoryRuntime:
         updates.memoryRuntime !== undefined
-          ? normalizeMemoryRuntimeConfig(updates.memoryRuntime)
+          ? normalizeMemoryRuntimeConfig(
+              // Deep-merge with current so partial UI updates (e.g., only embedding fields)
+              // never reset unrelated keys (llm config, storageRoot, ingestionConcurrency, etc.).
+              mergeMemoryRuntime(current.memoryRuntime, updates.memoryRuntime),
+              current.configSchemaVersion
+            )
           : current.memoryRuntime,
       isConfigured:
         updates.isConfigured !== undefined ? updates.isConfigured : current.isConfigured,
+      // configSchemaVersion is internal — only settable by ensureNormalized().
+      // Ignore any incoming update to prevent external callers from downgrading
+      // the schema version and triggering unwanted re-migration.
+      configSchemaVersion: current.configSchemaVersion,
       schedulerCatchUpPolicy:
         updates.schedulerCatchUpPolicy !== undefined
           ? updates.schedulerCatchUpPolicy
@@ -1676,7 +2113,35 @@ export class ConfigStore {
         updates.notificationsEnabled !== undefined
           ? toBoolean(updates.notificationsEnabled, current.notificationsEnabled)
           : current.notificationsEnabled,
-    });
+      ...(() => {
+        const next =
+          updates.httpProxy === undefined
+            ? current.httpProxy // no change
+            : (typeof updates.httpProxy === 'string' ? updates.httpProxy.trim() : '') || undefined; // empty = clear
+        return next ? { httpProxy: next } : {};
+      })(),
+      skillConflictConfig:
+        updates.skillConflictConfig !== undefined
+          ? normalizeSkillConflictConfig(updates.skillConflictConfig)
+          : current.skillConflictConfig,
+      orphanDismissals:
+        updates.orphanDismissals !== undefined
+          ? normalizeOrphanDismissals(updates.orphanDismissals)
+          : current.orphanDismissals,
+    };
+    // httpProxy is optional — delete from the merged object when the user
+    // clears it (empty string) so normalizeConfig sees it as absent.
+    const isHttpProxyClearing =
+      updates.httpProxy !== undefined &&
+      (typeof updates.httpProxy !== 'string' || !updates.httpProxy.trim());
+    if (isHttpProxyClearing) {
+      delete mergedForSave.httpProxy;
+      // Explicitly delete from the store so conf's merge-write doesn't leave
+      // the stale key on disk (conf.set(object) merges; it does not delete
+      // absent keys — only conf.delete(key) removes a key from the file).
+      this.store.delete('httpProxy' as unknown as keyof AppConfig);
+    }
+    this.saveConfig(mergedForSave);
   }
 
   /**
@@ -1950,3 +2415,23 @@ export class ConfigStore {
 
 // Singleton instance
 export const configStore = new ConfigStore();
+
+/**
+ * Pure function extracted from ConfigStore.migrateToV2 for testability.
+ * Given the raw persisted memoryRuntime value from a v1 config, returns the
+ * useEmbedding value to freeze for existing installs.
+ *
+ * Note: embedding.provider is intentionally NOT part of the migration output.
+ * Schema-version-aware normalization in normalizeMemoryRuntimeConfig handles
+ * provider fallback correctly based on configSchemaVersion, so persisting
+ * 'undefined' here is both unnecessary and risky (it would delete the key).
+ */
+export function computeV2Migration(rawMemory: unknown): { useEmbedding: boolean } {
+  const mem =
+    typeof rawMemory === 'object' && rawMemory !== null
+      ? (rawMemory as Partial<{ useEmbedding: boolean }>)
+      : {};
+  return {
+    useEmbedding: typeof mem.useEmbedding === 'boolean' ? mem.useEmbedding : false,
+  };
+}

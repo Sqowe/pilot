@@ -3,20 +3,23 @@
 ## 1. Purpose of This Document
 
 This is the architectural source of truth for Sqowe Pilot, an Electron desktop AI agent
-application. It describes the system as it exists today (v3.3.0-sqowe.10), not as imagined.
+application. It describes the system as it exists today (v1.0.x), not as imagined.
 
 Any AI coder working on this repository MUST read this document first to understand
 structure, boundaries, and where to find authoritative coding rules. This document
 does NOT define coding rules — it points to them (see Section 8).
 
 Target audience: AI coding assistants and new human contributors.
-Last updated: 2026-06-20.
+Last updated: 2026-07-22.
 
-> **Rebrand in progress:** the product has been renamed **Open Cowork → "Sqowe Pilot"**.
-> User-facing surfaces (renderer UI, i18n, default system prompts, icons) and documentation
-> already say "Sqowe Pilot"; the packaging identity (`appId`, `package.json` name) and the
-> on-disk data directory still use `open-cowork` (version `3.3.0-sqowe.10`) pending the
-> first-launch migration. See `docs/design/rebrand-to-sqowe-pilot-implementation-plan.md`.
+> **Rebrand complete:** the product was renamed **Open Cowork → "Sqowe Pilot"**. All
+> surfaces now carry the new name — renderer UI, i18n, default system prompts, icons,
+> documentation, the packaging identity (`appId: com.sqowe.pilot`, `package.json` name
+> `sqowe-pilot`, `productName: Sqowe Pilot`, version `1.0.x`), and the on-disk data
+> directory (`<appData>/sqowe-pilot`). First launch migrates legacy `<appData>/open-cowork`
+> data (see `src/main/migration/`). Encryption seed strings and the four `projectName`
+> store values intentionally retain `open-cowork` so migrated `config.json` stays
+> decryptable. See `docs/design/rebrand-to-sqowe-pilot-implementation-plan.md`.
 
 ---
 
@@ -52,9 +55,9 @@ isolation, skills, permission gating, and remote-channel integrations.
 │                                    └────────────────────────────┘  │
 │                                                                     │
 │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐    │
-│  │ Config Store │  │  SQLite DB   │  │ Remote Channels       │    │
-│  │ (electron-   │  │ (sessions,   │  │ (Feishu/Slack/ngrok)  │    │
-│  │  store)      │  │  memory)     │  │                       │    │
+│  │ Config Store │  │  SQLite DBs  │  │ Remote Channels       │    │
+│  │ (electron-   │  │ (cowork.db + │  │ (Feishu/Slack/ngrok)  │    │
+│  │  store)      │  │  memory.db)  │  │                       │    │
 │  └──────────────┘  └──────────────┘  └───────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────┘
          │                                        │
@@ -107,9 +110,11 @@ sqowe-pilot/
 │   └── bash-restrictions/     # Drop-in add-on; consumes src/shared engine
 ├── scripts/                    # Build, download, deploy scripts
 ├── resources/                  # Bundled runtimes (Node, Python, skills)
-├── docs/                       # Documentation + chat history
+├── docs/                       # Documentation, design records, chat history
+│   ├── design/                # ACTIVE design notes: in-progress features + cross-cutting findings
+│   │   └── archive/          # Design docs for COMPLETED/shipped features (as-built record)
 │   └── chats/                 # Exported conversation logs (context)
-├── .claude/skills/             # Dev-time skills (docx, pdf, pptx, etc.)
+├── resources/skills/           # Skills shipped with the app (docx, pdf, pptx, etc.)
 ├── adaptations/                # Issue tracking + patch notes
 ├── dist-electron/              # Compiled main process output
 ├── dist-mcp/                   # Bundled MCP servers
@@ -122,6 +127,11 @@ sqowe-pilot/
 ├── ROADMAP.md                  # Feature roadmap
 └── package.json                # Node 22+, Electron 41, Vite 7
 ```
+
+**Design docs lifecycle:** `docs/design/` holds _active_ design work — in-progress feature
+designs and cross-cutting "findings" write-ups (problem analyses, investigations). When a
+feature ships, move its design doc to `docs/design/archive/` as the as-built record. Treat
+archived docs as history — accurate for what was built, not a to-do list.
 
 ---
 
@@ -139,6 +149,30 @@ Key files: `agent-runner.ts`, `pi-model-resolution.ts`, `before-tool-call-hook.t
 
 Critical constraint: `pi-ai` and `pi-coding-agent` MUST be version-locked together
 (same monorepo, pre-1.0, frequent breaking changes).
+
+**SDK-only boundary — never inherit the `pi` CLI's workflow.** Sqowe Pilot consumes the
+pi _SDK_. It is not a front-end for the `pi` command-line agent and must never adopt that
+agent's user-level configuration, catalogs, or network behavior. Sqowe Pilot owns its own
+provider config (`config-store.ts` + the native provider catalog); inheriting the CLI's
+would bleed foreign models into the picker and make app behavior depend on whether the
+user also happens to run `pi` locally.
+
+The shared `ModelRuntime` singleton (`shared-auth.ts`) enforces this at construction:
+
+| Option                     | Why                                                                                                                                                                                                                                                                                                  |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `modelsPath: null`         | Never read `~/.pi/models.json`; also keeps the model store in memory instead of writing `models-store.json` next to it.                                                                                                                                                                              |
+| `allowModelNetwork: false` | No pi.dev dynamic catalog fetches. Model resolution goes through our own native catalog. Also keeps `create()` off the network (it otherwise refreshes inline with a 15s timeout) and keeps `setRuntimeApiKey()` cheap — it triggers a catalog refresh on every call, once per provider key per run. |
+
+This replaced the pre-0.80.8 `ModelRegistry.inMemory(authStorage)`, which encoded the same
+isolation. **Any future SDK uplift MUST re-assert it.** The SDK's defaults are CLI-shaped —
+file-backed and networked — so a mechanical migration silently re-introduces the coupling
+rather than failing loudly.
+
+Runtime API keys are injected per-run via `ModelRuntime.setRuntimeApiKey()` and are
+in-memory only (never persisted to `auth.json`). They are ref-counted and released in
+`finally` so concurrent sessions cannot clobber each other's credentials — see
+`docs/design/test-verification-gaps.md` for the coverage gap around this mechanism.
 
 ### 4.2 Renderer (`src/renderer/`)
 
@@ -361,6 +395,45 @@ Key files: `memory-extension.ts` (extension hook), `memory-chat-search-tool.ts`
 (active retrieval tools), `memory-service.ts` (core logic), `memory-tools.ts`
 (legacy search/read tools for Settings UI).
 
+**Storage — two backends, deliberately.** Experience memory lives in **`memory.db`**
+(SQLite via `better-sqlite3`); core memory and session state stay JSON. The split is by
+access pattern, not by preference: experience memory grows without bound (~24 MB in a
+month of use) and is queried by workspace, whereas `core_memory.json` holds ~24 curated
+entries, where a `WHERE` clause buys nothing over reading the file.
+
+`memory.db` is **separate from `cowork.db`** and sits under the user-configurable
+`memoryRuntime.storageRoot`, so all memory stays relocatable as one unit and memory-schema
+changes stay decoupled from the chat DB. The JSON→SQLite backfill runs once on
+`ensureStores()`, is idempotent, and renames the source to `.bak` only after the
+transaction commits.
+
+Four consequences worth knowing before touching this area:
+
+- **Vectors are homogeneous per install.** Cosine similarity is only meaningful within one
+  embedding space, so the store holds exactly one model's vectors at a time. A model change
+  is detected via `memory_meta.embedding_model` and degrades retrieval to lexical-only until
+  the vectors are recomputed, rather than silently comparing across spaces.
+- **The retrieval scan is text-only.** Embedding BLOBs are fetched by id for the candidate
+  window, and transcripts for the ranked top-K — neither is loaded during the scan. Reaching
+  for a `SELECT *` helper on this path reintroduces the whole-file parse the migration removed.
+- **The embedding provider gate is protocol-based, never id-based.** `ProviderType` is an
+  open `string` (native catalog ids like `minimax`), so any check written as a list of
+  provider names goes stale the moment the catalog grows — which is exactly how embeddings
+  came to be skipped for weeks with nothing but a rotated-away log line to show for it.
+  Resolve the route protocol with `resolvePiRouteProtocol`, as `complete()` does. An
+  embedding config that carries its own `baseUrl` and `model` is self-contained and is not
+  gated at all: the active chat provider contributes nothing to that request.
+- **The embedded text must stay derivable from stored columns.** Chunk vectors are built
+  from `summary + details + keywords`, sessions from `summary + keywords` — via the shared
+  `buildChunkEmbeddingText` / `buildSessionEmbeddingText`. This is what lets `backfillEmbeddings`
+  recompute vectors with no LLM extraction. Composing that text from anything not persisted,
+  or before the keyword fallback resolves, silently splits the two paths into slightly
+  different embedding spaces.
+
+Design: [docs/design/memory-storage-sqlite-migration.md](docs/design/memory-storage-sqlite-migration.md),
+[docs/design/memory-system-architecture.md](docs/design/memory-system-architecture.md),
+[docs/design/embedding-provider-gate-and-coverage.md](docs/design/embedding-provider-gate-and-coverage.md).
+
 ### 4.7 Shared Bash Engine & Pi Extension (`src/shared/bash-restrictions/`, `pi-extensions/`)
 
 The bash trust/denylist permission engine is a **pure, stateless** module — the single
@@ -458,26 +531,26 @@ Environment variables (`.env.example`): `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_
 
 ## 7. Stability Zones
 
-| Zone                | Components                                                                                                                | Notes                                                                                     |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| ✅ **Stable**       | Renderer UI, Config Store, IPC bridge, Session management, i18n, electron-updater, Skills loader, MCP Manager (stdio/SSE) | Production-ready, low risk                                                                |
-| ✅ **Stable**       | Skill conflict resolution, Skill workspace profiles, Skill pinning                                                        | Phase 0–5 complete; policy engine, session disable, profile save/load                     |
-| ✅ **Stable**       | Bash permission engine (trust/denylist), Path containment                                                                 | Security-critical, well-tested                                                            |
-| ✅ **Stable**       | System prompt loader (editable sections, workspace overrides, template variables)                                         | 46 tests, file-based, no external deps                                                    |
-| 🔄 **Semi-Stable**  | `ClaudeAgentRunner` + pi-coding-agent integration                                                                         | Functional but coupled to pre-1.0 SDK; breaks on Pi upgrades                              |
-| 🔄 **Semi-Stable**  | Remote channels (Feishu/Slack), GUI-operate server                                                                        | Working but APIs evolve; Feishu SDK updates frequently                                    |
-| 🔄 **Semi-Stable**  | SQLite persistence layer                                                                                                  | Schema may evolve with memory system                                                      |
-| ⚠️ **Experimental** | Sandbox (WSL2/Lima)                                                                                                       | Code-complete, UI-gated, not user-facing yet                                              |
-| ⚠️ **Experimental** | Memory system (`src/main/memory/`)                                                                                        | Active retrieval via tools + passive core injection                                       |
-| 🔄 **Semi-Stable**  | Schedule system (`src/main/schedule/`)                                                                                    | v2 complete: time windows, catch-up, budgets, run history                                 |
-| 🔄 **Semi-Stable**  | Plugin system (`src/main/skills/plugin-runtime-service.ts`)                                                               | Archive install, orchestrator detection, session-scoped plugin pinning                    |
-| 🔄 **Semi-Stable**  | Bash-restrictions shared engine + `pi` CLI extension (`src/shared/bash-restrictions/`, `pi-extensions/`)                  | Phases 1–6 complete; single source of truth, dual-host; manual `pi -e` smoke-test pending |
-| 🔄 **Semi-Stable**  | Workspace orphan config cleanup (`src/main/workspace/`)                                                                   | Phase 1–4 complete; detect/notify/one-click-fix for `.cowork/*.json`                      |
-| 🔮 **Planned**      | Multi-agent orchestration (incl. Plugin-as-Agent)                                                                         | See `ROADMAP.md`, `docs/design/plugin-as-agent-future.md`                                 |
-| 🔮 **Planned**      | Code Assistant tab (project-centric coding view on existing runner)                                                       | Design only — `docs/design/code-assistant-tab.md`                                         |
-| 🔮 **Planned**      | File-tool path permissions (inside/outside-workspace ask policy)                                                          | Design only — shared `path-permissions` engine, mirrors §4.7                              |
-| 🔮 **Planned**      | Linux first-class support                                                                                                 | Build-from-source only today                                                              |
-| 🔮 **Planned**      | Web version (server mode)                                                                                                 | Architecture supports it (clean IPC boundary)                                             |
+| Zone                | Components                                                                                                                | Notes                                                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| ✅ **Stable**       | Renderer UI, Config Store, IPC bridge, Session management, i18n, electron-updater, Skills loader, MCP Manager (stdio/SSE) | Production-ready, low risk                                                                                                  |
+| ✅ **Stable**       | Skill conflict resolution, Skill workspace profiles, Skill pinning                                                        | Phase 0–5 complete; policy engine, session disable, profile save/load                                                       |
+| ✅ **Stable**       | Bash permission engine (trust/denylist), Path containment                                                                 | Security-critical, well-tested                                                                                              |
+| ✅ **Stable**       | System prompt loader (editable sections, workspace overrides, template variables)                                         | 46 tests, file-based, no external deps                                                                                      |
+| 🔄 **Semi-Stable**  | `ClaudeAgentRunner` + pi-coding-agent integration                                                                         | Functional but coupled to pre-1.0 SDK; breaks on Pi upgrades                                                                |
+| 🔄 **Semi-Stable**  | Remote channels (Feishu/Slack), GUI-operate server                                                                        | Working but APIs evolve; Feishu SDK updates frequently                                                                      |
+| 🔄 **Semi-Stable**  | SQLite persistence layer (`cowork.db`)                                                                                    | Chat/session persistence. Decoupled from memory since experience memory moved to its own `memory.db`                        |
+| ⚠️ **Experimental** | Sandbox (WSL2/Lima)                                                                                                       | Code-complete, UI-gated, not user-facing yet                                                                                |
+| ⚠️ **Experimental** | Memory system (`src/main/memory/`)                                                                                        | Active retrieval via tools + passive core injection; experience memory backed by SQLite (`memory.db`), core/state stay JSON |
+| 🔄 **Semi-Stable**  | Schedule system (`src/main/schedule/`)                                                                                    | v2 complete: time windows, catch-up, budgets, run history                                                                   |
+| 🔄 **Semi-Stable**  | Plugin system (`src/main/skills/plugin-runtime-service.ts`)                                                               | Archive install, orchestrator detection, session-scoped plugin pinning                                                      |
+| 🔄 **Semi-Stable**  | Bash-restrictions shared engine + `pi` CLI extension (`src/shared/bash-restrictions/`, `pi-extensions/`)                  | Phases 1–6 complete; single source of truth, dual-host; manual `pi -e` smoke-test pending                                   |
+| 🔄 **Semi-Stable**  | Workspace orphan config cleanup (`src/main/workspace/`)                                                                   | Phase 1–4 complete; detect/notify/one-click-fix for `.cowork/*.json`                                                        |
+| 🔮 **Planned**      | Multi-agent orchestration (incl. Plugin-as-Agent)                                                                         | See `ROADMAP.md`, `docs/design/plugin-as-agent-future.md`                                                                   |
+| 🔮 **Planned**      | Code Assistant tab (project-centric coding view on existing runner)                                                       | Design only — `docs/design/code-assistant-tab.md`                                                                           |
+| 🔮 **Planned**      | File-tool path permissions (inside/outside-workspace ask policy)                                                          | Design only — shared `path-permissions` engine, mirrors §4.7                                                                |
+| 🔮 **Planned**      | Linux first-class support                                                                                                 | Build-from-source only today                                                                                                |
+| 🔮 **Planned**      | Web version (server mode)                                                                                                 | Architecture supports it (clean IPC boundary)                                                                               |
 
 ---
 
@@ -515,7 +588,7 @@ the dedicated rule files listed below.
 - **Bash engine is one source of truth** — engine + settings live in `src/shared/bash-restrictions/`; the app and the `pi-extensions/` add-on both consume it. Edit once, never fork; the extension must never enter the Electron main bundle
 - **Renderer must never import Node/Electron directly** — all access via `window.electronAPI`
 - **Security changes require explicit confirmation** — path containment, permission hooks, sandbox boundaries
-- **Builtin skill scripts use `uv run`** — all `.claude/skills/*/scripts/*.py` with third-party imports must have PEP 723 inline metadata; after upstream sync run `scripts/reapply-skill-deps.py`
+- **Builtin skill scripts use `uv run`** — all `resources/skills/*/scripts/*.py` with third-party imports must have PEP 723 inline metadata; after upstream sync run `scripts/reapply-skill-deps.py`
 - **Check `docs/chats/` for prior decisions** before proposing architectural changes
 - If any rule conflict or ambiguity is detected, **stop and ask for clarification**
 

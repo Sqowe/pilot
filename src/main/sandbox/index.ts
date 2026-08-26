@@ -1,6 +1,6 @@
 /**
  * Sandbox Module - Main entry point
- * 
+ *
  * Exports all sandbox-related functionality.
  */
 
@@ -8,7 +8,12 @@
 export * from './types';
 
 // Core adapters
-export { SandboxAdapter, getSandboxAdapter, initializeSandbox, shutdownSandbox } from './sandbox-adapter';
+export {
+  SandboxAdapter,
+  getSandboxAdapter,
+  initializeSandbox,
+  shutdownSandbox,
+} from './sandbox-adapter';
 export type { SandboxMode, SandboxAdapterConfig } from './sandbox-adapter';
 
 // Platform-specific executors

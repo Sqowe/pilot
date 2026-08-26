@@ -100,8 +100,12 @@ export class SessionManager {
   private activeSessions: Map<string, AbortController> = new Map();
   private promptQueues: Map<string, Array<{ prompt: string; content?: ContentBlock[] }>> =
     new Map();
-  private pendingPermissions: Map<string, (result: PermissionResult, suggestion?: string) => void> =
-    new Map();
+  // Keyed by toolUseId. sessionId is kept alongside the resolver so stopSession
+  // can release every request belonging to the session it stops.
+  private pendingPermissions: Map<
+    string,
+    { sessionId: string; resolve: (result: PermissionResult, suggestion?: string) => void }
+  > = new Map();
   private pendingSudoPasswords: Map<
     string,
     { sessionId: string; resolve: (password: string | null) => void }
@@ -1323,12 +1327,21 @@ export class SessionManager {
       // Only clean up here — no restart logic needed since the outer loop
       // already handles re-checking. activeSessions is only deleted once
       // there are truly no pending items remaining.
-      this.activeSessions.delete(session.id);
-      const queue = this.promptQueues.get(session.id);
-      if (queue && queue.length === 0) {
-        this.promptQueues.delete(session.id);
+      //
+      // Skip all of it when the entry no longer belongs to this run: stopSession
+      // removes it eagerly, and a newer run may already have registered its own
+      // controller. Clearing that one, or reporting 'idle' on its behalf, would
+      // make a session that is genuinely working look free.
+      const current = this.activeSessions.get(session.id);
+      const stillOurs = current === undefined || current === controller;
+      if (stillOurs) {
+        this.activeSessions.delete(session.id);
+        const queue = this.promptQueues.get(session.id);
+        if (queue && queue.length === 0) {
+          this.promptQueues.delete(session.id);
+        }
+        this.updateSessionStatus(session.id, 'idle');
       }
-      this.updateSessionStatus(session.id, 'idle');
     }
   }
 
@@ -1342,6 +1355,17 @@ export class SessionManager {
     log('[SessionManager] Stopping session:', sessionId);
     this.titleGenerationTokens.delete(sessionId);
     this.agentRunner.cancel(sessionId);
+    // Deny any permission request still waiting for an answer. Without this the
+    // promise never settles when the permission timeout is set to "wait forever"
+    // (0 seconds), so the tool call — and the whole agent loop behind it — stays
+    // alive in memory long after the user pressed Stop.
+    for (const [toolUseId, entry] of this.pendingPermissions) {
+      if (entry.sessionId === sessionId) {
+        entry.resolve('deny');
+        this.pendingPermissions.delete(toolUseId);
+        this.sendToRenderer({ type: 'permission.dismiss', payload: { toolUseId } });
+      }
+    }
     // Cancel any pending sudo password requests for this session
     for (const [toolUseId, entry] of this.pendingSudoPasswords) {
       if (entry.sessionId === sessionId) {
@@ -1350,10 +1374,14 @@ export class SessionManager {
         this.sendToRenderer({ type: 'sudo.password.dismiss', payload: { toolUseId } });
       }
     }
-    // Also abort any pending controller we tracked
+    // Also abort any pending controller we tracked, and drop the entry right
+    // away. processQueue's finally may run much later (it is still awaiting
+    // processPrompt); until then a stale entry makes the session look busy to
+    // enqueuePrompt, which would queue the next prompt instead of starting it.
     const controller = this.activeSessions.get(sessionId);
     if (controller) {
       controller.abort();
+      this.activeSessions.delete(sessionId);
     }
     this.promptQueues.delete(sessionId);
     this.messageCache.delete(sessionId);
@@ -1614,9 +1642,9 @@ export class SessionManager {
 
   // Handle permission response
   handlePermissionResponse(toolUseId: string, result: PermissionResult, suggestion?: string): void {
-    const resolver = this.pendingPermissions.get(toolUseId);
-    if (resolver) {
-      resolver(result, suggestion);
+    const entry = this.pendingPermissions.get(toolUseId);
+    if (entry) {
+      entry.resolve(result, suggestion);
       this.pendingPermissions.delete(toolUseId);
     }
   }
@@ -1640,9 +1668,12 @@ export class SessionManager {
         }, timeoutSeconds * 1000);
       }
 
-      this.pendingPermissions.set(toolUseId, (result: PermissionResult, suggestion?: string) => {
-        if (timeoutId !== null) clearTimeout(timeoutId);
-        resolve({ result, suggestion });
+      this.pendingPermissions.set(toolUseId, {
+        sessionId,
+        resolve: (result: PermissionResult, suggestion?: string) => {
+          if (timeoutId !== null) clearTimeout(timeoutId);
+          resolve({ result, suggestion });
+        },
       });
       this.sendToRenderer({
         type: 'permission.request',

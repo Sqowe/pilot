@@ -22,13 +22,13 @@ export function Titlebar() {
   };
 
   return (
-    <div 
+    <div
       className={`h-10 bg-background-secondary border-b border-border flex items-center titlebar-drag shrink-0 ${
         isMac ? 'justify-start pl-20' : 'justify-end'
       }`}
     >
       {/* macOS: Traffic lights are positioned by trafficLightPosition, we just need left padding */}
-      
+
       {/* Window Controls (for Windows/Linux - macOS uses native traffic lights) */}
       {!isMac && (
         <div className="flex items-center titlebar-no-drag h-full">

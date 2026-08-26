@@ -456,7 +456,10 @@ export function lexicalScore(query: string, text: string): number {
   return overlap / Math.sqrt(queryCount * Math.max(itemCount, 1));
 }
 
-export function cosineSimilarity(vecA: number[], vecB: number[]): number {
+export function cosineSimilarity(
+  vecA: number[] | Float32Array,
+  vecB: number[] | Float32Array
+): number {
   if (!vecA.length || vecA.length !== vecB.length) {
     return 0;
   }
@@ -472,6 +475,39 @@ export function cosineSimilarity(vecA: number[], vecB: number[]): number {
     return 0;
   }
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+/**
+ * Encode a number[] embedding as a little-endian Float32 Buffer for SQLite BLOB storage.
+ * ~4× smaller on disk than JSON text (4 bytes/dim vs ~18 bytes/dim).
+ */
+export function embeddingToBlob(embedding: number[]): Buffer {
+  return Buffer.from(new Float32Array(embedding).buffer);
+}
+
+/**
+ * Decode a SQLite BLOB back to a number[] embedding.
+ * Accepts a Buffer (better-sqlite3 returns Buffer for BLOB columns).
+ * Returns [] if the blob is empty or has a non-Float32-aligned length.
+ */
+export function blobToEmbedding(blob: Buffer): number[] {
+  if (!blob || blob.byteLength === 0) return [];
+  if (blob.byteLength % 4 !== 0) {
+    // Corrupted or unexpected BLOB — return empty rather than partial vector.
+    return [];
+  }
+  // `new Float32Array(buffer, byteOffset, …)` throws RangeError unless byteOffset is
+  // a multiple of 4. better-sqlite3 hands back byteOffset 0 today, but a Buffer that
+  // is pooled or produced by .subarray() need not be aligned, and callers such as
+  // exportExperienceJson decode without a try/catch. Copy into a fresh ArrayBuffer in
+  // that case — always offset 0, so alignment is guaranteed rather than assumed.
+  if (blob.byteOffset % 4 !== 0) {
+    const copy = new Uint8Array(blob.byteLength);
+    copy.set(blob);
+    return Array.from(new Float32Array(copy.buffer));
+  }
+  const f32 = new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4);
+  return Array.from(f32);
 }
 
 export function extractKeywords(text: string, limit = 8): string[] {

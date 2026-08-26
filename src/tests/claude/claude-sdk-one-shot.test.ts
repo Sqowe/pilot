@@ -8,11 +8,13 @@ vi.mock('@earendil-works/pi-ai/compat', () => ({
   getModel: vi.fn(() => undefined),
 }));
 
+// `AuthStorage` was replaced by the async `ModelRuntime` in pi-coding-agent 0.80.8.
 vi.mock('../../main/claude/shared-auth', () => ({
-  getSharedAuthStorage: () => ({
-    setRuntimeApiKey: vi.fn(),
-  }),
-  ModelRegistry: vi.fn(),
+  getSharedModelRuntime: () =>
+    Promise.resolve({
+      setRuntimeApiKey: vi.fn(() => Promise.resolve()),
+      removeRuntimeApiKey: vi.fn(() => Promise.resolve()),
+    }),
 }));
 
 import type { AppConfig } from '../../main/config/config-store';
@@ -62,6 +64,7 @@ function makeConfig(): AppConfig {
       promptIterationRounds: 2,
     },
     enableThinking: false,
+    thinkingLevel: 'off' as const,
     bashTrustedCommands: [],
     bashDenylist: [],
     schedulerCatchUpPolicy: 'ask',
@@ -78,6 +81,15 @@ function makeConfig(): AppConfig {
       acknowledgedConflicts: [],
     },
     orphanDismissals: [],
+    systemPromptFileEnabled: true,
+    systemPromptFilePriority: [
+      'CLAUDE.md',
+      'AGENTS.md',
+      '.cowork/instructions.md',
+      'memory.md',
+      'instructions.md',
+    ],
+    configSchemaVersion: 1,
   };
 }
 

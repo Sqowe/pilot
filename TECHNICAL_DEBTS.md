@@ -4,39 +4,40 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 
 ## Priority & Risk Summary
 
-| #   | Item                               | Priority | Risk            | Effort | Recommendation                                             |
-| --- | ---------------------------------- | -------- | --------------- | ------ | ---------------------------------------------------------- |
-| 1   | Dead code: ToolExecutor            | P3       | Low             | 1h     | Delete next cleanup sprint                                 |
-| 2   | Shared types duplication           | P2       | Medium          | 2h     | Do soon — prevents silent drift bugs                       |
-| 3   | Credential delivery                | P1       | **High**        | 4h     | Security-critical — address before any credential feature  |
-| 4   | Skills MCP server lifecycle        | P2       | Medium          | 8h     | Blocks skill ecosystem growth                              |
-| 5   | Workspace trust system             | P3       | Low             | 8h     | Fails safe, can wait                                       |
-| 6   | Remote channel support             | P4       | Low             | Varies | Implement per user demand                                  |
-| 7   | Feishu encryption                  | P2       | Medium          | 4h     | Blocks enterprise users                                    |
-| 8   | Scheduler bounded replay           | P3       | Low             | 2h     | Preventive — no current issue                              |
-| 9   | Permission UI desync               | P3       | Low             | 4h     | Cosmetic annoyance only                                    |
-| 10  | Windows tray icon                  | P4       | Negligible      | 0.5h   | Trivial when someone cares                                 |
-| 11  | Permission persistence             | P3       | Low             | 4h     | Works fine with current approach                           |
-| 12  | Legacy encryption keys             | P4       | Low             | 2h     | Wait 6+ months, then remove                                |
-| 13  | Before-tool-call hook fragility    | P1       | **Medium-High** | 2h     | Silent failure = no permissions                            |
-| 14  | Legacy Ollama config               | P4       | Low             | 1h     | Remove after migration window                              |
-| 15  | Deprecated sandbox methods         | P4       | Low             | 1h     | Quick grep + delete                                        |
-| 16  | Chat export Phase 3                | P3       | Low             | 4h     | Nice-to-have, no urgency                                   |
-| 17  | Chat smart scrolling               | P4       | Low             | 8h     | UX polish, low user demand                                 |
-| 18  | ~~MCP descriptions~~               | —        | —               | —      | ✅ Done                                                    |
-| 19  | Memory contradiction annotation    | P2       | Medium          | 8h     | Next memory improvement                                    |
-| 20  | Memory Lens Panel polish           | P4       | Low             | 4h     | Cosmetic only                                              |
-| 21  | ~~Skill Pinning~~                  | —        | —               | —      | ✅ Done                                                    |
-| 22  | Scheduler sandbox wiring           | P4       | Low             | 4h     | Blocked by sandbox feature                                 |
-| 23  | Memory architectural limits        | P3       | Medium          | High   | Long-term research topic                                   |
-| 24  | Plugin skills not in SkillsManager | P3       | Low             | 8h     | Only needed if individual plugin skill pinning is required |
+| #   | Item                                         | Priority | Risk       | Effort | Recommendation                                                   |
+| --- | -------------------------------------------- | -------- | ---------- | ------ | ---------------------------------------------------------------- |
+| 1   | Dead code: ToolExecutor                      | P3       | Low        | 1h     | Delete next cleanup sprint                                       |
+| 2   | Shared types duplication                     | P2       | Medium     | 2h     | Do soon — prevents silent drift bugs                             |
+| 3   | Credential delivery                          | P1       | **High**   | 4h     | Security-critical — address before any credential feature        |
+| 4   | Skills MCP server lifecycle                  | P2       | Medium     | 8h     | Blocks skill ecosystem growth                                    |
+| 5   | Workspace trust system                       | P3       | Low        | 8h     | Fails safe, can wait                                             |
+| 6   | Remote channel support                       | P4       | Low        | Varies | Implement per user demand                                        |
+| 7   | Feishu encryption                            | P2       | Medium     | 4h     | Blocks enterprise users                                          |
+| 8   | Scheduler bounded replay                     | P3       | Low        | 2h     | Preventive — no current issue                                    |
+| 9   | Permission UI desync                         | P3       | Low        | 4h     | Cosmetic annoyance only                                          |
+| 10  | Windows tray icon                            | P4       | Negligible | 0.5h   | Trivial when someone cares                                       |
+| 11  | Permission persistence                       | P3       | Low        | 4h     | Works fine with current approach                                 |
+| 12  | Legacy encryption keys                       | P4       | Low        | 2h     | Wait 6+ months, then remove                                      |
+| 13  | Before-tool-call hook: legacy setter cleanup | P4       | Low        | 1h     | Fixed 2026-05-01 (fail-closed); only legacy-path removal remains |
+| 14  | Legacy Ollama config                         | P4       | Low        | 1h     | Remove after migration window                                    |
+| 15  | Deprecated sandbox methods                   | P4       | Low        | 1h     | Quick grep + delete                                              |
+| 16  | Chat export Phase 3                          | P3       | Low        | 4h     | Nice-to-have, no urgency                                         |
+| 17  | Chat smart scrolling                         | P4       | Low        | 8h     | UX polish, low user demand                                       |
+| 18  | ~~MCP descriptions~~                         | —        | —          | —      | ✅ Done                                                          |
+| 19  | Memory contradiction annotation              | P2       | Medium     | 8h     | Next memory improvement                                          |
+| 20  | Memory Lens Panel polish                     | P4       | Low        | 4h     | Cosmetic only                                                    |
+| 21  | ~~Skill Pinning~~                            | —        | —          | —      | ✅ Done                                                          |
+| 22  | Scheduler sandbox wiring                     | P4       | Low        | 4h     | Blocked by sandbox feature                                       |
+| 23  | Memory architectural limits                  | P3       | Medium     | High   | Long-term research topic                                         |
+| 24  | Plugin skills not in SkillsManager           | P3       | Low        | 8h     | Only needed if individual plugin skill pinning is required       |
+| 25  | Sandbox toggle disabled in Settings UI       | P4       | Low        | 1h     | Re-enable once sandbox debugging is complete                     |
+| 26  | God files: index.ts, gui-operate-server.ts   | P3       | Low        | Varies | index.ts nearly doubled since last noted; consider splitting     |
 
 ### My analysis
 
 **Do first (P1 — safety/correctness):**
 
 - **#3** (Credentials): The TODO exists because injecting secrets into prompts is fundamentally unsafe. Even though the method is currently removed, this is the kind of thing that gets re-introduced under pressure. Having the secure channel ready prevents that.
-- **#13** (Hook fragility): This is the most dangerous item on the list. If the Pi SDK changes the `beforeToolCall` shape again, permission checks silently stop working — bash commands execute without approval. Simplifying to one shape reduces the attack surface.
 
 **Do soon (P2 — functional gaps):**
 
@@ -47,11 +48,11 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 
 **Do when convenient (P3 — cleanup):**
 
-- Items #1, #5, #8, #9, #11, #16, #23 — these work fine today or fail safe. Clean up during regular maintenance.
+- Items #1, #5, #8, #9, #11, #16, #23, #24, #26 — these work fine today or fail safe. Clean up during regular maintenance.
 
 **Backlog (P4 — deferred/optional):**
 
-- Items #6, #10, #12, #14, #15, #17, #20, #22 — these are either blocked by other work, trivially low impact, or driven by user demand that hasn't materialized.
+- Items #6, #10, #12, #13, #14, #15, #17, #20, #22, #25 — these are either blocked by other work, trivially low impact, resolved pending only trivial cleanup, or driven by user demand that hasn't materialized.
 
 ---
 
@@ -72,19 +73,21 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 
 ## 2. Shared Types Duplication (Main ↔ Renderer)
 
-**File:** `src/main/chat/export-markdown.ts`
+**File:** `src/main/chat/export-common.ts` (moved here from `export-markdown.ts` during the DOCX/PDF export refactor, commit `84010ec`)
 
-**Issue:** `TODO: Move shared message/content types to src/shared/ for single-source-of-truth.` Types are duplicated between main and renderer processes to avoid cross-process import issues. If renderer types change, the export-markdown types must be manually updated.
+**Issue:** `TODO: Move shared message/content types to src/shared/ for single-source-of-truth.` Types are duplicated between main and renderer processes to avoid cross-process import issues. If renderer types change, the export-common types must be manually updated.
+
+**Update (2026-07-02):** Blast radius increased since this was written — `export-common.ts` now feeds three serializers (Markdown, DOCX via `export-html.ts`/`export-docx.ts`, PDF via `export-html.ts`/`export-pdf.ts`) instead of just one. See also item #16.
 
 **Action:** Extract shared message/content types into `src/shared/` and import from both processes.
 
-**Risk:** Medium — type drift can cause silent bugs in markdown export.
+**Risk:** Medium — type drift can now cause silent bugs across markdown, DOCX, and PDF export.
 
 ---
 
 ## 3. Credential Delivery via System Prompt
 
-**File:** `src/main/claude/agent-runner.ts` (line ~705)
+**File:** `src/main/claude/agent-runner.ts` (line ~792)
 
 **Issue:** `TODO: Credentials should be served via a secure MCP tool or IPC channel, not injected as plaintext into the system prompt.` The `getCredentialsPrompt()` method was removed, but the architectural problem remains — credentials that the agent needs should flow through a secure tool, not prompt injection.
 
@@ -111,7 +114,7 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 
 ## 5. Permission Rules: Workspace Trust System Missing
 
-**File:** `src/main/config/permission-rules-store.ts` (line ~520)
+**File:** `src/main/config/permission-rules-store.ts` (line ~265)
 
 **Issue:** `TODO: integrate with workspace trust system when available.` Workspace MCP permission policies are permanently untrusted (`workspaceTrusted = false`). They can restrict but never grant access, even for projects the user has explicitly trusted.
 
@@ -165,7 +168,7 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 
 ## 9. Permission Hook: Renderer UI Desync on Async Permission Dialogs
 
-**File:** `src/main/claude/agent-runner.ts` (line ~1036)
+**File:** `src/main/claude/agent-runner.ts` (line ~1580)
 
 **Issue:** `Known limitation: the async requestPermission wait (user dialog) causes the renderer to miss UI update events. The tool executes correctly on the backend, but the renderer's loading spinner may not clear. This is a renderer-side issue tracked as a follow-up.`
 
@@ -189,7 +192,7 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 
 ## 11. Permission Rules: No Main-Process Persistence
 
-**File:** `src/main/config/permission-rules-store.ts` (line ~152)
+**File:** `src/main/config/permission-rules-store.ts` (line ~163)
 
 **Issue:** Session-scoped "always allow" memories and bash trust/deny lists live in-memory on the main process and are hydrated from the renderer on each bootstrap. A `follow-up could migrate both to main-process persistence.`
 
@@ -211,15 +214,19 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 
 ---
 
-## 13. Before-Tool-Call Hook: Fragile SDK Shape Detection
+## 13. Before-Tool-Call Hook: Legacy Setter Cleanup
 
 **File:** `src/main/claude/before-tool-call-hook.ts`
 
-**Issue:** Supports two SDK shapes (modern `beforeToolCall` property + legacy `setBeforeToolCall` setter). The `_beforeToolCall` private field is also accessed. Each Pi SDK bump risks breaking the detection — documented as "fragile" in `AI_MAIN_PROCESS.md`.
+**Status (2026-07-02):** The dangerous scenario this item originally warned about — a silent failure disabling all permission checks — was already fixed in commit `80ad1f9` (2026-05-01), before this document was first written (2026-06-03). Shape detection now lives in a dedicated, fully unit-tested module (`tests/before-tool-call-hook.test.ts`, 13 cases covering shape combinations, fail-closed behavior, and no partial mutation on the throw path). It **throws** when neither the modern `beforeToolCall` property nor the legacy `setBeforeToolCall` setter is available, so a future SDK change fails loudly at session start instead of silently disabling permissions.
 
-**Action:** After dropping support for pi-coding-agent < 0.74, remove the legacy `setBeforeToolCall` path and simplify to property-only.
+**Remaining issue:** The module still supports two SDK shapes (modern `beforeToolCall` property + legacy `setBeforeToolCall` setter), plus a legacy `_beforeToolCall` private-field read in `captureExistingHook`. This is intentional — kept for compatibility during the SDK migration window — but is now pure cleanup, not a safety risk.
 
-**Risk:** Medium — a silent failure here disables ALL permission checks.
+**Action:** After dropping support for pi-coding-agent < 0.74 (current: 0.80.2, so this is safe to do now), remove the legacy `setBeforeToolCall` path and `_beforeToolCall` fallback, simplify to property-only.
+
+**Risk:** Low — the silent-failure scenario is already mitigated by fail-closed behavior; what remains is simplification, not a safety fix.
+
+**Note:** `AI_MAIN_PROCESS.md`'s "Private Field Access" section still describes the pre-fix reach-around as "fragile" — that section is stale and should reference `before-tool-call-hook.ts` instead.
 
 ---
 
@@ -255,6 +262,8 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 **Design doc:** `docs/design/chat-export-markdown.md`
 
 **Status:** Phases 1 (Full Export) and 2 (Selective Export) are ✅ Done. Phase 3 is unimplemented.
+
+**Update (2026-07-02):** A separate initiative shipped outside this phase plan — DOCX and PDF export landed 2026-07-01 (commit `84010ec`, 64 tests), tracked in `docs/design/chat-export-multiformat.md` (✅ Shipped, Phases 1+2). That doc's own Non-Goals section confirms folder/zip export is still deferred to this doc's Phase 3 below. See also item #2 — the shared-types TODO moved to `export-common.ts` as part of that refactor.
 
 **Remaining work:**
 
@@ -388,31 +397,51 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 
 ---
 
-## 24. Plugin Skills Bypass Conflict Resolution Pipeline
+## 24. Plugin Skills Not Integrated into SkillsManager (By Design)
 
 **Files:**
 
-- `src/main/index.ts` (skills.getAll IPC handler — lines ~2320-2400)
+- `src/main/index.ts` (`skills.getAll` IPC handler — reverted to its simple form; just calls `listSkills()`)
 - `src/main/skills/skills-manager.ts` (does not load plugin skills)
-- `src/main/skills/skill-conflict-detector.ts` (SOURCE_PRIORITY includes 'plugin' but never processes plugin skills)
+- `src/main/skills/skill-conflict-detector.ts` (`SOURCE_PRIORITY` has no `'plugin'` entry)
 
-**Problem:**
+**Status (2026-07-02):** An earlier attempt (commit `d943cb2`) merged plugin skills into `skills.getAll` so they'd appear individually in the skill list and pass through conflict resolution. It was deliberately reverted eight days later (commit `12b36be`, 2026-06-11):
 
-Plugin skills from `PluginRuntimeService` are merged directly in the `skills.getAll` IPC handler after `SkillsManager.listSkills()` returns. This bypasses the canonical skill loading/conflict resolution pipeline. Consequences:
+> "Plugins should appear as ONE item in the Plugin Pinning section, not decomposed into 38 individual skills in the skill list. The plugin pinning system (`buildPinnedPluginsDirective`) already handles this correctly — one compact directive per plugin."
 
-1. Plugin skills that share a name with a builtin are both exposed (no conflict resolution applied)
-2. The configured conflict policy (custom-wins / builtin-wins / ask) does not apply to plugin-vs-builtin collisions
-3. `SkillsManager` has no knowledge of plugin skills — downstream operations (delete, toggle, conflict badge) may not work correctly for plugin skills
-4. Plugin skill names are taken from directory names rather than SKILL.md frontmatter `name` field
+**Current design:** Plugin skills are intentionally invisible to `SkillsManager`/`skills.getAll` and the conflict-resolution pipeline. They're surfaced exclusively through the Plugin Pinning UI, one entry per plugin rather than per skill.
 
-The current implementation mitigates this by: yielding to user/configured/project skills (name collision check), deduplicating by ID, and giving plugin the second-lowest priority in SOURCE_PRIORITY.
+**Remaining consideration:** If a future feature needs individual (not per-plugin) pinning, delete, or conflict-badge behavior for plugin-bundled skills, this would need to be revisited — at that point, inject `PluginRuntimeService` into `SkillsManager` (or a shared `SkillDiscoveryService`) so plugin skills pass through the full discovery/conflict flow.
 
-**Fix:**
+**Priority:** P3 — Not needed for the current design. Revisit only if per-skill (not per-plugin) plugin management becomes a requirement.
 
-Inject `PluginRuntimeService` into `SkillsManager` (or create a shared `SkillDiscoveryService`) so plugin skills are loaded alongside builtin/user/configured/project skills and pass through the full conflict detection/resolution flow. The `skills.getAll` handler should then just call `listSkills()` without any merging.
+**Effort:** 8h if revisited — same scope as before (SkillsManager dependency injection, discovery loop, conflict tests).
 
-**Priority:** P2 — Should be addressed before the plugin ecosystem grows. Currently safe because plugins yield to all user-installed skills.
+---
 
-**Effort:** 8h — requires modifying SkillsManager dependency injection, adding plugin skill paths to the discovery loop, updating conflict tests.
+## 25. Sandbox Toggle Disabled in Settings UI
+
+**File:** `src/renderer/components/settings/SettingsSandbox.tsx` (line ~112)
+
+**Issue:** `TODO: Re-enable when sandbox debugging is complete` — the `handleToggleSandbox` function is commented out, so users cannot toggle sandbox mode from Settings. Related to item #22 (scheduler sandbox wiring), which is also blocked on the sandbox feature.
+
+**Action:** Re-enable once sandbox debugging (referenced in the TODO) is complete.
+
+**Risk:** Low — sandbox status is still visible/read-only; only the toggle is disabled.
+
+---
+
+## 26. God Files: index.ts and gui-operate-server.ts
+
+**Files:**
+
+- `src/main/index.ts` (5,077 lines — nearly doubled from 2,672 lines noted in a 2026-05-08 roadmap review)
+- `src/main/mcp/gui-operate-server.ts` (6,884 lines)
+
+**Issue:** Both files have grown large enough to make navigation and review difficult. Not previously tracked in this document; noted only in an earlier roadmap chat (`docs/chats/application-roadmap-analysis-pending-features-and-development-plans-2026-05-08.md`) as a "Code Cleanup" goal for v3.4.0, but never carried over here.
+
+**Action:** Consider splitting `index.ts`'s IPC handlers into per-domain modules — several domains (skills, mcp, remote, schedule) already have their own directories, so handlers could move closer to their domain logic. Same idea for `gui-operate-server.ts`.
+
+**Risk:** Low — no functional bugs, but increases the cost of every future change that touches these files.
 
 ---

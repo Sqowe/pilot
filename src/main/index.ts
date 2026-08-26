@@ -38,7 +38,15 @@ import { SessionManager } from './session/session-manager';
 import { SkillsManager } from './skills/skills-manager';
 import { PluginCatalogService } from './skills/plugin-catalog-service';
 import { PluginRuntimeService } from './skills/plugin-runtime-service';
+import { getBuiltinSkillsPath } from './skills/builtin-skills-path';
 import { MemoryService } from './memory/memory-service';
+import { MemoryLLMClient } from './memory/memory-llm-client';
+import { isLocalModelDownloaded } from './memory/local-embedding-cache';
+import { getLocalModelRuntimeStatus } from './memory/local-embedding-state';
+import type {
+  LocalEmbeddingProgress,
+  MemoryBackfillProgress,
+} from '../shared/local-embedding-types';
 import { MemoryExtension } from './memory/memory-extension';
 import { CORE_MEMORY_UPDATE_SYSTEM_PROMPT } from './memory/memory-prompts';
 import { AgentRuntimeExtensionManager } from './extensions/agent-runtime-extension-manager';
@@ -48,10 +56,15 @@ import {
   type AppConfig,
   type AppTheme,
   type CreateConfigSetPayload,
+  type MemoryRuntimeConfig,
 } from './config/config-store';
 import { runConfigApiTest } from './config/config-test-routing';
+import { getFullProviderCatalog } from './config/provider-catalog-native';
 import { listOllamaModels } from './config/ollama-api';
+import { resolveThinkingCapabilities, resolvePiModelString } from './claude/pi-model-resolution';
+import type { ThinkingCapabilities } from './claude/pi-model-resolution';
 import { applyLocalDevPath, isBasePathSet, getEffectivePath } from './utils/path-env';
+import { applyConfigHttpProxy } from './utils/http-proxy';
 import {
   setPermissionRules,
   setBashCommandLists,
@@ -127,7 +140,10 @@ import {
 } from './utils/logger';
 import { listRecentWorkspaceFiles } from './utils/recent-workspace-files';
 import { buildDiagnosticsSummary } from './utils/diagnostics-summary';
-import { isValidSystemPromptFileChoice } from '../shared/system-prompt-file-choices';
+import {
+  isValidSystemPromptFileChoice,
+  isValidSystemPromptPriority,
+} from '../shared/system-prompt-file-choices';
 import {
   ensurePromptFiles,
   loadPromptSections,
@@ -158,6 +174,13 @@ if (configStore.isConfigured()) {
   configStore.applyToEnv();
 }
 
+// Apply saved HTTP proxy setting so all outbound SDK requests honour it.
+// Only applies when a proxy is actually configured; does not clear shell-set vars on startup.
+const savedHttpProxy = configStore.get('httpProxy');
+if (savedHttpProxy) {
+  applyConfigHttpProxy(savedHttpProxy);
+}
+
 // Disable hardware acceleration for better compatibility
 app.disableHardwareAcceleration();
 
@@ -165,6 +188,28 @@ let mainWindow: BrowserWindow | null = null;
 let sessionManager: SessionManager | null = null;
 let skillsManager: SkillsManager | null = null;
 let pluginRuntimeService: PluginRuntimeService | null = null;
+
+/**
+ * Broadcast local-embedding download progress to all renderer windows.
+ * Throttled to ~10 Hz to avoid flooding the renderer with chatty transformers.js
+ * callbacks; terminal events (ready/error) are always sent immediately. Shared by
+ * the MemoryService ingestion path and the "Check models availability" probe.
+ */
+const emitLocalEmbeddingProgress = (() => {
+  let lastEmitMs = 0;
+  const THROTTLE_MS = 100;
+  return (p: LocalEmbeddingProgress) => {
+    const now = Date.now();
+    if (p.status !== 'downloading' || now - lastEmitMs >= THROTTLE_MS) {
+      lastEmitMs = now;
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('memory.localEmbeddingProgress', p);
+        }
+      }
+    }
+  };
+})();
 let memoryService: MemoryService | null = null;
 let scheduledTaskManager: ScheduledTaskManager | null = null;
 
@@ -979,6 +1024,15 @@ app
     log('Config file:', configStore.getPath());
     log('Is configured:', configStore.isConfigured());
     log('[Runtime] Using pi-coding-agent SDK for all providers');
+
+    // Warm the native provider catalog at startup so the synchronous cache
+    // (getCachedProviderCatalogSync) used by routing/auth is populated before
+    // any agent run — even if the user never opens Settings this session.
+    // Without this, a first run with a saved native provider would route via
+    // the cold-start fallback and resolve a synthetic model (losing quirks).
+    // Fire-and-forget: getFullProviderCatalog never rejects (degrades to
+    // builtin-only on failure).
+    void getFullProviderCatalog();
     log('Developer logs:', enableDevLogs ? 'Enabled' : 'Disabled');
     log('Environment Variables:');
     log('  ANTHROPIC_AUTH_TOKEN:', process.env.ANTHROPIC_AUTH_TOKEN ? '✓ Set' : '✗ Not set');
@@ -1003,7 +1057,12 @@ app
     pluginRuntimeService = new PluginRuntimeService(new PluginCatalogService());
     // Defer orchestrator backfill to avoid blocking startup with synchronous disk I/O
     setImmediate(() => pluginRuntimeService?.backfillOrchestrators());
-    memoryService = new MemoryService(db);
+    memoryService = new MemoryService(db, {
+      llmClientOptions: {
+        getStorageRoot: () => join(app.getPath('userData'), 'memory'),
+        onLocalEmbeddingProgress: emitLocalEmbeddingProgress,
+      },
+    });
     const extensionManager = new AgentRuntimeExtensionManager([new MemoryExtension(memoryService)]);
 
     // Initialize session manager before creating an interactive window.
@@ -1854,6 +1913,12 @@ ipcMain.handle('config.get', () => {
   }
 });
 
+ipcMain.handle('config.getProviderCatalog', async () => {
+  // getFullProviderCatalog never rejects — it falls back to builtin-only entries
+  // on any import or build failure, so no try/catch is needed here.
+  return getFullProviderCatalog();
+});
+
 ipcMain.handle('config.getPresets', () => {
   try {
     return getPiAiModelPresets();
@@ -1871,6 +1936,7 @@ const buildAgentRuntimeSignature = (config: AppConfig): string =>
     customProtocol: config.customProtocol,
     model: config.model,
     enableThinking: config.enableThinking,
+    thinkingLevel: config.thinkingLevel ?? (config.enableThinking ? 'medium' : 'off'),
     memoryEnabled: config.memoryEnabled,
     memoryRuntime: config.memoryRuntime,
   });
@@ -1921,6 +1987,7 @@ ipcMain.handle('config.save', async (_event, newConfig: Partial<AppConfig>) => {
   log('[Config] Saving config:', {
     ...newConfig,
     apiKey: newConfig.apiKey ? '***' : '',
+    httpProxy: newConfig.httpProxy ? '<redacted>' : newConfig.httpProxy,
     memoryRuntime: newConfig.memoryRuntime
       ? {
           ...newConfig.memoryRuntime,
@@ -1941,6 +2008,32 @@ ipcMain.handle('config.save', async (_event, newConfig: Partial<AppConfig>) => {
   });
 
   const previousConfig = configStore.getAll();
+
+  // Server-side validation for httpProxy — renderer validation can be bypassed
+  // via devtools or corrupted config on disk.
+  if (newConfig.httpProxy !== undefined) {
+    const rawProxy = newConfig.httpProxy;
+    if (rawProxy && rawProxy.trim()) {
+      try {
+        const parsed = new URL(rawProxy.trim());
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          return { success: false, error: 'httpProxy must use http:// or https:// scheme' };
+        }
+        // Strip credentials from stored value — proxy URLs with user:pass@host
+        // are stored in plaintext; reject them to avoid silent secret exposure.
+        if (parsed.username || parsed.password) {
+          return {
+            success: false,
+            error:
+              'httpProxy must not include credentials (user:pass@host). Configure authentication separately.',
+          };
+        }
+      } catch {
+        return { success: false, error: 'httpProxy is not a valid URL' };
+      }
+    }
+  }
+
   // Update config
   configStore.update(newConfig);
 
@@ -1960,6 +2053,11 @@ ipcMain.handle('config.save', async (_event, newConfig: Partial<AppConfig>) => {
         mcpManager.invalidateEnvCache();
       }
     }
+  }
+
+  // If httpProxy changed, re-apply it unconditionally so all outbound requests pick it up
+  if (newConfig.httpProxy !== undefined && newConfig.httpProxy !== previousConfig.httpProxy) {
+    applyConfigHttpProxy(newConfig.httpProxy, true);
   }
 
   const updatedConfig = await syncConfigAfterMutation(previousConfig);
@@ -2021,35 +2119,27 @@ ipcMain.handle('config.isConfigured', () => {
 
 ipcMain.handle('workspace-instructions.getStatus', async (_event, requestedCwd?: string) => {
   try {
-    const { loadWorkspaceSystemPrompt, MAX_BYTES } =
-      await import('./utils/workspace-system-prompt');
-    const choice = configStore.get('systemPromptFile') || '';
-    if (!choice) {
-      return { configuredFile: '', loaded: false };
-    }
+    const { computeWorkspaceInstructionsStatus } = await import('./utils/workspace-system-prompt');
     // Use the renderer-provided cwd (session workspace) if given,
     // falling back to the global default only as a last resort.
     const cwd = requestedCwd || currentWorkingDir || undefined;
-    const result = await loadWorkspaceSystemPrompt(cwd, choice);
-    if (result) {
-      const sizeBytes = Buffer.byteLength(result.text, 'utf8');
-      return {
-        configuredFile: choice,
-        loaded: true,
-        sizeBytes,
-        truncated: sizeBytes >= MAX_BYTES,
-        fingerprintShort: result.fingerprint.slice(0, 8),
-      };
-    }
-    return {
-      configuredFile: choice,
-      loaded: false,
-      error: 'File not found or unreadable at workspace root',
-    };
+    return await computeWorkspaceInstructionsStatus(
+      {
+        get: (key: 'systemPromptFileEnabled' | 'systemPromptFilePriority' | 'systemPromptFile') =>
+          configStore.get(key),
+      },
+      cwd
+    );
   } catch (error) {
     logError('[WorkspaceInstructions] getStatus failed:', error);
+    // Derive best-effort configuredFile from the new fields; avoid reading the
+    // deprecated systemPromptFile key so the error path stays consistent.
+    const rawPriority = configStore.get('systemPromptFilePriority');
+    const firstCandidate =
+      Array.isArray(rawPriority) && typeof rawPriority[0] === 'string' ? rawPriority[0] : '';
     return {
-      configuredFile: configStore.get('systemPromptFile') || '',
+      configuredFile: firstCandidate,
+      resolvedFile: '',
       loaded: false,
       error: error instanceof Error ? error.message : 'Unknown error',
     };
@@ -2079,6 +2169,38 @@ ipcMain.handle(
       return [];
     }
     return listOllamaModels(payload);
+  }
+);
+
+ipcMain.handle(
+  'config.getThinkingLevels',
+  (
+    _event,
+    payload: {
+      provider: string;
+      model: string;
+      customProtocol?: string;
+      baseUrl?: string;
+    }
+  ): ThinkingCapabilities => {
+    try {
+      const modelString = resolvePiModelString({
+        provider: payload.provider,
+        customProtocol: payload.customProtocol,
+        model: payload.model,
+      });
+      // `resolveThinkingCapabilities` already guarantees 'off' is present and the
+      // list is in canonical order.
+      return resolveThinkingCapabilities(modelString, {
+        configProvider: payload.provider,
+        rawProvider: payload.provider,
+        customProtocol: payload.customProtocol,
+        customBaseUrl: payload.baseUrl,
+      });
+    } catch (err) {
+      logWarn('[Config] getThinkingLevels error:', err);
+      return { supportsThinking: false, levels: ['off'] };
+    }
   }
 );
 
@@ -2542,23 +2664,7 @@ ipcMain.handle('skills.getSessionPinnedSkills', async (_event, sessionId: string
 
 ipcMain.handle('skills.getBuiltinStatus', async () => {
   try {
-    const appPath = app.getAppPath();
-    const unpackedPath = appPath.replace(/\.asar$/, '.asar.unpacked');
-    const possiblePaths = [
-      join(__dirname, '..', '..', '..', '.claude', 'skills'),
-      join(process.resourcesPath || '', 'skills'),
-      ...(fs.existsSync(join(unpackedPath, '.claude', 'skills'))
-        ? [join(unpackedPath, '.claude', 'skills')]
-        : []),
-      join(appPath, '.claude', 'skills'),
-    ];
-    let builtinSkillsPath = '';
-    for (const p of possiblePaths) {
-      if (fs.existsSync(p)) {
-        builtinSkillsPath = p;
-        break;
-      }
-    }
+    const builtinSkillsPath = getBuiltinSkillsPath();
     if (!builtinSkillsPath) return [];
 
     const runtimeSkillsDir = join(app.getPath('userData'), 'claude', 'skills');
@@ -2869,22 +2975,7 @@ ipcMain.handle('skills.getConflicts', async () => {
     const { normalizeSkillConflictConfig } = await import('../shared/skill-conflict-types');
 
     // Gather skill source directories
-    const appPath = app.getAppPath();
-    const unpackedPath = appPath.replace(/\.asar$/, '.asar.unpacked');
-    const builtinPaths = [
-      join(__dirname, '..', '..', '..', '.claude', 'skills'),
-      join(process.resourcesPath || '', 'skills'),
-      join(unpackedPath, '.claude', 'skills'),
-      join(appPath, '.claude', 'skills'),
-    ];
-    let builtinDir = '';
-    for (const p of builtinPaths) {
-      if (fs.existsSync(p)) {
-        builtinDir = p;
-        break;
-      }
-    }
-
+    const builtinDir = getBuiltinSkillsPath();
     const userDir = join(app.getPath('home'), '.claude', 'skills');
     const rawConfiguredPath = configStore.get('globalSkillsPath');
     const configuredPath = typeof rawConfiguredPath === 'string' ? rawConfiguredPath.trim() : '';
@@ -3965,6 +4056,37 @@ ipcMain.handle('logs.isEnabled', () => {
 // Chat Export IPC
 // ============================================================================
 
+// Shared session/message accessors used by both handlers below
+function _exportGetSession(sessionId: string) {
+  if (!sessionManager) return undefined;
+  const sessions = sessionManager.listSessions();
+  return sessions.find((s) => s.id === sessionId);
+}
+
+function _exportGetMessages(sessionId: string) {
+  if (!sessionManager) return [];
+  return sessionManager.getMessages(sessionId);
+}
+
+// Primary handler: multi-format export (format chosen via the save dialog)
+ipcMain.handle(
+  'chat.export',
+  async (
+    _event,
+    request: {
+      sessionId: string;
+      messageIds?: string[];
+      format?: import('./chat/export-common').ExportFormat;
+      options?: Partial<import('./chat/export-common').ExportOptions>;
+    }
+  ) => {
+    const { exportChat } = await import('./chat/export-router');
+    return exportChat(request, _exportGetSession, _exportGetMessages);
+  }
+);
+
+// Backward-compat alias: callers that still invoke 'chat.exportMarkdown'
+// are forwarded to the new router (which defaults the dialog to .md).
 ipcMain.handle(
   'chat.exportMarkdown',
   async (
@@ -3972,23 +4094,12 @@ ipcMain.handle(
     request: {
       sessionId: string;
       messageIds?: string[];
-      options?: Partial<import('./chat/export-markdown').ExportOptions>;
+      format?: import('./chat/export-common').ExportFormat;
+      options?: Partial<import('./chat/export-common').ExportOptions>;
     }
   ) => {
-    const { exportChatToMarkdown } = await import('./chat/export-markdown');
-
-    const getSession = (sessionId: string) => {
-      if (!sessionManager) return undefined;
-      const sessions = sessionManager.listSessions();
-      return sessions.find((s) => s.id === sessionId);
-    };
-
-    const getMessages = (sessionId: string) => {
-      if (!sessionManager) return [];
-      return sessionManager.getMessages(sessionId);
-    };
-
-    return exportChatToMarkdown(request, getSession, getMessages);
+    const { exportChat } = await import('./chat/export-router');
+    return exportChat(request, _exportGetSession, _exportGetMessages);
   }
 );
 
@@ -4284,7 +4395,96 @@ ipcMain.handle('memory.getPanelState', (_event, cwd?: string, sessionId?: string
       workspaceCount: overview.sourceWorkspaceCount,
     },
     lastRetrieval: memoryService.getLastRetrievalMetrics(sessionId || undefined),
+    localModelDownloaded: isLocalModelDownloaded(getMemoryStorageRoot()),
   };
+});
+
+ipcMain.handle('memory.isLocalModelDownloaded', () => {
+  return { downloaded: isLocalModelDownloaded(getMemoryStorageRoot()) };
+});
+
+// True when stored local embeddings predate a format change (e.g. the prefix fix)
+// and need a rebuild for good search quality. Gated to the local provider in the
+// service so remote users aren't prompted to re-embed (which costs API calls).
+// `modelStale` is the separate §7 condition: stored vectors were embedded with a
+// different model than the one now configured, so semantic scoring is degraded to
+// lexical-only until a rebuild. Provider-agnostic (unlike `stale`) — switching model
+// invalidates the index regardless of who computed it.
+ipcMain.handle('memory.isEmbeddingFormatStale', () => {
+  return {
+    stale: memoryService?.isEmbeddingFormatStale() ?? false,
+    modelStale: memoryService?.isEmbeddingModelStale() ?? false,
+  };
+});
+
+// Combined status: on-disk cache presence (dependency-free) + in-process runtime
+// state (idle/loading/ready/error + backoff). Reads the runtime status from the
+// dependency-free state module, so opening Settings never loads transformers.js.
+ipcMain.handle('memory.getLocalModelStatus', () => {
+  return {
+    downloaded: isLocalModelDownloaded(getMemoryStorageRoot()),
+    ...getLocalModelRuntimeStatus(),
+  };
+});
+
+// Probe the LLM + embedding providers described by an *unsaved* draft runtime
+// config, so the Settings UI can gate "Save" behind a successful check when the
+// model config changed. Builds a throwaway client bound to the draft (real
+// appConfig with memoryRuntime swapped) — nothing is persisted.
+ipcMain.handle(
+  'memory.checkModelAvailability',
+  async (_event, draftRuntime: MemoryRuntimeConfig) => {
+    const testConfig: AppConfig = { ...configStore.getAll(), memoryRuntime: draftRuntime };
+    const client = new MemoryLLMClient(() => testConfig, {
+      getStorageRoot: () => join(app.getPath('userData'), 'memory'),
+      onLocalEmbeddingProgress: emitLocalEmbeddingProgress,
+    });
+    return client.checkAvailability();
+  }
+);
+
+// Proactively download/load the local model (warm-up on select, or manual retry
+// with { force }). Loads the provider lazily so startup stays light. Never throws —
+// the outcome is reflected in the returned status.
+ipcMain.handle('memory.warmUpLocalModel', async (_event, force?: boolean) => {
+  const storageRoot = getMemoryStorageRoot();
+  const { warmUpLocalModel } = await import('./memory/local-embedding-provider');
+  const status = await warmUpLocalModel(storageRoot, { force: force === true });
+  return {
+    downloaded: isLocalModelDownloaded(storageRoot),
+    ...status,
+  };
+});
+
+ipcMain.handle('memory.removeLocalModel', async () => {
+  const storageRoot = getMemoryStorageRoot();
+  // Safety: only allow deletion when storageRoot is under app userData.
+  // This prevents accidental or malicious deletion of unrelated directories
+  // when storageRoot is misconfigured to point outside app-owned storage.
+  const userDataPath = app.getPath('userData');
+  const resolvedRoot = resolve(storageRoot);
+  const resolvedUserData = resolve(userDataPath);
+  const rel = relative(resolvedUserData, resolvedRoot);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    return {
+      success: false,
+      removed: false,
+      error: `storageRoot (${resolvedRoot}) is outside app userData directory. Move storageRoot inside userData to allow model removal.`,
+    };
+  }
+  // Use the provider-level wrapper so resetLocalEmbeddingPipeline() is called
+  // after deletion, preventing stale in-memory pipeline state.
+  const { removeLocalModelCache } = await import('./memory/local-embedding-provider');
+  try {
+    const removed = await removeLocalModelCache(storageRoot);
+    return { success: true, removed };
+  } catch (error) {
+    return {
+      success: false,
+      removed: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 });
 
 ipcMain.handle(
@@ -4465,11 +4665,111 @@ ipcMain.handle('memory.openFileInEditor', () => {
  * is empty, falls back to app.getPath('userData')/memory.
  */
 function resolveMemoryPromptPath(): string {
-  const appConfig = configStore.getAll();
-  const configuredRoot = appConfig.memoryRuntime?.storageRoot?.trim();
-  const storageRoot = configuredRoot || join(app.getPath('userData'), 'memory');
-  return join(storageRoot, 'prompts', 'core-extraction.md');
+  return join(getMemoryStorageRoot(), 'prompts', 'core-extraction.md');
 }
+
+/**
+ * Returns the configured memory storage root, falling back to the default
+ * app userData directory. Single source of truth for all IPC handlers that
+ * need to locate the local embedding model cache.
+ */
+function getMemoryStorageRoot(): string {
+  const configured = configStore.getAll().memoryRuntime?.storageRoot?.trim();
+  return configured || join(app.getPath('userData'), 'memory');
+}
+
+ipcMain.handle('memory.getExperienceDbStatus', () => {
+  if (!memoryService) return { success: false, error: 'Memory service not initialized' };
+  try {
+    return { success: true, status: memoryService.getExperienceDbStatus() };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+/**
+ * Export experience memory to a user-selected file via save dialog.
+ * Uses atomic temp+rename write so disk I/O does not corrupt the file on crash.
+ * Note: exportExperienceJson() + JSON.stringify() runs on the main thread;
+ * for the current store size (~24 MB) this takes ~100ms and is triggered
+ * only by an explicit user action in the Settings UI.
+ */
+ipcMain.handle('memory.exportExperienceMemoryToFile', async () => {
+  if (!memoryService) return { success: false, error: 'Memory service not initialized' };
+  try {
+    // Prefer focused window; fall back to mainWindow if alive; allow no-parent dialog.
+    const win =
+      BrowserWindow.getFocusedWindow() ??
+      (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined);
+    const defaultExportPath = join(
+      app.getPath('downloads'),
+      `experience_memory_export_${Date.now()}.json`
+    );
+    const dialogOptions = {
+      title: 'Export Experience Memory',
+      defaultPath: defaultExportPath,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    };
+    const dialogResult = await (win
+      ? dialog.showSaveDialog(win, dialogOptions)
+      : dialog.showSaveDialog(dialogOptions));
+    if (dialogResult.canceled || !dialogResult.filePath) {
+      return { success: false, canceled: true };
+    }
+    return memoryService.exportExperienceJsonToFile(dialogResult.filePath);
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+/**
+ * VACUUM memory.db via the ingestion queue to prevent SQLITE_BUSY conflicts
+ * with concurrent memory reads/writes.
+ */
+ipcMain.handle('memory.vacuumExperienceDb', () => {
+  if (!memoryService)
+    return Promise.resolve({ success: false, error: 'Memory service not initialized' });
+  return memoryService.vacuumExperienceDbQueued();
+});
+
+/**
+ * Compute vectors for stored rows that lack one. Unlike memory.rebuildAll this
+ * runs no LLM extraction and deletes nothing — see MemoryService.backfillEmbeddings.
+ */
+ipcMain.handle('memory.backfillEmbeddings', async () => {
+  if (!memoryService) {
+    return { success: false, embedded: 0, failed: 0, error: 'Memory service not initialized' };
+  }
+  // Throttled like the local-model download progress above: the backfill emits one
+  // event per row, and a fast provider would otherwise flood the IPC channel.
+  let lastEmitMs = 0;
+  const emit = (p: MemoryBackfillProgress): void => {
+    const now = Date.now();
+    const isFinal = p.processed === 0 || p.processed === p.total;
+    if (!isFinal && now - lastEmitMs < 100) return;
+    lastEmitMs = now;
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('memory.backfillProgress', p);
+      }
+    }
+  };
+  try {
+    return await memoryService.backfillEmbeddings(emit);
+  } catch (err) {
+    return {
+      success: false,
+      embedded: 0,
+      failed: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+});
+
+ipcMain.handle('memory.countEmbeddingBackfill', () => {
+  if (!memoryService) return { sessionCount: 0, chunkCount: 0 };
+  return memoryService.countEmbeddingBackfill();
+});
 
 ipcMain.handle('memory.setEnabled', (_event, enabled: boolean) => {
   if (!memoryService) {
@@ -4796,10 +5096,82 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
         });
       }
 
-      if ('systemPromptFile' in event.payload) {
-        const raw = (event.payload as { systemPromptFile?: unknown }).systemPromptFile;
-        if (isValidSystemPromptFileChoice(raw)) {
-          configStore.update({ systemPromptFile: raw });
+      // Workspace-instructions settings: batch all three keys (legacy + new)
+      // into a single configStore.update + one config.status broadcast to
+      // avoid redundant renderer updates when multiple keys arrive together.
+      // Guard: only import + process when the payload actually contains one of
+      // the workspace-instruction keys (legacy or new) to avoid async overhead
+      // on every unrelated settings.update call.
+      if (
+        'systemPromptFile' in event.payload ||
+        'systemPromptFileEnabled' in event.payload ||
+        'systemPromptFilePriority' in event.payload
+      ) {
+        const { normalizeSystemPromptPriority } =
+          await import('../shared/system-prompt-file-choices');
+        type SystemPromptFileName =
+          import('../shared/system-prompt-file-choices').SystemPromptFileName;
+        const p = event.payload as Record<string, unknown>;
+        const wsUpdates: Partial<{
+          systemPromptFileEnabled: boolean;
+          systemPromptFilePriority: SystemPromptFileName[];
+        }> = {};
+        const wsWarns: string[] = [];
+
+        // Legacy key — translate to new fields (migration window compat).
+        // Only applies when the payload does NOT also contain the new
+        // systemPromptFilePriority key, to avoid clobbering an explicit update.
+        if ('systemPromptFile' in p && !('systemPromptFilePriority' in p)) {
+          const raw = p.systemPromptFile;
+          if (raw === '') {
+            wsUpdates.systemPromptFileEnabled = false;
+          } else if (isValidSystemPromptFileChoice(raw)) {
+            // Merge with the existing stored priority list: prepend the legacy
+            // choice so it wins, then normalize+dedup to preserve the rest.
+            // This prevents a legacy renderer from silently destroying a
+            // richer priority list the user configured in the new UI.
+            const existingPriority = configStore.get('systemPromptFilePriority');
+            const base = Array.isArray(existingPriority)
+              ? [raw as string, ...existingPriority.filter((x: unknown) => typeof x === 'string')]
+              : [raw as string];
+            wsUpdates.systemPromptFileEnabled = true;
+            wsUpdates.systemPromptFilePriority = normalizeSystemPromptPriority(base);
+          } else {
+            wsWarns.push(
+              `[settings.update] Ignored invalid legacy systemPromptFile value: ${String(raw)}`
+            );
+          }
+        }
+
+        // New enabled flag — overrides legacy translation when both arrive.
+        if ('systemPromptFileEnabled' in p) {
+          const raw = p.systemPromptFileEnabled;
+          if (typeof raw === 'boolean') {
+            wsUpdates.systemPromptFileEnabled = raw;
+          } else {
+            wsWarns.push(
+              `[settings.update] Ignored invalid systemPromptFileEnabled value: ${String(raw)}`
+            );
+          }
+        }
+
+        // New priority list — normalize before persisting to ensure
+        // deduplication and canonical ordering are always enforced.
+        if ('systemPromptFilePriority' in p) {
+          const raw = p.systemPromptFilePriority;
+          if (isValidSystemPromptPriority(raw)) {
+            wsUpdates.systemPromptFilePriority = normalizeSystemPromptPriority(raw);
+          } else {
+            wsWarns.push(
+              `[settings.update] Ignored invalid systemPromptFilePriority value: ${String(raw)}`
+            );
+          }
+        }
+
+        for (const w of wsWarns) logWarn(w);
+
+        if (Object.keys(wsUpdates).length > 0) {
+          configStore.update(wsUpdates);
           sendToRenderer({
             type: 'config.status',
             payload: {
@@ -4807,8 +5179,6 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
               config: configStore.getAll(),
             },
           });
-        } else {
-          logWarn('[settings.update] Ignored invalid systemPromptFile value:', raw);
         }
       }
 

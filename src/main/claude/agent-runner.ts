@@ -20,9 +20,74 @@ import {
   type AgentSession as PiAgentSession,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import type { ImageContent as PiImageContent } from '@earendil-works/pi-ai';
+import type { ImageContent as PiImageContent, ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { Type } from 'typebox';
-import { getSharedAuthStorage, ModelRegistry } from './shared-auth';
+import { getSharedModelRuntime, type ModelRuntime } from './shared-auth';
+import { formatTokenCount, normalizeTokenUsage } from './token-usage-utils';
+
+// ---------------------------------------------------------------------------
+// RuntimeKeyTracker — reference-counted runtime API key ownership
+//
+// Runtime API keys live on the shared ModelRuntime instance, reachable by every
+// concurrent agent session. Naively removing a key in `finally` would break any
+// other in-flight session that set the same key. This tracker maintains a
+// ref-count per provider key: setKey() increments, releaseKeys() decrements,
+// and the key is only removed from the runtime when the count reaches zero.
+// ---------------------------------------------------------------------------
+
+const _runtimeKeyRefCounts = new Map<string, number>();
+
+/** @internal Exported for testing only — do not use in production code. */
+export const _testOnly_runtimeKeyRefCounts = _runtimeKeyRefCounts;
+
+/** @internal Exported for testing only — do not use in production code. */
+export function _testOnly_trackRuntimeKeys(
+  modelRuntime: ModelRuntime,
+  keys: string[],
+  apiKey: string
+): Promise<void> {
+  return _trackRuntimeKeys(modelRuntime, keys, apiKey);
+}
+
+/** @internal Exported for testing only — do not use in production code. */
+export function _testOnly_releaseRuntimeKeys(
+  modelRuntime: ModelRuntime,
+  keys: string[]
+): Promise<void> {
+  return _releaseRuntimeKeys(modelRuntime, keys);
+}
+
+async function _trackRuntimeKeys(
+  modelRuntime: ModelRuntime,
+  keys: string[],
+  apiKey: string
+): Promise<void> {
+  for (const key of keys) {
+    // Increment before awaiting the write: setRuntimeApiKey is async as of
+    // 0.80.8, and a concurrent release must never observe a zero count for a key
+    // this run is still claiming and delete it mid-write. Callers record the keys
+    // before calling, so a throw here still releases them in `finally`.
+    _runtimeKeyRefCounts.set(key, (_runtimeKeyRefCounts.get(key) ?? 0) + 1);
+    await modelRuntime.setRuntimeApiKey(key, apiKey);
+  }
+}
+
+async function _releaseRuntimeKeys(modelRuntime: ModelRuntime, keys: string[]): Promise<void> {
+  for (const key of keys) {
+    try {
+      const count = _runtimeKeyRefCounts.get(key) ?? 0;
+      if (count <= 1) {
+        _runtimeKeyRefCounts.delete(key);
+        await modelRuntime.removeRuntimeApiKey(key);
+      } else {
+        _runtimeKeyRefCounts.set(key, count - 1);
+      }
+    } catch (err) {
+      // Best-effort cleanup — log and continue so one bad key doesn't block others
+      logWarn('[ClaudeAgentRunner] Failed to remove runtime API key for provider:', key, err);
+    }
+  }
+}
 import type { Session, Message, TraceStep, ServerEvent, ContentBlock } from '../../renderer/types';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -70,16 +135,22 @@ import { SandboxSync } from '../sandbox/sandbox-sync';
 import { extractArtifactsFromText, buildArtifactTraceSteps } from '../utils/artifact-parser';
 import { getDefaultShell } from '../utils/shell-resolver';
 import { PluginRuntimeService } from '../skills/plugin-runtime-service';
+import { getBuiltinSkillsPath } from '../skills/builtin-skills-path';
 import type { SkillsAdapter } from '../skills/skills-adapter';
 import { SAFE_SKILL_ID_REGEX, isValidSkillId } from '../../shared/skill-pinning-constants';
 import { normalizeSkillConflictConfig } from '../../shared/skill-conflict-types';
 import { AgentRuntimeExtensionManager } from '../extensions/agent-runtime-extension-manager';
 import { configStore } from '../config/config-store';
 import { setBasePath, applyLocalDevPath } from '../utils/path-env';
-import { loadWorkspaceSystemPrompt } from '../utils/workspace-system-prompt';
+import {
+  loadWorkspaceSystemPrompt,
+  resolveWorkspaceInstructionsConfig,
+} from '../utils/workspace-system-prompt';
 import { assembleUserPrompt } from '../prompts/prompt-loader';
 import { enrichToolErrorWithThinking, selectThinkingSource } from './tool-error-enrichment';
 import { normalizeOpenAICompatibleBaseUrl } from '../config/auth-utils';
+import { getCachedProviderCatalogSync } from '../config/provider-catalog-native';
+import { getCatalogEntry } from '../../shared/provider-catalog';
 import { resolveMessageEndPayload, toUserFacingErrorText } from './agent-runner-message-end';
 import {
   applyPiModelRuntimeOverrides,
@@ -87,6 +158,9 @@ import {
   resolvePiRegistryModel,
   resolvePiRouteProtocol,
   resolveSyntheticPiModelFallback,
+  resolveRuntimeApiKeyProviders,
+  clampThinkingLevelForModel,
+  applyRegistryReasoningTraits,
 } from './pi-model-resolution';
 import { buildPiSessionRuntimeSignature } from './pi-session-runtime';
 import { ThinkTagStreamParser } from './think-tag-parser';
@@ -483,30 +557,6 @@ function toErrorText(error: unknown): string {
   return serialized;
 }
 
-function normalizeTokenUsage(usage: unknown): Message['tokenUsage'] | undefined {
-  if (!usage || typeof usage !== 'object') {
-    return undefined;
-  }
-
-  const raw = usage as {
-    input?: unknown;
-    output?: unknown;
-    input_tokens?: unknown;
-    output_tokens?: unknown;
-    inputTokens?: unknown;
-    outputTokens?: unknown;
-  };
-
-  const input = raw.input ?? raw.input_tokens ?? raw.inputTokens;
-  const output = raw.output ?? raw.output_tokens ?? raw.outputTokens;
-
-  if (typeof input !== 'number' || typeof output !== 'number') {
-    return undefined;
-  }
-
-  return { input, output };
-}
-
 interface AgentRunnerOptions {
   sendToRenderer: (event: ServerEvent) => void;
   saveMessage?: (message: Message) => void;
@@ -833,7 +883,7 @@ RULES:
   /** Fallback skill path resolution when SkillsAdapter is not provided. */
   private legacySkillPaths(): string[] {
     const paths: string[] = [];
-    const builtin = this.getBuiltinSkillsPath();
+    const builtin = getBuiltinSkillsPath();
     if (builtin && fs.existsSync(builtin)) paths.push(builtin);
     const global = this.getConfiguredGlobalSkillsDir();
     if (global && fs.existsSync(global)) paths.push(global);
@@ -925,54 +975,6 @@ RULES:
     return Array.from(mergedPaths);
   }
 
-  /**
-   * Get the built-in skills directory (shipped with the app)
-   */
-  private getBuiltinSkillsPath(): string {
-    // In development, skills are in the project's .claude/skills directory
-    // In production, they're extracted via extraResources to resources/skills
-    const appPath = app.getAppPath();
-    const unpackedPath = appPath.replace(/\.asar$/, '.asar.unpacked');
-
-    const possiblePaths = [
-      // Development: relative to this file
-      path.join(__dirname, '..', '..', '..', '.claude', 'skills'),
-      // Production: extraResources extracts .claude/skills → resources/skills
-      // This is the preferred production path (real directory, no asar issues)
-      path.join(process.resourcesPath || '', 'skills'),
-      // Legacy: in app.asar.unpacked (for older builds with asarUnpack)
-      ...(this.physicalDirExists(path.join(unpackedPath, '.claude', 'skills'))
-        ? [path.join(unpackedPath, '.claude', 'skills')]
-        : []),
-      // Last resort: read from inside the asar archive (Electron intercepts this)
-      path.join(appPath, '.claude', 'skills'),
-    ];
-
-    for (const p of possiblePaths) {
-      if (fs.existsSync(p)) {
-        log('[ClaudeAgentRunner] Found built-in skills at:', p);
-        return p;
-      }
-    }
-
-    logWarn('[ClaudeAgentRunner] No built-in skills directory found');
-    return '';
-  }
-
-  /**
-   * Check if a directory physically exists on disk, bypassing Electron's
-   * asar interception.
-   */
-  private physicalDirExists(dirPath: string): boolean {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const originalFs = require('original-fs') as typeof import('fs');
-      return originalFs.existsSync(dirPath) && originalFs.statSync(dirPath).isDirectory();
-    } catch {
-      return false;
-    }
-  }
-
   private getAppClaudeDir(): string {
     return path.join(app.getPath('userData'), 'claude');
   }
@@ -1054,7 +1056,7 @@ RULES:
 
       if (resolution === 'emit-conflict') {
         // Determine the actual conflicting source for the event payload
-        const builtinSkillsPath = this.getBuiltinSkillsPath();
+        const builtinSkillsPath = getBuiltinSkillsPath();
         const conflictPath = builtinSkillsPath
           ? path.join(builtinSkillsPath, skillName)
           : targetPath;
@@ -1243,18 +1245,13 @@ RULES:
       // ENOENT — target doesn't exist, proceed with restore
     }
 
-    const builtinSkillsPath = this.getBuiltinSkillsPath();
+    const builtinSkillsPath = getBuiltinSkillsPath();
     if (!builtinSkillsPath) return;
     const builtinSkillPath = path.join(builtinSkillsPath, skillName);
     if (!fs.existsSync(builtinSkillPath)) return;
 
     try {
-      const sourceInsideAsar = /\.asar[/\\]/.test(builtinSkillsPath);
-      if (sourceInsideAsar) {
-        this.copyDirectorySync(builtinSkillPath, targetPath);
-      } else {
-        fs.symlinkSync(builtinSkillPath, targetPath, 'dir');
-      }
+      fs.symlinkSync(builtinSkillPath, targetPath, 'dir');
       log(`[ClaudeAgentRunner] Restored built-in skill after policy change: ${skillName}`);
     } catch (err) {
       logWarn(`[ClaudeAgentRunner] Failed to restore built-in skill ${skillName}:`, err);
@@ -1263,7 +1260,7 @@ RULES:
 
   /** Populate the built-in skill names set from the bundled skills directory. */
   private populateBuiltinSkillNames(): void {
-    const builtinSkillsPath = this.getBuiltinSkillsPath();
+    const builtinSkillsPath = getBuiltinSkillsPath();
     if (!builtinSkillsPath || !fs.existsSync(builtinSkillsPath)) return;
     try {
       const entries = fs.readdirSync(builtinSkillsPath);
@@ -1417,7 +1414,7 @@ RULES:
       }
 
       if (resolution === 'emit-conflict') {
-        const builtinSkillsPath = this.getBuiltinSkillsPath();
+        const builtinSkillsPath = getBuiltinSkillsPath();
         const conflictPath = builtinSkillsPath
           ? path.join(builtinSkillsPath, skillName)
           : targetPath;
@@ -1997,6 +1994,11 @@ RULES:
     // Sandbox isolation state (defined outside try for finally access)
     let sandboxPath: string | null = null;
     let useSandboxIsolation = false;
+    // All runtime API keys set for this run (defined outside try for finally
+    // cleanup). Every key written to the shared ModelRuntime is tracked here and
+    // removed in finally so credentials do not persist into subsequent runs in
+    // the same process.
+    let allRuntimeKeys: string[] = [];
 
     // Helper to convert real sandbox paths back to virtual workspace paths in output
     // Cache the compiled regex to avoid recompilation on every call
@@ -2090,7 +2092,7 @@ RULES:
           }
 
           // Copy skills to sandbox ~/.claude/skills/
-          const builtinSkillsPath = this.getBuiltinSkillsPath();
+          const builtinSkillsPath = getBuiltinSkillsPath();
           try {
             const distro = sandbox.wslStatus!.distro!;
             const sandboxSkillsPath = `${sandboxPath}/.claude/skills`;
@@ -2242,7 +2244,7 @@ RULES:
           }
 
           // Copy skills to sandbox ~/.claude/skills/
-          const builtinSkillsPath = this.getBuiltinSkillsPath();
+          const builtinSkillsPath = getBuiltinSkillsPath();
           try {
             const sandboxSkillsPath = `${sandboxPath}/.claude/skills`;
 
@@ -2429,6 +2431,11 @@ RULES:
           rawProvider: runtimeConfig.provider,
           customProtocol: runtimeConfig.customProtocol,
         });
+        // Borrow reasoning traits from any registry entry for the same model id.
+        // Must match what Settings showed via resolveThinkingCapabilities, or the
+        // UI would offer levels that pi then drops (every reasoning path in
+        // pi-ai's openai-completions is gated on `model.reasoning`).
+        piModel = applyRegistryReasoningTraits(piModel, modelString);
         logCtxWarn(
           '[ClaudeAgentRunner] Model not in pi-ai registry, using synthetic model:',
           modelString,
@@ -2556,20 +2563,34 @@ RULES:
         },
       });
 
-      // Set up API keys via AuthStorage
-      const authStorage = getSharedAuthStorage();
+      // Set up API keys via the shared ModelRuntime
+      const modelRuntime = await getSharedModelRuntime();
       const apiKey = runtimeConfig.apiKey?.trim();
       if (apiKey) {
-        // Map our config provider to pi-ai provider name
+        // Map our config provider to the pi-ai provider name.
+        // For native catalog entries use entry.piProvider (e.g. 'zai', 'minimax');
+        // for custom use the protocol; for builtins fall through to the id itself.
+        const catalog = getCachedProviderCatalogSync();
+        const catalogEntry = catalog ? getCatalogEntry(catalog, provider) : undefined;
         const piProvider =
-          provider === 'custom' ? runtimeConfig.customProtocol || 'anthropic' : provider;
-        authStorage.setRuntimeApiKey(piProvider, apiKey);
-        // Also set the key for the model's native provider (e.g., when using
-        // google/gemini via openrouter, pi-ai looks up "google" not "openrouter")
-        if (piModel.provider !== piProvider) {
-          authStorage.setRuntimeApiKey(piModel.provider, apiKey);
-          log('[ClaudeAgentRunner] Set runtime API key for model provider:', piModel.provider);
-        }
+          catalogEntry?.kind === 'native'
+            ? catalogEntry.piProvider
+            : provider === 'custom'
+              ? runtimeConfig.customProtocol || 'anthropic'
+              : provider;
+        // Compute provider keys before writing so all-or-nothing tracking is
+        // possible even if setRuntimeApiKey throws partway through.
+        const piProviderKeys = resolveRuntimeApiKeyProviders({
+          provider,
+          customProtocol: runtimeConfig.customProtocol,
+          piProvider,
+          piModelProvider: piModel.provider,
+        });
+        // Accumulate all keys set this run for ref-counted cleanup in finally.
+        allRuntimeKeys = [...new Set([...allRuntimeKeys, ...piProviderKeys])];
+        // Write keys and increment ref-counts atomically via _trackRuntimeKeys.
+        await _trackRuntimeKeys(modelRuntime, piProviderKeys, apiKey);
+        log('[ClaudeAgentRunner] Set runtime API key for provider(s):', piProviderKeys.join(', '));
         log('[ClaudeAgentRunner] Set runtime API key for config provider:', piProvider);
       } else {
         if (provider === 'ollama') {
@@ -2626,9 +2647,8 @@ RULES:
         // hash differs (or no stamp exists), the runtime copy is replaced with the
         // bundled version. User-modified skills (marked with `.user-modified`) are
         // preserved and never overwritten.
-        const builtinSkillsPath = this.getBuiltinSkillsPath();
+        const builtinSkillsPath = getBuiltinSkillsPath();
         if (builtinSkillsPath && fs.existsSync(builtinSkillsPath)) {
-          const sourceInsideAsar = /\.asar[/\\]/.test(builtinSkillsPath);
           const builtinSkills = fs.readdirSync(builtinSkillsPath);
           // Populate the set of built-in skill names for conflict resolution
           // Uses same validation as populateBuiltinSkillNames() and skill-conflict-detector
@@ -2726,27 +2746,22 @@ RULES:
               }
             }
 
-            // Install fresh copy from bundled source
-            if (sourceInsideAsar) {
+            // Install from the bundled source. The source is a real directory both
+            // in development and in the packaged app (extraResources keeps skills
+            // out of the asar archive), so a symlink is enough — the runtime entry
+            // then tracks the bundled one with no copying. Copy only if the symlink
+            // cannot be created, e.g. on Windows without developer mode.
+            try {
+              fs.symlinkSync(builtinSkillPath, userSkillPath, 'dir');
+              log(`[ClaudeAgentRunner] Linked built-in skill: ${skillName}`);
+            } catch (err) {
+              logWarn(`[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`, err);
               this.copyDirectorySync(builtinSkillPath, userSkillPath);
-              log(`[ClaudeAgentRunner] Copied built-in skill from asar: ${skillName}`);
-            } else {
-              // In dev mode, symlink for instant updates during development
-              try {
-                fs.symlinkSync(builtinSkillPath, userSkillPath, 'dir');
-                log(`[ClaudeAgentRunner] Linked built-in skill: ${skillName}`);
-              } catch (err) {
-                logWarn(
-                  `[ClaudeAgentRunner] Failed to symlink ${skillName}, copying instead:`,
-                  err
-                );
-                this.copyDirectorySync(builtinSkillPath, userSkillPath);
-              }
             }
 
             // Write the content hash stamp (only for copies, not symlinks)
             // Symlinks always point to the source so they're inherently up-to-date
-            if (sourceInsideAsar || !fs.lstatSync(userSkillPath).isSymbolicLink()) {
+            if (!fs.lstatSync(userSkillPath).isSymbolicLink()) {
               try {
                 fs.writeFileSync(builtinHashFile, builtinHash, 'utf-8');
               } catch (hashErr) {
@@ -2776,19 +2791,28 @@ RULES:
       // pi-ai handles auth and model routing natively — no proxy, no env overrides needed.
       logCtx('[ClaudeAgentRunner] Using pi-ai native routing for:', piModel.provider, piModel.id);
 
-      // Resolve thinking level early — needed for session reuse check below
-      const enableThinking = configStore.get('enableThinking') ?? false;
-      logCtx('[ClaudeAgentRunner] Enable thinking mode:', enableThinking);
-      type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-      const thinkingLevel: PiThinkingLevel = enableThinking ? 'medium' : 'off';
+      // Resolve thinking level — read stored level (migrate from legacy boolean),
+      // then clamp via the shared helper which enforces reasoning=false=>off,
+      // filters against THINKING_LEVELS, and wraps compat errors safely.
+      const allConfig = configStore.getAll();
+      const storedLevel: ModelThinkingLevel =
+        allConfig.thinkingLevel ?? (allConfig.enableThinking ? 'medium' : 'off');
+      // Clamp against the `piModel` resolved above rather than re-resolving from
+      // its id — re-resolution drops customProtocol/customBaseUrl and can land on
+      // a different model (or a differently-built synthetic) than the one we run.
+      const thinkingLevel: ModelThinkingLevel = clampThinkingLevelForModel(piModel, storedLevel);
+      logCtx(`[ClaudeAgentRunner] thinkingLevel stored=${storedLevel} clamped=${thinkingLevel}`);
 
       // Load workspace-level instructions once per query so the fingerprint is
       // available to the runtime signature below. Reused cached sessions get
       // invalidated automatically when the file content / chosen filename
       // changes, which is the whole point of including the fingerprint here.
+      const { enabled: wsEnabled, priority: wsPriority } =
+        resolveWorkspaceInstructionsConfig(configStore);
       const workspaceInstructions = await loadWorkspaceSystemPrompt(
         effectiveCwd,
-        configStore.get('systemPromptFile')
+        wsPriority,
+        wsEnabled
       );
 
       const sessionRuntimeSignature = buildPiSessionRuntimeSignature({
@@ -2996,7 +3020,7 @@ RULES:
                 }
 
                 if (!imageCapable) {
-                  serverEnv.OPEN_COWORK_DISABLE_IMAGE_TOOL_OUTPUT = '1';
+                  serverEnv.SQOWE_PILOT_DISABLE_IMAGE_TOOL_OUTPUT = '1';
                 }
 
                 // Resolve path placeholders for presets
@@ -3237,7 +3261,7 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
         logTiming('pi-coding-agent session reused', runStartTime);
       } else {
         // First query in this session — create new pi-coding-agent session
-        // ResourceLoader + ModelRegistry only needed for session creation — skip on reuse
+        // ResourceLoader only needed for session creation — skip on reuse
         const { DefaultResourceLoader } = await import('@earendil-works/pi-coding-agent');
 
         // Workspace-level instructions (loaded earlier in this call for signature
@@ -3249,9 +3273,22 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
           appendSystemPrompt = `${coworkAppendPrompt}\n\n<workspace_instructions>\n${workspaceInstructions.text}\n</workspace_instructions>`;
           log(
             '[ClaudeAgentRunner] Appended workspace instructions to system prompt (file:',
-            configStore.get('systemPromptFile'),
+            workspaceInstructions.resolvedFile,
             ')'
           );
+        } else {
+          // Invariant check: noContextFiles=true means pi won't inject any
+          // context files either — log a warning if instructions were enabled
+          // but nothing resolved, so zero-injection runs are visible in logs.
+          // Reuses `wsEnabled` resolved earlier for the fingerprint signature.
+          if (wsEnabled) {
+            logWarn(
+              '[ClaudeAgentRunner] noContextFiles=true but workspace instructions resolved to null.',
+              'Agent will run without workspace instructions (no candidate file found in cwd:',
+              effectiveCwd,
+              ')'
+            );
+          }
         }
 
         const resourceLoader = new DefaultResourceLoader({
@@ -3259,10 +3296,20 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
           agentDir: userClaudeDir,
           additionalSkillPaths: skillPaths,
           appendSystemPrompt: appendSystemPrompt ? [appendSystemPrompt] : undefined,
+          // App owns instruction-file discovery (D1): disable pi's native
+          // AGENTS.md/CLAUDE.md auto-loading to prevent double-injection.
+          // Confirmed from resource-loader.js (dist): noContextFiles=true only
+          // gates the agentsFiles path (loadProjectContextFiles call) — it sets
+          // agentsFiles:[] and leaves extensions, skills, prompts, themes, and
+          // system-prompt discovery completely unaffected. Verified against the
+          // installed package; see tests/workspace-system-prompt.test.ts for
+          // the regression test that detects double-injection.
+          noContextFiles: true,
         });
+        log(
+          '[ClaudeAgentRunner] noContextFiles=true: pi native context-file discovery disabled; app priority-list resolver is sole injection source.'
+        );
         await resourceLoader.reload();
-
-        const modelRegistry = ModelRegistry.inMemory(authStorage);
 
         // Ollama-specific compaction tuning based on actual context window
         const contextWindow = piModel.contextWindow || 128000;
@@ -3337,8 +3384,7 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
         const { session: newPiSession } = await createAgentSession({
           model: piModel,
           thinkingLevel,
-          authStorage,
-          modelRegistry,
+          modelRuntime,
           noTools: 'builtin',
           customTools: [
             ...(wrappedTools as ToolDefinition[]),
@@ -4002,11 +4048,19 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
 
             case 'compaction_end': {
               const status = event.aborted ? 'error' : event.errorMessage ? 'error' : 'completed';
+              const estimatedTokensAfter =
+                !event.aborted && !event.errorMessage
+                  ? event.result?.estimatedTokensAfter
+                  : undefined;
+              const tokenSuffix =
+                typeof estimatedTokensAfter === 'number'
+                  ? ` (~${formatTokenCount(estimatedTokensAfter)} tokens)`
+                  : '';
               const title = event.aborted
                 ? 'Context compaction aborted'
                 : event.errorMessage
                   ? `Context compaction failed: ${event.errorMessage}`
-                  : 'Context compaction completed';
+                  : `Context compaction completed${tokenSuffix}`;
               log(
                 '[ClaudeAgentRunner] Auto-compaction ended:',
                 title,
@@ -4024,6 +4078,21 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
                   status,
                   title,
                   timestamp: Date.now(),
+                });
+              }
+              // Phase 2: bridge the post-compaction token estimate to the ContextPanel
+              // so the usage bar drops immediately rather than waiting for the next
+              // message_end. Reuses the existing session.contextInfo channel — no
+              // extra IPC cost. Only emit when we have a known contextWindow so we
+              // don't overwrite the renderer's correct value with a stale default.
+              if (typeof estimatedTokensAfter === 'number' && piModel.contextWindow) {
+                this.sendToRenderer({
+                  type: 'session.contextInfo',
+                  payload: {
+                    sessionId: session.id,
+                    contextWindow: piModel.contextWindow,
+                    currentInputTokens: estimatedTokensAfter,
+                  },
                 });
               }
               break;
@@ -4365,8 +4434,30 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
         }
       }
     } finally {
-      this.activeControllers.delete(session.id);
+      // Only drop the entry if it is still ours. A cancelled run can outlive
+      // the Stop press (pi settles asynchronously); by the time it gets here a
+      // newer run may already have registered its own controller, and deleting
+      // that one would leave the new run with nothing left to cancel.
+      if (this.activeControllers.get(session.id) === controller) {
+        this.activeControllers.delete(session.id);
+      }
       this.pathResolver.unregisterSession(session.id);
+
+      // Release all runtime API keys set for this run via ref-counted cleanup.
+      // _releaseRuntimeKeys decrements the ref-count per key and only removes it
+      // from the shared ModelRuntime when no other concurrent run is still using
+      // that key, preventing cross-session credential clobber in multi-session
+      // processes. Guarded so a failure here can't mask the original error.
+      if (allRuntimeKeys.length > 0) {
+        try {
+          const modelRuntime = await getSharedModelRuntime();
+          await _releaseRuntimeKeys(modelRuntime, allRuntimeKeys);
+          log('[ClaudeAgentRunner] Released runtime API key(s):', allRuntimeKeys.join(', '));
+        } catch (err) {
+          logWarn('[ClaudeAgentRunner] Failed to release runtime API key(s):', err);
+        }
+        allRuntimeKeys = [];
+      }
 
       // Sync changes from sandbox back to host OS (but don't cleanup - sandbox persists)
       if (useSandboxIsolation && sandboxPath) {
@@ -4413,6 +4504,36 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
   cancel(sessionId: string): void {
     const controller = this.activeControllers.get(sessionId);
     if (controller) controller.abort();
+    // Our own AbortController only silences the event subscription — the pi
+    // agent loop never sees it. Without the calls below the agent keeps making
+    // model requests and running tools after the user pressed Stop, and every
+    // in-flight tool keeps its per-call signal unfired. pi's abort() covers
+    // retry + the agent loop; compaction, branch summary and bash have their
+    // own controllers that abort() does not touch (see pi's dispose(),
+    // node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js:562).
+    const cached = this.piSessions.get(sessionId);
+    if (cached) {
+      for (const [label, stop] of [
+        ['abortCompaction', () => cached.session.abortCompaction()],
+        ['abortBranchSummary', () => cached.session.abortBranchSummary()],
+        ['abortBash', () => cached.session.abortBash()],
+      ] as const) {
+        try {
+          stop();
+        } catch (e) {
+          logWarn(`[ClaudeAgentRunner] ${label} error during cancel:`, e);
+        }
+      }
+      // abort() resolves once the agent is idle; we don't wait for that here
+      // because cancel() must stay synchronous for its callers.
+      try {
+        void cached.session.abort().catch((e) => {
+          logWarn('[ClaudeAgentRunner] pi session abort error:', e);
+        });
+      } catch (e) {
+        logWarn('[ClaudeAgentRunner] pi session abort threw synchronously:', e);
+      }
+    }
     // Clean up permission-waiting state so the flag doesn't leak.
     // This also invalidates any in-flight permission awaits from this run —
     // their finally blocks will see a mismatched runId and become no-ops.

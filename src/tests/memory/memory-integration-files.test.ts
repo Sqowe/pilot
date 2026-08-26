@@ -34,7 +34,10 @@ describe('memory integration wiring', () => {
     const memorySettings = readProjectFile('src/renderer/components/settings/SettingsMemory.tsx');
 
     expect(settingsPanel).toContain("id: 'memory'");
-    expect(settingsPanel).toContain('<SettingsMemory />');
+    // SettingsPanel keeps visited tabs mounted, so the panel must be told when it
+    // becomes visible again — otherwise its counters (notably embedding coverage)
+    // stay frozen at the snapshot taken when the tab was first opened.
+    expect(settingsPanel).toContain("<SettingsMemory isActive={activeTab === 'memory'} />");
     expect(preload).toContain('memory: {');
     expect(preload).toContain("ipcRenderer.invoke('memory.search'");
     expect(preload).toContain("ipcRenderer.invoke('memory.listFiles')");

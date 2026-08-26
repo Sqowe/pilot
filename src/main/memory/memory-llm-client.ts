@@ -1,8 +1,15 @@
 import OpenAI from 'openai';
+import * as os from 'os';
+import * as path from 'path';
 import type { UserMessage as PiUserMessage } from '@earendil-works/pi-ai';
 // `completeSimple` moved off the pi-ai root entrypoint to `/compat` in 0.80.0.
 import { completeSimple } from '@earendil-works/pi-ai/compat';
-import type { AppConfig, CustomProtocolType, ProviderType } from '../config/config-store';
+import type {
+  AppConfig,
+  CustomProtocolType,
+  ProviderType,
+  EmbeddingProviderType,
+} from '../config/config-store';
 import { configStore } from '../config/config-store';
 import {
   normalizeOpenAICompatibleBaseUrl,
@@ -19,6 +26,12 @@ import {
   inferPiApi,
 } from '../claude/pi-model-resolution';
 import { log, logWarn } from '../utils/logger';
+import {
+  configureLocalEmbeddingCacheDir,
+  embedLocal,
+  type EmbeddingKind,
+  type LocalEmbeddingProgress,
+} from './local-embedding-provider';
 
 export interface MemoryCompletionRequest {
   systemPrompt: string;
@@ -31,14 +44,39 @@ export interface MemoryCompletionResponse {
   text: string;
 }
 
+/** Result of probing the currently-configured memory LLM + embedding providers. */
+export interface MemoryModelCheckResult {
+  llm: { ok: boolean; error?: string };
+  /** `skipped` is true when embeddings are disabled (nothing to check). */
+  embedding: { ok: boolean; error?: string; skipped?: boolean };
+}
+
+/**
+ * Thrown by `embed()` when the resolved embedding provider cannot serve an
+ * embeddings API (e.g. an Anthropic-protocol provider). Callers are expected to
+ * degrade to lexical-only retrieval, but must surface the reason rather than
+ * silently storing chunks without vectors.
+ */
+export class EmbeddingUnsupportedError extends Error {
+  constructor(public readonly provider: string) {
+    super(
+      `Provider "${provider}" has no embeddings API. Set an explicit embedding endpoint ` +
+        `(Settings → Memory → Embedding → Custom: model + base URL), or switch to the built-in local model.`
+    );
+    this.name = 'EmbeddingUnsupportedError';
+  }
+}
+
 export interface MemoryLLMClientLike {
   complete(request: MemoryCompletionRequest): Promise<MemoryCompletionResponse>;
-  embed(text: string): Promise<number[]>;
+  /** `kind` selects the local model's query/document prefix; ignored by remote providers. */
+  embed(text: string, kind?: EmbeddingKind): Promise<number[]>;
 }
 
 interface MemoryModelConfig {
   inheritFromActive?: boolean;
-  provider?: ProviderType;
+  /** Accepts EmbeddingProviderType so callers can pass embedding config directly; 'local' is handled before this reaches normalizeModelConfig. */
+  provider?: EmbeddingProviderType;
   customProtocol?: CustomProtocolType;
   apiKey?: string;
   baseUrl?: string;
@@ -47,6 +85,7 @@ interface MemoryModelConfig {
 }
 
 interface ResolvedMemoryModelConfig {
+  /** Always a ProviderType — 'local' is handled before normalizeModelConfig is called. */
   provider: ProviderType;
   customProtocol?: CustomProtocolType;
   apiKey: string;
@@ -67,7 +106,11 @@ function normalizeModelConfig(
   const activeApiKey = appConfig.apiKey;
   const activeModel = appConfig.model;
 
-  const provider = inherit ? activeProvider : input?.provider || activeProvider;
+  const rawProvider = inherit ? activeProvider : input?.provider || activeProvider;
+  // 'local' is always handled before normalizeModelConfig is called (in embed());
+  // if it somehow arrives here, fall back to the active provider.
+  const provider: ProviderType =
+    rawProvider === 'local' ? activeProvider : (rawProvider as ProviderType);
   const customProtocol = inherit ? activeProtocol : input?.customProtocol || activeProtocol;
   const apiKey = inherit ? activeApiKey : input?.apiKey || '';
   const baseUrl = inherit ? activeBaseUrl : input?.baseUrl || activeBaseUrl;
@@ -87,6 +130,7 @@ function normalizeModelConfig(
 function buildAppConfig(base: AppConfig, resolved: ResolvedMemoryModelConfig): AppConfig {
   return {
     ...base,
+    // resolved.provider is ProviderType — 'local' never reaches this function.
     provider: resolved.provider,
     customProtocol: resolved.customProtocol,
     apiKey: resolved.apiKey,
@@ -95,8 +139,30 @@ function buildAppConfig(base: AppConfig, resolved: ResolvedMemoryModelConfig): A
   };
 }
 
+export interface MemoryLLMClientOptions {
+  /** Called during first-use local model download — wire to IPC from index.ts. */
+  onLocalEmbeddingProgress?: (p: LocalEmbeddingProgress) => void;
+  /** Returns the storage root path for the local model cache. Injected to keep this module Electron-free. */
+  getStorageRoot?: () => string;
+}
+
 export class MemoryLLMClient implements MemoryLLMClientLike {
-  constructor(private readonly getConfig: () => AppConfig = () => configStore.getAll()) {}
+  private readonly onLocalEmbeddingProgress?: (p: LocalEmbeddingProgress) => void;
+  private readonly getStorageRoot: () => string;
+  /** Cache dir is configured once — subsequent calls are no-ops unless it changes. */
+  private configuredCacheDir = '';
+
+  constructor(
+    private readonly getConfig: () => AppConfig = () => configStore.getAll(),
+    options?: MemoryLLMClientOptions
+  ) {
+    this.onLocalEmbeddingProgress = options?.onLocalEmbeddingProgress;
+    // Default storage root uses os.homedir() so non-Electron contexts (tests, CLI)
+    // never throw on construction. Callers should inject app.getPath('userData')
+    // via options.getStorageRoot for the canonical production path.
+    this.getStorageRoot =
+      options?.getStorageRoot ?? (() => path.join(os.homedir(), '.open-cowork', 'memory'));
+  }
 
   async complete(request: MemoryCompletionRequest): Promise<MemoryCompletionResponse> {
     const appConfig = this.getConfig();
@@ -217,7 +283,7 @@ export class MemoryLLMClient implements MemoryLLMClientLike {
     }
   }
 
-  async embed(text: string): Promise<number[]> {
+  async embed(text: string, kind: EmbeddingKind = 'document'): Promise<number[]> {
     const trimmed = text.trim();
     if (!trimmed) {
       return [];
@@ -227,6 +293,27 @@ export class MemoryLLMClient implements MemoryLLMClientLike {
     if (!appConfig.memoryRuntime?.useEmbedding) {
       return [];
     }
+
+    // Check for local provider before normalizeModelConfig — the local branch
+    // bypasses all remote credential resolution and uses the in-process ONNX pipeline.
+    const rawEmbeddingProvider = appConfig.memoryRuntime.embedding?.provider;
+    if (rawEmbeddingProvider === 'local') {
+      const configuredRoot = appConfig.memoryRuntime.storageRoot?.trim();
+      const storageRoot = configuredRoot || this.getStorageRoot();
+      // Configure cache dir only on first call or when storageRoot changes.
+      if (storageRoot !== this.configuredCacheDir) {
+        if (this.configuredCacheDir) {
+          logWarn(
+            '[MemoryLLMClient] storageRoot changed after pipeline init — cache dir updated:',
+            storageRoot
+          );
+        }
+        configureLocalEmbeddingCacheDir(storageRoot);
+        this.configuredCacheDir = storageRoot;
+      }
+      return embedLocal(trimmed, kind, this.onLocalEmbeddingProgress);
+    }
+
     const embedConfig = normalizeModelConfig(
       appConfig,
       appConfig.memoryRuntime.embedding,
@@ -235,18 +322,29 @@ export class MemoryLLMClient implements MemoryLLMClientLike {
 
     const provider = embedConfig.provider;
     const protocol = embedConfig.customProtocol;
-    const isOpenAiCompatible =
-      provider === 'openai' ||
-      provider === 'openrouter' ||
-      provider === 'ollama' ||
-      (provider === 'custom' && protocol === 'openai');
 
-    if (!isOpenAiCompatible) {
-      logWarn(
-        '[MemoryLLMClient] Embedding requested for unsupported provider; returning empty embedding:',
-        provider
-      );
-      return [];
+    // A Custom-mode override that carries its own baseUrl *and* model is
+    // self-contained: the request goes to that endpoint, with that key, for that
+    // model. The active chat provider contributes nothing to it, so its id must
+    // not gate the call. (normalizeModelConfig resolves `provider: undefined` to
+    // the active provider — see line 93 — which previously blocked valid setups
+    // such as an OpenRouter embedding endpoint used alongside a native-catalog
+    // chat provider.)
+    const override = appConfig.memoryRuntime.embedding;
+    const isSelfContainedOverride =
+      override?.inheritFromActive === false &&
+      Boolean(override.baseUrl?.trim()) &&
+      Boolean(override.model?.trim());
+
+    // ProviderType is an open string (native catalog ids like 'minimax', 'zai',
+    // 'deepseek'), so matching against the 6 legacy builtin ids is not enough —
+    // resolve the route protocol the same way complete() does.
+    const isOpenAiCompatible = resolvePiRouteProtocol(provider, protocol) === 'openai';
+
+    if (!isSelfContainedOverride && !isOpenAiCompatible) {
+      // Thrown, not swallowed: a silent [] made this failure invisible for weeks.
+      // Callers degrade to lexical-only, but they record the reason first.
+      throw new EmbeddingUnsupportedError(provider);
     }
 
     const resolved =
@@ -274,5 +372,55 @@ export class MemoryLLMClient implements MemoryLLMClientLike {
       input: trimmed,
     });
     return response.data[0]?.embedding || [];
+  }
+
+  /**
+   * Probe the currently-configured LLM and embedding providers without saving
+   * anything. Used by the Settings "Check models availability" step before a
+   * model-config change can be saved.
+   *
+   * Bind a throwaway client to the *draft* config to check unsaved settings:
+   *   new MemoryLLMClient(() => ({ ...appConfig, memoryRuntime: draft }), opts)
+   *
+   * - LLM: a 1-token, temperature-0 completion — the only reliable cross-provider
+   *   proof that the key + model + endpoint actually work.
+   * - Embedding: a tiny embed('ping'). For the local provider this warms up
+   *   (downloads if needed) and confirms the pipeline loads; for remote it makes a
+   *   real embeddings call. Skipped entirely when useEmbedding is off.
+   */
+  async checkAvailability(): Promise<MemoryModelCheckResult> {
+    const llm = await this.probeLLM();
+    const embedding = await this.probeEmbedding();
+    return { llm, embedding };
+  }
+
+  private async probeLLM(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await this.complete({ systemPrompt: '', userPrompt: 'ping', temperature: 0, maxTokens: 1 });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  private async probeEmbedding(): Promise<{ ok: boolean; error?: string; skipped?: boolean }> {
+    if (!this.getConfig().memoryRuntime?.useEmbedding) {
+      return { ok: true, skipped: true };
+    }
+    try {
+      const vector = await this.embed('ping', 'query');
+      if (!vector.length) {
+        // An unsupported provider now throws (EmbeddingUnsupportedError) and is
+        // reported by the catch below with its specific reason. Reaching here
+        // means the endpoint answered but returned no vector.
+        return {
+          ok: false,
+          error: 'Embedding returned an empty vector — the endpoint answered but produced nothing.',
+        };
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 }

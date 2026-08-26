@@ -1,7 +1,7 @@
 # Memory System Architecture
 
 > Current implementation documentation for the Open Cowork memory subsystem.
-> Last updated: 2026-05-31
+> Last updated: 2026-07-22
 
 ## Overview
 
@@ -9,10 +9,10 @@ The memory system provides long-term context persistence across chat sessions. I
 
 The architecture uses a **two-layer design**:
 
-| Layer             | Type                | Injection                    | Scope                   | Storage                  |
-| ----------------- | ------------------- | ---------------------------- | ----------------------- | ------------------------ |
-| Core Memory       | User profile        | Passive (always in prompt)   | Workspace-filtered      | `core_memory.json`       |
-| Experience Memory | Past session chunks | Active (on-demand via tools) | Workspace-scoped search | `experience_memory.json` |
+| Layer             | Type                | Injection                    | Scope                   | Storage            |
+| ----------------- | ------------------- | ---------------------------- | ----------------------- | ------------------ |
+| Core Memory       | User profile        | Passive (always in prompt)   | Workspace-filtered      | `core_memory.json` |
+| Experience Memory | Past session chunks | Active (on-demand via tools) | Workspace-scoped search | `memory.db`        |
 
 ---
 
@@ -181,7 +181,7 @@ LLM call → returns JSON:
 Each chunk gets:
   - rawText extracted from source turns
   - embedding vector computed
-  - stored in experience_memory.json
+  - stored in memory.db (memory_chunks / memory_sessions)
 ```
 
 Each session produces 1–8 chunks. The extraction prompt instructs the LLM to organize chunks around: goal / decision / implementation / constraint / result / unresolved.
@@ -232,6 +232,24 @@ When a newer chunk from the same workspace covers the same keywords (overlap ≥
 
 All scoring parameters are user-configurable via Settings → Memory → Advanced Configuration.
 
+#### Embedding staleness & lexical fallback
+
+The embedding term is only meaningful within one model's space, so retrieval guards against
+comparing across spaces. Two independent conditions make `buildPromptPrefix` skip the query
+embedding and score **lexical-only**:
+
+- **Model staleness** (`isEmbeddingModelStale()`, provider-agnostic) — `memory_meta.embedding_model`
+  differs from the active embedding config. Unknown/empty metadata is treated as _not_ stale, so
+  retrieval degrades only on positive evidence of a mismatch.
+- **Format staleness** (`isEmbeddingFormatStale()`, gated to the local provider) — the stored
+  `embedding_format_version` is behind (e.g. the EmbeddingGemma prefix fix), so the text the
+  vectors were built from no longer matches what ingestion produces today.
+
+Either surfaces an in-app prompt to recompute the vectors — a **backfill**, not a full rebuild
+(see [embedding-provider-gate-and-coverage.md](embedding-provider-gate-and-coverage.md)). The
+homogeneous-store rule these gates rest on is decision D5 of
+[memory-storage-sqlite-migration.md](memory-storage-sqlite-migration.md).
+
 ### Progressive Retrieval (Navigator)
 
 For deeper context needs, the system uses multi-step retrieval:
@@ -252,7 +270,7 @@ Navigator actions:
 ## 3. Ingestion Flow
 
 ```
-User finishes a chat session
+After each agent run (per turn)
          │
          ▼
 MemoryExtension.afterSessionRun()
@@ -270,7 +288,7 @@ IngestionQueue processes (concurrency-limited)
          │      └─ Returns session_summary + chunks
          │
          └─ 3. storeExperienceSession(extracted, embeddings)
-                └─ Compute embeddings → store in experience_memory.json
+                └─ Compute embeddings → store in memory.db
 ```
 
 ### Deduplication
@@ -314,17 +332,29 @@ The injected block includes safety instructions:
 
 ## 5. Storage Layout
 
-All memory files live under a configurable `storageRoot` (typically `~/.open-cowork/memory/`):
+All memory files live under a configurable `storageRoot`. By default this is
+`app.getPath('userData')/memory` — on macOS `~/Library/Application Support/sqowe-pilot/memory/`
+(Windows `%APPDATA%\sqowe-pilot\memory\`, Linux `~/.config/sqowe-pilot/memory/`), resolved by
+`getPaths()` in `memory-service.ts`:
 
 ```
 storageRoot/
-├── core_memory.json          # Core memory entries (v2 format)
-├── experience_memory.json    # Sessions + chunks with embeddings
-├── session_state.json        # Tracks which sessions have been ingested
-├── prompts/                  # Custom prompt overrides (optional)
-│   └── core-extraction.md    # Custom extraction prompt (if created by user)
-└── eval/                     # Eval harness artifacts (optional)
+├── core_memory.json              # Core memory entries (v2 format)
+├── memory.db                     # Experience memory: sessions + chunks + embeddings (SQLite, WAL)
+├── memory.db-wal                 # WAL sidecars, present while the DB is open
+├── memory.db-shm
+├── experience_memory.json.bak    # Pre-migration JSON, retained as a rollback artefact
+├── session_state.json            # Tracks which sessions have been ingested
+├── prompts/                      # Custom prompt overrides (optional)
+│   └── core-extraction.md        # Custom extraction prompt (if created by user)
+└── eval-artifacts/               # Eval harness artifacts (optional)
 ```
+
+> Experience memory moved from `experience_memory.json` to **`memory.db`** — see
+> [memory-storage-sqlite-migration.md](memory-storage-sqlite-migration.md). Core memory and
+> session state stay JSON by design (decision D2 there): both are small enough that indexed
+> queries buy nothing. The `.bak` is created once by the backfill and kept for one release cycle;
+> a store that never had embeddings enabled will not have one.
 
 ---
 
@@ -343,15 +373,26 @@ interface MemoryRuntimeConfig {
   };
   embedding: {
     inheritFromActive: boolean;
+    // 'local' = in-process EmbeddingGemma (default for fresh installs); otherwise an
+    // OpenAI-compatible ProviderType (openai/openrouter/ollama/custom+openai).
+    provider?: 'local' | ProviderType;
+    customProtocol?: CustomProtocolType;
     apiKey: string;
     baseUrl: string;
+    // Remote-only fallback model; ignored when provider === 'local' (model ID is hardcoded).
     model: string; // default: "text-embedding-3-small"
     timeoutMs: number;
   };
-  useEmbedding: boolean; // Whether to compute embeddings
+  // Whether to compute embeddings. Default: true for fresh installs (schema v2);
+  // frozen to its prior value for existing installs via the v1→v2 migration.
+  useEmbedding: boolean;
   maxNavSteps: number; // Progressive retrieval depth (default: 2)
-  ingestionConcurrency: number; // Parallel ingestion limit (default: 2)
+  ingestionConcurrency: number; // Parallel LLM-extraction limit (default: 4; embeddings run sequentially)
   storageRoot: string;
+  // Memory eval harness (dev/QA benchmarking; off by default).
+  evalEnabled?: boolean; // default: false — runs eval cases against live retrieval + an LLM judge
+  evalMaxRounds?: number; // default: 12
+  promptIterationRounds?: number;
   evalArtifactsRoot?: string;
   // Advanced scoring parameters
   recencyFloor?: number; // default: 0.05
@@ -363,6 +404,33 @@ interface MemoryRuntimeConfig {
   customExtractionPromptPath?: string;
 }
 ```
+
+### 6.1 Local embedding provider (`provider: 'local'`)
+
+Fresh installs default to an **in-process** embedding provider — no API key, no per-query
+network calls. `MemoryLLMClient.embed()` branches on `embedding.provider === 'local'` before any
+remote-credential resolution and delegates to `local-embedding-provider.ts`, which runs
+`onnx-community/embeddinggemma-300m-ONNX` (quantized q8, 768-dim) via `@huggingface/transformers`.
+The model is downloaded on first use (with backoff/retry) and cached under `{storageRoot}/models`.
+
+EmbeddingGemma requires a task prefix that the pipeline does not auto-apply, so embeds are tagged
+`query` vs `document` (`EmbeddingKind`, threaded from the ingestion/retrieval call sites) and the
+retrieval prefixes are prepended **only in the local provider** (remote models are prefix-free).
+`memory.db` records `embedding_format_version` in its `memory_meta` table
+(`EMBEDDING_FORMAT_VERSION`) so a format change (e.g. the prefix fix) is detected as a stale index
+and a backfill (recomputing the vectors — no LLM extraction) is offered. A change of embedding _model_ is detected separately, via
+`memory_meta.embedding_model` — see
+[memory-storage-sqlite-migration.md §7](memory-storage-sqlite-migration.md).
+
+**Build/packaging constraint.** `onnxruntime-node` loads its native binding
+(`onnxruntime_binding.node`) via a dynamic `require`, which Rollup cannot bundle. The
+main-process build therefore marks `onnxruntime-node`, `onnxruntime-common`, and `sharp` as
+**external** ([vite.config.ts](../../vite.config.ts) → `rollupOptions.external`) so they resolve
+from `node_modules` at runtime. A bundled build missing these externals fails at load with
+_"Could not dynamically require … onnxruntime_binding.node"_. Production packaging must ship these
+native modules and `asarUnpack` the `.node`/`.dylib` files.
+
+Full design, decisions, and empirical validation: [local-embeddings-default.md](local-embeddings-default.md) §13.
 
 ### Custom Extraction Prompt
 
@@ -378,22 +446,32 @@ The core memory extraction prompt can be overridden via a file:
 
 ## 7. UI Integration
 
-### Memory Lens Panel (Settings → Memory)
+### Sidebar Memory Lens (`MemoryLensSection.tsx`)
 
-Shows:
+A collapsible panel in the chat sidebar. Shows:
 
 - Memory enabled/disabled status
-- Core memory entries (filtered by current workspace)
-- Workspace stats (session count, chunk count, last ingested)
-- Last retrieval metrics
+- Core memory entries (filtered by current workspace), each editable or deletable inline
+- Per-workspace stats (session count, chunk count) and a global total
+- Last retrieval metrics (entries matched, chunks retrieved, tokens injected vs. budget)
 
-Actions:
+### Settings → Memory page (`SettingsMemory.tsx`)
 
-- Delete individual core entries
-- Edit core entry values
-- Rebuild current workspace
-- Clear current workspace
-- Clear all core memory
+The full configuration and maintenance surface. Its status cards report:
+
+- **Overview** — core/session/chunk/workspace counts, latest ingestion, ingestion health.
+- **Embedding coverage** — _N of M chunks embedded (P%)_: green when complete, amber when chunks
+  lack vectors, red when an embedding call last failed. Offers a **Backfill embeddings** action
+  (recomputes missing vectors from stored text; no LLM extraction, deletes nothing) with live
+  progress. See [embedding-provider-gate-and-coverage.md](embedding-provider-gate-and-coverage.md).
+- **Current workspace** — the active workspace and its top contributors by session/chunk count.
+
+Below the cards: **Runtime Configuration** (memory LLM, embedding provider/model, navigation
+depth, storage root), **Memory Storage** (browse on-disk files; the `memory.db` entry opens an
+Experience Database card with Export JSON / Vacuum), **Search & Inspect**, and a **Maintenance**
+block — Rebuild current workspace / Rebuild all memory / Clear current workspace / Clear core
+memory. The tab re-reads its state when it becomes active, so the coverage and DB cards are never
+a stale snapshot.
 
 ### Advanced Configuration (Settings → Memory → Advanced)
 
@@ -408,38 +486,87 @@ Collapsible section at the bottom of Memory settings with:
 
 ### IPC Endpoints
 
-| Endpoint                              | Purpose                                    |
-| ------------------------------------- | ------------------------------------------ |
-| `memory.getPanelState`                | Get full panel state for UI                |
-| `memory.deleteCoreEntry`              | Delete a core memory entry                 |
-| `memory.updateCoreEntry`              | Edit a core memory value                   |
-| `memory.rebuildAll`                   | Re-process all sessions                    |
-| `memory.rebuildWorkspace`             | Re-process sessions for one workspace      |
-| `memory.clearWorkspace`               | Remove experience data for one workspace   |
-| `memory.clearCoreMemory`              | Wipe all core memory                       |
-| `memory.listFiles`                    | Debug: list memory files                   |
-| `memory.readFile`                     | Debug: read a memory file                  |
-| `memory.getBuiltinExtractionPrompt`   | Get the built-in extraction prompt text    |
-| `memory.getCustomExtractionPrompt`    | Check if custom prompt file exists         |
-| `memory.createCustomExtractionPrompt` | Copy built-in to file path                 |
-| `memory.deleteCustomExtractionPrompt` | Delete custom prompt file                  |
-| `memory.openFileInEditor`             | Open a file in system editor               |
-| `memory.inspectSession`               | Debug: inspect a specific session's memory |
+The full memory IPC surface (29 `ipcMain.handle` registrations), grouped by concern.
+
+**State & overview**
+
+| Endpoint                        | Purpose                                                      |
+| ------------------------------- | ------------------------------------------------------------ |
+| `memory.getOverview`            | Overview counts, embedding coverage, ingestion health/errors |
+| `memory.getPanelState`          | Sidebar Memory Lens state                                    |
+| `memory.setEnabled`             | Toggle memory on/off                                         |
+| `memory.isEmbeddingFormatStale` | Format + model staleness flags for the banner                |
+
+**Core memory CRUD**
+
+| Endpoint                 | Purpose              |
+| ------------------------ | -------------------- |
+| `memory.updateCoreEntry` | Edit a core value    |
+| `memory.deleteCoreEntry` | Delete a core entry  |
+| `memory.clearCoreMemory` | Wipe all core memory |
+
+**Ingestion, rebuild & maintenance**
+
+| Endpoint                        | Purpose                                                |
+| ------------------------------- | ------------------------------------------------------ |
+| `memory.rebuildAll`             | Re-process all sessions (clear + re-ingest + re-embed) |
+| `memory.rebuildWorkspace`       | Re-process sessions for one workspace                  |
+| `memory.clearWorkspace`         | Remove experience data for one workspace               |
+| `memory.dismissIngestionErrors` | Acknowledge recorded ingestion errors                  |
+
+**Experience DB (SQLite) & embeddings**
+
+| Endpoint                              | Purpose                                                     |
+| ------------------------------------- | ----------------------------------------------------------- |
+| `memory.getExperienceDbStatus`        | Schema/mode/size/counts/model/integrity/workspace breakdown |
+| `memory.exportExperienceMemoryToFile` | Dump the DB to a portable JSON file                         |
+| `memory.vacuumExperienceDb`           | `VACUUM` the experience DB                                  |
+| `memory.backfillEmbeddings`           | Recompute missing/stale vectors without re-extraction       |
+| `memory.countEmbeddingBackfill`       | Count rows a backfill would touch                           |
+
+**Local embedding model**
+
+| Endpoint                        | Purpose                           |
+| ------------------------------- | --------------------------------- |
+| `memory.getLocalModelStatus`    | Download state of the local model |
+| `memory.isLocalModelDownloaded` | Whether the model cache exists    |
+| `memory.warmUpLocalModel`       | Pre-load the model                |
+| `memory.removeLocalModel`       | Delete the local model cache      |
+
+**Debug & files**
+
+| Endpoint                  | Purpose                                           |
+| ------------------------- | ------------------------------------------------- |
+| `memory.listFiles`        | List on-disk memory files                         |
+| `memory.readFile`         | Read a (text) memory file (refuses the binary DB) |
+| `memory.read`             | Alias read path                                   |
+| `memory.openFileInEditor` | Open a file in the system editor                  |
+| `memory.inspectSession`   | Inspect a specific session's memory               |
+
+**Prompts**
+
+| Endpoint                              | Purpose                              |
+| ------------------------------------- | ------------------------------------ |
+| `memory.getBuiltinExtractionPrompt`   | Get the built-in extraction prompt   |
+| `memory.getCustomExtractionPrompt`    | Check if a custom prompt file exists |
+| `memory.createCustomExtractionPrompt` | Copy built-in to a file              |
+| `memory.deleteCustomExtractionPrompt` | Delete the custom prompt file        |
 
 ---
 
 ## 8. Key Design Decisions
 
-| Decision                             | Rationale                                                                            |
-| ------------------------------------ | ------------------------------------------------------------------------------------ |
-| Two-layer (core + experience)        | Core is small/stable/always-present; experience is large/dynamic/on-demand           |
-| Active retrieval for experience      | Saves context window; model decides relevance                                        |
-| Workspace-scoped experience search   | Prevents cross-project contamination                                                 |
-| Workspace-tagged core memory         | Prevents irrelevant profile entries from polluting unrelated projects                |
-| LLM-based extraction                 | Produces higher-quality, future-useful chunks vs raw transcript storage              |
-| Progressive retrieval with navigator | Balances precision vs token cost                                                     |
-| JSON file storage                    | Simple, debuggable, no external dependencies; sufficient for single-user desktop app |
-| Max 24 core entries                  | Keeps prompt injection small; forces selectivity                                     |
+| Decision                                             | Rationale                                                                                                                                                                                                                |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Two-layer (core + experience)                        | Core is small/stable/always-present; experience is large/dynamic/on-demand                                                                                                                                               |
+| Active retrieval for experience                      | Saves context window; model decides relevance                                                                                                                                                                            |
+| Workspace-scoped experience search                   | Prevents cross-project contamination                                                                                                                                                                                     |
+| Workspace-tagged core memory                         | Prevents irrelevant profile entries from polluting unrelated projects                                                                                                                                                    |
+| LLM-based extraction                                 | Produces higher-quality, future-useful chunks vs raw transcript storage                                                                                                                                                  |
+| Progressive retrieval with navigator                 | Balances precision vs token cost                                                                                                                                                                                         |
+| SQLite for experience; JSON for core & session state | Experience memory needs indexed queries without whole-file rewrites on every ingest; core (~24 entries) and session bookkeeping stay JSON — see [memory-storage-sqlite-migration.md](memory-storage-sqlite-migration.md) |
+| Homogeneous embedding store (one model at a time)    | Cosine is only meaningful within one embedding space; a model/provider switch invalidates the vectors and triggers a backfill (decisions D4/D5 of the SQLite migration design)                                           |
+| Max 24 core entries                                  | Keeps prompt injection small; forces selectivity                                                                                                                                                                         |
 
 ---
 

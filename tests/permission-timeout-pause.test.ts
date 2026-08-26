@@ -70,7 +70,12 @@ describe('Permission dialog pauses activity timeout', () => {
 
     it('cleans up all state on cancel including currentRunId', () => {
       const cancelIdx = agentRunnerContent.indexOf('cancel(sessionId: string): void {');
-      const cancelMethod = agentRunnerContent.slice(cancelIdx, cancelIdx + 500);
+      // Bound by the next method rather than a fixed length, so growing cancel()
+      // does not push the assertions below out of the window.
+      const cancelEndIdx = agentRunnerContent.indexOf('private sendTraceStep(', cancelIdx);
+      expect(cancelIdx).toBeGreaterThan(-1);
+      expect(cancelEndIdx).toBeGreaterThan(cancelIdx);
+      const cancelMethod = agentRunnerContent.slice(cancelIdx, cancelEndIdx);
       expect(cancelMethod).toContain('this.permissionWaitState.delete(sessionId)');
       expect(cancelMethod).toContain('this.currentRunId.delete(sessionId)');
       expect(cancelMethod).toContain('this.restartActivityTimeout.delete(sessionId)');

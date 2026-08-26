@@ -128,7 +128,14 @@ export function useIPC() {
       // previously-persisted values.
       store.setSettings({
         theme: config.theme || 'light',
-        systemPromptFile: config.systemPromptFile ?? '',
+        systemPromptFileEnabled: config.systemPromptFileEnabled ?? true,
+        systemPromptFilePriority: config.systemPromptFilePriority ?? [
+          'CLAUDE.md',
+          'AGENTS.md',
+          '.cowork/instructions.md',
+          'memory.md',
+          'instructions.md',
+        ],
         globalSkillsPath: config.globalSkillsPath ?? '',
         bashTrustedCommands: config.bashTrustedCommands ?? [],
         bashDenylist: config.bashDenylist ?? [],
@@ -337,15 +344,15 @@ export function useIPC() {
             }
             break;
 
-          case 'session.contextInfo':
-            store.setSessionContextWindow(
-              event.payload.sessionId,
-              event.payload.contextWindow,
-              event.payload.toolSchemaTokens,
-              event.payload.maxOutputTokens,
-              event.payload.currentInputTokens
-            );
+          case 'session.contextInfo': {
+            const p = event.payload;
+            const opts: Parameters<typeof store.setSessionContextWindow>[2] = {};
+            if (p.toolSchemaTokens !== undefined) opts.toolSchemaTokens = p.toolSchemaTokens;
+            if (p.maxOutputTokens !== undefined) opts.maxOutputTokens = p.maxOutputTokens;
+            if (p.currentInputTokens !== undefined) opts.currentInputTokens = p.currentInputTokens;
+            store.setSessionContextWindow(p.sessionId, p.contextWindow, opts);
             break;
+          }
 
           case 'error':
             console.error('[useIPC] Server error:', event.payload.message);

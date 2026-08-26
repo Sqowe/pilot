@@ -1,10 +1,21 @@
-export type SharedProviderType =
+/**
+ * The 6 legacy builtin provider ids. Use this for exhaustive switches
+ * over the builtin set.
+ */
+export type BuiltinProviderType =
   | 'openrouter'
   | 'anthropic'
   | 'custom'
   | 'openai'
   | 'gemini'
   | 'ollama';
+
+/**
+ * Open provider type — accepts any catalog id including native providers
+ * (e.g. 'zai', 'minimax', 'deepseek') and the 6 legacy builtin ids.
+ * Use BuiltinProviderType when you need exhaustive matching over the 6.
+ */
+export type SharedProviderType = string;
 
 export type SharedCustomProtocolType = 'anthropic' | 'openai' | 'gemini';
 
@@ -25,6 +36,19 @@ export interface SharedProviderPresets {
   ollama: SharedProviderPreset;
 }
 
+/**
+ * Look up a preset by provider id using own-property checks only.
+ * Prototype-chain keys (e.g. `__proto__`, `constructor`) always return undefined.
+ * Returns undefined for unknown/native ids.
+ */
+export function getPresetForProvider(
+  presets: SharedProviderPresets,
+  providerId: string
+): SharedProviderPreset | undefined {
+  if (!Object.prototype.hasOwnProperty.call(presets, providerId)) return undefined;
+  return (presets as unknown as Record<string, SharedProviderPreset | undefined>)[providerId];
+}
+
 export interface ModelInputGuidance {
   placeholder: string;
   hint: string;
@@ -35,9 +59,13 @@ export const API_PROVIDER_PRESETS: SharedProviderPresets = {
     name: 'OpenRouter',
     baseUrl: 'https://openrouter.ai/api/v1',
     models: [
-      { id: 'anthropic/claude-opus-4-6', name: 'anthropic/claude-opus-4-6' },
-      { id: 'anthropic/claude-sonnet-4-6', name: 'anthropic/claude-sonnet-4-6' },
-      { id: 'anthropic/claude-haiku-4-5', name: 'anthropic/claude-haiku-4-5' },
+      { id: 'anthropic/claude-fable-5', name: 'anthropic/claude-fable-5' },
+      { id: 'anthropic/claude-sonnet-5', name: 'anthropic/claude-sonnet-5' },
+      { id: 'anthropic/claude-opus-4.8', name: 'anthropic/claude-opus-4.8' },
+      { id: 'anthropic/claude-opus-4.6', name: 'anthropic/claude-opus-4.6' },
+      { id: 'anthropic/claude-sonnet-4.6', name: 'anthropic/claude-sonnet-4.6' },
+      { id: 'anthropic/claude-haiku-4.5', name: 'anthropic/claude-haiku-4.5' },
+      { id: 'openai/gpt-5.5', name: 'openai/gpt-5.5' },
       { id: 'openai/gpt-5.4', name: 'openai/gpt-5.4' },
       { id: 'openai/gpt-5.3-codex', name: 'openai/gpt-5.3-codex' },
       { id: 'google/gemini-3.1-pro-preview', name: 'google/gemini-3.1-pro-preview' },
@@ -51,6 +79,9 @@ export const API_PROVIDER_PRESETS: SharedProviderPresets = {
     name: 'Anthropic',
     baseUrl: 'https://api.anthropic.com',
     models: [
+      { id: 'claude-fable-5', name: 'claude-fable-5' },
+      { id: 'claude-sonnet-5', name: 'claude-sonnet-5' },
+      { id: 'claude-opus-4-8', name: 'claude-opus-4-8' },
       { id: 'claude-opus-4-6', name: 'claude-opus-4-6' },
       { id: 'claude-sonnet-4-6', name: 'claude-sonnet-4-6' },
       { id: 'claude-haiku-4-5', name: 'claude-haiku-4-5' },
@@ -64,6 +95,8 @@ export const API_PROVIDER_PRESETS: SharedProviderPresets = {
     name: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
     models: [
+      { id: 'gpt-5.5', name: 'gpt-5.5' },
+      { id: 'gpt-5.5-pro', name: 'gpt-5.5-pro' },
       { id: 'gpt-5.4', name: 'gpt-5.4' },
       { id: 'gpt-5.4-pro', name: 'gpt-5.4-pro' },
       { id: 'gpt-5.4-mini', name: 'gpt-5.4-mini' },
@@ -79,9 +112,11 @@ export const API_PROVIDER_PRESETS: SharedProviderPresets = {
     name: 'Gemini',
     baseUrl: 'https://generativelanguage.googleapis.com',
     models: [
+      { id: 'gemini-3.5-flash', name: 'gemini-3.5-flash' },
       { id: 'gemini-3.1-pro-preview', name: 'gemini-3.1-pro-preview' },
-      { id: 'gemini-3-flash-preview', name: 'gemini-3-flash-preview' },
       { id: 'gemini-3.1-flash-lite-preview', name: 'gemini-3.1-flash-lite-preview' },
+      { id: 'gemini-3.1-flash-lite', name: 'gemini-3.1-flash-lite' },
+      { id: 'gemini-3-flash-preview', name: 'gemini-3-flash-preview' },
       { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro' },
       { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash' },
       { id: 'gemini-2.5-flash-lite', name: 'gemini-2.5-flash-lite' },
@@ -106,11 +141,11 @@ export const API_PROVIDER_PRESETS: SharedProviderPresets = {
     models: [
       { id: 'deepseek-chat', name: 'deepseek-chat' },
       { id: 'deepseek-reasoner', name: 'deepseek-reasoner' },
+      { id: 'kimi-k3', name: 'kimi-k3' },
       { id: 'kimi-k2-thinking', name: 'kimi-k2-thinking' },
       { id: 'glm-5', name: 'glm-5' },
       { id: 'MiniMax-M2.5', name: 'MiniMax-M2.5' },
       { id: 'qwen-max', name: 'qwen-max' },
-      { id: 'grok-code-fast-1', name: 'grok-code-fast-1' },
       { id: 'mistral-large-latest', name: 'mistral-large-latest' },
     ],
     keyPlaceholder: 'sk-xxx',
@@ -118,13 +153,28 @@ export const API_PROVIDER_PRESETS: SharedProviderPresets = {
   },
 };
 
+/**
+ * Curated model pick-lists for the pi-native model picker (used when the pi SDK
+ * catalog is active). Each entry maps an OC provider id to:
+ *   - `piProvider`: the pi-ai catalog provider id (may differ, e.g. 'google' vs 'gemini')
+ *   - `pick`: ordered list of model IDs to show.
+ *
+ * NOTE on naming conventions: provider catalogs use different model-ID formats.
+ * For example, Anthropic native uses dashes (claude-opus-4-8) while OpenRouter
+ * uses dots for the same model (anthropic/claude-opus-4.8). Both are correct for
+ * their respective providers and verified against the pi-ai catalog.
+ */
 export const PI_AI_CURATED_PRESETS: Record<string, { piProvider: string; pick: string[] }> = {
   openrouter: {
     piProvider: 'openrouter',
     pick: [
-      'anthropic/claude-opus-4-6',
-      'anthropic/claude-sonnet-4-6',
-      'anthropic/claude-haiku-4-5',
+      'anthropic/claude-fable-5',
+      'anthropic/claude-sonnet-5',
+      'anthropic/claude-opus-4.8',
+      'anthropic/claude-opus-4.6',
+      'anthropic/claude-sonnet-4.6',
+      'anthropic/claude-haiku-4.5',
+      'openai/gpt-5.5',
       'openai/gpt-5.4',
       'openai/gpt-5.3-codex',
       'google/gemini-3.1-pro-preview',
@@ -135,6 +185,9 @@ export const PI_AI_CURATED_PRESETS: Record<string, { piProvider: string; pick: s
   anthropic: {
     piProvider: 'anthropic',
     pick: [
+      'claude-fable-5',
+      'claude-sonnet-5',
+      'claude-opus-4-8',
       'claude-opus-4-6',
       'claude-sonnet-4-6',
       'claude-haiku-4-5',
@@ -145,6 +198,8 @@ export const PI_AI_CURATED_PRESETS: Record<string, { piProvider: string; pick: s
   openai: {
     piProvider: 'openai',
     pick: [
+      'gpt-5.5',
+      'gpt-5.5-pro',
       'gpt-5.4',
       'gpt-5.4-pro',
       'gpt-5.4-mini',
@@ -157,9 +212,11 @@ export const PI_AI_CURATED_PRESETS: Record<string, { piProvider: string; pick: s
   gemini: {
     piProvider: 'google',
     pick: [
+      'gemini-3.5-flash',
       'gemini-3.1-pro-preview',
-      'gemini-3-flash-preview',
       'gemini-3.1-flash-lite-preview',
+      'gemini-3.1-flash-lite',
+      'gemini-3-flash-preview',
       'gemini-2.5-pro',
       'gemini-2.5-flash',
       'gemini-2.5-flash-lite',
@@ -173,14 +230,14 @@ export function getModelInputGuidance(
 ): ModelInputGuidance {
   if (provider === 'openrouter') {
     return {
-      placeholder: 'openai/gpt-5.4, anthropic/claude-sonnet-4-6, google/gemini-3-flash-preview',
+      placeholder: 'openai/gpt-5.5, anthropic/claude-fable-5, google/gemini-3.1-pro-preview',
       hint: 'Use the exact model ID for the selected protocol or endpoint.',
     };
   }
 
   if (provider === 'custom' && customProtocol === 'openai') {
     return {
-      placeholder: 'deepseek-chat, deepseek-reasoner, qwen-max, gpt-5.4-mini',
+      placeholder: 'deepseek-chat, deepseek-reasoner, qwen-max, gpt-5.5-pro',
       hint: 'Use the exact model ID for the selected protocol or endpoint.',
     };
   }
@@ -194,7 +251,7 @@ export function getModelInputGuidance(
 
   if (provider === 'custom') {
     return {
-      placeholder: 'glm-5, kimi-k2-thinking, claude-sonnet-4-6',
+      placeholder: 'kimi-k3, glm-5, claude-fable-5',
       hint: 'Use the exact model ID for the selected protocol or endpoint.',
     };
   }
@@ -221,7 +278,7 @@ export function getModelInputGuidance(
   }
 
   return {
-    placeholder: 'claude-sonnet-4-6, claude-opus-4-6',
+    placeholder: 'claude-fable-5, claude-sonnet-5',
     hint: 'Use the exact model ID for the selected protocol or endpoint.',
   };
 }

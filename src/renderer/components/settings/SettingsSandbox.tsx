@@ -1,12 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  Shield,
-  AlertCircle,
-  CheckCircle,
-  Settings,
-  Loader2,
-} from 'lucide-react';
+import { Shield, AlertCircle, CheckCircle, Settings, Loader2 } from 'lucide-react';
 import { renderLocalizedBannerMessage } from './shared';
 import type { LocalizedBanner } from './shared';
 

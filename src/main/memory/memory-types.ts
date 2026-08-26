@@ -209,6 +209,8 @@ export interface MemorySessionStateRecord {
 
 export interface MemoryDebugFileInfo {
   kind: 'core' | 'experience' | 'state' | 'artifacts';
+  /** 'sqlite' for memory.db, 'file' (default) for JSON/dir entries. */
+  storage?: 'file' | 'sqlite';
   label: string;
   filePath: string;
   exists: boolean;
@@ -216,6 +218,22 @@ export interface MemoryDebugFileInfo {
   updatedAt: number | null;
   sessionCount?: number;
   chunkCount?: number;
+}
+
+export interface ExperienceDbStatus {
+  schemaVersion: number;
+  sessionCount: number;
+  chunkCount: number;
+  embeddingModel: string | null;
+  embeddingDim: number | null;
+  sizeBytes: number;
+  journalMode?: string | null;
+  integrityOk: boolean;
+  workspaceBreakdown: Array<{
+    workspaceKey: string;
+    sessionCount: number;
+    chunkCount: number;
+  }>;
 }
 
 export interface MemoryDebugFileContent {
@@ -248,6 +266,13 @@ export interface MemoryOverview {
   latestIngestionAt: number | null;
   latestError: string | null;
   latestErrorAt: number | null;
+  /** `memoryRuntime.useEmbedding` — when false the coverage fields are not meaningful. */
+  embeddingEnabled: boolean;
+  /** Chunks carrying a vector. Below `experienceChunkCount` means degraded semantic search. */
+  embeddedChunkCount: number;
+  /** Last embedding failure this process saw, or null. Not persisted across restarts. */
+  embeddingError: string | null;
+  embeddingErrorAt: number | null;
   currentWorkspace?: {
     workspaceKey: string;
     experienceSessionCount: number;

@@ -1,4 +1,4 @@
-import { platform } from 'os'
+import { platform } from 'os';
 
 /**
  * Returns the appropriate shell for the current platform.
@@ -7,9 +7,9 @@ import { platform } from 'os'
  */
 export function getDefaultShell(): string {
   if (platform() === 'win32') {
-    return process.env.COMSPEC || 'cmd.exe'
+    return process.env.COMSPEC || 'cmd.exe';
   }
-  return process.env.SHELL || '/bin/bash'
+  return process.env.SHELL || '/bin/bash';
 }
 
 /**
@@ -18,9 +18,9 @@ export function getDefaultShell(): string {
  * Unix bash/zsh: ['-c', command]
  */
 export function getShellArgs(command: string): [string, string[]] {
-  const shell = getDefaultShell()
+  const shell = getDefaultShell();
   if (platform() === 'win32') {
-    return [shell, ['/c', command]]
+    return [shell, ['/c', command]];
   }
-  return [shell, ['-c', command]]
+  return [shell, ['-c', command]];
 }

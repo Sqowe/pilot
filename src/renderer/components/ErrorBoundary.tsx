@@ -54,12 +54,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
           {/* Heading & description */}
           <div className="space-y-2">
-            <h2 className="text-xl font-semibold text-text-primary">
-              {t('errorBoundary.title')}
-            </h2>
-            <p className="text-sm text-text-secondary">
-              {t('errorBoundary.description')}
-            </p>
+            <h2 className="text-xl font-semibold text-text-primary">{t('errorBoundary.title')}</h2>
+            <p className="text-sm text-text-secondary">{t('errorBoundary.description')}</p>
           </div>
 
           {/* Error detail (collapsed, non-critical) */}

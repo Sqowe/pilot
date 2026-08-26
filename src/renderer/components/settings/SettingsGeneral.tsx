@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../../store';
 
@@ -26,6 +26,69 @@ export function SettingsGeneral() {
   }, []);
 
   const notificationsEnabled = appConfig?.notificationsEnabled ?? true;
+
+  // HTTP proxy state — draft/committed pattern matching localDevPath in SettingsSkills
+  const [httpProxyDraft, setHttpProxyDraft] = useState(appConfig?.httpProxy ?? '');
+  const [httpProxyCommitted, setHttpProxyCommitted] = useState(appConfig?.httpProxy ?? '');
+  const [httpProxySaving, setHttpProxySaving] = useState(false);
+  const [httpProxyError, setHttpProxyError] = useState<string | null>(null);
+  const [httpProxySaved, setHttpProxySaved] = useState(false);
+  const savedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clean up the transient "saved" indicator timeout on unmount
+  useEffect(
+    () => () => {
+      if (savedTimeoutRef.current !== null) clearTimeout(savedTimeoutRef.current);
+    },
+    []
+  );
+
+  // Sync draft from appConfig on mount / config reload
+  useEffect(() => {
+    const v = appConfig?.httpProxy ?? '';
+    setHttpProxyDraft(v);
+    setHttpProxyCommitted(v);
+  }, [appConfig?.httpProxy]);
+
+  const handleSaveHttpProxy = async () => {
+    if (httpProxySaving) return; // prevent concurrent saves
+    setHttpProxySaving(true);
+    setHttpProxyError(null);
+    setHttpProxySaved(false);
+    const trimmed = httpProxyDraft.trim();
+    // Validate non-empty URLs: must parse and use http or https scheme
+    if (trimmed) {
+      try {
+        const parsed = new URL(trimmed);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          setHttpProxyError(t('general.httpProxyInvalidScheme'));
+          setHttpProxySaving(false);
+          return;
+        }
+        if (parsed.username || parsed.password) {
+          setHttpProxyError(t('general.httpProxyNoCredentials'));
+          setHttpProxySaving(false);
+          return;
+        }
+      } catch {
+        setHttpProxyError(t('general.httpProxyInvalidUrl'));
+        setHttpProxySaving(false);
+        return;
+      }
+    }
+    try {
+      await window.electronAPI.config.save({ httpProxy: trimmed });
+      setHttpProxyCommitted(trimmed);
+      setHttpProxySaved(true);
+      if (savedTimeoutRef.current !== null) clearTimeout(savedTimeoutRef.current);
+      const savedTimeoutId = setTimeout(() => setHttpProxySaved(false), 2000);
+      savedTimeoutRef.current = savedTimeoutId;
+    } catch (err) {
+      setHttpProxyError(err instanceof Error ? err.message : t('general.httpProxySaveFailed'));
+    } finally {
+      setHttpProxySaving(false);
+    }
+  };
 
   const languages = [
     { code: 'en', nativeName: 'English' },
@@ -97,6 +160,48 @@ export function SettingsGeneral() {
             <p className="text-xs text-text-muted mt-0.5">{t('general.notificationsHint')}</p>
           </div>
         </label>
+      </div>
+
+      {/* HTTP Proxy */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-medium text-text-primary">{t('general.httpProxy')}</h4>
+        <p className="text-xs text-text-muted">{t('general.httpProxyHint')}</p>
+        <div className="flex gap-2">
+          <input
+            type="url"
+            value={httpProxyDraft}
+            onChange={(e) => {
+              setHttpProxyDraft(e.target.value);
+              setHttpProxySaved(false);
+              setHttpProxyError(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !httpProxySaving && httpProxyDraft !== httpProxyCommitted)
+                handleSaveHttpProxy();
+            }}
+            placeholder="http://proxy.example.com:8080"
+            className="flex-1 px-3 py-2 text-sm rounded-lg border border-border bg-surface text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50"
+            aria-label={t('general.httpProxy')}
+          />
+          <button
+            onClick={handleSaveHttpProxy}
+            disabled={httpProxySaving || httpProxyDraft === httpProxyCommitted}
+            className="px-3 py-2 text-sm rounded-lg border border-border bg-surface text-text-secondary hover:text-text-primary hover:border-accent/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            aria-label={t('general.httpProxySave')}
+          >
+            {httpProxySaving
+              ? t('general.httpProxySaving')
+              : httpProxySaved
+                ? t('general.httpProxySaved')
+                : t('general.httpProxySave')}
+          </button>
+        </div>
+        {httpProxyError && <p className="text-xs text-red-500">{httpProxyError}</p>}
+        {httpProxySaved && (
+          <p className="sr-only" aria-live="polite" aria-atomic="true">
+            {t('general.httpProxySaved')}
+          </p>
+        )}
       </div>
 
       {/* About */}

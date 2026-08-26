@@ -1,10 +1,5 @@
 // Shared types for MessageCard sub-components
-import type {
-  Message,
-  ContentBlock,
-  ToolUseContent,
-  ToolResultContent,
-} from '../../types';
+import type { Message, ContentBlock, ToolUseContent, ToolResultContent } from '../../types';
 
 export type { Message, ContentBlock, ToolUseContent, ToolResultContent };
 

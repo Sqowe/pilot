@@ -29,8 +29,17 @@ import type {
   MemoryDebugFileInfo,
   MemoryDebugFileContent,
   MemoryInspectSessionResult,
+  ExperienceDbStatus,
+  ExperienceExportResult,
+  LocalEmbeddingProgress,
+  MemoryBackfillProgress,
+  LocalModelStatus,
+  MemoryModelCheckResult,
+  MemoryRuntimeConfig,
+  ThinkingCapabilities,
 } from '../renderer/types';
 import type { DiagnosticInput, DiagnosticResult } from '../renderer/types';
+import type { ProviderCatalogEntry } from '../shared/provider-catalog';
 import type {
   McpServerConfig,
   McpTool,
@@ -181,6 +190,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   config: {
     get: (): Promise<AppConfig> => ipcRenderer.invoke('config.get'),
     getPresets: (): Promise<ProviderPresets> => ipcRenderer.invoke('config.getPresets'),
+    getProviderCatalog: (): Promise<ProviderCatalogEntry[]> =>
+      ipcRenderer.invoke('config.getProviderCatalog'),
     save: (config: Partial<AppConfig>): Promise<{ success: boolean; config: AppConfig }> =>
       ipcRenderer.invoke('config.save', config),
     createSet: (payload: CreateSetPayload): Promise<{ success: boolean; config: AppConfig }> =>
@@ -206,6 +217,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('config.diagnose', input),
     discoverLocal: (payload?: { baseUrl?: string }): Promise<LocalOllamaDiscoveryResult> =>
       ipcRenderer.invoke('config.discover-local', payload),
+    getThinkingLevels: (payload: {
+      provider: string;
+      model: string;
+      customProtocol?: string;
+      baseUrl?: string;
+    }): Promise<ThinkingCapabilities> => ipcRenderer.invoke('config.getThinkingLevels', payload),
   },
 
   // Window control methods
@@ -222,9 +239,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Chat export
   chat: {
+    // Primary: multi-format export (format chosen via the native save dialog)
+    export: (request: {
+      sessionId: string;
+      messageIds?: string[];
+      format?: 'md' | 'docx' | 'pdf';
+      options?: Partial<{
+        includeToolCalls: boolean;
+        includeThinking: boolean;
+        includeTimestamps: boolean;
+        includeTokenUsage: boolean;
+        imageHandling: 'skip' | 'placeholder' | 'inline';
+      }>;
+    }): Promise<{ success: boolean; path?: string; error?: string }> =>
+      ipcRenderer.invoke('chat.export', request),
+    // Backward-compat alias — invokes 'chat.exportMarkdown' on the main process,
+    // which routes through the same multi-format router as 'chat.export'.
+    // Both show the full save dialog with .md/.docx/.pdf filters.
     exportMarkdown: (request: {
       sessionId: string;
       messageIds?: string[];
+      format?: 'md' | 'docx' | 'pdf';
       options?: Partial<{
         includeToolCalls: boolean;
         includeThinking: boolean;
@@ -630,6 +665,55 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteCustomExtractionPrompt: (): Promise<{ success: boolean }> =>
       ipcRenderer.invoke('memory.deleteCustomExtractionPrompt'),
     openFileInEditor: (): Promise<void> => ipcRenderer.invoke('memory.openFileInEditor'),
+    removeLocalModel: (): Promise<{ success: boolean; removed: boolean; error?: string }> =>
+      ipcRenderer.invoke('memory.removeLocalModel'),
+    isLocalModelDownloaded: (): Promise<{ downloaded: boolean }> =>
+      ipcRenderer.invoke('memory.isLocalModelDownloaded'),
+    isEmbeddingFormatStale: (): Promise<{ stale: boolean; modelStale: boolean }> =>
+      ipcRenderer.invoke('memory.isEmbeddingFormatStale'),
+    getLocalModelStatus: (): Promise<LocalModelStatus> =>
+      ipcRenderer.invoke('memory.getLocalModelStatus'),
+    warmUpLocalModel: (force?: boolean): Promise<LocalModelStatus> =>
+      ipcRenderer.invoke('memory.warmUpLocalModel', force),
+    checkModelAvailability: (draft: MemoryRuntimeConfig): Promise<MemoryModelCheckResult> =>
+      ipcRenderer.invoke('memory.checkModelAvailability', draft),
+    getExperienceDbStatus: (): Promise<
+      { success: true; status: ExperienceDbStatus } | { success: false; error: string }
+    > => ipcRenderer.invoke('memory.getExperienceDbStatus'),
+    exportExperienceMemoryToFile: (): Promise<ExperienceExportResult> =>
+      ipcRenderer.invoke('memory.exportExperienceMemoryToFile'),
+    vacuumExperienceDb: (): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('memory.vacuumExperienceDb'),
+    backfillEmbeddings: (): Promise<{
+      success: boolean;
+      embedded: number;
+      failed: number;
+      error?: string;
+    }> => ipcRenderer.invoke('memory.backfillEmbeddings'),
+    countEmbeddingBackfill: (): Promise<{ sessionCount: number; chunkCount: number }> =>
+      ipcRenderer.invoke('memory.countEmbeddingBackfill'),
+    onBackfillProgress: (callback: (p: MemoryBackfillProgress) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, p: MemoryBackfillProgress) => {
+        try {
+          callback(p);
+        } catch (err) {
+          console.error('[preload] onBackfillProgress callback threw:', err);
+        }
+      };
+      ipcRenderer.on('memory.backfillProgress', listener);
+      return () => ipcRenderer.removeListener('memory.backfillProgress', listener);
+    },
+    onLocalEmbeddingProgress: (callback: (p: LocalEmbeddingProgress) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, p: LocalEmbeddingProgress) => {
+        try {
+          callback(p);
+        } catch (err) {
+          console.error('[preload] onLocalEmbeddingProgress callback threw:', err);
+        }
+      };
+      ipcRenderer.on('memory.localEmbeddingProgress', listener);
+      return () => ipcRenderer.removeListener('memory.localEmbeddingProgress', listener);
+    },
   },
 });
 
@@ -658,6 +742,7 @@ declare global {
       config: {
         get: () => Promise<AppConfig>;
         getPresets: () => Promise<ProviderPresets>;
+        getProviderCatalog: () => Promise<ProviderCatalogEntry[]>;
         save: (config: Partial<AppConfig>) => Promise<{ success: boolean; config: AppConfig }>;
         createSet: (payload: CreateSetPayload) => Promise<{ success: boolean; config: AppConfig }>;
         renameSet: (payload: {
@@ -675,6 +760,12 @@ declare global {
         }) => Promise<ProviderModelInfo[]>;
         diagnose: (input: DiagnosticInput) => Promise<DiagnosticResult>;
         discoverLocal: (payload?: { baseUrl?: string }) => Promise<LocalOllamaDiscoveryResult>;
+        getThinkingLevels: (payload: {
+          provider: string;
+          model: string;
+          customProtocol?: string;
+          baseUrl?: string;
+        }) => Promise<ThinkingCapabilities>;
       };
       window: {
         minimize: () => void;
@@ -685,9 +776,23 @@ declare global {
         writeText: (text: string) => Promise<void>;
       };
       chat: {
+        export: (request: {
+          sessionId: string;
+          messageIds?: string[];
+          format?: 'md' | 'docx' | 'pdf';
+          options?: Partial<{
+            includeToolCalls: boolean;
+            includeThinking: boolean;
+            includeTimestamps: boolean;
+            includeTokenUsage: boolean;
+            imageHandling: 'skip' | 'placeholder' | 'inline';
+          }>;
+        }) => Promise<{ success: boolean; path?: string; error?: string }>;
+        // Backward-compat alias — forwards to chat.export
         exportMarkdown: (request: {
           sessionId: string;
           messageIds?: string[];
+          format?: 'md' | 'docx' | 'pdf';
           options?: Partial<{
             includeToolCalls: boolean;
             includeThinking: boolean;
@@ -997,6 +1102,26 @@ declare global {
         createCustomExtractionPrompt: () => Promise<{ success: boolean }>;
         deleteCustomExtractionPrompt: () => Promise<{ success: boolean }>;
         openFileInEditor: () => Promise<void>;
+        removeLocalModel: () => Promise<{ success: boolean; removed: boolean; error?: string }>;
+        isLocalModelDownloaded: () => Promise<{ downloaded: boolean }>;
+        isEmbeddingFormatStale: () => Promise<{ stale: boolean; modelStale: boolean }>;
+        getLocalModelStatus: () => Promise<LocalModelStatus>;
+        warmUpLocalModel: (force?: boolean) => Promise<LocalModelStatus>;
+        checkModelAvailability: (draft: MemoryRuntimeConfig) => Promise<MemoryModelCheckResult>;
+        getExperienceDbStatus: () => Promise<
+          { success: true; status: ExperienceDbStatus } | { success: false; error: string }
+        >;
+        exportExperienceMemoryToFile: () => Promise<ExperienceExportResult>;
+        vacuumExperienceDb: () => Promise<{ success: boolean; error?: string }>;
+        backfillEmbeddings: () => Promise<{
+          success: boolean;
+          embedded: number;
+          failed: number;
+          error?: string;
+        }>;
+        countEmbeddingBackfill: () => Promise<{ sessionCount: number; chunkCount: number }>;
+        onBackfillProgress: (callback: (p: MemoryBackfillProgress) => void) => () => void;
+        onLocalEmbeddingProgress: (callback: (p: LocalEmbeddingProgress) => void) => () => void;
       };
     };
   }

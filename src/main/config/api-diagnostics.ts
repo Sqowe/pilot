@@ -11,6 +11,7 @@ import * as tls from 'tls';
 import OpenAI from 'openai';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { PROVIDER_PRESETS, configStore } from './config-store';
+import { getPresetForProvider } from '../../shared/api-model-presets';
 import { DEFAULT_OLLAMA_BASE_URL } from '../../shared/ollama-base-url';
 import { isLoopbackBaseUrl } from '../../shared/network/loopback';
 import {
@@ -32,6 +33,7 @@ import type {
 } from '../../renderer/types';
 import { log, logWarn } from '../utils/logger';
 import { probeWithClaudeSdk } from '../claude/claude-sdk-one-shot';
+import { resolveNativeProviderInfo } from '../claude/pi-model-resolution';
 import { fetchOllamaModelIndex } from './ollama-api';
 
 const STEP_NAMES: DiagnosticStepName[] = ['dns', 'tcp', 'tls', 'auth', 'model'];
@@ -63,7 +65,11 @@ function resolveEffectiveUrl(input: DiagnosticInput): URL {
   let raw = input.baseUrl?.trim();
 
   if (!raw && input.provider !== 'custom') {
-    raw = PROVIDER_PRESETS[input.provider]?.baseUrl;
+    // Builtin providers have a preset base URL; native catalog providers
+    // (z.ai, MiniMax, …) carry theirs in the pi-ai registry instead.
+    raw =
+      getPresetForProvider(PROVIDER_PRESETS, input.provider)?.baseUrl ??
+      resolveNativeProviderInfo(input.provider, input.model)?.baseUrl;
   }
 
   if (!raw) {
@@ -96,26 +102,42 @@ function defaultPort(
   return protocol === 'https:' ? 443 : 80;
 }
 
+/**
+ * Route protocol for a native catalog provider (z.ai, MiniMax, …), or
+ * undefined for builtin/custom/unknown providers. Lets the protocol predicates
+ * below classify native providers by their registry-derived routing instead of
+ * falling through to the "unknown" branch and picking the wrong SDK client.
+ */
+function nativeRouteProtocol(
+  input: DiagnosticInput
+): 'anthropic' | 'openai' | 'gemini' | undefined {
+  if (input.provider === 'custom') return undefined;
+  return resolveNativeProviderInfo(input.provider, input.model)?.routeProtocol;
+}
+
 function isOpenAICompatible(input: DiagnosticInput): boolean {
   return (
     input.provider === 'openai' ||
     input.provider === 'ollama' ||
     input.provider === 'openrouter' ||
-    (input.provider === 'custom' && input.customProtocol === 'openai')
+    (input.provider === 'custom' && input.customProtocol === 'openai') ||
+    nativeRouteProtocol(input) === 'openai'
   );
 }
 
 function isAnthropicCompatible(input: DiagnosticInput): boolean {
   return (
     input.provider === 'anthropic' ||
-    (input.provider === 'custom' && (input.customProtocol ?? 'anthropic') === 'anthropic')
+    (input.provider === 'custom' && (input.customProtocol ?? 'anthropic') === 'anthropic') ||
+    nativeRouteProtocol(input) === 'anthropic'
   );
 }
 
 function isGeminiProtocol(input: DiagnosticInput): boolean {
   return (
     input.provider === 'gemini' ||
-    (input.provider === 'custom' && input.customProtocol === 'gemini')
+    (input.provider === 'custom' && input.customProtocol === 'gemini') ||
+    nativeRouteProtocol(input) === 'gemini'
   );
 }
 
@@ -188,7 +210,9 @@ function resolveClientBaseUrl(input: DiagnosticInput): string | undefined {
   if (isOpenAICompatible(input)) {
     if (raw) return normalizeOpenAICompatibleBaseUrl(raw);
     if (input.provider !== 'custom') {
-      return PROVIDER_PRESETS[input.provider]?.baseUrl;
+      const preset = getPresetForProvider(PROVIDER_PRESETS, input.provider)?.baseUrl;
+      // Native providers (z.ai, DeepSeek, …) have no preset — read the registry.
+      return preset ?? resolveNativeProviderInfo(input.provider, input.model)?.baseUrl;
     }
     return undefined;
   }
@@ -198,13 +222,16 @@ function resolveClientBaseUrl(input: DiagnosticInput): string | undefined {
     if (input.provider === 'anthropic') {
       return normalizeAnthropicBaseUrl(PROVIDER_PRESETS.anthropic?.baseUrl);
     }
-    return undefined;
+    // Native anthropic-routed providers (MiniMax, Kimi) — registry base URL.
+    const nativeBase = resolveNativeProviderInfo(input.provider, input.model)?.baseUrl;
+    return nativeBase ? normalizeAnthropicBaseUrl(nativeBase) : undefined;
   }
 
   // Gemini or unknown
   if (raw) return raw;
   if (input.provider !== 'custom') {
-    return PROVIDER_PRESETS[input.provider as keyof typeof PROVIDER_PRESETS]?.baseUrl;
+    const preset = PROVIDER_PRESETS[input.provider as keyof typeof PROVIDER_PRESETS]?.baseUrl;
+    return preset ?? resolveNativeProviderInfo(input.provider, input.model)?.baseUrl;
   }
   return undefined;
 }
@@ -495,11 +522,16 @@ async function stepModel(input: DiagnosticInput, step: DiagnosticStep): Promise<
     }
 
     const config = configStore.getAll();
+    // Native providers carry no user-entered baseUrl — supply the registry
+    // endpoint so a synthetic/manual native model still probes the right host
+    // instead of the SDK's default (e.g. api.openai.com). Registry-resolved
+    // native models already embed their baseUrl, so this is a no-op for them.
+    const nativeBaseUrl = resolveNativeProviderInfo(input.provider, input.model)?.baseUrl;
     const result = await probeWithClaudeSdk(
       {
         provider: input.provider,
         apiKey: input.apiKey,
-        baseUrl: input.baseUrl,
+        baseUrl: input.baseUrl || nativeBaseUrl,
         customProtocol: input.customProtocol,
         model: input.model,
         verificationLevel,

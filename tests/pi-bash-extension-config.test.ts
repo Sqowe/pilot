@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import * as piSdk from '@earendil-works/pi-coding-agent';
 import { DEFAULT_BASH_RESTRICTIONS_SETTINGS } from '../src/shared/bash-restrictions';
 import {
   loadBashRestrictionsSettings,
@@ -84,6 +85,20 @@ describe('path resolution', () => {
   it('resolveProjectConfigPath appends .pi/bash-restrictions.json to cwd', () => {
     const cwd = join('/', 'my', 'project');
     expect(resolveProjectConfigPath(cwd)).toBe(join(cwd, '.pi', 'bash-restrictions.json'));
+  });
+
+  it('CONFIG_DIR_NAME exported from the SDK is honored (not hardcoded .pi)', () => {
+    // Verify the runtime constant matches what pi-coding-agent exports.
+    // On the 0.80+ baseline CONFIG_DIR_NAME is guaranteed present; if it ever
+    // changed (rebranded distribution), paths would update automatically.
+    const sdkValue = (piSdk as { CONFIG_DIR_NAME?: unknown }).CONFIG_DIR_NAME;
+    expect(typeof sdkValue).toBe('string');
+    expect((sdkValue as string).trim()).not.toBe('');
+    // resolveGlobalConfigPath and resolveProjectConfigPath must embed the SDK
+    // value, not a hardcoded '.pi'.
+    const home = join('/', 'test', 'home');
+    expect(resolveGlobalConfigPath(home)).toContain(sdkValue as string);
+    expect(resolveProjectConfigPath(join('/', 'test', 'project'))).toContain(sdkValue as string);
   });
 });
 

@@ -1,10 +1,69 @@
-import type { Api, Model } from '@earendil-works/pi-ai';
+import type { Api, Model, ModelThinkingLevel } from '@earendil-works/pi-ai';
 // `getModel` moved off the pi-ai root entrypoint to `/compat` in 0.80.0.
-import { getModel } from '@earendil-works/pi-ai/compat';
+import {
+  getModel,
+  getModels,
+  getProviders,
+  getSupportedThinkingLevels,
+  clampThinkingLevel,
+} from '@earendil-works/pi-ai/compat';
 import { isOfficialOpenAIBaseUrl } from '../config/auth-utils';
+import { log, logWarn } from '../utils/logger';
+import { THINKING_LEVELS } from '../../shared/thinking-levels';
+import { getCachedProviderCatalogSync } from '../config/provider-catalog-native';
+import {
+  getCatalogEntry,
+  NATIVE_COLD_START_PROTOCOL,
+  NATIVE_PROVIDER_IDS,
+} from '../../shared/provider-catalog';
+
+/**
+ * Per-process dedup set for the native-provider/model-prefix mismatch warning.
+ * Avoids log flooding when a misconfigured model string is used repeatedly.
+ * Key: `${rawProvider}\0${parsedProvider}` — one warning per unique pair.
+ * Capped at 100 entries to prevent unbounded memory growth in long-lived processes.
+ */
+const _loggedMismatchPairs = new Set<string>();
+const _MISMATCH_LOG_CAP = 100;
+
+/**
+ * Centralized map of builtin config provider id -> pi-ai auth provider key
+ * for cases where the two differ. Used by resolveRuntimeApiKeyProviders to
+ * ensure auth keys are stored under the key pi-ai actually looks up.
+ * Extend when new aliases are discovered via pi-ai SDK changes.
+ */
+export const PROVIDER_AUTH_ALIASES: Record<string, string> = {
+  // gemini (OC config id) -> 'google' (pi-ai registry/auth key for all Gemini models)
+  gemini: 'google',
+};
 
 const COMMON_FALLBACK_PROVIDERS = ['openai', 'anthropic', 'google'] as const;
 const INVALID_REGISTRY_PROVIDERS = new Set(['', 'custom']);
+
+/**
+ * Every provider id in pi's registry, cached for the process.
+ *
+ * Backs {@link findRegistryReasoningTraits}. Model *resolution* deliberately
+ * still searches only COMMON_FALLBACK_PROVIDERS — widening that would change
+ * which transport/compat/pricing entry a Custom endpoint adopts. This list is
+ * used solely to answer "does pi know this model id reasons?".
+ */
+let _registryProviderIds: readonly string[] | undefined;
+function getRegistryProviderIds(): readonly string[] {
+  if (_registryProviderIds) return _registryProviderIds;
+  try {
+    const providers = (getProviders as () => unknown)();
+    _registryProviderIds = Array.isArray(providers)
+      ? providers.filter((id): id is string => typeof id === 'string')
+      : Object.keys(providers as Record<string, unknown>);
+  } catch (err) {
+    // Registry unavailable — degrade to the narrow fallback list rather than
+    // failing resolution outright.
+    logWarn('[pi-model-resolution] getProviders() failed, skipping wide sweep:', err);
+    _registryProviderIds = [];
+  }
+  return _registryProviderIds;
+}
 const REASONING_MODEL_PATTERN =
   /\bthinking\b|\breasoner\b|deepseek-r1|kimi-k2|qwen3(?:\.5)?(?=[:/-]|$)/i;
 type PiRegistryProvider = Parameters<typeof getModel>[0];
@@ -52,7 +111,78 @@ export function resolvePiRouteProtocol(provider?: string, customProtocol?: strin
   if (provider === 'openai') return 'openai';
   if (provider === 'openrouter') return 'openai';
   if (provider === 'gemini') return 'gemini';
+  // Native provider — look up the catalog for the correct route protocol.
+  // Cold-start fallback is only applied for known native provider ids (from
+  // NATIVE_PROVIDER_IDS) to avoid changing legacy behavior for unknown providers.
+  if (provider) {
+    const catalog = getCachedProviderCatalogSync();
+    if (catalog) {
+      const entry = getCatalogEntry(catalog, provider);
+      if (entry?.kind === 'native') return entry.routeProtocol;
+    } else if (NATIVE_PROVIDER_IDS.has(provider)) {
+      // Cold-start: catalog not yet resolved — use static fallback map for
+      // known native providers so they get a valid protocol string rather
+      // than their raw provider id. Unknown providers fall through to legacy.
+      return NATIVE_COLD_START_PROTOCOL[provider] ?? 'openai';
+    }
+  }
   return provider || 'anthropic';
+}
+
+export interface NativeProviderInfo {
+  /** pi-ai registry provider key (equals the catalog id for v1 natives) */
+  piProvider: string;
+  /** Route protocol derived from the catalog / cold-start map */
+  routeProtocol: 'anthropic' | 'openai' | 'gemini';
+  /** Registry base URL (from the resolved model, or the provider's first model) */
+  baseUrl?: string;
+}
+
+/**
+ * For a native catalog provider, resolve the registry-backed info the
+ * diagnostics engine needs — base URL and route protocol — since native
+ * providers carry no user-entered baseUrl (it lives in the pi-ai registry).
+ *
+ * Returns `undefined` for builtin/custom/unknown providers so callers keep
+ * their existing behavior. Works both after the catalog has warmed (uses the
+ * catalog entry's piProvider/routeProtocol) and during cold start (falls back
+ * to NATIVE_PROVIDER_IDS + NATIVE_COLD_START_PROTOCOL; v1 natives have
+ * id === piProvider).
+ */
+export function resolveNativeProviderInfo(
+  provider: string,
+  model?: string
+): NativeProviderInfo | undefined {
+  if (!provider || provider === 'custom') return undefined;
+
+  const catalog = getCachedProviderCatalogSync();
+  const entry = catalog ? getCatalogEntry(catalog, provider) : undefined;
+
+  let piProvider: string | undefined;
+  let routeProtocol: 'anthropic' | 'openai' | 'gemini' | undefined;
+  if (entry?.kind === 'native') {
+    piProvider = entry.piProvider;
+    routeProtocol = entry.routeProtocol;
+  } else if (NATIVE_PROVIDER_IDS.has(provider)) {
+    piProvider = provider;
+    routeProtocol = NATIVE_COLD_START_PROTOCOL[provider] ?? 'openai';
+  }
+  if (!piProvider || !routeProtocol) return undefined;
+
+  // Resolve base URL from the registry. Prefer the specific model's baseUrl;
+  // fall back to the provider's first model (all models for a native provider
+  // share the same endpoint). Guard registry calls defensively.
+  let baseUrl: string | undefined;
+  const lookup = getModel as (p: string, m: string) => Model<Api> | undefined;
+  const listModels = getModels as (p: string) => Model<Api>[] | undefined;
+  try {
+    if (model) baseUrl = lookup(piProvider, model)?.baseUrl || undefined;
+    if (!baseUrl) baseUrl = listModels(piProvider)?.[0]?.baseUrl || undefined;
+  } catch {
+    // Registry lookup failed — leave baseUrl undefined; caller handles it.
+  }
+
+  return { piProvider, routeProtocol, baseUrl };
 }
 
 function shouldDisableDeveloperRoleForEndpoint(
@@ -224,6 +354,17 @@ export function resolvePiModelString(input: PiModelStringInput): string {
     return model;
   }
   const provider = input.provider || 'anthropic';
+  // Native catalog providers (z.ai, MiniMax, …) must be prefixed with their
+  // registry provider id so the model resolves to the native registry entry.
+  // Their `customProtocol` is a routing hint (e.g. 'openai'), NOT a registry
+  // provider id — prefixing with it yields 'openai/glm-5.2', which misses the
+  // native entry and falls back to a synthetic OpenAI model pointed at
+  // api.openai.com. The agent-runner avoids this by passing the bare model id;
+  // this path (probe/diagnostics) builds the string here, so fix it at source.
+  const nativeInfo = resolveNativeProviderInfo(provider);
+  if (nativeInfo) {
+    return `${nativeInfo.piProvider}/${model}`;
+  }
   const protocol = input.customProtocol || provider;
   return `${protocol}/${model}`;
 }
@@ -264,11 +405,65 @@ export function buildPiModelLookupCandidates(
   const seen = new Set<string>();
   const candidates: PiModelLookupCandidate[] = [];
 
+  // Track whether rawProvider was handled by the native injection block above.
+  // When it was (or was deliberately skipped for mismatch), we must not add it
+  // again in the generic tail — that would produce malformed candidates like
+  // {provider:'zai', model:'openai/gpt-4'}.
+  let nativeRawProviderHandled = false;
+
+  // For native providers, unshift the registry lookup candidate first so the
+  // native model (with correct compat quirks) takes precedence over generic
+  // fallbacks. Only inject when the model string has no provider prefix, or
+  // when the prefix already matches the native piProvider — injecting with a
+  // mismatched prefix (e.g. model="openai/gpt-4" with rawProvider="zai")
+  // would create an invalid candidate like {provider:"zai", model:"openai/gpt-4"}.
+  if (rawProvider && !INVALID_REGISTRY_PROVIDERS.has(rawProvider)) {
+    const catalog = getCachedProviderCatalogSync();
+    if (catalog) {
+      const entry = getCatalogEntry(catalog, rawProvider);
+      if (entry?.kind === 'native') {
+        // Mark as handled regardless of whether we inject — the native block
+        // owns this rawProvider slot and the tail must not duplicate/corrupt it.
+        nativeRawProviderHandled = true;
+        const piProvider = entry.piProvider;
+        if (parts.length < 2) {
+          // Bare model id — inject directly
+          addLookupCandidate(candidates, seen, piProvider, trimmedModel);
+        } else if (parts[0] === piProvider) {
+          // Prefix matches piProvider — strip and inject bare model id
+          addLookupCandidate(candidates, seen, piProvider, parts.slice(1).join('/'));
+        } else {
+          // Prefix is a different provider — skip injection to avoid producing
+          // a malformed candidate like {provider:'zai', model:'openai/gpt-4'}.
+          // Log once per unique (rawProvider, parsedProvider) pair to surface
+          // misconfigured model strings without flooding the log.
+          const mismatchKey = `${rawProvider}\0${parts[0]}`;
+          if (
+            !_loggedMismatchPairs.has(mismatchKey) &&
+            _loggedMismatchPairs.size < _MISMATCH_LOG_CAP
+          ) {
+            _loggedMismatchPairs.add(mismatchKey);
+            log(
+              `[PiModelResolution] Native rawProvider '${rawProvider}' ignored: ` +
+                `model string '${trimmedModel}' is prefixed with a different provider ('${parts[0]}'). ` +
+                `Resolving via parsed provider only.`
+            );
+          }
+        }
+      }
+    }
+  }
+
   if (parts.length >= 2) {
     const parsedProvider = parts[0];
     const parsedModelId = parts.slice(1).join('/');
 
-    if (rawProvider && rawProvider !== keyProvider && rawProvider !== parsedProvider) {
+    if (
+      rawProvider &&
+      rawProvider !== keyProvider &&
+      rawProvider !== parsedProvider &&
+      !nativeRawProviderHandled
+    ) {
       addLookupCandidate(candidates, seen, rawProvider, trimmedModel);
     }
     if (keyProvider !== parsedProvider) {
@@ -286,6 +481,60 @@ export function buildPiModelLookupCandidates(
     addLookupCandidate(candidates, seen, fallbackProvider, trimmedModel);
   }
   return candidates;
+}
+
+/** Reasoning metadata borrowed from a registry entry for the same model id. */
+export interface ReasoningTraits {
+  reasoning: boolean;
+  /** provider/id the traits came from — for logging only. */
+  source: string;
+}
+
+/**
+ * Find any registry entry, under any provider, describing this model id, and
+ * return only its *reasoning* traits.
+ *
+ * Why traits and not the whole model: a model served through a Custom endpoint
+ * may exist in pi's registry under a provider the user isn't calling (e.g.
+ * `claude-opus-4.8` under `github-copilot`). Adopting that entry wholesale would
+ * import its `compat` quirks, pricing and context limits — a far bigger change
+ * than the capability question warrants, and one that could break a working
+ * endpoint. Reasoning support is a property of the *model*, so it travels; the
+ * transport details do not.
+ *
+ * Tries the full model string before the prefix-stripped id, so a registry that
+ * keys models by a slash-containing id (openrouter's `z-ai/glm-5.1`) wins over a
+ * coincidental bare-id match under an unrelated provider.
+ *
+ * Deliberately does NOT borrow `thinkingLevelMap`. pi gates `xhigh`/`max` behind
+ * an explicit map entry because those levels need per-vendor confirmation, and
+ * the donor entry is by definition not the endpoint being called — inheriting a
+ * map from it would offer levels the real endpoint may reject. Without a map,
+ * `getSupportedThinkingLevels` yields the safe default `off…high`.
+ */
+export function findRegistryReasoningTraits(modelString: string): ReasoningTraits | undefined {
+  const trimmed = modelString.trim();
+  if (!trimmed) return undefined;
+
+  const parts = trimmed.split('/');
+  const ids = parts.length >= 2 ? [trimmed, parts.slice(1).join('/')] : [trimmed];
+  const lookup = getModel as (p: string, m: string) => Model<Api> | undefined;
+
+  for (const id of ids) {
+    for (const providerId of getRegistryProviderIds()) {
+      if (INVALID_REGISTRY_PROVIDERS.has(providerId)) continue;
+      let found: Model<Api> | undefined;
+      try {
+        found = lookup(providerId, id);
+      } catch {
+        continue;
+      }
+      if (found?.reasoning) {
+        return { reasoning: true, source: `${found.provider}/${found.id}` };
+      }
+    }
+  }
+  return undefined;
 }
 
 export function applyPiModelRuntimeOverrides(
@@ -370,4 +619,212 @@ export function resolvePiRegistryModel(
     }
   }
   return undefined;
+}
+
+export interface ThinkingCapabilities {
+  supportsThinking: boolean;
+  levels: ModelThinkingLevel[];
+}
+
+/**
+ * Resolve a model string to a pi `Model`, falling back to a synthetic one for
+ * models absent from the registry. Shared by the two thinking-level helpers so
+ * both agree on which model they are describing.
+ */
+function resolveModelForThinking(modelString: string, options: PiModelLookupOptions): Model<Api> {
+  const registryModel = resolvePiRegistryModel(modelString, options);
+  if (registryModel) return registryModel;
+
+  const synthProvider = options.rawProvider || options.configProvider || 'anthropic';
+  const synthProtocol = resolvePiRouteProtocol(synthProvider, options.customProtocol);
+  const synthetic = buildSyntheticPiModel(
+    modelString,
+    synthProvider,
+    synthProtocol,
+    options.customBaseUrl
+  );
+  return applyRegistryReasoningTraits(synthetic, modelString);
+}
+
+/**
+ * Enrich a synthetic model with reasoning traits borrowed from the registry.
+ *
+ * Synthetic models infer `reasoning` from REASONING_MODEL_PATTERN, which misses
+ * anything the pattern doesn't name — so a Custom endpoint serving a model pi
+ * *does* know about was reported as having no reasoning support at all. Only the
+ * reasoning fields are copied; transport, cost and context stay synthetic.
+ *
+ * No-op when the model already claims reasoning support (the pattern matched, or
+ * the caller supplied it).
+ */
+export function applyRegistryReasoningTraits(model: Model<Api>, modelString: string): Model<Api> {
+  if (model.reasoning) return model;
+
+  const traits = findRegistryReasoningTraits(modelString);
+  if (!traits) return model;
+
+  log(
+    '[PiModelResolution] Borrowed reasoning support for',
+    modelString,
+    'from registry entry',
+    traits.source
+  );
+  return { ...model, reasoning: true } as Model<Api>;
+}
+
+/**
+ * Thinking capabilities of an already-resolved pi `Model`.
+ * Delegates entirely to pi-ai's `getSupportedThinkingLevels` — no per-model
+ * tables are hardcoded here.
+ *
+ * `supportsThinking` is false when the model has no reasoning support *or* when
+ * its `thinkingLevelMap` masks every non-off level (nothing left to choose).
+ */
+export function resolveThinkingCapabilitiesForModel(model: Model<Api>): ThinkingCapabilities {
+  if (!model.reasoning) return { supportsThinking: false, levels: ['off'] };
+
+  const supported = getSupportedThinkingLevels(model) as string[];
+  // Re-order through THINKING_LEVELS so callers always get canonical order, and
+  // drop anything a newer pi-ai adds that this build doesn't know about.
+  const levels = (THINKING_LEVELS as readonly string[]).filter((level) =>
+    supported.includes(level)
+  ) as ModelThinkingLevel[];
+  const nonOff = levels.filter((level) => level !== 'off');
+
+  // 'off' is always offered so a stored non-off level can always be cleared.
+  return { supportsThinking: nonOff.length > 0, levels: ['off', ...nonOff] };
+}
+
+/**
+ * Clamp a stored thinking level to one an already-resolved model supports.
+ * Delegates to pi-ai's `clampThinkingLevel` — handles the up/down/off search.
+ *
+ * Prefer this over {@link clampModelThinkingLevel} wherever the caller already
+ * holds the `Model`: re-resolving from a model *string* can land on a different
+ * model than the one actually in use.
+ */
+export function clampThinkingLevelForModel(
+  model: Model<Api>,
+  level: ModelThinkingLevel
+): ModelThinkingLevel {
+  // Short-circuit non-reasoning models — never return a non-off level.
+  if (!model.reasoning) return 'off';
+  try {
+    const clamped = clampThinkingLevel(model, level) as string;
+    return (THINKING_LEVELS as readonly string[]).includes(clamped)
+      ? (clamped as ModelThinkingLevel)
+      : 'off';
+  } catch (err) {
+    // Silent downgrade to 'off' looks like "the model stopped reasoning" with
+    // nothing to grep for — always leave a trail.
+    logWarn(
+      '[pi-model-resolution] clampThinkingLevel failed for',
+      model.provider,
+      model.id,
+      '— falling back to off:',
+      err
+    );
+    return 'off';
+  }
+}
+
+/**
+ * Resolve the thinking levels supported by a given model string.
+ * String-keyed entry point for callers without a resolved `Model` (e.g. the
+ * Settings IPC handler).
+ */
+export function resolveThinkingCapabilities(
+  modelString: string,
+  options: PiModelLookupOptions = {}
+): ThinkingCapabilities {
+  try {
+    return resolveThinkingCapabilitiesForModel(resolveModelForThinking(modelString, options));
+  } catch (err) {
+    logWarn(
+      '[pi-model-resolution] resolveThinkingCapabilities failed for',
+      modelString,
+      '— reporting no thinking support:',
+      err
+    );
+    return { supportsThinking: false, levels: ['off'] };
+  }
+}
+
+/**
+ * Clamp a stored thinking level against a model *string*.
+ * Use {@link clampThinkingLevelForModel} instead when the resolved `Model` is
+ * already in hand.
+ */
+export function clampModelThinkingLevel(
+  modelString: string,
+  level: ModelThinkingLevel,
+  options: PiModelLookupOptions = {}
+): ModelThinkingLevel {
+  try {
+    return clampThinkingLevelForModel(resolveModelForThinking(modelString, options), level);
+  } catch (err) {
+    logWarn(
+      '[pi-model-resolution] clampModelThinkingLevel failed to resolve',
+      modelString,
+      '— falling back to off:',
+      err
+    );
+    return 'off';
+  }
+}
+
+/**
+ * Compute the set of pi-ai provider keys under which an API key should be
+ * stored in AuthStorage for a given agent run.
+ *
+ * Returns an array of provider key strings (deduplicated, length 1 or 2):
+ * - Always includes `piProvider` (the primary resolved key).
+ * - Conditionally includes `piModelProvider` (the SDK model's own provider)
+ *   for explicitly known-safe secondary-key scenarios only:
+ *   - openrouter: aggregator routes through underlying native providers
+ *     (e.g. pi-ai looks up 'google' for gemini models served via openrouter)
+ *   - custom with explicit protocol: relay routing where the protocol
+ *     identifies the actual provider SDK path
+ *
+ * Cold-start (catalog not yet resolved) is intentionally NOT a reason to add
+ * a secondary key — doing so risks storing a native-provider key under an
+ * unintended provider id (e.g. 'openai') and causing credential leakage or
+ * auth failures in multi-provider processes. Native providers in the v1
+ * allowlist all have id === piProvider, so the primary key is sufficient.
+ *
+ * Secondary keys set for aggregator paths must be removed after the run
+ * completes (see `secondaryRuntimeKeys` cleanup in agent-runner.ts `finally`)
+ * to prevent them persisting into subsequent runs via shared AuthStorage.
+ *
+ * Exported as a pure helper so it can be unit-tested independently.
+ */
+export function resolveRuntimeApiKeyProviders({
+  provider,
+  customProtocol,
+  piProvider,
+  piModelProvider,
+}: {
+  provider: string;
+  customProtocol?: string;
+  piProvider: string;
+  piModelProvider: string;
+}): string[] {
+  const keys: string[] = [piProvider];
+  if (piModelProvider === piProvider) return [...new Set(keys)]; // no-op
+
+  const isAggregatorPath = provider === 'openrouter' || (provider === 'custom' && !!customProtocol);
+
+  // Known provider-alias mappings: some builtin providers store models under a
+  // different pi-ai provider key than their config id. These are not aggregator
+  // paths but require the secondary key for auth lookup to succeed.
+  // Centralized here so routing and auth key storage share the same source of truth.
+  // Extend when new aliases are discovered via pi-ai SDK changes.
+  const isKnownAlias = piModelProvider === PROVIDER_AUTH_ALIASES[provider];
+
+  if (isAggregatorPath || isKnownAlias) {
+    keys.push(piModelProvider);
+  }
+  // Deduplicate explicitly to keep the length-1-or-2 contract even if
+  // future callers pass identical piProvider/piModelProvider values.
+  return [...new Set(keys)];
 }

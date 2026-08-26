@@ -1,4 +1,7 @@
 import type { SkillSource } from '../../shared/skill-conflict-types';
+import type { TokenUsage } from '../../shared/token-usage';
+import type { SharedModelThinkingLevel } from '../../shared/thinking-levels';
+export type { TokenUsage } from '../../shared/token-usage';
 
 // Session types
 export interface Session {
@@ -90,11 +93,6 @@ export interface ToolResultContent {
 export interface ThinkingContent {
   type: 'thinking';
   thinking: string;
-}
-
-export interface TokenUsage {
-  input: number;
-  output: number;
 }
 
 // Trace types for visualization
@@ -423,6 +421,8 @@ export interface SessionMemoryItem {
 
 export interface MemoryDebugFileInfo {
   kind: 'core' | 'experience' | 'state' | 'artifacts';
+  /** 'sqlite' for memory.db, 'file' (default) for JSON/dir entries. */
+  storage?: 'file' | 'sqlite';
   label: string;
   filePath: string;
   exists: boolean;
@@ -431,6 +431,28 @@ export interface MemoryDebugFileInfo {
   sessionCount?: number;
   chunkCount?: number;
 }
+
+export interface ExperienceDbStatus {
+  schemaVersion: number;
+  sessionCount: number;
+  chunkCount: number;
+  embeddingModel: string | null;
+  embeddingDim: number | null;
+  sizeBytes: number;
+  journalMode?: string | null;
+  integrityOk: boolean;
+  workspaceBreakdown: Array<{
+    workspaceKey: string;
+    sessionCount: number;
+    chunkCount: number;
+  }>;
+}
+
+/** Result of the file-based experience memory export. */
+export type ExperienceExportResult =
+  | { success: false; canceled: true }
+  | { success: true; path: string }
+  | { success: false; error: string };
 
 export interface MemoryDebugFileContent {
   kind: MemoryDebugFileInfo['kind'];
@@ -448,9 +470,25 @@ export interface MemoryInspectSessionResult {
   chunks: ChunkMemoryItem[];
 }
 
+// Re-export from shared — single source of truth across main/preload/renderer.
+export type {
+  LocalEmbeddingProgress,
+  LocalModelRuntimeStatus,
+  LocalModelStatus,
+  MemoryBackfillProgress,
+} from '../../shared/local-embedding-types';
+
+/** Result of the "Check models availability" probe (memory LLM + embedding). */
+export interface MemoryModelCheckResult {
+  llm: { ok: boolean; error?: string };
+  /** `skipped` is true when embeddings are disabled (nothing to check). */
+  embedding: { ok: boolean; error?: string; skipped?: boolean };
+}
+
 export interface MemoryPanelState {
   enabled: boolean;
   skillFallbackEnabled: boolean;
+  localModelDownloaded: boolean;
   coreEntries: Array<{ category: string; key: string; value: string; combinedKey: string }>;
   workspaceStats: {
     name: string;
@@ -489,6 +527,13 @@ export interface MemoryOverview {
   latestIngestionAt: number | null;
   latestError: string | null;
   latestErrorAt: number | null;
+  /** `memoryRuntime.useEmbedding` — when false the coverage fields are not meaningful. */
+  embeddingEnabled: boolean;
+  /** Chunks carrying a vector. Below `experienceChunkCount` means degraded semantic search. */
+  embeddedChunkCount: number;
+  /** Last embedding failure this process saw, or null. Not persisted across restarts. */
+  embeddingError: string | null;
+  embeddingErrorAt: number | null;
   currentWorkspace?: {
     workspaceKey: string;
     experienceSessionCount: number;
@@ -781,7 +826,8 @@ export interface Settings {
    */
   bashDenylist: string[];
   globalSkillsPath: string;
-  systemPromptFile: SystemPromptFileChoice;
+  systemPromptFileEnabled: boolean;
+  systemPromptFilePriority: string[];
   memoryStrategy: 'auto' | 'manual' | 'rolling';
   maxContextTokens: number;
   // Scheduler settings (v2)
@@ -822,10 +868,33 @@ export interface ExecutionContext {
 }
 
 // App Config types
-export type ProviderType = 'openrouter' | 'anthropic' | 'custom' | 'openai' | 'gemini' | 'ollama';
+/**
+ * The 6 legacy builtin provider ids. Use for exhaustive switches over builtins.
+ */
+export type BuiltinProviderType =
+  | 'openrouter'
+  | 'anthropic'
+  | 'custom'
+  | 'openai'
+  | 'gemini'
+  | 'ollama';
+/**
+ * Open provider type — accepts any catalog id including native providers
+ * (e.g. 'zai', 'minimax', 'deepseek') and the 6 legacy builtin ids.
+ * Use BuiltinProviderType when you need exhaustive matching over the 6.
+ */
+export type ProviderType = string;
+/**
+ * Superset of ProviderType that additionally allows 'local' for the embedding sub-config only.
+ * The 'local' value must never appear on the main LLM config or any ApiConfigSet provider field.
+ */
+export type EmbeddingProviderType = ProviderType | 'local';
 export type CustomProtocolType = 'anthropic' | 'openai' | 'gemini';
 export type AppTheme = 'dark' | 'light' | 'system';
-export type ProviderProfileKey =
+/**
+ * Builtin profile keys for the 6 legacy providers.
+ */
+export type BuiltinProfileKey =
   | 'openrouter'
   | 'anthropic'
   | 'openai'
@@ -834,6 +903,12 @@ export type ProviderProfileKey =
   | 'custom:anthropic'
   | 'custom:openai'
   | 'custom:gemini';
+/**
+ * Profile key — builtin slot or a native provider slot (`native:<piProvider>`).
+ * Each native provider gets its own credential slot so switching between
+ * providers preserves both saved keys.
+ */
+export type ProviderProfileKey = BuiltinProfileKey | `native:${string}`;
 export type ConfigSetId = string;
 
 export interface ProviderProfile {
@@ -842,6 +917,14 @@ export interface ProviderProfile {
   model: string;
   contextWindow?: number;
   maxTokens?: number;
+}
+
+/** Re-exported from shared/thinking-levels to keep renderer types consistent with main. */
+export type ModelThinkingLevel = SharedModelThinkingLevel;
+
+export interface ThinkingCapabilities {
+  supportsThinking: boolean;
+  levels: ModelThinkingLevel[];
 }
 
 export interface ApiConfigSet {
@@ -853,6 +936,8 @@ export interface ApiConfigSet {
   activeProfileKey: ProviderProfileKey;
   profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
   enableThinking: boolean;
+  /** Replaces enableThinking. Always a valid ModelThinkingLevel after normalization. */
+  thinkingLevel: ModelThinkingLevel;
   updatedAt: string;
 }
 
@@ -862,9 +947,9 @@ export interface CreateSetPayload {
   fromSetId?: string;
 }
 
-export interface MemoryModelRuntimeConfig {
+/** Shared fields for both LLM and embedding memory runtime sub-configs. */
+export interface MemoryModelRuntimeConfigBase {
   inheritFromActive: boolean;
-  provider?: ProviderType;
   customProtocol?: CustomProtocolType;
   apiKey?: string;
   baseUrl?: string;
@@ -872,9 +957,26 @@ export interface MemoryModelRuntimeConfig {
   timeoutMs: number;
 }
 
+/** LLM sub-config: provider is always a ProviderType (never 'local'). */
+export interface MemoryLLMRuntimeConfig extends MemoryModelRuntimeConfigBase {
+  provider?: ProviderType;
+}
+
+/** Embedding sub-config: provider may be 'local' for in-process ONNX inference. */
+export interface MemoryEmbeddingRuntimeConfig extends MemoryModelRuntimeConfigBase {
+  provider?: EmbeddingProviderType;
+}
+
+/**
+ * @deprecated Use MemoryLLMRuntimeConfig or MemoryEmbeddingRuntimeConfig directly.
+ * Kept as a union alias so existing consumers that reference MemoryModelRuntimeConfig
+ * continue to compile during the transition.
+ */
+export type MemoryModelRuntimeConfig = MemoryLLMRuntimeConfig | MemoryEmbeddingRuntimeConfig;
+
 export interface MemoryRuntimeConfig {
-  llm: MemoryModelRuntimeConfig;
-  embedding: MemoryModelRuntimeConfig;
+  llm: MemoryLLMRuntimeConfig;
+  embedding: MemoryEmbeddingRuntimeConfig;
   useEmbedding: boolean;
   maxNavSteps: number;
   ingestionConcurrency: number;
@@ -910,7 +1012,8 @@ export interface AppConfig {
   defaultWorkdir?: string;
   globalSkillsPath?: string;
   localDevPath?: string;
-  systemPromptFile?: SystemPromptFileChoice;
+  systemPromptFileEnabled?: boolean;
+  systemPromptFilePriority?: string[];
   // Bash command trust list and denylist. Optional on the renderer side
   // because the Settings bootstrap hydrates them defensively via `?? []`.
   // Main's `AppConfig` keeps these required and always non-null.
@@ -921,6 +1024,8 @@ export interface AppConfig {
   memoryEnabled?: boolean;
   memoryRuntime?: MemoryRuntimeConfig;
   enableThinking?: boolean;
+  /** Replaces enableThinking. Always a valid ModelThinkingLevel after normalization. */
+  thinkingLevel?: ModelThinkingLevel;
   isConfigured: boolean;
   // Scheduler settings (v2)
   schedulerCatchUpPolicy?: CatchUpPolicy;
@@ -932,6 +1037,8 @@ export interface AppConfig {
   mcpToolTimeoutSeconds?: number;
   // Native desktop notifications when the app is not focused.
   notificationsEnabled?: boolean;
+  // Optional HTTP proxy URL for all outbound API requests.
+  httpProxy?: string;
 }
 
 export interface ProviderPreset {

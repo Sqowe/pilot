@@ -4,7 +4,7 @@ import { probeWithClaudeSdk } from '../claude/claude-sdk-one-shot';
 
 export async function runConfigApiTest(
   payload: ApiTestInput,
-  config: AppConfig,
+  config: AppConfig
 ): Promise<ApiTestResult> {
   return probeWithClaudeSdk(payload, config);
 }

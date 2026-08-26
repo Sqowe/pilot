@@ -13,7 +13,10 @@ export function getDefaultTitleFromPrompt(prompt: string): string {
   return truncateSessionTitle(trimmed);
 }
 
-export function getInitialSessionTitle(prompt: string, firstAttachmentName?: string | null): string {
+export function getInitialSessionTitle(
+  prompt: string,
+  firstAttachmentName?: string | null
+): string {
   const promptTitle = getDefaultTitleFromPrompt(prompt);
   if (promptTitle !== DEFAULT_SESSION_TITLE) {
     return promptTitle;

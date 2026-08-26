@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
+  EmbeddingProviderType,
+  ExperienceDbStatus,
+  LocalEmbeddingProgress,
   MemoryDebugFileContent,
   MemoryDebugFileInfo,
   MemoryInspectSessionResult,
+  MemoryModelCheckResult,
   MemoryOverview,
   MemoryReadResult,
   MemoryRuntimeConfig,
@@ -12,8 +16,22 @@ import type {
 } from '../../types';
 import { useAppStore } from '../../store';
 import { SettingsContentSection } from './shared';
+import { classifyEmbeddingModel } from './embedding-model-validation';
 
 type SearchMode = 'workspace' | 'all' | 'global';
+
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes)) return '—';
+  const KB = 1024;
+  const MB = KB * 1024;
+  const GB = MB * 1024;
+  const TB = GB * 1024;
+  if (bytes < KB) return `${bytes} B`;
+  if (bytes < MB) return `${(bytes / KB).toFixed(1)} KB`;
+  if (bytes < GB) return `${(bytes / MB).toFixed(1)} MB`;
+  if (bytes < TB) return `${(bytes / GB).toFixed(2)} GB`;
+  return `${(bytes / TB).toFixed(2)} TB`;
+}
 
 function formatRelativeTime(timestamp: number, locale?: string): string {
   const now = Date.now();
@@ -59,6 +77,13 @@ function classifyIngestionError(error: string): string {
   return 'unknown';
 }
 
+/**
+ * UI-side fallback defaults, mirroring config-store.ts defaultConfig.memoryRuntime.
+ * Design decisions D3 (local-by-default for new installs) and D4 (existing installs
+ * frozen via schema v2 migration) are implemented in the main process config layer.
+ * These UI defaults only apply when appConfig.memoryRuntime is absent (e.g., tests
+ * or pre-hydration render). See docs/design/local-embeddings-default.md §7.
+ */
 const DEFAULT_MEMORY_RUNTIME: MemoryRuntimeConfig = {
   llm: {
     inheritFromActive: true,
@@ -68,13 +93,14 @@ const DEFAULT_MEMORY_RUNTIME: MemoryRuntimeConfig = {
     timeoutMs: 180000,
   },
   embedding: {
-    inheritFromActive: true,
+    inheritFromActive: false,
+    provider: 'local' as EmbeddingProviderType,
     apiKey: '',
     baseUrl: '',
-    model: 'text-embedding-3-small',
+    model: '',
     timeoutMs: 180000,
   },
-  useEmbedding: false,
+  useEmbedding: true,
   maxNavSteps: 2,
   ingestionConcurrency: 4,
   storageRoot: '',
@@ -89,6 +115,26 @@ const DEFAULT_MEMORY_RUNTIME: MemoryRuntimeConfig = {
   supersessionPenalty: 0.2,
   supersessionKeywordThreshold: 0.5,
 };
+
+/**
+ * Deterministic JSON with recursively-sorted object keys, so two configs that
+ * differ only in key order compare equal. Used for dirty-checking the runtime
+ * config and detecting model-config changes.
+ */
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, val) => {
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      const obj = val as Record<string, unknown>;
+      return Object.keys(obj)
+        .sort()
+        .reduce<Record<string, unknown>>((acc, k) => {
+          acc[k] = obj[k];
+          return acc;
+        }, {});
+    }
+    return val;
+  });
+}
 
 function cloneRuntimeConfig(runtime?: MemoryRuntimeConfig): MemoryRuntimeConfig {
   const source = runtime || DEFAULT_MEMORY_RUNTIME;
@@ -117,7 +163,13 @@ function cloneRuntimeConfig(runtime?: MemoryRuntimeConfig): MemoryRuntimeConfig 
   };
 }
 
-export function SettingsMemory() {
+/**
+ * `isActive` follows the SettingsSkills/SettingsConnectors convention: SettingsPanel
+ * keeps visited tabs mounted (hidden via CSS), so without it the overview would stay
+ * frozen at whatever it was when the tab was first opened. The embedding-coverage
+ * card in particular reports a live condition and must not show a stale snapshot.
+ */
+export function SettingsMemory({ isActive = true }: { isActive?: boolean } = {}) {
   const { t, i18n } = useTranslation();
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   const sessions = useAppStore((state) => state.sessions);
@@ -143,8 +195,69 @@ export function SettingsMemory() {
   );
   const [isBusy, setIsBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  // "Check models availability" step: when the LLM/embedding config changes, the
+  // user must run a successful check before Save is enabled. checkedSignature holds
+  // the model signature that last passed; a later edit changes the signature and
+  // re-requires a check.
+  const [isChecking, setIsChecking] = useState(false);
+  const [checkedSignature, setCheckedSignature] = useState<string | null>(null);
+  const [checkResult, setCheckResult] = useState<MemoryModelCheckResult | null>(null);
+  // True when stored local embeddings predate a format change (e.g. the prefix fix).
+  const [embeddingFormatStale, setEmbeddingFormatStale] = useState(false);
+  // Separate §7 condition: stored vectors were embedded with a different model than
+  // the one now configured, so retrieval has silently degraded to lexical-only.
+  const [embeddingModelStale, setEmbeddingModelStale] = useState(false);
+
+  // Experience DB (memory.db) status card — populated when the sqlite entry is selected.
+  const [experienceDbStatus, setExperienceDbStatus] = useState<ExperienceDbStatus | null>(null);
+  const [isVacuuming, setIsVacuuming] = useState(false);
+  const [isBackfilling, setIsBackfilling] = useState(false);
+  const [backfillProgress, setBackfillProgress] = useState<{
+    processed: number;
+    total: number;
+  } | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Selection request sequencing: bumped on each selection/refresh so that in-flight
+  // reads/status fetches whose selection has since changed are discarded (stale-guard).
+  const selectionRequestRef = useRef(0);
+
+  const refreshEmbeddingFormatStale = useCallback(async () => {
+    try {
+      const { stale, modelStale } = await window.electronAPI.memory.isEmbeddingFormatStale();
+      setEmbeddingFormatStale(stale);
+      setEmbeddingModelStale(modelStale);
+    } catch {
+      setEmbeddingFormatStale(false);
+      setEmbeddingModelStale(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isActive) {
+      return;
+    }
+    void refreshEmbeddingFormatStale();
+  }, [refreshEmbeddingFormatStale, isActive]);
+
+  // Backfill progress arrives from the main process per row (throttled there).
+  // Subscribed unconditionally rather than only while running, so a backfill
+  // started before this tab was opened still reports itself.
+  useEffect(() => {
+    return window.electronAPI.memory.onBackfillProgress((p) => {
+      setBackfillProgress(p);
+      // Track the running flag from the events themselves, so a panel mounted
+      // mid-run reports correctly and does not stay stuck on "running" at the end
+      // (the handler's own finally only fires in the tab that started the run).
+      setIsBackfilling(p.processed < p.total);
+    });
+  }, []);
 
   const enabled = overview?.enabled ?? appConfig?.memoryEnabled ?? true;
+
+  const selectedFile =
+    selectedFilePath != null ? (files.find((f) => f.filePath === selectedFilePath) ?? null) : null;
+  const selectedIsSqlite = selectedFile?.storage === 'sqlite';
 
   const groupedResults = useMemo(() => {
     return {
@@ -170,20 +283,74 @@ export function SettingsMemory() {
     setOverview(nextOverview);
   };
 
+  // Fetch the experience DB status card data. When `requestId` is supplied it acts as a
+  // stale-guard: if the selection has since changed (token bumped) the result is discarded.
+  // `silent` skips touching the shared `status` message — used by actions (e.g. vacuum) that
+  // set their own status and don't want it cleared by this refresh.
+  const refreshExperienceDbStatus = async (opts?: { requestId?: number; silent?: boolean }) => {
+    const { requestId, silent = false } = opts ?? {};
+    const isStale = () => requestId != null && requestId !== selectionRequestRef.current;
+    try {
+      const result = await window.electronAPI.memory.getExperienceDbStatus();
+      if (isStale()) return;
+      if (result.success) {
+        setExperienceDbStatus(result.status);
+        // Clear any prior error so a successful reload doesn't leave stale error text.
+        if (!silent) setStatus(null);
+      } else {
+        setExperienceDbStatus(null);
+        if (!silent) {
+          setStatus(
+            `${t('memory.experienceDbStatusError')}${result.error ? `: ${result.error}` : ''}`
+          );
+        }
+      }
+    } catch (error) {
+      if (isStale()) return;
+      setExperienceDbStatus(null);
+      if (!silent) setStatus(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const refreshFiles = async () => {
     const nextFiles = await window.electronAPI.memory.listFiles();
     setFiles(nextFiles);
     const selectedEntry = nextFiles.find((item) => item.filePath === selectedFilePath);
     if (selectedFilePath && selectedEntry?.exists) {
-      const nextContent = await window.electronAPI.memory.readFile(selectedFilePath);
-      setFileContent(nextContent);
+      const requestId = ++selectionRequestRef.current;
+      // Experience memory lives in a binary SQLite DB; the backend refuses raw reads,
+      // so fetch structured status instead of trying to parse the file.
+      if (selectedEntry.storage === 'sqlite') {
+        setFileContent(null); // clear the raw pane when viewing the DB card
+        await refreshExperienceDbStatus({ requestId });
+      } else {
+        setExperienceDbStatus(null); // clear the DB card when viewing a raw file
+        try {
+          const nextContent = await window.electronAPI.memory.readFile(selectedFilePath);
+          if (requestId === selectionRequestRef.current) setFileContent(nextContent);
+        } catch (error) {
+          if (requestId === selectionRequestRef.current) {
+            setStatus(error instanceof Error ? error.message : String(error));
+          }
+        }
+      }
     } else {
+      // Selection no longer valid (file removed/missing): invalidate any in-flight
+      // fetch for the previous entry before resetting the pane.
+      ++selectionRequestRef.current;
       setSelectedFilePath(null);
       setFileContent(null);
+      setExperienceDbStatus(null);
     }
   };
 
+  // Re-reads whenever the tab becomes visible again, so counters that move in the
+  // background (ingestion, embedding coverage) are current rather than a snapshot
+  // from when the panel was first opened.
   useEffect(() => {
+    if (!isActive) {
+      return;
+    }
     let cancelled = false;
     const load = async () => {
       try {
@@ -205,7 +372,7 @@ export function SettingsMemory() {
     return () => {
       cancelled = true;
     };
-  }, [currentWorkspace]);
+  }, [currentWorkspace, isActive]);
 
   const handleToggle = async () => {
     setIsBusy(true);
@@ -287,21 +454,179 @@ export function SettingsMemory() {
   const handleSelectFile = async (filePath: string) => {
     const entry = files.find((item) => item.filePath === filePath);
     if (entry && !entry.exists) {
+      // Supersede any in-flight fetch for the prior entry; nothing to load here.
+      ++selectionRequestRef.current;
       setSelectedFilePath(filePath);
       setFileContent(null);
-      setStatus(t('memory.fileNotCreatedYet'));
+      setExperienceDbStatus(null);
+      setIsBusy(false);
+      setStatus(
+        entry.storage === 'sqlite'
+          ? t('memory.experienceDbNotCreatedYet')
+          : t('memory.fileNotCreatedYet')
+      );
       return;
     }
+    // Bump on each selection so in-flight reads/status fetches for the previous entry
+    // are discarded once they resolve (stale-guard against out-of-order resolution).
+    const requestId = ++selectionRequestRef.current;
+    setSelectedFilePath(filePath);
+    setStatus(null);
     setIsBusy(true);
+    try {
+      // Experience memory lives in a binary SQLite DB (memory.db); the backend refuses
+      // raw reads, so fetch the structured status instead of trying to parse the file.
+      if (entry?.storage === 'sqlite') {
+        setFileContent(null);
+        await refreshExperienceDbStatus({ requestId });
+      } else {
+        setExperienceDbStatus(null);
+        const nextContent = await window.electronAPI.memory.readFile(filePath);
+        if (requestId === selectionRequestRef.current) setFileContent(nextContent);
+      }
+    } catch (error) {
+      if (requestId === selectionRequestRef.current) {
+        setStatus(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (requestId === selectionRequestRef.current) setIsBusy(false);
+    }
+  };
+
+  const handleVacuumExperienceDb = async () => {
+    // Capture the selection token so a selection change mid-vacuum doesn't clobber the
+    // newly-selected entry's status / DB card with this action's result.
+    const requestId = selectionRequestRef.current;
+    const stillCurrent = () => requestId === selectionRequestRef.current;
+    setIsVacuuming(true);
     setStatus(null);
     try {
-      const nextContent = await window.electronAPI.memory.readFile(filePath);
-      setSelectedFilePath(filePath);
-      setFileContent(nextContent);
+      const result = await window.electronAPI.memory.vacuumExperienceDb();
+      if (result.success) {
+        if (stillCurrent()) setStatus(t('memory.vacuumSuccess'));
+        // Silent refresh so this success message isn't cleared by the status reload.
+        await refreshExperienceDbStatus({ requestId, silent: true });
+      } else if (stillCurrent()) {
+        setStatus(`${t('memory.vacuumFailed')}${result.error ? `: ${result.error}` : ''}`);
+      }
+    } catch (error) {
+      if (stillCurrent()) setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsVacuuming(false);
+    }
+  };
+
+  const handleBackfillEmbeddings = async () => {
+    const counts = await window.electronAPI.memory.countEmbeddingBackfill();
+    const total = counts.chunkCount + counts.sessionCount;
+    if (!total) {
+      setStatus(t('memory.backfillNothingToDo'));
+      return;
+    }
+    if (!window.confirm(t('memory.backfillConfirm', { count: total }))) {
+      return;
+    }
+    setIsBackfilling(true);
+    setStatus(null);
+    try {
+      const result = await window.electronAPI.memory.backfillEmbeddings();
+      if (result.success) {
+        setStatus(t('memory.backfillDone', { embedded: result.embedded, failed: result.failed }));
+      } else {
+        setStatus(`${t('memory.backfillFailed')}${result.error ? `: ${result.error}` : ''}`);
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsBusy(false);
+      setIsBackfilling(false);
+      setBackfillProgress(null);
+      // Redraw regardless of outcome: on success the coverage card must show the new
+      // numbers, on failure it must show the recorded reason.
+      await Promise.all([
+        refreshOverview(),
+        refreshEmbeddingFormatStale(),
+        refreshExperienceDbStatus({ silent: true }),
+      ]);
+    }
+  };
+
+  const handleExportExperienceJson = async () => {
+    const requestId = selectionRequestRef.current;
+    const stillCurrent = () => requestId === selectionRequestRef.current;
+    setIsExporting(true);
+    setStatus(null);
+    try {
+      const result = await window.electronAPI.memory.exportExperienceMemoryToFile();
+      if (!stillCurrent()) return;
+      if (result.success) {
+        setStatus(t('memory.exportSuccess', { path: result.path }));
+      } else if ('canceled' in result && result.canceled) {
+        // User dismissed the save dialog — no message.
+      } else {
+        // Failure (carries `error`) or any unexpected shape — surface it rather than
+        // silently misclassifying it as a cancellation.
+        const detail = 'error' in result && result.error ? `: ${result.error}` : '';
+        setStatus(`${t('memory.exportFailed')}${detail}`);
+      }
+    } catch (error) {
+      if (stillCurrent()) setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Block saving when a Custom-mode embedding override is a chat model (won't embed).
+  // A 'prefix' issue (E5/Nomic) is only a soft warning and does not block.
+  const embeddingModelBlocked =
+    runtimeDraft.useEmbedding &&
+    resolveEmbeddingMode(runtimeDraft.embedding) === 'custom' &&
+    classifyEmbeddingModel(runtimeDraft.embedding.model ?? '') === 'chat';
+
+  // Dirty-check the whole runtime section (compared against a same-shape clone of
+  // the saved config so key order can't cause false positives).
+  const savedRuntimeClone = cloneRuntimeConfig(appConfig?.memoryRuntime);
+  const runtimeDirty = stableStringify(runtimeDraft) !== stableStringify(savedRuntimeClone);
+
+  // Did the model config specifically change? Embedding changes only matter when
+  // embeddings are enabled.
+  const llmChanged = stableStringify(runtimeDraft.llm) !== stableStringify(savedRuntimeClone.llm);
+  const embeddingChanged =
+    stableStringify(runtimeDraft.embedding) !== stableStringify(savedRuntimeClone.embedding);
+  const useEmbeddingChanged = runtimeDraft.useEmbedding !== savedRuntimeClone.useEmbedding;
+  const modelConfigChanged =
+    llmChanged || useEmbeddingChanged || (runtimeDraft.useEmbedding && embeddingChanged);
+
+  // Signature of the model-affecting config; a passed check is only valid while
+  // this stays identical.
+  const modelSignature = stableStringify({
+    llm: runtimeDraft.llm,
+    useEmbedding: runtimeDraft.useEmbedding,
+    embedding: runtimeDraft.embedding,
+  });
+  const checkPassed = checkedSignature === modelSignature;
+  // Must run a successful availability check before saving a model-config change.
+  const needsCheck = modelConfigChanged && !checkPassed;
+
+  const handleCheckModels = async () => {
+    setIsChecking(true);
+    setStatus(null);
+    setCheckResult(null);
+    try {
+      const result = await window.electronAPI.memory.checkModelAvailability(runtimeDraft);
+      setCheckResult(result);
+      if (result.llm.ok && result.embedding.ok) {
+        setCheckedSignature(modelSignature);
+        setStatus(t('memory.modelCheckPassed'));
+      } else {
+        const parts: string[] = [];
+        if (!result.llm.ok) parts.push(`LLM — ${result.llm.error ?? 'failed'}`);
+        if (!result.embedding.ok) parts.push(`Embedding — ${result.embedding.error ?? 'failed'}`);
+        setStatus(`${t('memory.modelCheckFailed')} ${parts.join(' · ')}`);
+      }
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsChecking(false);
     }
   };
 
@@ -309,11 +634,34 @@ export function SettingsMemory() {
     setIsBusy(true);
     setStatus(null);
     try {
+      // Detect embedding provider or model change before saving.
+      // Switching provider/model changes vector dimensions (768 vs 1536+), making
+      // existing stored vectors incompatible with new ones (§8 of local-embeddings-default.md).
+      const savedEmbedding = appConfig?.memoryRuntime?.embedding;
+      const draftEmbedding = runtimeDraft.embedding;
+      const providerChanged = draftEmbedding.provider !== savedEmbedding?.provider;
+      const modelChanged =
+        (draftEmbedding.model ?? '') !== (savedEmbedding?.model ?? '') &&
+        // Only flag a model change when not using local (local's model ID is hardcoded,
+        // not stored in config, so the model field is irrelevant for local mode).
+        draftEmbedding.provider !== 'local' &&
+        savedEmbedding?.provider !== 'local';
+      const willUseEmbedding = runtimeDraft.useEmbedding;
+      const embeddingIndexAffected = willUseEmbedding && (providerChanged || modelChanged);
+
       await window.electronAPI.config.save({
         memoryRuntime: runtimeDraft,
       });
-      await refreshOverview();
+      await Promise.all([refreshOverview(), refreshEmbeddingFormatStale()]);
       setStatus(t('memory.runtimeSaved'));
+
+      // Offer to recompute vectors after saving, so the new config is already
+      // persisted when the backfill reads it. A provider or model change
+      // invalidates the vectors, not the extracted summaries — so this recomputes
+      // embeddings rather than re-running extraction over every session.
+      if (embeddingIndexAffected) {
+        await handleBackfillEmbeddings();
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {
@@ -349,7 +697,7 @@ export function SettingsMemory() {
     setStatus(null);
     try {
       const result = await window.electronAPI.memory.rebuildAll();
-      await Promise.all([refreshOverview(), refreshFiles()]);
+      await Promise.all([refreshOverview(), refreshFiles(), refreshEmbeddingFormatStale()]);
       setStatus(
         t('memory.rebuildAllSuccess', {
           sessions: result.sessionCount,
@@ -520,6 +868,72 @@ export function SettingsMemory() {
                   : undefined
               }
             />
+            {/* Embedding coverage is deliberately its own card rather than part of
+                "Ingestion status": a chunk stored without a vector was ingested
+                successfully, it is just invisible to semantic search. Folding the
+                two together would report a failure that did not happen — and hide
+                one that did. */}
+            {overview?.embeddingEnabled ? (
+              <InfoCard
+                label={t('memory.embeddingCoverage')}
+                status={
+                  overview.embeddingError
+                    ? 'error'
+                    : overview.embeddedChunkCount < overview.experienceChunkCount
+                      ? 'warning'
+                      : 'healthy'
+                }
+                value={t('memory.embeddingCoverageValue', {
+                  embedded: overview.embeddedChunkCount,
+                  total: overview.experienceChunkCount,
+                  percent: overview.experienceChunkCount
+                    ? Math.round(
+                        (overview.embeddedChunkCount / overview.experienceChunkCount) * 100
+                      )
+                    : 0,
+                })}
+                secondary={
+                  // While a backfill runs, progress is the only thing worth saying:
+                  // the coverage number above is a snapshot and cannot move on its own.
+                  isBackfilling && backfillProgress
+                    ? t('memory.backfillProgress', {
+                        processed: backfillProgress.processed,
+                        total: backfillProgress.total,
+                      })
+                    : overview.embeddingError
+                      ? [
+                          overview.embeddingError,
+                          overview.embeddingErrorAt
+                            ? t('memory.lastFailure', {
+                                time: new Date(overview.embeddingErrorAt).toLocaleString(
+                                  i18n.language
+                                ),
+                              })
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join('\n')
+                      : overview.embeddedChunkCount < overview.experienceChunkCount
+                        ? t('memory.embeddingCoverageHint')
+                        : undefined
+                }
+                // Offered only when there is something to fix. Unlike "Rebuild all"
+                // this runs no LLM extraction and deletes nothing — it just computes
+                // the missing vectors from text already in the database.
+                action={
+                  overview.embeddedChunkCount < overview.experienceChunkCount
+                    ? {
+                        label: isBackfilling
+                          ? t('memory.backfillRunning')
+                          : t('memory.backfillAction'),
+                        onClick: () => {
+                          if (!isBackfilling) void handleBackfillEmbeddings();
+                        },
+                      }
+                    : undefined
+                }
+              />
+            ) : null}
           </div>
         </div>
       </SettingsContentSection>
@@ -685,68 +1099,88 @@ export function SettingsMemory() {
                 />
               </LabeledField>
             </div>
-            <div className="space-y-3 rounded-lg border border-border-muted bg-background/80 p-3">
-              <p className="text-sm font-medium text-text-primary">{t('memory.embeddingConfig')}</p>
-              <ToggleField
-                label={t('memory.inheritActive')}
-                checked={runtimeDraft.embedding.inheritFromActive}
-                onChange={(checked) =>
-                  setRuntimeDraft((prev) => ({
-                    ...prev,
-                    embedding: { ...prev.embedding, inheritFromActive: checked },
-                  }))
-                }
-              />
-              <LabeledField label={t('memory.modelOverride')}>
-                <input
-                  value={runtimeDraft.embedding.model || ''}
-                  onChange={(event) =>
-                    setRuntimeDraft((prev) => ({
-                      ...prev,
-                      embedding: { ...prev.embedding, model: event.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none focus:border-accent"
-                />
-              </LabeledField>
-              <LabeledField label={t('memory.baseUrlOverride')}>
-                <input
-                  value={runtimeDraft.embedding.baseUrl || ''}
-                  onChange={(event) =>
-                    setRuntimeDraft((prev) => ({
-                      ...prev,
-                      embedding: { ...prev.embedding, baseUrl: event.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none focus:border-accent"
-                />
-              </LabeledField>
-              <LabeledField label={t('memory.apiKeyOverride')}>
-                <input
-                  type="password"
-                  value={runtimeDraft.embedding.apiKey || ''}
-                  onChange={(event) =>
-                    setRuntimeDraft((prev) => ({
-                      ...prev,
-                      embedding: { ...prev.embedding, apiKey: event.target.value },
-                    }))
-                  }
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none focus:border-accent"
-                />
-              </LabeledField>
-            </div>
+            {(embeddingFormatStale || embeddingModelStale) && (
+              <div className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-900/60 dark:bg-amber-950/30 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  {embeddingModelStale
+                    ? t('memory.embeddingModelStaleWarning')
+                    : t('memory.embeddingFormatStaleWarning')}
+                </p>
+                {/* Backfill, not rebuildAll: both staleness cases need vectors
+                    recomputed, not summaries re-extracted. Rebuilding would delete
+                    core memory, drop records whose source sessions are gone, and
+                    spend an LLM extraction pass on every session to arrive at the
+                    same place. */}
+                <button
+                  type="button"
+                  onClick={() => void handleBackfillEmbeddings()}
+                  disabled={isBusy || isBackfilling}
+                  className="shrink-0 rounded-lg border border-amber-400 bg-background px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-60 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                >
+                  {isBackfilling ? t('memory.backfillRunning') : t('memory.backfillAction')}
+                </button>
+              </div>
+            )}
+            <EmbeddingConfigBlock
+              runtimeDraft={runtimeDraft}
+              setRuntimeDraft={setRuntimeDraft}
+              savedStorageRoot={appConfig?.memoryRuntime?.storageRoot ?? ''}
+              isBusy={isBusy}
+              setIsBusy={setIsBusy}
+              setStatus={setStatus}
+            />
           </div>
           <div className="flex justify-end">
-            <button
-              onClick={() => {
-                void handleSaveRuntime();
-              }}
-              disabled={isBusy}
-              className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {t('memory.saveRuntime')}
-            </button>
+            {needsCheck ? (
+              <button
+                onClick={() => {
+                  void handleCheckModels();
+                }}
+                disabled={isBusy || isChecking || embeddingModelBlocked || !appConfig}
+                title={embeddingModelBlocked ? t('memory.embeddingModelChatError') : undefined}
+                className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isChecking ? t('memory.checkingModels') : t('memory.checkModelsAvailability')}
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  void handleSaveRuntime();
+                }}
+                disabled={isBusy || !appConfig || !runtimeDirty || embeddingModelBlocked}
+                title={embeddingModelBlocked ? t('memory.embeddingModelChatError') : undefined}
+                className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {t('memory.saveRuntime')}
+              </button>
+            )}
           </div>
+          {checkResult && (
+            <div className="flex flex-col items-end gap-0.5 text-xs">
+              <span
+                className={
+                  checkResult.llm.ok
+                    ? 'text-green-700 dark:text-green-400'
+                    : 'text-rose-600 dark:text-rose-400'
+                }
+              >
+                {checkResult.llm.ok ? '✓' : '✗'} {t('memory.checkLlmLabel')}
+              </span>
+              <span
+                className={
+                  checkResult.embedding.skipped
+                    ? 'text-text-muted'
+                    : checkResult.embedding.ok
+                      ? 'text-green-700 dark:text-green-400'
+                      : 'text-rose-600 dark:text-rose-400'
+                }
+              >
+                {checkResult.embedding.skipped ? '—' : checkResult.embedding.ok ? '✓' : '✗'}{' '}
+                {t('memory.checkEmbeddingLabel')}
+                {checkResult.embedding.skipped ? ` (${t('memory.checkSkipped')})` : ''}
+              </span>
+            </div>
+          )}
         </div>
       </SettingsContentSection>
 
@@ -969,7 +1403,14 @@ export function SettingsMemory() {
                       : 'border-border-muted bg-background/80 hover:bg-surface-hover'
                   }`}
                 >
-                  <p className="text-sm font-medium text-text-primary">{file.label}</p>
+                  <p className="text-sm font-medium text-text-primary">
+                    {file.label}
+                    {file.storage === 'sqlite' && (
+                      <span className="ml-2 rounded bg-accent/10 px-1.5 py-0.5 align-middle text-[10px] font-medium uppercase tracking-wide text-accent">
+                        SQLite
+                      </span>
+                    )}
+                  </p>
                   <p className="mt-1 text-xs text-text-muted">{file.filePath}</p>
                   <p className="mt-2 text-[11px] text-text-muted">
                     {file.sizeBytes} bytes
@@ -988,32 +1429,51 @@ export function SettingsMemory() {
           </div>
 
           <div className="rounded-xl border border-border-muted bg-background/80 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-text-primary">{t('memory.fileContent')}</p>
-                {fileContent?.filePath && (
-                  <p className="mt-1 text-xs text-text-muted">{fileContent.filePath}</p>
-                )}
-              </div>
-              {fileContent?.filePath && (
-                <button
-                  onClick={() => {
-                    void window.electronAPI.showItemInFolder(fileContent.filePath);
-                  }}
-                  className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-text-primary"
-                >
-                  {t('memory.revealInFinder')}
-                </button>
-              )}
-            </div>
-            {fileContent ? (
-              <pre className="mt-3 max-h-[34rem] overflow-auto rounded-lg bg-background-secondary/80 p-3 text-xs leading-5 text-text-secondary whitespace-pre-wrap">
-                {fileContent.parsed
-                  ? JSON.stringify(fileContent.parsed, null, 2)
-                  : fileContent.text || t('memory.emptyFile')}
-              </pre>
+            {selectedIsSqlite ? (
+              <ExperienceDbStatusCard
+                status={experienceDbStatus}
+                exists={selectedFile?.exists ?? false}
+                isVacuuming={isVacuuming}
+                isExporting={isExporting}
+                onVacuum={() => {
+                  void handleVacuumExperienceDb();
+                }}
+                onExport={() => {
+                  void handleExportExperienceJson();
+                }}
+              />
             ) : (
-              <p className="mt-3 text-sm text-text-muted">{t('memory.selectFileHint')}</p>
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-text-primary">
+                      {t('memory.fileContent')}
+                    </p>
+                    {fileContent?.filePath && (
+                      <p className="mt-1 text-xs text-text-muted">{fileContent.filePath}</p>
+                    )}
+                  </div>
+                  {fileContent?.filePath && (
+                    <button
+                      onClick={() => {
+                        void window.electronAPI.showItemInFolder(fileContent.filePath);
+                      }}
+                      className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-text-primary"
+                    >
+                      {t('memory.revealInFinder')}
+                    </button>
+                  )}
+                </div>
+                {fileContent ? (
+                  <pre className="mt-3 max-h-[34rem] overflow-auto rounded-lg bg-background-secondary/80 p-3 text-xs leading-5 text-text-secondary whitespace-pre-wrap">
+                    {fileContent.parsed
+                      ? JSON.stringify(fileContent.parsed, null, 2)
+                      : fileContent.text || t('memory.emptyFile')}
+                  </pre>
+                ) : (
+                  <p className="mt-3 text-sm text-text-muted">{t('memory.selectFileHint')}</p>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -1075,6 +1535,342 @@ export function SettingsMemory() {
       {status && (
         <div className="rounded-lg border border-border-muted bg-background-secondary/70 px-4 py-3 text-sm text-text-secondary">
           {status}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Embedding configuration block — 3-way provider selector
+// ---------------------------------------------------------------------------
+
+type EmbeddingMode = 'local' | 'inherit' | 'custom';
+
+function resolveEmbeddingMode(embedding: MemoryRuntimeConfig['embedding']): EmbeddingMode {
+  if (embedding.provider === 'local') return 'local';
+  if (embedding.inheritFromActive) return 'inherit';
+  return 'custom';
+}
+
+function EmbeddingConfigBlock({
+  runtimeDraft,
+  setRuntimeDraft,
+  savedStorageRoot,
+  isBusy,
+  setIsBusy,
+  setStatus,
+}: {
+  runtimeDraft: MemoryRuntimeConfig;
+  setRuntimeDraft: (fn: (prev: MemoryRuntimeConfig) => MemoryRuntimeConfig) => void;
+  /** The last-saved storageRoot from appConfig — used to detect unsaved changes. */
+  savedStorageRoot: string;
+  isBusy: boolean;
+  setIsBusy: (busy: boolean) => void;
+  setStatus: (status: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  const mode = resolveEmbeddingMode(runtimeDraft.embedding);
+
+  // Custom-mode model-override validation (only meaningful in custom mode).
+  const modelIssue =
+    mode === 'custom' ? classifyEmbeddingModel(runtimeDraft.embedding.model ?? '') : null;
+
+  // True when the draft storageRoot differs from the saved one — removal IPC
+  // would target the old saved root, not the pending new one.
+  const isStorageRootDirty = (runtimeDraft.storageRoot ?? '') !== savedStorageRoot;
+
+  // Local model download progress
+  const [downloadProgress, setDownloadProgress] = useState<LocalEmbeddingProgress | null>(null);
+  // Whether the model is already cached — seeded from status, updated by progress events
+  const [localModelDownloaded, setLocalModelDownloaded] = useState<boolean | null>(null);
+  // Persistent error message when the model failed to download (survives missed events).
+  const [modelError, setModelError] = useState<string | null>(null);
+  // True while a manual retry download is in flight.
+  const [isRetrying, setIsRetrying] = useState(false);
+
+  // Fetch initial status to seed downloaded + any persistent error state.
+  useEffect(() => {
+    window.electronAPI.memory
+      .getLocalModelStatus()
+      .then((status) => {
+        setLocalModelDownloaded(status.downloaded);
+        setModelError(status.state === 'error' ? (status.error ?? '') : null);
+      })
+      .catch(() => setLocalModelDownloaded(false));
+  }, []);
+
+  // Subscribe to download progress events
+  useEffect(() => {
+    const unsub = window.electronAPI.memory.onLocalEmbeddingProgress((p) => {
+      setDownloadProgress(p);
+      if (p.status === 'ready') {
+        setLocalModelDownloaded(true);
+        setModelError(null);
+        setDownloadProgress(null);
+      } else if (p.status === 'error') {
+        // Persist the error for a stable banner, and re-check actual cache state rather
+        // than forcing false so a network blip doesn't mark an already-downloaded model
+        // as absent.
+        setModelError(p.message ?? '');
+        window.electronAPI.memory
+          .getLocalModelStatus()
+          .then((status) => setLocalModelDownloaded(status.downloaded))
+          .catch(() => {
+            /* keep current state on IPC failure */
+          });
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const handleRetryDownload = async () => {
+    setIsRetrying(true);
+    setModelError(null);
+    setDownloadProgress(null);
+    try {
+      // force=true clears any backoff window so the attempt fires immediately.
+      const status = await window.electronAPI.memory.warmUpLocalModel(true);
+      setLocalModelDownloaded(status.downloaded);
+      setModelError(status.state === 'error' ? (status.error ?? '') : null);
+    } catch (err) {
+      setModelError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
+  const handleModeChange = (next: EmbeddingMode) => {
+    if (next === 'local') {
+      // Warm-up on select: start the download immediately (fire-and-forget) so any
+      // failure surfaces while the user is looking at this panel, not silently on the
+      // next ingestion. Progress/errors arrive via the onLocalEmbeddingProgress
+      // subscription and the status refetch below. force=false respects any backoff.
+      void window.electronAPI.memory
+        .warmUpLocalModel(false)
+        .then((status) => {
+          setLocalModelDownloaded(status.downloaded);
+          setModelError(status.state === 'error' ? (status.error ?? '') : null);
+        })
+        .catch(() => {
+          /* status subscription still reflects outcome */
+        });
+    }
+    setRuntimeDraft((prev) => {
+      const base = { ...prev.embedding };
+      if (next === 'local') {
+        // Selecting local mode enables embeddings — selecting local is an explicit opt-in.
+        return {
+          ...prev,
+          useEmbedding: true,
+          embedding: {
+            ...base,
+            provider: 'local' as EmbeddingProviderType,
+            inheritFromActive: false,
+          },
+        };
+      }
+      if (next === 'inherit') {
+        return {
+          ...prev,
+          // provider: undefined + inheritFromActive: true — main process normalizeModelConfig
+          // falls back to the active API provider (line 84 in memory-llm-client.ts).
+          // Clear override fields so hidden values cannot affect future modes or cause confusion.
+          // useEmbedding is left unchanged — the user controls it via the toggle above.
+          embedding: {
+            ...base,
+            provider: undefined,
+            inheritFromActive: true,
+            model: '',
+            baseUrl: '',
+            apiKey: '',
+          },
+        };
+      }
+      // custom — provider: undefined + inheritFromActive: false.
+      // normalizeModelConfig resolves undefined provider to the active API provider
+      // (input?.provider || activeProvider at line 84 of memory-llm-client.ts),
+      // so model/baseUrl/apiKey overrides apply on top of the active provider.
+      // useEmbedding is left unchanged — the user controls it via the toggle above.
+      return {
+        ...prev,
+        embedding: { ...base, provider: undefined, inheritFromActive: false },
+      };
+    });
+  };
+
+  const handleRemoveModel = async () => {
+    if (!window.confirm(t('memory.removeDownloadedModelConfirm'))) return;
+    setIsBusy(true);
+    setStatus(null);
+    try {
+      const result = await window.electronAPI.memory.removeLocalModel();
+      if (!result.success) {
+        setStatus(result.error ?? t('memory.embeddingModelDownloadFailed'));
+        return;
+      }
+      setLocalModelDownloaded(false);
+      setDownloadProgress(null);
+      setStatus(t('memory.removeDownloadedModelSuccess'));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const modeOptions: { value: EmbeddingMode; label: string }[] = [
+    { value: 'local', label: t('memory.embeddingProviderLocal') },
+    { value: 'inherit', label: t('memory.embeddingProviderInherit') },
+    { value: 'custom', label: t('memory.embeddingProviderCustom') },
+  ];
+
+  return (
+    <div className="space-y-3 rounded-lg border border-border-muted bg-background/80 p-3">
+      <p className="text-sm font-medium text-text-primary">{t('memory.embeddingConfig')}</p>
+
+      {/* Provider selector */}
+      <div className="flex flex-wrap gap-1.5">
+        {modeOptions.map((opt) => (
+          <button
+            type="button"
+            key={opt.value}
+            onClick={() => handleModeChange(opt.value)}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+              mode === opt.value
+                ? 'border-accent bg-accent/10 text-accent'
+                : 'border-border bg-background text-text-secondary hover:bg-surface-hover'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Local mode status */}
+      {mode === 'local' && (
+        <div className="space-y-2">
+          <p className="text-xs text-text-muted">{t('memory.localModelDescription')}</p>
+
+          {/* Download progress */}
+          {downloadProgress?.status === 'downloading' || isRetrying ? (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-xs text-text-secondary">
+                <span>
+                  {t('memory.localModelDownloading', {
+                    progress: Math.round(downloadProgress?.progress ?? 0),
+                  })}
+                </span>
+                {downloadProgress?.file && (
+                  <span className="max-w-[200px] truncate text-text-muted">
+                    {downloadProgress.file.split(/[/\\]/).pop()}
+                  </span>
+                )}
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+                <div
+                  className="h-full rounded-full bg-accent transition-all duration-200"
+                  style={{ width: `${downloadProgress?.progress ?? 0}%` }}
+                />
+              </div>
+            </div>
+          ) : modelError !== null ? (
+            <div className="space-y-1.5 rounded border border-rose-300 bg-rose-50 p-2 dark:border-rose-900/60 dark:bg-rose-950/30">
+              <p className="text-xs text-rose-600 dark:text-rose-400">
+                {t('memory.embeddingModelDownloadFailed')}
+              </p>
+              <p className="text-xs text-text-muted">
+                {t('memory.localModelErrorLexicalFallback')}
+              </p>
+              <button
+                type="button"
+                onClick={() => void handleRetryDownload()}
+                disabled={isBusy || isRetrying}
+                className="rounded border border-border bg-background px-2 py-1 text-xs text-text-secondary hover:text-accent disabled:opacity-60"
+              >
+                {t('memory.localModelRetryDownload')}
+              </button>
+            </div>
+          ) : localModelDownloaded === true ? (
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-green-700 dark:text-green-400">
+                ✓ {t('memory.localModelReady')}
+              </p>
+              <button
+                type="button"
+                onClick={() => void handleRemoveModel()}
+                disabled={isBusy || isStorageRootDirty}
+                title={isStorageRootDirty ? t('memory.saveRuntime') : undefined}
+                className="rounded border border-border bg-background px-2 py-1 text-xs text-text-muted hover:text-rose-600 disabled:opacity-60"
+              >
+                {t('memory.removeDownloadedModel')}
+              </button>
+            </div>
+          ) : (
+            <p className="text-xs text-text-muted">{t('memory.localModelNotDownloaded')}</p>
+          )}
+        </div>
+      )}
+
+      {/* Inherit mode — no extra fields */}
+      {mode === 'inherit' && (
+        <p className="text-xs text-text-muted">{t('memory.runtimeDescription')}</p>
+      )}
+
+      {/* Custom mode — model / baseUrl / apiKey */}
+      {mode === 'custom' && (
+        <div className="space-y-3">
+          <LabeledField label={t('memory.modelOverride')}>
+            <input
+              value={runtimeDraft.embedding.model || ''}
+              onChange={(event) =>
+                setRuntimeDraft((prev) => ({
+                  ...prev,
+                  embedding: { ...prev.embedding, model: event.target.value },
+                }))
+              }
+              className={`w-full rounded-lg border bg-background px-3 py-2.5 text-sm text-text-primary outline-none ${
+                modelIssue === 'chat'
+                  ? 'border-rose-400 focus:border-rose-500'
+                  : 'border-border focus:border-accent'
+              }`}
+            />
+            {modelIssue === 'chat' && (
+              <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                {t('memory.embeddingModelChatError')}
+              </p>
+            )}
+            {modelIssue === 'prefix' && (
+              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                {t('memory.embeddingModelPrefixWarning')}
+              </p>
+            )}
+          </LabeledField>
+          <LabeledField label={t('memory.baseUrlOverride')}>
+            <input
+              value={runtimeDraft.embedding.baseUrl || ''}
+              onChange={(event) =>
+                setRuntimeDraft((prev) => ({
+                  ...prev,
+                  embedding: { ...prev.embedding, baseUrl: event.target.value },
+                }))
+              }
+              className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none focus:border-accent"
+            />
+          </LabeledField>
+          <LabeledField label={t('memory.apiKeyOverride')}>
+            <input
+              type="password"
+              value={runtimeDraft.embedding.apiKey || ''}
+              onChange={(event) =>
+                setRuntimeDraft((prev) => ({
+                  ...prev,
+                  embedding: { ...prev.embedding, apiKey: event.target.value },
+                }))
+              }
+              className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none focus:border-accent"
+            />
+          </LabeledField>
         </div>
       )}
     </div>
@@ -1575,6 +2371,122 @@ function NumberField({
         step={step}
         className="w-20 rounded border border-border bg-background px-2 py-1 text-right text-sm text-text-primary"
       />
+    </div>
+  );
+}
+
+function ExperienceDbStatusCard({
+  status,
+  exists,
+  isVacuuming,
+  isExporting,
+  onVacuum,
+  onExport,
+}: {
+  status: ExperienceDbStatus | null;
+  /** Whether the selected memory.db entry exists on disk. */
+  exists: boolean;
+  isVacuuming: boolean;
+  isExporting: boolean;
+  onVacuum: () => void;
+  onExport: () => void;
+}) {
+  const { t } = useTranslation();
+  // Defensive normalization: the backend type guarantees these fields, but guard the
+  // render boundary against partial/undefined payloads (older schema, IPC mismatch)
+  // so the card degrades gracefully instead of throwing or rendering NaN.
+  const breakdown = status?.workspaceBreakdown ?? [];
+  const sizeLabel =
+    status && typeof status.sizeBytes === 'number' ? formatFileSize(status.sizeBytes) : '—';
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-text-primary">{t('memory.experienceDbTitle')}</p>
+          <p className="mt-1 text-xs text-text-muted">memory.db</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={onExport}
+            disabled={!status || isExporting}
+            className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isExporting ? t('memory.exporting') : t('memory.exportJson')}
+          </button>
+          <button
+            onClick={onVacuum}
+            disabled={!status || isVacuuming}
+            className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isVacuuming ? t('memory.vacuuming') : t('memory.vacuum')}
+          </button>
+        </div>
+      </div>
+
+      {!exists ? (
+        <p className="text-sm text-text-muted">{t('memory.experienceDbNotCreatedYet')}</p>
+      ) : status ? (
+        <div className="space-y-2">
+          <p className="text-[11px] text-text-muted">
+            {t('memory.experienceDbSchema', { version: status.schemaVersion ?? 1 })} ·{' '}
+            {status.journalMode ? status.journalMode.toUpperCase() : '—'} · {sizeLabel}
+          </p>
+          <p className="text-sm text-text-primary">
+            {t('memory.experienceDbCounts', {
+              sessions: status.sessionCount ?? 0,
+              chunks: status.chunkCount ?? 0,
+            })}
+          </p>
+          <p className="text-xs text-text-secondary">
+            <span className="text-text-muted">{t('memory.embeddingModel')}:</span>{' '}
+            {status.embeddingModel ? (
+              <>
+                {status.embeddingModel}
+                {status.embeddingDim != null
+                  ? ` · ${t('memory.dimensionShort')} ${status.embeddingDim}`
+                  : ''}
+              </>
+            ) : (
+              t('memory.noEmbeddingModel')
+            )}
+          </p>
+          <p className="text-xs text-text-secondary">
+            <span className="text-text-muted">{t('memory.integrity')}:</span>{' '}
+            {status.integrityOk ? t('memory.integrityOk') : t('memory.integrityFailed')}
+          </p>
+
+          <div>
+            <p className="text-xs text-text-muted">{t('memory.byWorkspace')}</p>
+            {breakdown.length > 0 ? (
+              <ul className="mt-1 space-y-1">
+                {breakdown.map((ws, idx) => {
+                  const key =
+                    ws.workspaceKey && ws.workspaceKey !== '(none)' ? ws.workspaceKey : '';
+                  const label = key
+                    ? (key.split(/[\\/]/).filter(Boolean).pop() ?? key)
+                    : t('memory.globalWorkspace');
+                  return (
+                    <li
+                      key={`${ws.workspaceKey || '(none)'}-${idx}`}
+                      className="flex items-center justify-between gap-2 text-xs text-text-secondary"
+                      title={ws.workspaceKey || undefined}
+                    >
+                      <span className="truncate">{label}</span>
+                      <span className="shrink-0 text-text-muted">
+                        {ws.sessionCount ?? 0} · {ws.chunkCount ?? 0}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="mt-1 text-xs text-text-muted">{t('memory.noWorkspaces')}</p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-text-muted">{t('memory.experienceDbStatusMissing')}</p>
+      )}
     </div>
   );
 }

@@ -3,9 +3,9 @@ import type {
   MemoryReadResult,
   MemorySearchParams,
   MemorySearchResult,
-  SessionMemoryItem,
 } from './memory-types';
 import { ExperienceMemoryStore } from './experience-memory-store';
+import type { ExperienceSessionSearchRow } from './experience-memory-store';
 import { lexicalScore, normalizeWorkspaceKey, summarizeText } from './memory-utils';
 
 function buildSearchId(kind: string, recordId: string): string {
@@ -170,10 +170,11 @@ export class MemoryRetriever {
     const store = this.deps.getExperienceStore();
     const results: MemorySearchResult[] = [];
 
-    for (const item of store.sessions) {
-      if (sourceWorkspace && item.sourceWorkspace !== sourceWorkspace) {
-        continue;
-      }
+    // Workspace scoping is applied in SQL — see ExperienceMemoryStore.getSearchRows.
+    // These rows carry no embeddings and no transcripts; this search is text-only.
+    const { sessions, chunks } = store.getSearchRows(sourceWorkspace);
+
+    for (const item of sessions) {
       const score = lexicalScore(query, [item.summary, ...item.keywords].join(' '));
       if (score <= 0) {
         continue;
@@ -181,10 +182,7 @@ export class MemoryRetriever {
       results.push(this.mapSessionResult(item, score));
     }
 
-    for (const item of store.chunks) {
-      if (sourceWorkspace && item.sourceWorkspace !== sourceWorkspace) {
-        continue;
-      }
+    for (const item of chunks) {
       const score = lexicalScore(
         query,
         [item.summary, item.details, item.rawText, ...item.keywords].join(' ')
@@ -216,7 +214,7 @@ export class MemoryRetriever {
     return results;
   }
 
-  private mapSessionResult(item: SessionMemoryItem, score: number): MemorySearchResult {
+  private mapSessionResult(item: ExperienceSessionSearchRow, score: number): MemorySearchResult {
     return {
       id: buildSearchId('experience_session', item.sessionId),
       recordId: item.sessionId,

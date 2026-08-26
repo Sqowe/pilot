@@ -4,138 +4,25 @@
  * Serializes chat messages into a well-formatted markdown document.
  * Handles all content block types: text, thinking, tool_use, tool_result,
  * image, and file_attachment.
- *
- * NOTE: Content block interfaces are duplicated here from src/renderer/types/index.ts
- * to avoid cross-process import issues (main cannot import from renderer).
- * If the renderer types change, these must be updated to match.
- * TODO: Move shared message/content types to src/shared/ for single-source-of-truth.
  */
 
-import { dialog, BrowserWindow } from 'electron';
-import * as fs from 'fs';
-import { log, logError } from '../utils/logger';
+import {
+  type Message,
+  type Session,
+  type ExportOptions,
+  type ExportRequest,
+  type ExportResult,
+  type TextContent,
+  type ThinkingContent,
+  type ToolUseContent,
+  type ToolResultContent,
+  type ImageContent,
+  type FileAttachmentContent,
+  formatSize,
+  blockIsVisible,
+} from './export-common';
 
-// Re-use the same content block types from the renderer
-interface TextContent {
-  type: 'text';
-  text: string;
-}
-
-interface ThinkingContent {
-  type: 'thinking';
-  thinking: string;
-}
-
-interface ToolUseContent {
-  type: 'tool_use';
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-}
-
-interface ToolResultContent {
-  type: 'tool_result';
-  toolUseId: string;
-  content: string;
-  isError?: boolean;
-}
-
-interface ImageContent {
-  type: 'image';
-  source: {
-    type: 'base64';
-    media_type: string;
-    data: string;
-  };
-}
-
-interface FileAttachmentContent {
-  type: 'file_attachment';
-  filename: string;
-  relativePath: string;
-  size: number;
-  mimeType?: string;
-}
-
-type ContentBlock =
-  | TextContent
-  | ThinkingContent
-  | ToolUseContent
-  | ToolResultContent
-  | ImageContent
-  | FileAttachmentContent;
-
-interface Message {
-  id: string;
-  sessionId: string;
-  role: 'user' | 'assistant' | 'system';
-  content: ContentBlock[];
-  timestamp: number;
-  tokenUsage?: { input: number; output: number };
-  executionTimeMs?: number;
-}
-
-interface Session {
-  id: string;
-  title: string;
-  model?: string;
-  createdAt: number;
-}
-
-export interface ExportOptions {
-  includeToolCalls: boolean;
-  includeThinking: boolean;
-  includeTimestamps: boolean;
-  includeTokenUsage: boolean;
-  imageHandling: 'skip' | 'placeholder' | 'inline';
-}
-
-export interface ExportRequest {
-  sessionId: string;
-  messageIds?: string[];
-  options?: Partial<ExportOptions>;
-}
-
-export interface ExportResult {
-  success: boolean;
-  path?: string;
-  error?: string;
-}
-
-const DEFAULT_OPTIONS: ExportOptions = {
-  includeToolCalls: false,
-  includeThinking: false,
-  includeTimestamps: false,
-  includeTokenUsage: false,
-  imageHandling: 'placeholder',
-};
-
-/**
- * Sanitize a string for use as a filename.
- * Preserves unicode letters (Chinese, etc.) but removes dangerous chars.
- */
-function sanitizeFilename(str: string): string {
-  // Remove characters unsafe for filenames and control characters
-  const unsafe = new Set('<>:"/\\|?*'.split(''));
-  const cleaned = Array.from(str)
-    .filter((ch) => {
-      const code = ch.charCodeAt(0);
-      if (code <= 0x1f) return false; // control characters
-      if (unsafe.has(ch)) return false;
-      return true;
-    })
-    .join('');
-  return cleaned.trim().replace(/\s+/g, '-').slice(0, 100);
-}
-
-/**
- * Format file size for display.
- */
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} bytes`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+export type { ExportOptions, ExportRequest, ExportResult };
 
 /**
  * Serialize an array of messages into a markdown string.
@@ -169,23 +56,7 @@ export function serializeMessagesToMarkdown(
 
     // Check if this message will produce any visible output with current options.
     // Skip empty assistant messages (e.g., tool-only turns when includeToolCalls is off).
-    const hasVisibleContent = contentBlocks.some((block) => {
-      switch (block.type) {
-        case 'text':
-          return Boolean((block as TextContent).text.trim());
-        case 'thinking':
-          return options.includeThinking;
-        case 'tool_use':
-        case 'tool_result':
-          return options.includeToolCalls;
-        case 'image':
-          return options.imageHandling !== 'skip';
-        case 'file_attachment':
-          return true;
-        default:
-          return false;
-      }
-    });
+    const hasVisibleContent = contentBlocks.some((block) => blockIsVisible(block, options));
 
     if (!hasVisibleContent) continue;
 
@@ -312,98 +183,4 @@ export function serializeMessagesToMarkdown(
   }
 
   return lines.join('\n');
-}
-
-/**
- * Export a chat session to a markdown file.
- * Shows a native save dialog and writes the file.
- */
-export async function exportChatToMarkdown(
-  request: ExportRequest,
-  getSession: (sessionId: string) => Session | undefined,
-  getMessages: (sessionId: string) => Message[]
-): Promise<ExportResult> {
-  try {
-    // Fetch session
-    const session = getSession(request.sessionId);
-    if (!session) {
-      return { success: false, error: 'Session not found' };
-    }
-
-    // Fetch messages
-    let messages = getMessages(request.sessionId);
-    if (!messages || messages.length === 0) {
-      return { success: false, error: 'No messages to export' };
-    }
-
-    // Filter by message IDs if specified
-    if (request.messageIds && request.messageIds.length > 0) {
-      const idSet = new Set(request.messageIds);
-      const beforeCount = messages.length;
-      messages = messages.filter((m) => idSet.has(m.id));
-      log(
-        '[ChatExport] Filtered by messageIds:',
-        'requested:',
-        request.messageIds.length,
-        'matched:',
-        messages.length,
-        'total in DB:',
-        beforeCount
-      );
-      if (messages.length < request.messageIds.length) {
-        const dbIds = new Set(messages.map((m) => m.id));
-        const missing = request.messageIds.filter((id) => !dbIds.has(id));
-        log('[ChatExport] Missing IDs (not in DB):', missing);
-      }
-    }
-
-    // Filter out partial/streaming messages and system messages
-    messages = messages.filter((m) => !m.id.startsWith('partial-') && m.role !== 'system');
-
-    // Guard: nothing exportable after filtering
-    if (messages.length === 0) {
-      return { success: false, error: 'No messages to export' };
-    }
-
-    // Merge options with defaults
-    const options: ExportOptions = { ...DEFAULT_OPTIONS, ...request.options };
-
-    // Serialize
-    const markdown = serializeMessagesToMarkdown(messages, session, options);
-
-    // Build default filename
-    const titleSlug = sanitizeFilename(session.title || 'chat');
-    const dateStr = new Date().toISOString().split('T')[0];
-    const defaultFilename = `${titleSlug}-${dateStr}.md`;
-
-    // Show save dialog — handle case where no window is focused
-    const dialogOptions = {
-      title: 'Export Chat as Markdown',
-      defaultPath: defaultFilename,
-      filters: [
-        { name: 'Markdown', extensions: ['md'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
-    };
-    const mainWindow = BrowserWindow.getFocusedWindow();
-    const result = mainWindow
-      ? await dialog.showSaveDialog(mainWindow, dialogOptions)
-      : await dialog.showSaveDialog(dialogOptions);
-
-    if (result.canceled || !result.filePath) {
-      return { success: false, error: 'Export cancelled' };
-    }
-
-    // Write file asynchronously to avoid blocking the event loop
-    await fs.promises.writeFile(result.filePath, markdown, 'utf-8');
-    log('[ChatExport] Exported chat to:', result.filePath);
-
-    return { success: true, path: result.filePath };
-  } catch (error) {
-    logError('[ChatExport] Export failed:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
 }

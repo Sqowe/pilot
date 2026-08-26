@@ -46,7 +46,7 @@ import {
 } from 'lucide-react';
 import type { TraceStep, MCPServerInfo } from '../types';
 import type { SkillsWorkspaceProfile } from '../../shared/skill-conflict-types';
-import { computeContextUsage } from '../utils/context-usage';
+import { computeContextUsage, findLastTokenUsage } from '../utils/context-usage';
 import { deriveDisabledServerIds } from '../utils/mcp-profile-derive';
 import { isSkillsProfileDirty } from '../utils/skills-profile-derive';
 
@@ -241,6 +241,10 @@ export function ContextPanel() {
     return { input, output, total: input + output };
   }, [messages]);
 
+  // Single reverse scan to find the latest assistant message tokenUsage,
+  // used as the contextUsage lastMessageInputTokens fallback.
+  const lastAssistantTokenUsage = useMemo(() => findLastTokenUsage(messages), [messages]);
+
   // Context usage: effective budget including tool schemas + output reservation
   // Uses live currentInputTokens from _onPayload when available (updates during
   // tool loop), falls back to last message's tokenUsage.input for initial state.
@@ -253,23 +257,14 @@ export function ContextPanel() {
     const maxOutputTokens = sessionState?.maxOutputTokens ?? 0;
     const currentInputTokens = sessionState?.currentInputTokens ?? 0;
 
-    // Find last reported input tokens from assistant messages (fallback)
-    let lastMessageInputTokens = 0;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].tokenUsage?.input) {
-        lastMessageInputTokens = messages[i].tokenUsage!.input;
-        break;
-      }
-    }
-
     return computeContextUsage({
       contextWindow,
       toolSchemaTokens,
       maxOutputTokens,
       currentInputTokens,
-      lastMessageInputTokens,
+      lastMessageInputTokens: lastAssistantTokenUsage?.input ?? 0,
     });
-  }, [activeSessionId, sessionStates, messages]);
+  }, [activeSessionId, sessionStates, lastAssistantTokenUsage]);
 
   const completedStepCount = useMemo(
     () => steps.reduce((n, s) => n + (s.status === 'completed' ? 1 : 0), 0),

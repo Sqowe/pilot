@@ -71,7 +71,10 @@ export function localPathFromFileUrl(fileUrl: string, platform?: NodeJS.Platform
   }
 }
 
-export function localPathFromAppUrlPathname(pathname: string, platform?: NodeJS.Platform): string | null {
+export function localPathFromAppUrlPathname(
+  pathname: string,
+  platform?: NodeJS.Platform
+): string | null {
   const decodedPathname = decodePathSafely(pathname || '');
   if (!decodedPathname) {
     return null;
