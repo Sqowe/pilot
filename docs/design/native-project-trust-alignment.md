@@ -13,6 +13,38 @@ on the user's machine.
 
 ---
 
+> ## ⚠️ Re-checked against pi 0.85.1 — 2026-09-09
+>
+> **The naive reading of "align with native project trust" is not available to us, and would
+> be a security hole if taken literally.** pi stores trust decisions in
+> `join(resolvePath(agentDir), "trust.json")` — `~/.pi/agent/trust.json`
+> (`dist/core/trust-manager.js:173`). That is the same shared location as pi's session files,
+> and the SDK-only boundary (`ARCHITECTURE.md` §4.1) rules it out for the same reason, only
+> with higher stakes: marking a project trusted in this app would mark it trusted for the
+> user's `pi` CLI in a terminal, and the reverse. Trust decides what the agent may do, so
+> the two products silently sharing that state is worse than sharing conversation history.
+>
+> **The mechanism is still usable, with our own store.** `resolveProjectTrusted()` takes
+> `trustStore: ProjectTrustStore` as a parameter (`dist/core/project-trust.d.ts`), and
+> `AgentSessionRuntime.switchSession()` accepts a `projectTrustContextFactory(cwd)`
+> (`dist/core/agent-session-runtime.d.ts:76`). So we can borrow pi's _decision logic_ while
+> keeping the _state_ ours.
+>
+> **But that changes the payoff, and the plan below is written against the old one.** The
+> stated benefit was removing duplication by adopting something native. If we must supply the
+> store, the persistence half stays ours regardless, and what is actually gained is one
+> resolution routine — considerably less than "one coherent trust story". Whether that is
+> worth an epic spanning five surfaces is now an open question, not a premise.
+>
+> **Before any phase-1 work, decide:** is the goal still consolidation, or has it become
+> "reuse pi's resolver, keep our storage"? Those are different projects with different
+> justifications. Note also that §7.1.1 of
+> [`pi-sdk-085-feature-adoption-plan.md`](./pi-sdk-085-feature-adoption-plan.md) found the
+> file-tool path surface has _no_ containment check today — so the five surfaces this plan
+> enumerates may not all be as built-out as it assumes. Re-audit them before costing the work.
+
+---
+
 ## 1. Why this is its own epic
 
 pi (0.79.0–0.79.1, broadened since) added a **native** project-trust mechanism. Open Cowork

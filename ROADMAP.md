@@ -103,7 +103,11 @@ backlog from the 0.80 and 0.82 plans is consolidated there; both predecessors ar
 
 - **Items A & B:** session usage totals via `getSessionStats()` (now a read, not an
   accumulator) and compaction failure/retry narration in the trace.
-- **Item E:** verify path containment against 0.85.0's `ctx.cwd` fix in the built-in tools.
+- ~~**Item E:** verify path containment against 0.85.0's `ctx.cwd` fix~~ — **done 2026-09-09**,
+  no change needed: `effectiveCwd` is part of the session runtime signature, so tools are
+  rebuilt whenever it changes. The check did surface that there is no path-containment check
+  on the built-in file tools at all (`PathGuard` is never called; `ToolExecutor` is dead code
+  — TECHNICAL_DEBTS #1), which confirms the premise of file-tool path permissions below.
 - **Item S:** settle the bash session-variable exposure policy. Four `PI_*` variables reach
   agent bash commands; `PI_SESSION_FILE` is not among them, because the app's pi session is
   in-memory — the SDK-only boundary applied to sessions, since persisting through pi would

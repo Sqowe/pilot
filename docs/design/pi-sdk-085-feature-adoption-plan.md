@@ -43,22 +43,21 @@ Guiding principles, unchanged from both predecessors and consistent with
 
 ### Prioritization summary
 
-| Item  | Feature                                               | Origin           | Effort | Risk         | Recommended    |
-| ----- | ----------------------------------------------------- | ---------------- | ------ | ------------ | -------------- |
-| **S** | Settle the bash session-variable exposure policy      | 0.82 Item C      | S      | Low          | Yes            |
-| **A** | Session usage totals — now a read, not an accumulator | 0.82 Item A      | S      | Low          | Yes            |
-| **B** | Compaction failure and retry narration                | 0.82 Item B      | S      | Low          | Yes            |
-| **E** | `ctx.cwd` honoured by built-in tools                  | 0.85.0 fix       | S      | **Security** | Yes — verify   |
-| **F** | Edit-diff rendering in the transcript                 | 0.80 §4.1 item 3 | M      | Low          | Yes            |
-| **G** | Waiting-on-a-human as a distinct state                | 0.84.4           | S      | Low          | Diagnose first |
-| **D** | Constrained (strict-schema) tool sampling             | 0.82 Item D      | M      | Medium       | Investigate    |
-| **H** | Provider-scoped `env` overrides                       | 0.80 §5.3        | S      | Low          | Opportunistic  |
-| **I** | RPC extension-UI typed surface                        | 0.80 §5.2        | S      | Low          | Opportunistic  |
+| Item  | Feature                                               | Origin           | Effort | Risk   | Recommended    |
+| ----- | ----------------------------------------------------- | ---------------- | ------ | ------ | -------------- |
+| **S** | Settle the bash session-variable exposure policy      | 0.82 Item C      | S      | Low    | Yes            |
+| **A** | Session usage totals — now a read, not an accumulator | 0.82 Item A      | S      | Low    | Yes            |
+| **B** | Compaction failure and retry narration                | 0.82 Item B      | S      | Low    | Yes            |
+| **E** | `ctx.cwd` honoured by built-in tools                  | 0.85.0 fix       | —      | —      | ✅ Done        |
+| **F** | Edit-diff rendering in the transcript                 | 0.80 §4.1 item 3 | M      | Low    | Yes            |
+| **G** | Waiting-on-a-human as a distinct state                | 0.84.4           | S      | Low    | Diagnose first |
+| **D** | Constrained (strict-schema) tool sampling             | 0.82 Item D      | M      | Medium | Investigate    |
+| **H** | Provider-scoped `env` overrides                       | 0.80 §5.3        | S      | Low    | Opportunistic  |
+| **I** | RPC extension-UI typed surface                        | 0.80 §5.2        | S      | Low    | Opportunistic  |
 
-Recommended sequencing: **A** and **B** first — both collapsed to small by what 0.84
-shipped, and both are visible improvements. Then **E** as a verification pass, since it is
-the one remaining item touching a security boundary. Then **S**, which is a short
-consistency decision plus a regression test, and **F**. **G** needs a diagnosis before it
+Recommended sequencing: **E is done** (§7.1 — verified, no change needed). **A** and **B**
+next: both collapsed to small by what 0.84 shipped, and both are visible improvements. Then
+**S**, which is a short consistency decision plus a regression test, and **F**. **G** needs a diagnosis before it
 is scheduled at all (§7.2); **D** is an investigation. **H** and **I** are cleanups to fold
 into whatever work next touches those files.
 
@@ -427,20 +426,47 @@ exported types reduces drift. **Effort:** S. **Risk:** Low. Opportunistic.
 
 ## 7. New in 0.83–0.85 worth adopting
 
-### 7.1 Item E — `ctx.cwd` now honoured by the built-in tools · verify
+### 7.1 Item E — `ctx.cwd` now honoured by the built-in tools · **verified 2026-09-09, no change needed**
 
 0.85.0 fixed the `bash`, `edit`, `find`, `grep`, `ls`, `read` and `write` tools ignoring
-`ctx.cwd` (`#8627`). Path containment is a security boundary in this app, and this app
-threads a working directory through a `cwdRef` that is updated at the start of each
-`run()` ([`agent-runner.ts:1601-1615`](../../src/main/claude/agent-runner.ts#L1601)).
+`ctx.cwd` (`#8627`). All seven now resolve relative paths through `ctx?.cwd || cwd`, where
+`cwd` is what was passed to `createCodingTools()` and `ctx.cwd` takes precedence
+(`dist/core/tools/read.js:56`, `write.js:32`, `edit.js:95`, `ls.js:40`, `grep.js:57`,
+`find.js:65`, `bash.js:157`).
 
-A behavioural fix in which directory the built-in tools resolve paths against is exactly
-the kind of change that can silently shift what a containment check is checking. The work
-here is a verification pass, not a feature: confirm the app's `cwd` handling still means
-what it did before, and that the fix does not widen the reachable path set under either
-sandbox.
+**Conclusion: no regression, and nothing to change.** The two values cannot diverge here.
+Both originate from the same `effectiveCwd`, and `effectiveCwd` is part of
+`sessionRuntimeSignature` ([`agent-runner.ts:2823`](../../src/main/claude/agent-runner.ts#L2823)).
+When the working directory changes, the signature changes, the cached pi session is disposed
+and rebuilt ([`agent-runner.ts:2837-2846`](../../src/main/claude/agent-runner.ts#L2837)), and
+`createCodingTools(effectiveCwd)` runs again with the new value
+([`agent-runner.ts:3194`](../../src/main/claude/agent-runner.ts#L3194)). A session is only
+reused when the working directory did not change.
 
-**Effort:** S. **Risk:** Security-relevant — worth doing early despite the small size.
+> This was investigated on the hypothesis that tools could be left resolving paths against a
+> stale directory while the permission gate looked at the current one — which would have
+> leaked reads across workspaces. The hypothesis was wrong: `effectiveCwd` is in the
+> signature. Recorded because the reasoning is not obvious, and because the next uplift that
+> touches tool construction will need it again.
+
+### 7.1.1 What the investigation did find
+
+There is **no path-containment check on the built-in file tools at all** — so there was
+nothing for the `ctx.cwd` fix to weaken:
+
+- `PathGuard` ([`path-guard.ts`](../../src/main/sandbox/path-guard.ts)) is exported from
+  `sandbox/index.ts` and **called from nowhere**.
+- `ToolExecutor` and `SandboxToolExecutor` both hold `isPathWithinRoot` checks, and neither
+  class is ever constructed — they are the dead code already filed as TECHNICAL_DEBTS #1.
+- The permission gate reads `cwdRef.value` for exactly one purpose: the read-loop guard
+  ([`agent-runner.ts:1627`](../../src/main/claude/agent-runner.ts#L1627)). It is not a zone
+  check.
+
+So today a file-tool path is governed by the permission rules (`decidePermission`, which
+judges by tool name and input) and by sandbox isolation when enabled — not by any
+workspace-zone policy. That is precisely the gap
+[`file-tool-path-permissions.md`](./file-tool-path-permissions.md) proposes to close, and
+this confirms its premise is still accurate rather than already half-built.
 
 ### 7.2 Item G — Waiting on a human as a distinct state · diagnose first
 

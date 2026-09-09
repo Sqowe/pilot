@@ -3,8 +3,37 @@
 **Status:** Future / Exploratory
 **Date:** 2026-06-11
 **Author:** Mike Obodnikov + Kiro
-**Depends on:** `plugin-archive-install-and-pin.md` (Phase 1-3 must ship first)
+**Depends on:** `plugin-archive-install-and-pin.md` (Phase 1-3 must ship first) —
+**satisfied**: that work shipped and its design is now in
+[`archive/plugin-archive-install-and-pin.md`](./archive/plugin-archive-install-and-pin.md).
 **Scope:** `agent-runner.ts`, `session-manager.ts`, new `plugin-agent-adapter.ts`, renderer
+
+---
+
+> ## 🔄 Re-checked against pi 0.85.1 — 2026-09-09
+>
+> **Unblocked, and cheaper than costed.** The comparison table below ends on "Requires new
+> agent dispatch subsystem", which was accurate in June. It is no longer the starting point:
+> pi ships a **working subagent extension as an example** —
+> `node_modules/@earendil-works/pi-coding-agent/examples/extensions/subagent/` — with a 36 KB
+> `index.ts`, its own `README.md`, a `prompts/` directory, and `agents.ts` that discovers
+> agents from markdown files whose frontmatter carries `name`, `description`, `tools`,
+> `model` and `systemPrompt`.
+>
+> That is the same shape as the Vision above: an agent with its own system prompt, its own
+> tool subset, and its own model. The example is actively maintained — 0.84.3 fixed it
+> re-prompting before running project-local agents in trusted repositories.
+>
+> **So the question changes** from "should we build a dispatch subsystem?" to "does adapting
+> pi's example fit our plugin model?" Read the example first; only then re-cost this plan.
+>
+> **Two caveats before adopting it.** It is an _example_, not a supported API surface — it can
+> change between releases without a breaking-change note, so treat it as a reference
+> implementation to learn from rather than a dependency. And it discovers agents from
+> `CONFIG_DIR_NAME` / `getAgentDir()` locations, which is the `~/.pi/` tree shared with the
+> user's CLI — the same boundary that rules out pi's session and trust storage
+> (`ARCHITECTURE.md` §4.1). Any adaptation must source its agent definitions from our own
+> plugin store instead.
 
 ---
 
