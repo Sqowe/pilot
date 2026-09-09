@@ -6,64 +6,82 @@ and how the workspace (working directory) partitions memory per project.
 
 ---
 
-## 1. Embedding "Inherit Active API"
+## 1. Embedding and LLM Configuration
 
-### Config Structure
+> **Verified against the code on 2026-09-09.** This section previously described a single
+> `MemoryModelRuntimeConfig`, claimed the embedding provider could not be set from the UI,
+> and documented a hard-coded provider allow-list with a manual workaround. All three were
+> out of date — the local-embedding work and the 1.0.6 provider-gate fix changed them. §2
+> was re-checked at the same time and needed no changes.
 
-The memory runtime has two model sub-configs — `llm` and `embedding` — both
-sharing the same `MemoryModelRuntimeConfig` interface:
+The memory runtime has two model sub-configs, `llm` and `embedding`. They share a common
+base but differ in one field, because only embedding can run in-process:
 
 ```typescript
 // src/main/config/config-store.ts
-export interface MemoryModelRuntimeConfig {
+export interface MemoryModelRuntimeConfigBase {
   inheritFromActive: boolean;
-  provider?: ProviderType; // NOT exposed in the Settings UI
-  customProtocol?: CustomProtocolType; // NOT exposed in the Settings UI
+  customProtocol?: CustomProtocolType;
   apiKey?: string;
   baseUrl?: string;
   model?: string;
   timeoutMs: number;
 }
+
+/** LLM sub-config: provider is always a ProviderType (never 'local'). */
+export interface MemoryLLMRuntimeConfig extends MemoryModelRuntimeConfigBase {
+  provider?: ProviderType;
+}
+
+/** Embedding sub-config: provider may be 'local' for in-process ONNX inference. */
+export interface MemoryEmbeddingRuntimeConfig extends MemoryModelRuntimeConfigBase {
+  provider?: EmbeddingProviderType;
+}
 ```
 
-The Settings UI (`SettingsMemory.tsx`) exposes only:
+`MemoryModelRuntimeConfig` still exists as a `@deprecated` union alias so older consumers
+keep compiling. New code should name the specific one.
 
-- **Inherit active API** toggle (`inheritFromActive`)
-- **Model override** (`model`)
-- **Base URL override** (`baseUrl`)
-- **API Key override** (`apiKey`)
+### Three embedding modes, all set from the UI
 
-The `provider` and `customProtocol` fields exist in the type but are **not
-configurable from the UI** — they can only be set programmatically or via
-raw config file edits.
+`SettingsMemory.tsx` models the embedding choice as `EmbeddingMode = 'local' | 'inherit' |
+'custom'` and writes `embedding.provider` accordingly. The older claim that `provider` and
+`customProtocol` were UI-invisible is no longer true for embedding:
+
+| Mode      | Meaning                                                                       |
+| --------- | ----------------------------------------------------------------------------- |
+| `local`   | In-process ONNX inference. No network, no credentials, no active-API coupling |
+| `inherit` | Follow the active chat API for endpoint and credentials                       |
+| `custom`  | An explicitly named endpoint, key and model, independent of the chat API      |
+
+For the **LLM** sub-config the older statement still holds: the UI exposes the inherit
+toggle plus model/base-URL/API-key overrides, and `provider` / `customProtocol` are only
+reachable programmatically or by editing the config file.
 
 ### Resolution Logic
 
-The core resolution happens in `normalizeModelConfig()` inside
-`src/main/memory/memory-llm-client.ts`:
+`normalizeModelConfig()` in `src/main/memory/memory-llm-client.ts` resolves the remote
+case. The local case never reaches it — `embed()` checks
+`memoryRuntime.embedding?.provider === 'local'` first and routes to the in-process pipeline,
+bypassing all credential resolution:
 
 ```typescript
-function normalizeModelConfig(
-  appConfig: AppConfig,
-  input: MemoryModelConfig | undefined,
-  fallbackModel: string
-): ResolvedMemoryModelConfig {
-  const inherit = input?.inheritFromActive !== false;
+const inherit = input?.inheritFromActive !== false;
 
-  const provider = inherit ? activeProvider : input?.provider || activeProvider;
-  const customProtocol = inherit ? activeProtocol : input?.customProtocol || activeProtocol;
-  const apiKey = inherit ? activeApiKey : input?.apiKey || '';
-  const baseUrl = inherit ? activeBaseUrl : input?.baseUrl || activeBaseUrl;
-  const model = (input?.model || (inherit ? activeModel : '') || fallbackModel).trim();
-  const timeoutMs = Math.max(5_000, input?.timeoutMs || 180_000);
-
-  return { provider, customProtocol, apiKey, baseUrl, model, timeoutMs };
-}
+const rawProvider = inherit ? activeProvider : input?.provider || activeProvider;
+// 'local' is handled before this function is called; if it somehow arrives, fall back.
+const provider: ProviderType =
+  rawProvider === 'local' ? activeProvider : (rawProvider as ProviderType);
+const customProtocol = inherit ? activeProtocol : input?.customProtocol || activeProtocol;
+const apiKey = inherit ? activeApiKey : input?.apiKey || '';
+const baseUrl = inherit ? activeBaseUrl : input?.baseUrl || activeBaseUrl;
+const model = (input?.model || (inherit ? activeModel : '') || fallbackModel).trim();
+const timeoutMs = Math.max(5_000, input?.timeoutMs || 180_000);
 ```
 
 ### What "Inherit Active API" Actually Inherits
 
-When `inheritFromActive: true` (the checkbox is checked):
+When `inheritFromActive: true`:
 
 | Field            | Source                                                                     |
 | ---------------- | -------------------------------------------------------------------------- |
@@ -73,69 +91,77 @@ When `inheritFromActive: true` (the checkbox is checked):
 | `baseUrl`        | App's active base URL                                                      |
 | `model`          | **Model override field first**, then active model, then hardcoded fallback |
 
-**Key insight:** Everything is inherited from the active API config **except
-the model**, which prioritizes the "Model override" field. The resolution
-order for model is:
+Everything is inherited except the model, which prioritises the override field:
 
-1. `input.model` (the "Model override" field — e.g., `text-embedding-3-small`)
-2. Active model from the main API config (e.g., `claude-sonnet-4-6`)
-3. Hardcoded fallback (`'text-embedding-3-small'` for embedding)
+1. `input.model` (the "Model override" field)
+2. Active model from the main API config
+3. Hardcoded fallback (`'text-embedding-3-small'`)
 
-Since the default config ships with `model: 'text-embedding-3-small'` in the
-embedding section, that value wins over the active model.
+### When embedding is actually attempted
 
-### Provider Compatibility Warning
-
-The `embed()` method in `MemoryLLMClient` checks whether the resolved provider
-supports embeddings:
+`embed()` returns an empty vector early if `useEmbedding` is off. Past that, two conditions
+decide whether a remote embedding call is made — **neither is a provider name allow-list**,
+which is what this section used to describe:
 
 ```typescript
-const isOpenAiCompatible =
-  provider === 'openai' ||
-  provider === 'openrouter' ||
-  provider === 'ollama' ||
-  (provider === 'custom' && protocol === 'openai');
+// A config that names its own endpoint and model does not depend on the chat provider.
+const isSelfContainedOverride =
+  override?.inheritFromActive === false &&
+  Boolean(override.baseUrl?.trim()) &&
+  Boolean(override.model?.trim());
 
-if (!isOpenAiCompatible) {
-  logWarn(
-    '[MemoryLLMClient] Embedding requested for unsupported provider; returning empty embedding:',
-    provider
-  );
-  return [];
+// ProviderType is an open string (native catalog ids like 'minimax', 'zai', 'deepseek'),
+// so matching against the 6 legacy builtin ids is not enough — resolve the route protocol
+// the same way complete() does.
+const isOpenAiCompatible = resolvePiRouteProtocol(provider, protocol) === 'openai';
+
+if (!isSelfContainedOverride && !isOpenAiCompatible) {
+  /* warn, return [] */
 }
 ```
 
-If your active provider is **Anthropic** (which doesn't have an embeddings
-endpoint), and you have "Inherit active API" checked, embedding calls will
-**silently return empty arrays**. The memory system won't crash, but semantic
-search quality degrades to keyword-only.
+This is the 1.0.6 fix. Previously the check was a fixed list of six builtin provider ids, so
+selecting any native catalog provider for **chat** silently disabled embedding. Two
+consequences worth knowing:
 
-**Workaround:** If using Anthropic as your main provider, uncheck "Inherit
-active API" for embedding and manually set the Base URL and API Key to an
-OpenAI-compatible endpoint (e.g., OpenRouter or OpenAI directly).
+- A `custom` embedding config with its own base URL and model works regardless of which
+  chat provider is active. The old advice to "uncheck inherit and point at an
+  OpenAI-compatible endpoint" is now simply what the `custom` mode is for, not a workaround.
+- Judgement is by the provider's actual route protocol, not by its name.
+
+With the default `local` provider neither condition is consulted at all.
 
 ### Default Configuration
 
 ```typescript
-const DEFAULT_MEMORY_RUNTIME: MemoryRuntimeConfig = {
+memoryRuntime: {
   llm: {
     inheritFromActive: true,
+    provider: undefined,
+    customProtocol: undefined,
     apiKey: '',
     baseUrl: '',
-    model: '', // empty → uses active model
+    model: '',            // empty → uses active model
     timeoutMs: 180000,
   },
   embedding: {
-    inheritFromActive: true,
+    inheritFromActive: false,
+    provider: 'local',    // in-process ONNX by default
+    customProtocol: undefined,
     apiKey: '',
     baseUrl: '',
-    model: 'text-embedding-3-small', // always overrides active model
+    // Safe fallback for non-local providers. Ignored when provider === 'local',
+    // since the model id is hardcoded in local-embedding-provider.ts.
+    model: 'text-embedding-3-small',
     timeoutMs: 180000,
   },
-  useEmbedding: false, // embedding is OFF by default
+  useEmbedding: true,     // embedding is ON by default
   // ...
-};
+}
 ```
+
+Note both defaults inverted from what this document previously stated: embedding no longer
+inherits the active API, and `useEmbedding` is on.
 
 ---
 

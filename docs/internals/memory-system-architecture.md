@@ -246,9 +246,9 @@ embedding and score **lexical-only**:
   vectors were built from no longer matches what ingestion produces today.
 
 Either surfaces an in-app prompt to recompute the vectors — a **backfill**, not a full rebuild
-(see [embedding-provider-gate-and-coverage.md](embedding-provider-gate-and-coverage.md)). The
+(see [embedding-provider-gate-and-coverage.md](../design/archive/embedding-provider-gate-and-coverage.md)). The
 homogeneous-store rule these gates rest on is decision D5 of
-[memory-storage-sqlite-migration.md](memory-storage-sqlite-migration.md).
+[memory-storage-sqlite-migration.md](../design/archive/memory-storage-sqlite-migration.md).
 
 ### Progressive Retrieval (Navigator)
 
@@ -351,7 +351,7 @@ storageRoot/
 ```
 
 > Experience memory moved from `experience_memory.json` to **`memory.db`** — see
-> [memory-storage-sqlite-migration.md](memory-storage-sqlite-migration.md). Core memory and
+> [memory-storage-sqlite-migration.md](../design/archive/memory-storage-sqlite-migration.md). Core memory and
 > session state stay JSON by design (decision D2 there): both are small enough that indexed
 > queries buy nothing. The `.bak` is created once by the backfill and kept for one release cycle;
 > a store that never had embeddings enabled will not have one.
@@ -420,7 +420,7 @@ retrieval prefixes are prepended **only in the local provider** (remote models a
 (`EMBEDDING_FORMAT_VERSION`) so a format change (e.g. the prefix fix) is detected as a stale index
 and a backfill (recomputing the vectors — no LLM extraction) is offered. A change of embedding _model_ is detected separately, via
 `memory_meta.embedding_model` — see
-[memory-storage-sqlite-migration.md §7](memory-storage-sqlite-migration.md).
+[memory-storage-sqlite-migration.md §7](../design/archive/memory-storage-sqlite-migration.md).
 
 **Build/packaging constraint.** `onnxruntime-node` loads its native binding
 (`onnxruntime_binding.node`) via a dynamic `require`, which Rollup cannot bundle. The
@@ -430,7 +430,7 @@ from `node_modules` at runtime. A bundled build missing these externals fails at
 _"Could not dynamically require … onnxruntime_binding.node"_. Production packaging must ship these
 native modules and `asarUnpack` the `.node`/`.dylib` files.
 
-Full design, decisions, and empirical validation: [local-embeddings-default.md](local-embeddings-default.md) §13.
+Full design, decisions, and empirical validation: [local-embeddings-default.md](../design/archive/local-embeddings-default.md) §13.
 
 ### Custom Extraction Prompt
 
@@ -463,7 +463,7 @@ The full configuration and maintenance surface. Its status cards report:
 - **Embedding coverage** — _N of M chunks embedded (P%)_: green when complete, amber when chunks
   lack vectors, red when an embedding call last failed. Offers a **Backfill embeddings** action
   (recomputes missing vectors from stored text; no LLM extraction, deletes nothing) with live
-  progress. See [embedding-provider-gate-and-coverage.md](embedding-provider-gate-and-coverage.md).
+  progress. See [embedding-provider-gate-and-coverage.md](../design/archive/embedding-provider-gate-and-coverage.md).
 - **Current workspace** — the active workspace and its top contributors by session/chunk count.
 
 Below the cards: **Runtime Configuration** (memory LLM, embedding provider/model, navigation
@@ -556,17 +556,17 @@ The full memory IPC surface (29 `ipcMain.handle` registrations), grouped by conc
 
 ## 8. Key Design Decisions
 
-| Decision                                             | Rationale                                                                                                                                                                                                                |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Two-layer (core + experience)                        | Core is small/stable/always-present; experience is large/dynamic/on-demand                                                                                                                                               |
-| Active retrieval for experience                      | Saves context window; model decides relevance                                                                                                                                                                            |
-| Workspace-scoped experience search                   | Prevents cross-project contamination                                                                                                                                                                                     |
-| Workspace-tagged core memory                         | Prevents irrelevant profile entries from polluting unrelated projects                                                                                                                                                    |
-| LLM-based extraction                                 | Produces higher-quality, future-useful chunks vs raw transcript storage                                                                                                                                                  |
-| Progressive retrieval with navigator                 | Balances precision vs token cost                                                                                                                                                                                         |
-| SQLite for experience; JSON for core & session state | Experience memory needs indexed queries without whole-file rewrites on every ingest; core (~24 entries) and session bookkeeping stay JSON — see [memory-storage-sqlite-migration.md](memory-storage-sqlite-migration.md) |
-| Homogeneous embedding store (one model at a time)    | Cosine is only meaningful within one embedding space; a model/provider switch invalidates the vectors and triggers a backfill (decisions D4/D5 of the SQLite migration design)                                           |
-| Max 24 core entries                                  | Keeps prompt injection small; forces selectivity                                                                                                                                                                         |
+| Decision                                             | Rationale                                                                                                                                                                                                                                  |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Two-layer (core + experience)                        | Core is small/stable/always-present; experience is large/dynamic/on-demand                                                                                                                                                                 |
+| Active retrieval for experience                      | Saves context window; model decides relevance                                                                                                                                                                                              |
+| Workspace-scoped experience search                   | Prevents cross-project contamination                                                                                                                                                                                                       |
+| Workspace-tagged core memory                         | Prevents irrelevant profile entries from polluting unrelated projects                                                                                                                                                                      |
+| LLM-based extraction                                 | Produces higher-quality, future-useful chunks vs raw transcript storage                                                                                                                                                                    |
+| Progressive retrieval with navigator                 | Balances precision vs token cost                                                                                                                                                                                                           |
+| SQLite for experience; JSON for core & session state | Experience memory needs indexed queries without whole-file rewrites on every ingest; core (~24 entries) and session bookkeeping stay JSON — see [memory-storage-sqlite-migration.md](../design/archive/memory-storage-sqlite-migration.md) |
+| Homogeneous embedding store (one model at a time)    | Cosine is only meaningful within one embedding space; a model/provider switch invalidates the vectors and triggers a backfill (decisions D4/D5 of the SQLite migration design)                                                             |
+| Max 24 core entries                                  | Keeps prompt injection small; forces selectivity                                                                                                                                                                                           |
 
 ---
 

@@ -75,7 +75,7 @@ Beyond upstream's basic MCP bridging:
 
 ## 4. Scheduler v2
 
-An anacron-style, in-app task scheduler ([docs/design/scheduler-v2.md](design/scheduler-v2.md)).
+An anacron-style, in-app task scheduler ([docs/design/archive/scheduler-v2.md](design/archive/scheduler-v2.md)).
 
 - **Named fuzzy time windows** (morning/afternoon/evening/night) — tasks run _sometime within_
   a window, not at a precise second; the system picks the moment.

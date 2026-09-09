@@ -1,4 +1,4 @@
-<!-- sources: src/renderer/components/settings/SettingsMemory.tsx, src/renderer/components/MemoryLensSection.tsx, src/renderer/components/message/MemorySourcesBadge.tsx, src/main/memory/memory-extension.ts, src/main/memory/memory-chat-search-tool.ts, README, ARCHITECTURE.md §4.6, docs/design/memory-system-architecture.md, docs/design/memory-storage-sqlite-migration.md, docs/design/embedding-provider-gate-and-coverage.md, docs/design/archive/local-embeddings-default.md -->
+<!-- sources: src/renderer/components/settings/SettingsMemory.tsx, src/renderer/components/MemoryLensSection.tsx, src/renderer/components/message/MemorySourcesBadge.tsx, src/main/memory/memory-extension.ts, src/main/memory/memory-chat-search-tool.ts, README, ARCHITECTURE.md §4.6, docs/design/memory-system-architecture.md, docs/design/archive/memory-storage-sqlite-migration.md, docs/design/archive/embedding-provider-gate-and-coverage.md, docs/design/archive/local-embeddings-default.md -->
 
 # Memory
 
