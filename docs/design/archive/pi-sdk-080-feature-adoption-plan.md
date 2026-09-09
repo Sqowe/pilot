@@ -1,7 +1,27 @@
 # Pi SDK 0.79–0.80 Feature Adoption — Design & Implementation Plan
 
+> ## 🗄️ Archived — 2026-09-08
+>
+> **This plan is closed.** Its tiers were completed during the 0.80 series; the three
+> items that were still open were carried into the live plan and re-scoped against what
+> shipped in pi 0.83–0.85:
+>
+> | Left open here                         | Now tracked as                                                    |
+> | -------------------------------------- | ----------------------------------------------------------------- |
+> | §4.1 item 3 — edit-diff rendering      | [`pi-sdk-085`](../pi-sdk-085-feature-adoption-plan.md) **Item F** |
+> | §5.3 — provider-scoped `env` overrides | [`pi-sdk-085`](../pi-sdk-085-feature-adoption-plan.md) **Item H** |
+> | §5.2 — RPC extension-UI typed surface  | [`pi-sdk-085`](../pi-sdk-085-feature-adoption-plan.md) **Item I** |
+>
+> §5.3's remaining Mistral prompt-cache check was **dropped**: the "CH" cache-hit display
+> it was meant to verify against was itself removed (§3.2). The two designs extracted from
+> this plan — [`native-project-trust-alignment.md`](../native-project-trust-alignment.md)
+> and [`thinking-level-per-model.md`](../thinking-level-per-model.md) — remain live and
+> independent.
+>
+> Kept as as-built history. Baseline below is **0.80.10**; the codebase is now on 0.85.1.
+
 **Created:** 2026-06-25
-**Status:** Opportunistic-adoption pass complete (2026-07-17). **T1** — compaction transparency ✅; prompt-cache CH ❌ removed (buggy + low-value next to Context Usage, see §3.2). **T2** — `CONFIG_DIR_NAME` + `ModelThinkingLevel` ✅; native project-trust ➡️ **extracted** to [`native-project-trust-alignment.md`](./native-project-trust-alignment.md) (its own security epic). **T3** — §5.1 curation refresh ✅; §5.3 `httpProxy` ✅ (scoped-`env` + Mistral pending); §5.2 RPC types, §4.1.3 edit-diff remain opportunistic/pending; §5.4 step 2 (thinking-level UX) ➡️ **extracted** to [`thinking-level-per-model.md`](./thinking-level-per-model.md).
+**Status:** Opportunistic-adoption pass complete (2026-07-17). **T1** — compaction transparency ✅; prompt-cache CH ❌ removed (buggy + low-value next to Context Usage, see §3.2). **T2** — `CONFIG_DIR_NAME` + `ModelThinkingLevel` ✅; native project-trust ➡️ **extracted** to [`native-project-trust-alignment.md`](../native-project-trust-alignment.md) (its own security epic). **T3** — §5.1 curation refresh ✅; §5.3 `httpProxy` ✅ (scoped-`env` + Mistral pending); §5.2 RPC types, §4.1.3 edit-diff remain opportunistic/pending; §5.4 step 2 (thinking-level UX) ➡️ **extracted** to [`thinking-level-per-model.md`](../thinking-level-per-model.md).
 **Author:** AI-assisted design session
 **Baseline:** **0.80.10** — `chore(deps): uplift pi-ai + pi-coding-agent 0.80.3 → 0.80.10`
 (`eee3877`), landed. The original blocking dependency (the 0.78.1 → 0.80.2 uplift,
@@ -36,21 +56,21 @@ Guiding principles (consistent with `ARCHITECTURE.md`):
 - **Additive and reversible.** Each feature is independently shippable; none is a
   prerequisite for another except where noted.
 - **Security changes require explicit confirmation** (project-trust work — extracted to
-  [`native-project-trust-alignment.md`](./native-project-trust-alignment.md)).
+  [`native-project-trust-alignment.md`](../native-project-trust-alignment.md)).
 
 ### Prioritization summary
 
-| Tier   | Feature                                                                | SDK version          | Effort | Risk                | Status                                                                                    |
-| ------ | ---------------------------------------------------------------------- | -------------------- | ------ | ------------------- | ----------------------------------------------------------------------------------------- |
-| **T1** | Compaction transparency — surface post-compaction token estimate       | 0.79.8               | S      | Low                 | ✅ Done                                                                                   |
-| **T1** | Prompt-cache hit visibility (CH)                                       | 0.79.0 + pi-ai usage | S–M    | Low                 | ❌ Removed                                                                                |
-| **T2** | `CONFIG_DIR_NAME` hardening                                            | 0.79.7               | S      | Low                 | ✅ Done                                                                                   |
-| **T2** | `ModelThinkingLevel` type hygiene (§5.4 step 1)                        | 0.80.6               | S      | Low                 | ✅ Done                                                                                   |
-| **T2** | Native project-trust alignment (investigation → design)                | 0.79.0–0.79.1        | L      | **High (security)** | ➡️ Extracted → [`native-project-trust-alignment.md`](./native-project-trust-alignment.md) |
-| **T3** | Thinking-level surface — import the SDK type (§5.4 step 1)             | 0.80.6               | S      | Low                 | ✅ Done (same item as T2 row above)                                                       |
-| **T3** | Claude Fable 5 + refresh stale curation                                | 0.79.1–0.80.9        | S      | Low                 | ✅ Done                                                                                   |
-| **T3** | RPC extension UI typed surface                                         | 0.79.0               | S      | Low                 | Pending                                                                                   |
-| **T3** | Provider/runtime config surface (httpProxy, Mistral cache, scoped env) | 0.79.5–**0.80.8**    | S–M    | Low                 | ⏳ Partial — `httpProxy` ✅; scoped-`env` + Mistral pending                               |
+| Tier   | Feature                                                                | SDK version          | Effort | Risk                | Status                                                                                     |
+| ------ | ---------------------------------------------------------------------- | -------------------- | ------ | ------------------- | ------------------------------------------------------------------------------------------ |
+| **T1** | Compaction transparency — surface post-compaction token estimate       | 0.79.8               | S      | Low                 | ✅ Done                                                                                    |
+| **T1** | Prompt-cache hit visibility (CH)                                       | 0.79.0 + pi-ai usage | S–M    | Low                 | ❌ Removed                                                                                 |
+| **T2** | `CONFIG_DIR_NAME` hardening                                            | 0.79.7               | S      | Low                 | ✅ Done                                                                                    |
+| **T2** | `ModelThinkingLevel` type hygiene (§5.4 step 1)                        | 0.80.6               | S      | Low                 | ✅ Done                                                                                    |
+| **T2** | Native project-trust alignment (investigation → design)                | 0.79.0–0.79.1        | L      | **High (security)** | ➡️ Extracted → [`native-project-trust-alignment.md`](../native-project-trust-alignment.md) |
+| **T3** | Thinking-level surface — import the SDK type (§5.4 step 1)             | 0.80.6               | S      | Low                 | ✅ Done (same item as T2 row above)                                                        |
+| **T3** | Claude Fable 5 + refresh stale curation                                | 0.79.1–0.80.9        | S      | Low                 | ✅ Done                                                                                    |
+| **T3** | RPC extension UI typed surface                                         | 0.79.0               | S      | Low                 | Pending                                                                                    |
+| **T3** | Provider/runtime config surface (httpProxy, Mistral cache, scoped env) | 0.79.5–**0.80.8**    | S–M    | Low                 | ⏳ Partial — `httpProxy` ✅; scoped-`env` + Mistral pending                                |
 | **T3** | Edit diff rendering via SDK helpers (reframed — see §4.1.3)            | 0.79.7               | M      | Low                 |
 
 Recommended sequencing: **T1 first** (small, visible, low-risk wins that exercise the
@@ -102,13 +122,13 @@ refresh), which are the cheapest and fix drift that already exists.
 **already consumed** by Open Cowork.
 
 **What we have today:**
-[`agent-runner.ts:3990-4030`](../../src/main/claude/agent-runner.ts#L3990) handles
+[`agent-runner.ts:3990-4030`](../../../src/main/claude/agent-runner.ts#L3990) handles
 `compaction_start` / `compaction_end`, reading `event.reason`, `event.willRetry`,
 `event.aborted`, `event.errorMessage`, and emitting a trace "thinking" step
 ("Compacting context (reason)…" → "Context compaction completed"). The
 post-compaction size is **not** surfaced. Compaction settings are computed in
-[`compaction-budget.ts`](../../src/main/claude/compaction-budget.ts) via
-`selectCompactionSettings` ([`agent-runner.ts:3277`](../../src/main/claude/agent-runner.ts#L3277)).
+[`compaction-budget.ts`](../../../src/main/claude/compaction-budget.ts) via
+`selectCompactionSettings` ([`agent-runner.ts:3277`](../../../src/main/claude/agent-runner.ts#L3277)).
 
 **Change:** in the `compaction_end` handler, when `event.estimatedTokensAfter` is a
 number and not aborted, append the estimate to the completed step title, e.g.
@@ -126,8 +146,8 @@ usage bar so the post-compaction drop shows immediately rather than waiting for 
 > question — "is it worth the extra IPC?" — rested on a false premise: there is no extra
 > IPC. `session.contextInfo` already exists and is already emitted on a throttle
 > (`CONTEXT_EMIT_INTERVAL_MS` / `CONTEXT_EMIT_MIN_DELTA`,
-> [`agent-runner.ts:3616`](../../src/main/claude/agent-runner.ts#L3616)), consumed by
-> [`useIPC.ts:347`](../../src/renderer/hooks/useIPC.ts#L347). Phase 2 reuses that channel;
+> [`agent-runner.ts:3616`](../../../src/main/claude/agent-runner.ts#L3616)), consumed by
+> [`useIPC.ts:347`](../../../src/renderer/hooks/useIPC.ts#L347). Phase 2 reuses that channel;
 > the cost is one emit on an event that fires rarely.
 
 **Tests:** extend the agent-runner event-handling tests with a `compaction_end`
@@ -168,11 +188,11 @@ latest prompt-cache hit rate ("CH"). The underlying data — `cacheRead`, `cache
 arrives on `message_end` usage.
 
 **What we have today:**
-[`context-usage.ts`](../../src/renderer/utils/context-usage.ts) computes a stacked
+[`context-usage.ts`](../../../src/renderer/utils/context-usage.ts) computes a stacked
 context-usage bar (conversation / tool-schema / output reservation) for the
-[`ContextPanel`](../../src/renderer/components/ContextPanel.tsx). It does **not** model
+[`ContextPanel`](../../../src/renderer/components/ContextPanel.tsx). It does **not** model
 cache reads/writes or a hit rate. `message_end` usage is consumed in
-[`agent-runner.ts`](../../src/main/claude/agent-runner.ts#L3700) (around line 3700 /
+[`agent-runner.ts`](../../../src/main/claude/agent-runner.ts#L3700) (around line 3700 /
 3773).
 
 **Change:** thread `cacheRead` / `cacheWrite` from `message_end` usage through the
@@ -184,7 +204,7 @@ is a natural extension since the usage type also carries per-segment `cost`.
 > **Decision (2026-07-17):** **header chip**, not a tooltip or a per-message line. It is
 > always visible, matches pi's footer, and the header is already a flex row
 > (`px-3 h-10 flex items-center gap-2`,
-> [`ContextPanel.tsx:1072`](../../src/renderer/components/ContextPanel.tsx#L1072)) — the
+> [`ContextPanel.tsx:1072`](../../../src/renderer/components/ContextPanel.tsx#L1072)) — the
 > chip drops in without relayout. A tooltip would hide the metric behind a hover; a
 > per-message line would add noise to every turn.
 
@@ -192,7 +212,7 @@ is a natural extension since the usage type also carries per-segment `cost`.
 
 1. Main process: include `cacheRead`/`cacheWrite` in the usage object sent to the
    renderer on `message_end`. **Note:** `normalizeTokenUsage`
-   ([`agent-runner.ts:556`](../../src/main/claude/agent-runner.ts#L556)) currently returns
+   ([`agent-runner.ts:556`](../../../src/main/claude/agent-runner.ts#L556)) currently returns
    only `{ input, output }` and drops everything else — it is the choke point to widen.
 2. Renderer: extend `context-usage.ts` with a pure `computeCacheHitRate(...)` + a
    small UI chip; unit-test the pure function (zero-division, no-cache, all-cache).
@@ -237,14 +257,14 @@ edit-diff helpers `generateDiffString`, `generateUnifiedPatch`, and the
 **What we have today:**
 
 - The pi bash extension already adopted `CONFIG_DIR_NAME` **defensively** with a `.pi`
-  fallback ([`pi-extensions/bash-restrictions/config.ts:41-47`](../../pi-extensions/bash-restrictions/config.ts#L41)),
+  fallback ([`pi-extensions/bash-restrictions/config.ts:41-47`](../../../pi-extensions/bash-restrictions/config.ts#L41)),
   written while still on a pre-0.79 SDK. Now that the toolchain is on 0.80.10, the
   constant is guaranteed present.
 - **Correction (2026-07-17):** the original claim here — "the app/renderer renders
   edit-tool diffs with its own logic" — is **false**. There is no diff rendering at all.
-  [`toolHelpers.tsx`](../../src/renderer/components/message/toolHelpers.tsx) (64 lines)
+  [`toolHelpers.tsx`](../../../src/renderer/components/message/toolHelpers.tsx) (64 lines)
   maps `edit` to a pencil icon and the label `Edit <path>`, and
-  [`ToolUseBlock.tsx:197`](../../src/renderer/components/message/ToolUseBlock.tsx#L197)
+  [`ToolUseBlock.tsx:197`](../../../src/renderer/components/message/ToolUseBlock.tsx#L197)
   renders the tool input as raw `JSON.stringify(block.input, null, 2)` in a `<pre>`. So
   the user sees escaped `old_string` / `new_string` blobs. No diff library is present in
   dependencies either.
@@ -293,7 +313,7 @@ swap).
 > plan — the (broader-than-sketched) SDK surface, OC's five parallel trust surfaces, the
 > security invariants that must not regress, the phased approach, and the open questions —
 > now lives in
-> [`native-project-trust-alignment.md`](./native-project-trust-alignment.md).
+> [`native-project-trust-alignment.md`](../native-project-trust-alignment.md).
 >
 > **Why it left:** every other item in this plan is a pure, low-risk consumer of a public
 > SDK surface, shippable in one edit. Project-trust is a security boundary spanning five OC
@@ -314,11 +334,11 @@ Claude Sonnet 5 (0.80.3), Fable 5 `xhigh`/`max` across generated catalogs (0.80.
 Kimi K3 + Grok 4.5 (0.80.9).
 
 **What we have today:** model presets are built in
-[`config-store.ts`](../../src/main/config/config-store.ts) — `PROVIDER_PRESETS`
+[`config-store.ts`](../../../src/main/config/config-store.ts) — `PROVIDER_PRESETS`
 overlaid with registry data via the (now `/compat`) dynamic `getModels` import and a
 `PI_AI_CURATED` curation map (`getPiAiModelPresets`,
-[`config-store.ts:469`](../../src/main/config/config-store.ts#L469)); the map itself lives
-in [`api-model-presets.ts:145`](../../src/shared/api-model-presets.ts#L145).
+[`config-store.ts:469`](../../../src/main/config/config-store.ts#L469)); the map itself lives
+in [`api-model-presets.ts:145`](../../../src/shared/api-model-presets.ts#L145).
 
 The curated lists are **visibly stale**: OpenRouter picks still top out at
 `anthropic/claude-opus-4-6` / `claude-sonnet-4-6` and `openai/gpt-5.4` — no Opus 4.8, no
@@ -345,7 +365,7 @@ from the built-in xAI catalog. Verified as a non-issue — no xAI/Grok entries e
 curation map or presets.
 
 > **As built (2026-07-17, commit `bdcd8ff5`):** curation refreshed in
-> [`api-model-presets.ts`](../../src/shared/api-model-presets.ts). `claude-fable-5`,
+> [`api-model-presets.ts`](../../../src/shared/api-model-presets.ts). `claude-fable-5`,
 > `claude-sonnet-5`, and `claude-opus-4.8` (dot form on OpenRouter, dash form
 > `claude-opus-4-8` on Anthropic native) added to both `API_PROVIDER_PRESETS` and
 > `PI_AI_CURATED_PRESETS`; guard test `tests/api-model-presets-guard.test.ts` added.
@@ -367,7 +387,7 @@ curation map or presets.
 public API.
 
 **What we have today:** the IPC/RPC bridge and
-[`agent-runtime-extension.ts`](../../src/main/extensions/agent-runtime-extension.ts)
+[`agent-runtime-extension.ts`](../../../src/main/extensions/agent-runtime-extension.ts)
 use OC's own interfaces. Adopting the exported types where the bridge mirrors pi's
 extension-UI protocol improves type-safety and reduces drift.
 
@@ -384,11 +404,11 @@ extension-UI protocol improves type-safety and reduces drift.
 (0.79.8).
 
 **What we have today:** provider/auth config in
-[`config-store.ts`](../../src/main/config/config-store.ts),
-[`auth-utils.ts`](../../src/main/config/auth-utils.ts), and runtime key injection via
+[`config-store.ts`](../../../src/main/config/config-store.ts),
+[`auth-utils.ts`](../../../src/main/config/auth-utils.ts), and runtime key injection via
 `ModelRuntime.setRuntimeApiKey`
-([`claude-sdk-one-shot.ts:236`](../../src/main/claude/claude-sdk-one-shot.ts#L236), plus
-the ref-counted tracker in [`agent-runner.ts`](../../src/main/claude/agent-runner.ts)).
+([`claude-sdk-one-shot.ts:236`](../../../src/main/claude/claude-sdk-one-shot.ts#L236), plus
+the ref-counted tracker in [`agent-runner.ts`](../../../src/main/claude/agent-runner.ts)).
 
 **What 0.80.8 changed:** request-auth assembly moved from
 `ModelRegistry.getApiKeyAndHeaders()` to `ModelRuntime.getAuth()`, which accepts
@@ -412,14 +432,14 @@ management (§7).
 
 > **As built (2026-07-17, commit `bdcd8ff5`) — `httpProxy` only:**
 >
-> - [`http-proxy.ts`](../../src/main/utils/http-proxy.ts) — `applyConfigHttpProxy` sets the
+> - [`http-proxy.ts`](../../../src/main/utils/http-proxy.ts) — `applyConfigHttpProxy` sets the
 >   four conventional proxy env vars (`HTTP_PROXY`/`HTTPS_PROXY` + lowercase); startup mode
 >   uses `??=` to avoid clobbering shell-set vars, force mode (user change) applies
 >   immediately and restores the module-load snapshot when cleared.
-> - Persisted in [`config-store.ts`](../../src/main/config/config-store.ts); exposed in
->   [`SettingsGeneral.tsx`](../../src/renderer/components/settings/SettingsGeneral.tsx) with
+> - Persisted in [`config-store.ts`](../../../src/main/config/config-store.ts); exposed in
+>   [`SettingsGeneral.tsx`](../../../src/renderer/components/settings/SettingsGeneral.tsx) with
 >   `httpProxy` i18n across all four locales; wired at
->   [`index.ts`](../../src/main/index.ts) on startup and on config change.
+>   [`index.ts`](../../../src/main/index.ts) on startup and on config change.
 > - Tests: `tests/http-proxy-env.test.ts`, `tests/config-store-http-proxy.test.ts` (20 cases).
 >
 > **Still pending:** provider-scoped `env` via `ModelRuntimeAuthOverrides` and the Mistral
@@ -436,7 +456,7 @@ define `thinkingMax`. 0.80.7 extended native `xhigh`/`max` to Claude Fable 5 acr
 generated provider catalogs.
 
 **What we have today:**
-[`agent-runner.ts:2871`](../../src/main/claude/agent-runner.ts#L2871) hand-rolls the union
+[`agent-runner.ts:2871`](../../../src/main/claude/agent-runner.ts#L2871) hand-rolls the union
 and then uses almost none of it:
 
 ```ts
@@ -470,7 +490,7 @@ unreachable.
 >   union — single source of truth, compile-time drift detection going forward.
 >
 > Step 2 (UX — expose levels in UI) ➡️ **extracted** to
-> [`thinking-level-per-model.md`](./thinking-level-per-model.md) (2026-07-19) — its own design.
+> [`thinking-level-per-model.md`](../thinking-level-per-model.md) (2026-07-19) — its own design.
 > Key unblock found there: the "per-model capability clamping" cited as the blocker below is
 > already solved in the SDK (`getSupportedThinkingLevels` / `clampThinkingLevel` are pure
 > functions of the resolved `Model` in `pi-ai/compat`), so Sqowe inherits the per-model tables
@@ -491,10 +511,10 @@ unreachable.
   compaction on a long thread, observe CH + post-compaction estimate).
 - **Security gate:** project-trust (formerly §4.2) cannot merge without a design doc +
   security review — now tracked in
-  [`native-project-trust-alignment.md`](./native-project-trust-alignment.md).
+  [`native-project-trust-alignment.md`](../native-project-trust-alignment.md).
 - **Uplift checklist — model curation (added 2026-07-17):** every pi SDK uplift must
   re-check `PI_AI_CURATED_PRESETS`
-  ([`api-model-presets.ts:145`](../../src/shared/api-model-presets.ts#L145)) against the
+  ([`api-model-presets.ts:145`](../../../src/shared/api-model-presets.ts#L145)) against the
   new catalog: add newly-relevant models, and confirm nothing picked was removed upstream
   (0.80.9 dropped Grok 3 / Grok 4.20 / Grok Code Fast 1 — harmless for us only because we
   curate no xAI models). Native catalog entries update themselves; these lists do not.
@@ -534,14 +554,14 @@ unreachable.
 All questions opened with this plan were resolved on **2026-07-17**, during the 0.80.10
 rebase. Each decision is recorded inline in the relevant section; this is the index.
 
-| #   | Question                   | Decision                                                         | §                                                     |
-| --- | -------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------- |
-| 1   | CH placement               | **Header chip** in ContextPanel, mirroring pi's footer           | §3.2                                                  |
-| 2   | Compaction estimate bridge | **In scope** — reuses the existing `session.contextInfo`         | §3.1                                                  |
-| 3   | Project-trust scope        | **Extracted** — it is phase 1's output, now owned by its own doc | §4.2 → [own doc](./native-project-trust-alignment.md) |
-| 4   | Edit-diff helpers          | **Reframed** — a readability feature, not a cleanup swap         | §4.1.3                                                |
-| 5   | Thinking levels            | **Step 1 only** — import the SDK type, keep the on/off UI        | §5.4                                                  |
-| 6   | Curation freshness         | **Refresh once** + a curation check in the uplift checklist      | §5.1, §6                                              |
+| #   | Question                   | Decision                                                         | §                                                      |
+| --- | -------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------ |
+| 1   | CH placement               | **Header chip** in ContextPanel, mirroring pi's footer           | §3.2                                                   |
+| 2   | Compaction estimate bridge | **In scope** — reuses the existing `session.contextInfo`         | §3.1                                                   |
+| 3   | Project-trust scope        | **Extracted** — it is phase 1's output, now owned by its own doc | §4.2 → [own doc](../native-project-trust-alignment.md) |
+| 4   | Edit-diff helpers          | **Reframed** — a readability feature, not a cleanup swap         | §4.1.3                                                 |
+| 5   | Thinking levels            | **Step 1 only** — import the SDK type, keep the on/off UI        | §5.4                                                   |
+| 6   | Curation freshness         | **Refresh once** + a curation check in the uplift checklist      | §5.1, §6                                               |
 
 Two of these were resolved by reading the code rather than by preference, and both turned
 out to rest on false premises:
@@ -556,7 +576,7 @@ alignment _replace_ OC's trust surfaces or only _delegate_ the project-trust dec
 the deliverable of its phase-1 gap analysis, not an input to it. Answering it from the
 armchair — on a security boundary — is exactly the failure mode that section is structured
 to avoid. It stays open, owned by phase 1 of
-[`native-project-trust-alignment.md`](./native-project-trust-alignment.md).
+[`native-project-trust-alignment.md`](../native-project-trust-alignment.md).
 
 **Newly opened by the rebase** (tracked in `docs/design/test-verification-gaps.md`, not
 here): whether to adopt `@electron/rebuild`, which install scripts to approve under npm 12,

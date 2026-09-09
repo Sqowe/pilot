@@ -1,5 +1,21 @@
 # Pi SDK 0.81–0.82 Feature Adoption — Design & Implementation Plan
 
+> ## 🗄️ Archived — 2026-09-08
+>
+> **This plan was never started, and three of its four items were overtaken by pi
+> 0.83–0.85 before any of it was built.** All four were carried into the live plan and
+> re-scoped there:
+>
+> | Item here                         | Now tracked as                                                    | What changed                                                                                                                                                                                              |
+> | --------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+> | **A** — usage accounting          | [`pi-sdk-085`](../pi-sdk-085-feature-adoption-plan.md) **Item A** | `AgentSession.getSessionStats()` already aggregates it — a read, not an accumulator. A1 dropped as double-counting.                                                                                       |
+> | **B** — summary-retry progress    | [`pi-sdk-085`](../pi-sdk-085-feature-adoption-plan.md) **Item B** | Widened: 0.84.3's `session_compact_failed` reports _why_ a compaction failed.                                                                                                                             |
+> | **C** — bash session variables    | [`pi-sdk-085`](../pi-sdk-085-feature-adoption-plan.md) **Item S** | Its open questions are answered. The exposure is on by default, but `PI_SESSION_FILE` is never set here — the app's pi session is in-memory — so the security question it was filed under does not arise. |
+> | **D** — constrained tool sampling | [`pi-sdk-085`](../pi-sdk-085-feature-adoption-plan.md) **Item D** | 0.84.2 shipped an upstream implementation to observe first.                                                                                                                                               |
+>
+> Kept as as-built history — its analysis of the 0.81–0.82 surface is still accurate for
+> that baseline. Baseline below is **0.80.10**; the codebase is now on 0.85.1.
+
 **Created:** 2026-07-24
 **Status:** Proposed — not started. Four items, each independently shippable.
 **Author:** AI-assisted design session
@@ -16,7 +32,7 @@ See §2.
 > [`pi-sdk-080-feature-adoption-plan.md`](./pi-sdk-080-feature-adoption-plan.md) —
 > a sequenced, codebase-grounded adoption plan for one uplift's worth of new SDK
 > surface. That doc covered 0.79–0.80; this one covers 0.81–0.82. The
-> [`thinking-level-per-model.md`](./thinking-level-per-model.md) design was
+> [`thinking-level-per-model.md`](../thinking-level-per-model.md) design was
 > extracted from the earlier plan the same way an item here might later be.
 
 ---

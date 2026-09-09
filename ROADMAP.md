@@ -94,13 +94,21 @@
 - **Simplify `beforeToolCall` hook** (#13) — drop the legacy `setBeforeToolCall` path
   once `pi-coding-agent ≥ 0.74` is the floor; eliminate the silent permission-bypass risk.
 
-**Pi SDK 0.80 feature adoption** — [`docs/design/pi-sdk-080-feature-adoption-plan.md`](docs/design/pi-sdk-080-feature-adoption-plan.md)
+**Pi SDK 0.83–0.85 feature adoption** — [`docs/design/pi-sdk-085-feature-adoption-plan.md`](docs/design/pi-sdk-085-feature-adoption-plan.md)
 
-- **T1:** compaction transparency (post-compaction token estimate), prompt-cache hit
-  visibility.
-- **T2:** `CONFIG_DIR_NAME` hardening + exported edit-diff helpers.
-- **T3 (opportunistic):** new models (Claude Fable 5, etc.) in picker, RPC extension UI
-  types, `httpProxy` + provider-scoped env.
+The 0.85.1 uplift landed on 2026-09-08 (typecheck clean, 3141 tests green). The adoption
+backlog from the 0.80 and 0.82 plans is consolidated there; both predecessors are archived.
+
+- **Items A & B:** session usage totals via `getSessionStats()` (now a read, not an
+  accumulator) and compaction failure/retry narration in the trace.
+- **Item E:** verify path containment against 0.85.0's `ctx.cwd` fix in the built-in tools.
+- **Item S:** settle the bash session-variable exposure policy. Four `PI_*` variables reach
+  agent bash commands; `PI_SESSION_FILE` is not among them, because the app's pi session is
+  in-memory. Worth a regression test pinning that, since the safety depends on it.
+- **Item F:** edit-diff rendering — the transcript still shows raw JSON for `edit` calls.
+- **Item G:** reproduce the stuck loading indicator during a permission wait before
+  deciding how to fix it; the wait itself is already tracked in the main process.
+- **Opportunistic:** RPC extension-UI types, provider-scoped `env` overrides.
 
 **Tool completeness (API-key users)**
 
@@ -161,7 +169,7 @@
 
 ### Long-term & exploratory
 
-- **Native project-trust alignment** — [`docs/design/pi-sdk-080-feature-adoption-plan.md`](docs/design/pi-sdk-080-feature-adoption-plan.md) §4.2.
+- **Native project-trust alignment** — [`docs/design/native-project-trust-alignment.md`](docs/design/native-project-trust-alignment.md).
   Consolidate Open Cowork's parallel trust/permission surfaces around pi's native
   `project_trust` event / `ctx.isProjectTrusted()`. Security-sensitive, investigation-first.
 - **Plugin-as-Agent** — [`docs/design/plugin-as-agent-future.md`](docs/design/plugin-as-agent-future.md).

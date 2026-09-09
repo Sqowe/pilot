@@ -4,7 +4,7 @@
 **Status:** **Implemented — shipped 2026-07-20** (`9078c543`, `a5b628d2`). See §9 for the
 as-built record, including four defects found in review and three deliberate divergences
 from this design. Extracts and supersedes
-[`pi-sdk-080-feature-adoption-plan.md`](./pi-sdk-080-feature-adoption-plan.md) **§5.4 step 2**
+[`pi-sdk-080-feature-adoption-plan.md`](./archive/pi-sdk-080-feature-adoption-plan.md) **§5.4 step 2**
 (the deferred UX half). Step 1 — importing `ModelThinkingLevel` — already shipped
 (`agent-runner.ts`, 2026-07-18).
 **Author:** AI-assisted design session

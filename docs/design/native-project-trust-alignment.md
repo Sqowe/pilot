@@ -5,7 +5,7 @@
 is approved and security-reviewed.
 **Author:** AI-assisted design session
 **Provenance:** Extracted from
-[`pi-sdk-080-feature-adoption-plan.md`](./pi-sdk-080-feature-adoption-plan.md) §4.2 on
+[`pi-sdk-080-feature-adoption-plan.md`](./archive/pi-sdk-080-feature-adoption-plan.md) §4.2 on
 2026-07-17. That plan is an _opportunistic SDK-adoption_ track; project-trust is a security
 boundary and does not belong in it.
 **Security classification:** **High.** These gates decide whether an LLM-driven agent may act

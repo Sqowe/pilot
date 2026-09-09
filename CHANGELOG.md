@@ -7,8 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-09-09
+
 ### Changed
 
+- Uplifted `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` from **0.82.0 to
+  0.85.1**, nine releases. No source change was needed: the two breaking changes in the
+  range do not reach this app. 0.84.0's removal of the cumulative `message` and
+  `assistantMessageEvent.partial` fields applies only to the JSON and RPC wire protocols,
+  and this app subscribes to session events in-process, where both fields remain; 0.83.0's
+  TypeBox 1.3.7 upgrade removed no API this app uses. `typecheck` is clean and all 3141
+  tests pass. Note for anything reading the SDK version: 0.85.1 no longer exports the
+  `./package.json` subpath, so that path must be read from disk rather than required.
+  Pin **0.85.1, not 0.85.0** — 0.85.0 shipped broken SDK imports.
 - The skills shipped with the app now live in `resources/skills/` instead of `.claude/skills/`.
   That directory belongs to Claude Code, which loaded the app's own product content as if it
   were tooling for working on the repository — `skill-creator`, for one, appeared twice. The
@@ -417,6 +428,7 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
 [Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.6...HEAD
+[1.0.7]: https://github.com/sqowe/pilot/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/sqowe/pilot/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/sqowe/pilot/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/sqowe/pilot/compare/v1.0.3...v1.0.4
