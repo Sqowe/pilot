@@ -195,8 +195,30 @@ constructor only sets a file when one is given (`dist/core/session-manager.js:60
 and `getSessionFile()` returns that field unchanged (`dist/core/session-manager.js:736-738`).
 
 So `sessionFile` is always undefined, the conditional never fires, and the transcript path
-is never handed to a bash command. The app does not store conversations through pi at all;
-it has its own store.
+is never handed to a bash command.
+
+**`inMemory()` is not incidental — it is the SDK-only boundary applied to sessions.**
+Persisting through pi would write to `~/.pi/agent/sessions/--<encoded cwd>--`
+(`dist/core/session-manager.js:242-247`), which is the very directory the `pi` CLI reads
+and writes. Conversations held in this app would appear in `pi`'s own session list for the
+same working directory, and vice versa. `ARCHITECTURE.md` §4.1 forbids exactly that: the
+app "must never adopt that agent's user-level configuration, catalogs, or network
+behavior", because doing so would "make app behavior depend on whether the user also
+happens to run `pi` locally" (`ARCHITECTURE.md:153-158`).
+
+The version dimension makes it worse than a tidiness problem. The SDK pinned here and the
+user's installed `pi` CLI are independent and **will normally be different versions** — the
+two happening to match at 0.85.1 on 2026-09-09 is the exception. Session files are versioned
+(v1 → v2 → v3) and older ones are rewritten to the current version when loaded
+(`docs/session-format.md:19-27`), so a shared directory would have whichever side is newer
+migrating the other's files in place, with no way back for the older one.
+
+There is also no reason to want it. The app already owns conversation history: sessions,
+messages and trace steps live in its own SQLite database at `<userData>/data/cowork.db`
+([`database.ts:232-234`](../../src/main/db/database.ts#L232), schema at `:255-291`), with
+memory in `<userData>/memory` ([`index.ts:1062`](../../src/main/index.ts#L1062)) and its own
+export paths in [`src/main/chat/`](../../src/main/chat/). Switching to pi's session files
+would add nothing and mix two products' histories in one directory.
 
 > **Correction (2026-09-09).** An earlier revision of this plan stated that a
 > model-invoked bash command could already read the absolute path to the conversation
@@ -204,9 +226,13 @@ it has its own store.
 > reasoned from the capability's documentation rather than from how this app instantiates
 > the session. The exposure does not exist here.
 
-**This conclusion rests entirely on `inMemory()`.** If the app ever adopts pi's persisted
-sessions, `PI_SESSION_FILE` starts being set silently, with no code change at the call
-site and nothing to notice it. That is the durable risk, and §4.5 addresses it.
+**The conclusion rests on one unannotated call.** `inMemory()` is the third instance of the
+SDK-only rule, alongside `modelsPath: null` and `allowModelNetwork: false` — but those two
+are named in the `ARCHITECTURE.md` §4.1 table and enforced visibly in
+[`shared-auth.ts:18-22`](../../src/main/claude/shared-auth.ts#L18), whereas the session
+choice appears nowhere in the architecture document and carries no comment at the call
+site. Anyone changing it would see a lone `inMemory()` and no reason not to. §4.5 closes
+that gap.
 
 ### 4.3 What is actually exposed
 
@@ -250,10 +276,28 @@ one. Three options:
    This also removes the system-prompt line, since both hang off the same flag.
 3. **Align the sudo path** by adding the same four variables to its `spawn` call.
 
-**Recommended: option 1, plus a regression test.** The test should assert that the session
-manager reports no session file — so that if the app ever moves to persisted pi sessions,
-the change fails loudly instead of quietly widening what a bash command can read. A
-comment is not enough here; the coupling is invisible at the call site.
+**Recommended: option 1, plus making the session choice explicit.** Not as insurance
+against a likely product decision — there is none, per §4.2 — but because the SDK-only
+boundary is documented for two cases and silent for the third. Three small pieces:
+
+1. **Name it in `ARCHITECTURE.md` §4.1**, as a row beside `modelsPath: null` and
+   `allowModelNetwork: false`, since it is the same rule applied to sessions.
+2. **Comment the call site** at [`agent-runner.ts:3394`](../../src/main/claude/agent-runner.ts#L3394),
+   so the reason is visible where the change would be made.
+3. **Add a regression test** asserting the session manager reports no session file. This is
+   the part that actually holds: it fails if the boundary is crossed, whereas prose only
+   helps someone who reads it first. It also happens to pin `PI_SESSION_FILE` shut, which
+   is why this item can otherwise be left alone.
+
+> **Done (2026-09-09).** All three shipped: the `ARCHITECTURE.md` §4.1 paragraph, the
+> comment at the call site, and
+> [`sdk-only-session-isolation.test.ts`](../../src/tests/claude/sdk-only-session-isolation.test.ts).
+> The test asserts both halves independently — that the SDK's `inMemory()` still means "no
+> file" (an uplift could change that) and that the runner still asks for it — and was
+> verified to fail when the construction is swapped for a file-backed one. It is the first
+> test covering any of the three SDK-only cases; `modelsPath: null` and
+> `allowModelNetwork: false` are still documented but unpinned, which is worth closing the
+> same way.
 
 If the exposure is ever wanted narrower rather than off, a single variable **can** be
 masked: `spawnHook` receives and returns `{ command, cwd, env }`

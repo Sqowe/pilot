@@ -3391,6 +3391,16 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
             ...mcpToolsWithTimeout,
             ...extensionCustomTools,
           ],
+          // In-memory by design — the SDK-only boundary (ARCHITECTURE.md §4.1) applied to
+          // sessions. A persisting SessionManager writes to ~/.pi/agent/sessions/, the
+          // directory the `pi` CLI itself reads, so our conversations would appear in its
+          // session list and vice versa. Worse, our pinned SDK and the user's installed CLI
+          // are normally *different versions*, and session files are versioned (v1..v3) and
+          // rewritten to the current version on load — a shared directory means the newer
+          // side silently migrates the older side's files. History is ours instead:
+          // sessions/messages/trace_steps in <userData>/data/cowork.db. This also keeps
+          // PI_SESSION_FILE out of the env of agent bash commands, since pi only sets it
+          // when a session file exists.
           sessionManager: PiSessionManager.inMemory(),
           settingsManager: PiSettingsManager.inMemory({
             compaction: compactionSettings,

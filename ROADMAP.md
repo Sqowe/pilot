@@ -104,7 +104,9 @@ backlog from the 0.80 and 0.82 plans is consolidated there; both predecessors ar
 - **Item E:** verify path containment against 0.85.0's `ctx.cwd` fix in the built-in tools.
 - **Item S:** settle the bash session-variable exposure policy. Four `PI_*` variables reach
   agent bash commands; `PI_SESSION_FILE` is not among them, because the app's pi session is
-  in-memory. Worth a regression test pinning that, since the safety depends on it.
+  in-memory — the SDK-only boundary applied to sessions, since persisting through pi would
+  write into `~/.pi/agent/sessions/` and mix this app's conversations with the `pi` CLI's.
+  Worth naming in ARCHITECTURE.md §4.1 and pinning with a test, as the other two cases are.
 - **Item F:** edit-diff rendering — the transcript still shows raw JSON for `edit` calls.
 - **Item G:** reproduce the stuck loading indicator during a permission wait before
   deciding how to fix it; the wait itself is already tracked in the main process.

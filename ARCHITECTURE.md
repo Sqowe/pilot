@@ -169,6 +169,24 @@ isolation. **Any future SDK uplift MUST re-assert it.** The SDK's defaults are C
 file-backed and networked — so a mechanical migration silently re-introduces the coupling
 rather than failing loudly.
 
+**Sessions are held in memory for the same reason.** The pi `AgentSession` is constructed
+with `SessionManager.inMemory()` (`claude/agent-runner.ts`). Persisting through pi would
+write to `~/.pi/agent/sessions/--<encoded cwd>--` — the directory the `pi` CLI itself reads
+and writes — so conversations held here would show up in `pi`'s session list for the same
+working directory, and the CLI's would show up here. Conversation history is owned by the
+app instead: `sessions`, `messages` and `trace_steps` in `<userData>/data/cowork.db`
+(`db/database.ts`), with memory under `<userData>/memory`.
+
+This is not merely untidy. **The pinned SDK version and the user's installed `pi` CLI are
+independent and will normally differ**, and the session file format is versioned (v1 → v2 →
+v3) with older files rewritten to the current version on load (`docs/session-format.md`). A
+shared directory would therefore have whichever side is newer silently migrating the other's
+files, with no path back for the older one. Version skew between the app and a CLI we do not
+control is the normal case, so the isolation has to hold without it.
+
+This is the third instance of the SDK-only rule, and like the two in the table above, an
+uplift must re-assert it — the SDK default is to persist.
+
 Runtime API keys are injected per-run via `ModelRuntime.setRuntimeApiKey()` and are
 in-memory only (never persisted to `auth.json`). They are ref-counted and released in
 `finally` so concurrent sessions cannot clobber each other's credentials — see
