@@ -558,15 +558,15 @@ Unchanged from the predecessor plans, and still accurate:
 
 Recorded so these are not rediscovered and re-proposed at the next uplift.
 
-| Dropped                                               | Reason                                                                                         |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| 0.82 Item A1 — capture compaction usage by hand       | `getSessionStats()` already aggregates it; doing it manually would double-count (§5.1)         |
-| 0.80 §5.3 — Mistral prompt-cache accounting check     | Its verification target, the "CH" cache-hit display, was itself removed as buggy and low-value |
-| 0.82 Item C — "expose four, suppress one" via forking | Unnecessary: a `spawnHook` can mask a single variable (§4.2)                                   |
-| 0.80 §4.1 items 1–2 — `CONFIG_DIR_NAME` hardening     | Shipped 2026-07-18                                                                             |
-| 0.80 §3.1 — compaction transparency                   | Shipped                                                                                        |
-| 0.80 §3.2 — prompt-cache hit visibility               | Deliberately removed 2026-07-17                                                                |
-| 0.80 §5.4 — thinking-level surface                    | Shipped 2026-07-20; design in [`thinking-level-per-model.md`](./thinking-level-per-model.md)   |
+| Dropped                                               | Reason                                                                                               |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 0.82 Item A1 — capture compaction usage by hand       | `getSessionStats()` already aggregates it; doing it manually would double-count (§5.1)               |
+| 0.80 §5.3 — Mistral prompt-cache accounting check     | Its verification target, the "CH" cache-hit display, was itself removed as buggy and low-value       |
+| 0.82 Item C — "expose four, suppress one" via forking | Unnecessary: a `spawnHook` can mask a single variable (§4.2)                                         |
+| 0.80 §4.1 items 1–2 — `CONFIG_DIR_NAME` hardening     | Shipped 2026-07-18                                                                                   |
+| 0.80 §3.1 — compaction transparency                   | Shipped                                                                                              |
+| 0.80 §3.2 — prompt-cache hit visibility               | Deliberately removed 2026-07-17                                                                      |
+| 0.80 §5.4 — thinking-level surface                    | Shipped 2026-07-20; design in [`thinking-level-per-model.md`](./archive/thinking-level-per-model.md) |
 
 ### Still live elsewhere, not folded in here
 

@@ -40,7 +40,9 @@
   retrieval, active retrieval via tools, embedding-based scoring, Settings UI +
   Memory Lens panel
 - Aggressive core-memory updates + configurable recency/supersession scoring (6.1, 6.3)
-- Workspace-aware core-memory filtering (prevents cross-project contamination)
+- Workspace-aware core-memory filtering (prevents cross-project contamination) — tool-result
+  scoping, staleness §6.7: `workspacePinned` entries + configurable `pinnedToolPatterns`
+  ([`docs/design/archive/memory-tool-result-scoping.md`](docs/design/archive/memory-tool-result-scoping.md))
 
 **Skills & Plugins**
 
@@ -73,7 +75,7 @@
 
 ## 🚧 In Progress
 
-- **Chat Export — Multi-format (DOCX + PDF)** — [`docs/design/chat-export-multiformat.md`](docs/design/chat-export-multiformat.md).
+- **Chat Export — Multi-format (DOCX + PDF)** — [`docs/design/archive/chat-export-multiformat.md`](docs/design/archive/chat-export-multiformat.md).
   One shared HTML serializer feeding DOCX (`@turbodocx/html-to-docx`) and PDF
   (`webContents.printToPDF`); format chosen via native save-dialog filter. Design
   complete; implementation pending.
@@ -117,7 +119,7 @@ backlog from the 0.80 and 0.82 plans is consolidated there; both predecessors ar
 - Native `TodoWrite`, `AskUserQuestion`, `Glob`, `Grep`, `WebFetch`, `WebSearch` tool
   schemas + handlers for users without a bundled skill set.
 
-**Chat Export — Phase 3** — [`docs/design/chat-export-markdown.md`](docs/design/chat-export-markdown.md)
+**Chat Export — Phase 3** — [`docs/design/archive/chat-export-markdown.md`](docs/design/archive/chat-export-markdown.md)
 
 - Folder export with extracted images, persist last-used options, batch sidebar export,
   `Cmd+Shift+E` shortcut.
@@ -128,10 +130,6 @@ backlog from the 0.80 and 0.82 plans is consolidated there; both predecessors ar
 
 **Memory hardening**
 
-- **Tool-result scoping** — [`docs/design/memory-tool-result-scoping.md`](docs/design/memory-tool-result-scoping.md)
-  (staleness §6.7). Exclude operational MCP/bash tool results from the profiler
-  transcript; workspace-pin CoWork-memory-derived entries. Prevents cross-workspace
-  contamination.
 - **Fact layer with contradiction tracking** (staleness §6.4, high effort) — structured
   facts that get superseded only on explicit contradiction, weighted by mention count.
 
@@ -161,7 +159,7 @@ backlog from the 0.80 and 0.82 plans is consolidated there; both predecessors ar
 
 **UX**
 
-- **Code Assistant tab** — [`docs/design/code-assistant-tab.md`](docs/design/code-assistant-tab.md).
+- **Code Assistant tab** — [`docs/design/archive/code-assistant-tab.md`](docs/design/archive/code-assistant-tab.md).
   A project-directory-centric coding-agent view that reuses the existing engine, tools,
   MCP, skills, and permission system. Mostly renderer/UX work.
 - **Chat smart scrolling** — [`docs/design/chat-smart-scrolling.md`](docs/design/chat-smart-scrolling.md).

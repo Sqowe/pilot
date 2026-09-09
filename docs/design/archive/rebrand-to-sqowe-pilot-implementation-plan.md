@@ -174,7 +174,7 @@ Add an **Attribution / NOTICE** section to `README.md` (and keep `LICENSE`):
 Sqowe Pilot is a fork of [Open Cowork](https://github.com/OpenCoworkAI/open-cowork),
 originally released under the MIT License. The original copyright and license are retained
 in [LICENSE](./LICENSE). Sqowe Pilot has since diverged substantially — see
-[docs/SQOWE_PILOT_VS_OPEN_COWORK.md](./docs/SQOWE_PILOT_VS_OPEN_COWORK.md).
+[docs/SQOWE_PILOT_VS_OPEN_COWORK.md](docs/SQOWE_PILOT_VS_OPEN_COWORK.md).
 ```
 
 > **Encryption seeds:** do **not** rename `open-cowork-*` seed strings (see [§4.3](#43-encryption)).

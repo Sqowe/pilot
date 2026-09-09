@@ -206,7 +206,7 @@ embedded script is inert text there.
 > is **completely unrelated** to Open Cowork's own **Sandbox feature**
 > (`src/main/sandbox/`, the WSL2/Lima/Native execution adapters), which is
 > ⚠️ Experimental and **not enabled yet** (`sandboxEnabled: false`, UI-gated — see
-> [ARCHITECTURE.md](../../ARCHITECTURE.md) §4.4).
+> [ARCHITECTURE.md](../../../ARCHITECTURE.md) §4.4).
 >
 > The PDF export window depends **only** on the Electron renderer flag, which has
 > nothing to do with where agent tool/bash execution runs. The two are independent;

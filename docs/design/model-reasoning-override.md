@@ -4,7 +4,7 @@
 **Status:** Design — not started.
 **Author:** AI-assisted design session
 **Baseline:** pi-ai / pi-coding-agent **0.80.10**
-**Follows:** [`thinking-level-per-model.md`](./thinking-level-per-model.md) (shipped `9078c543`)
+**Follows:** [`thinking-level-per-model.md`](./archive/thinking-level-per-model.md) (shipped `9078c543`)
 and its Custom-endpoint fix (`a5b628d2`). This doc covers the case neither can reach.
 
 ---

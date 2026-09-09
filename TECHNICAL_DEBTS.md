@@ -332,7 +332,7 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 
 ## 20. Memory Lens Panel: Phase 3/4 Incomplete Items
 
-**Design doc:** `docs/design/memory-lens-panel.md`
+**Design doc:** `docs/design/archive/memory-lens-panel.md`
 
 **Status:** Phases 1, 2 mostly done. Phase 3 partially done. Phase 4 partially done.
 

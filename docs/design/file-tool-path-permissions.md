@@ -3,7 +3,7 @@
 **Status:** Proposed (not yet implemented)
 **Date:** 2026-06-19
 **Owner:** @obodnikov
-**Related:** [pi-bash-restrictions-extension.md](pi-bash-restrictions-extension.md), [path-containment.ts](../../src/main/tools/path-containment.ts), [permission-rules-store.ts](../../src/main/config/permission-rules-store.ts), [config-store.ts](../../src/main/config/config-store.ts), [agent-runner.ts](../../src/main/claude/agent-runner.ts), `node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
+**Related:** [pi-bash-restrictions-extension.md](archive/pi-bash-restrictions-extension.md), [path-containment.ts](../../src/main/tools/path-containment.ts), [permission-rules-store.ts](../../src/main/config/permission-rules-store.ts), [config-store.ts](../../src/main/config/config-store.ts), [agent-runner.ts](../../src/main/claude/agent-runner.ts), `node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
 
 ---
 
@@ -13,7 +13,7 @@ Add a **two-zone permission policy for the built-in file tools**: auto-allow ope
 target path is **inside the workspace** (or the OS temp dir), and **ask** for anything
 **outside**. This applies to **both** hosts — the Electron app and the standalone `pi` CLI
 extension — driven by one shared, pure decision engine, mirroring the
-[bash-restrictions](pi-bash-restrictions-extension.md) architecture.
+[bash-restrictions](archive/pi-bash-restrictions-extension.md) architecture.
 
 Concretely: "give the agent free rein under the current workspace, but prompt before it
 touches files elsewhere."
@@ -28,7 +28,7 @@ in the bash work (Phases 1–2 there).
 ### Non-goals
 
 - Confining **bash**-tool reads/writes (`cat`, `cp`, `>` redirection). Those remain the
-  [bash engine's](pi-bash-restrictions-extension.md) job via its denylist. This feature governs
+  [bash engine's](archive/pi-bash-restrictions-extension.md) job via its denylist. This feature governs
   the **dedicated file tools** only.
 - A full sandbox / OS-level jail. `PathGuard` ([path-guard.ts](../../src/main/sandbox/path-guard.ts))
   already does hard sandbox containment; this is a softer, always-on **ask** boundary that works
@@ -262,7 +262,7 @@ shared normalizer applied at load and update — same shape as the bash settings
 ## 8. Extension integration — universal dialog (remark #1)
 
 This **generalizes** the bash extension's `resolveBashToolCall`
-([bash plan §6](pi-bash-restrictions-extension.md)) into a tool-agnostic resolver + a shared
+([bash plan §6](archive/pi-bash-restrictions-extension.md)) into a tool-agnostic resolver + a shared
 presentation function. **The bash plan's §6 should be updated to consume `presentAsk`.**
 
 ```ts
@@ -386,7 +386,7 @@ export async function presentAsk(toolName, summary, ctx, settings) {
 
 - **Code:** generalize to `resolveToolCall` + tool-agnostic `presentAsk` (also rewires the bash
   path to use `presentAsk`); `path-config.ts` loader; wire `tool_call` for the file tools.
-  **Update [bash plan §6](pi-bash-restrictions-extension.md) to reference `presentAsk`.**
+  **Update [bash plan §6](archive/pi-bash-restrictions-extension.md) to reference `presentAsk`.**
 - **Unit tests:**
   - `pi-permission-dialog.test.ts` — `presentAsk` tool-agnostic: allow/deny/ask, deny-and-suggest
     (suggestion in reason + generalized wording), `hasUI:false`→block, timeout→block, `{timeout}`

@@ -15,13 +15,13 @@
 > §5.3's remaining Mistral prompt-cache check was **dropped**: the "CH" cache-hit display
 > it was meant to verify against was itself removed (§3.2). The two designs extracted from
 > this plan — [`native-project-trust-alignment.md`](../native-project-trust-alignment.md)
-> and [`thinking-level-per-model.md`](../thinking-level-per-model.md) — remain live and
+> and [`thinking-level-per-model.md`](./thinking-level-per-model.md) — remain live and
 > independent.
 >
 > Kept as as-built history. Baseline below is **0.80.10**; the codebase is now on 0.85.1.
 
 **Created:** 2026-06-25
-**Status:** Opportunistic-adoption pass complete (2026-07-17). **T1** — compaction transparency ✅; prompt-cache CH ❌ removed (buggy + low-value next to Context Usage, see §3.2). **T2** — `CONFIG_DIR_NAME` + `ModelThinkingLevel` ✅; native project-trust ➡️ **extracted** to [`native-project-trust-alignment.md`](../native-project-trust-alignment.md) (its own security epic). **T3** — §5.1 curation refresh ✅; §5.3 `httpProxy` ✅ (scoped-`env` + Mistral pending); §5.2 RPC types, §4.1.3 edit-diff remain opportunistic/pending; §5.4 step 2 (thinking-level UX) ➡️ **extracted** to [`thinking-level-per-model.md`](../thinking-level-per-model.md).
+**Status:** Opportunistic-adoption pass complete (2026-07-17). **T1** — compaction transparency ✅; prompt-cache CH ❌ removed (buggy + low-value next to Context Usage, see §3.2). **T2** — `CONFIG_DIR_NAME` + `ModelThinkingLevel` ✅; native project-trust ➡️ **extracted** to [`native-project-trust-alignment.md`](../native-project-trust-alignment.md) (its own security epic). **T3** — §5.1 curation refresh ✅; §5.3 `httpProxy` ✅ (scoped-`env` + Mistral pending); §5.2 RPC types, §4.1.3 edit-diff remain opportunistic/pending; §5.4 step 2 (thinking-level UX) ➡️ **extracted** to [`thinking-level-per-model.md`](./thinking-level-per-model.md).
 **Author:** AI-assisted design session
 **Baseline:** **0.80.10** — `chore(deps): uplift pi-ai + pi-coding-agent 0.80.3 → 0.80.10`
 (`eee3877`), landed. The original blocking dependency (the 0.78.1 → 0.80.2 uplift,
@@ -490,7 +490,7 @@ unreachable.
 >   union — single source of truth, compile-time drift detection going forward.
 >
 > Step 2 (UX — expose levels in UI) ➡️ **extracted** to
-> [`thinking-level-per-model.md`](../thinking-level-per-model.md) (2026-07-19) — its own design.
+> [`thinking-level-per-model.md`](./thinking-level-per-model.md) (2026-07-19) — its own design.
 > Key unblock found there: the "per-model capability clamping" cited as the blocker below is
 > already solved in the SDK (`getSupportedThinkingLevels` / `clampThinkingLevel` are pure
 > functions of the resolved `Model` in `pi-ai/compat`), so Sqowe inherits the per-model tables

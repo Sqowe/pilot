@@ -1,10 +1,22 @@
 # Memory: Tool Result Scoping
 
 **Created:** 2026-06-05
-**Status:** Draft
+**Status:** **Implemented** — `workspacePinned` + `pinnedToolPatterns` shipped; covered by `src/tests/memory/memory-tool-result-scoping.test.ts`.
 **Problem:** MCP tool responses contaminate core memory across workspaces
 
 ---
+
+> ## 🗄️ Archived — 2026-09-09
+>
+> **Verified implemented against the code.** All of §4 shipped: the `workspacePinned` field
+> on `CoreMemoryEntry` (`core-memory-store.ts:23`) with v2 storage format and workspace-scoped
+> filtering, `pinnedToolPatterns` as a configurable runtime setting consumed in
+> `memory-service.ts`, and transcript filtering via `TranscriptFilterOptions` in
+> `memory-utils.ts`. 20 references outside the tests, plus a dedicated test file.
+>
+> This is also item **6.7** of [`memory-fact-staleness-problem.md`](../memory-fact-staleness-problem.md),
+> whose priority table still showed it open; that has been corrected. The `Status: Draft`
+> line above was stale. Kept as as-built history.
 
 ## 1. Problem Statement
 

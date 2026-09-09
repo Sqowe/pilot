@@ -6,11 +6,11 @@ Manual verification (§17) in progress: A1–A3 passed on a real store 2026-07-2
 **Updated:** 2026-07-21
 **Owner:** @obodnikov
 **Branch:** `feat/memory2sql-migration`
-**Related:** [memory-system-architecture.md](memory-system-architecture.md),
+**Related:** [memory-system-architecture.md](../../internals/memory-system-architecture.md),
 [local-embeddings-default.md](local-embeddings-default.md),
-[experience-memory-store.ts](../../src/main/memory/experience-memory-store.ts),
-[database.ts](../../src/main/db/database.ts),
-[memory-service.ts](../../src/main/memory/memory-service.ts),
+[experience-memory-store.ts](../../../src/main/memory/experience-memory-store.ts),
+[database.ts](../../../src/main/db/database.ts),
+[memory-service.ts](../../../src/main/memory/memory-service.ts),
 [memory-lens-panel.md](memory-lens-panel.md)
 **Prior discussion:** conversation of 2026-07-03 (MCP-access + storage sizing thread)
 
@@ -26,7 +26,7 @@ Manual verification (§17) in progress: A1–A3 passed on a real store 2026-07-2
 | 3.3   | Lazy transcript hydration — §1 goal #2 fully closed             | ✅ Done | `03a56c8` |
 | 3.4   | Hardening — BLOB alignment, column-definition guard, doc sync   | ✅ Done | `5fcfd1b` |
 
-> Note: [memory-system-architecture.md §5](memory-system-architecture.md)'s storage-root
+> Note: [memory-system-architecture.md §5](../../internals/memory-system-architecture.md)'s storage-root
 > default is now **fixed** (`app.getPath('userData')/memory`). Its storage-layout tree is
 > still stale, though: it lists `experience_memory.json` and has no `memory.db` entry.
 
@@ -39,9 +39,9 @@ the two structural weaknesses of the JSON store that scale with total size regar
 much data a query actually needs:
 
 1. **Whole-file rewrite on every mutation.** Every ingested session rewrites the entire file
-   via atomic temp+rename (`saveJsonFile`, [memory-utils.ts:121](../../src/main/memory/memory-utils.ts),
+   via atomic temp+rename (`saveJsonFile`, [memory-utils.ts:121](../../../src/main/memory/memory-utils.ts),
    called by `ExperienceMemoryStore.save()` at
-   [experience-memory-store.ts:340](../../src/main/memory/experience-memory-store.ts)).
+   [experience-memory-store.ts:340](../../../src/main/memory/experience-memory-store.ts)).
 2. **Whole-file load+parse on every read.** Answering a workspace-scoped query loads and parses
    the full file even though only a fraction of rows belong to that workspace.
 
@@ -105,7 +105,7 @@ ops and native joins. Reconsider only if storageRoot relocation is dropped as a 
 ## 6. Proposed schema (`memory.db`)
 
 Mirrors the additive-migration idiom in `initializeSchema`
-([database.ts:248](../../src/main/db/database.ts)) — `CREATE TABLE IF NOT EXISTS` + `ensureColumn`.
+([database.ts:248](../../../src/main/db/database.ts)) — `CREATE TABLE IF NOT EXISTS` + `ensureColumn`.
 Dates are kept as ISO-8601 **TEXT** to preserve source fidelity (the current normalizers read
 `created_at` / `ingested_at` / `session_date` as strings); ISO-8601 sorts lexicographically.
 
@@ -190,7 +190,7 @@ Ollama-various, or none). So at any moment the store holds **one** model's vecto
 - On load/query, assert the stored `embedding_model` equals the active embedding config.
   On mismatch → treat as a stale index: fall back to lexical-only retrieval and surface
   the existing "rebuild memory index" prompt
-  (`rebuildAll` / `rebuildWorkspace`, [memory-service.ts](../../src/main/memory/memory-service.ts);
+  (`rebuildAll` / `rebuildWorkspace`, [memory-service.ts](../../../src/main/memory/memory-service.ts);
   [local-embeddings-default.md §8](local-embeddings-default.md)).
 - This makes the implicit "changing the model invalidates the index" rule **explicit and safe**,
   and lets the future MCP reader refuse to semantic-search vectors built with a different model
@@ -231,7 +231,7 @@ Swap the internals:
 
 - **Load → query.** Replace `loadJsonFile` of the whole file with prepared statements. The hot path
   (`retrieveProgressive` / the private scorer at
-  [experience-memory-store.ts:~502](../../src/main/memory/experience-memory-store.ts)) first selects
+  [experience-memory-store.ts:~502](../../../src/main/memory/experience-memory-store.ts)) first selects
   the candidate set via `WHERE source_workspace = ? OR source_workspace IS NULL` (∪ global), then
   runs the **existing** JS scoring — `cosineSimilarity` + `lexicalScore` + `workspaceBoost` +
   `recencyBoost` + supersession penalty — over that subset. Scoring math is unchanged.
@@ -253,7 +253,7 @@ Swap the internals:
 - **Lexical (optional, phase 2 of this migration).** Move the lexical half to `memory_chunks_fts`
   (FTS5) and combine with the JS vector score, keeping the same weighting. Ship phase 1 with
   lexical still in JS to de-risk.
-- `cosineSimilarity` / `lexicalScore` in [memory-utils.ts](../../src/main/memory/memory-utils.ts)
+- `cosineSimilarity` / `lexicalScore` in [memory-utils.ts](../../../src/main/memory/memory-utils.ts)
   gain `Float32Array` support (currently `number[]`).
 
 ## 9. Migration / backfill
@@ -300,9 +300,9 @@ One-time and idempotent, run after `storageRoot` is resolved and before memory s
 Two renderer surfaces read the raw stores today and both must change:
 
 1. **Settings → Memory "Raw File Viewer"**
-   ([SettingsMemory.tsx](../../src/renderer/components/settings/SettingsMemory.tsx)) — a file list +
+   ([SettingsMemory.tsx](../../../src/renderer/components/settings/SettingsMemory.tsx)) — a file list +
    raw-content pane driven by `memory.listFiles()` / `memory.readFile()`
-   ([preload:633](../../src/preload/index.ts); `memory-service.ts:306/347`).
+   ([preload:633](../../../src/preload/index.ts); `memory-service.ts:306/347`).
 2. **ContextPanel Memory Lens** ([memory-lens-panel.md](memory-lens-panel.md)) — status +
    per-workspace stats; already consumes `getStatsBySourceWorkspace`, which becomes a cheap indexed
    `GROUP BY` (see that doc's "Post-Migration Opportunity: Memory-by-Workspace View").
@@ -361,12 +361,12 @@ The same Settings page has a **Maintenance** block with four buttons. All keep t
 three route through experience-store verbs (now indexed `DELETE` / row inserts), and one is out of
 scope:
 
-| Button                    | IPC                       | Backend                                                                                                                                                            | Under SQLite                                                                                                           |
-| ------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| Rebuild current workspace | `memory.rebuildWorkspace` | `rebuildWorkspace()` ([memory-service.ts:481](../../src/main/memory/memory-service.ts)) — clears then re-ingests ([:487](../../src/main/memory/memory-service.ts)) | `DELETE WHERE source_workspace = ?` + row inserts, **in one transaction**                                              |
-| Rebuild all memory        | `memory.rebuildAll`       | `rebuildAll()` ([memory-service.ts:500](../../src/main/memory/memory-service.ts))                                                                                  | same across the store; **re-stamps every row's `embedding_model`/`embedding_dim`** (the §7 model-change recovery path) |
-| Clear current workspace   | `memory.clearWorkspace`   | `clearWorkspace()` → `removeBySourceWorkspace()` ([memory-service.ts:521/528](../../src/main/memory/memory-service.ts))                                            | indexed `DELETE`; follow with `VACUUM` (DB-card action) to reclaim pages                                               |
-| Clear core memory         | `memory.clearCoreMemory`  | `clearCoreMemory()` ([memory-service.ts:534](../../src/main/memory/memory-service.ts))                                                                             | **unaffected** — core stays JSON (D2)                                                                                  |
+| Button                    | IPC                       | Backend                                                                                                                                                                  | Under SQLite                                                                                                           |
+| ------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| Rebuild current workspace | `memory.rebuildWorkspace` | `rebuildWorkspace()` ([memory-service.ts:481](../../../src/main/memory/memory-service.ts)) — clears then re-ingests ([:487](../../../src/main/memory/memory-service.ts)) | `DELETE WHERE source_workspace = ?` + row inserts, **in one transaction**                                              |
+| Rebuild all memory        | `memory.rebuildAll`       | `rebuildAll()` ([memory-service.ts:500](../../../src/main/memory/memory-service.ts))                                                                                     | same across the store; **re-stamps every row's `embedding_model`/`embedding_dim`** (the §7 model-change recovery path) |
+| Clear current workspace   | `memory.clearWorkspace`   | `clearWorkspace()` → `removeBySourceWorkspace()` ([memory-service.ts:521/528](../../../src/main/memory/memory-service.ts))                                               | indexed `DELETE`; follow with `VACUUM` (DB-card action) to reclaim pages                                               |
+| Clear core memory         | `memory.clearCoreMemory`  | `clearCoreMemory()` ([memory-service.ts:534](../../../src/main/memory/memory-service.ts))                                                                                | **unaffected** — core stays JSON (D2)                                                                                  |
 
 Key points:
 
@@ -565,7 +565,7 @@ and declined, §16.7 not actionable). All seven are now settled: 1, 2, 3, 5, 6 s
    `rankedSessions` are declared on `ProgressiveRetrievalResult` and populated, but **no
    production code reads any of them** — `rankedChunks`/`rankedSessions` are used only as test
    handles, and the nav loop's `get_raw_session` fetches transcripts on demand via `getSession()`
-   ([memory-service.ts:1251](../../src/main/memory/memory-service.ts)). The lazy hydration above
+   ([memory-service.ts:1251](../../../src/main/memory/memory-service.ts)). The lazy hydration above
    therefore fills a field nobody consumes. Left in place rather than deleted, since removing
    fields from a public result type is a judgement call about reserved API, not a cleanup —
    worth a decision of its own.
@@ -633,7 +633,7 @@ and declined, §16.7 not actionable). All seven are now settled: 1, 2, 3, 5, 6 s
    which now points at `memory_meta.embedding_format_version` and cross-references §7 for the
    separate model-change signal.
 7. **Not actionable yet — note for whoever builds the memory MCP reader.** There is no such
-   reader in the codebase today ([src/main/mcp/](../../src/main/mcp/) has the gui-operate server,
+   reader in the codebase today ([src/main/mcp/](../../../src/main/mcp/) has the gui-operate server,
    config store and manager, nothing for memory), so this is not a task that can be picked up: it
    is a constraint to honour when that feature is designed. When it is: point it at `memory.db`
    rather than the JSON — it is simpler and race-free versus reading a file mid-rewrite — and have
@@ -752,7 +752,7 @@ Two things this surfaced, neither caused by the migration:
 
 - **Only ~5% of the store has embeddings** (23/443 chunks, 6/117 sessions). Pre-existing, and
   invisible while the data sat in one large JSON. `embedText` swallows provider failures and
-  returns `[]` ([memory-service.ts](../../src/main/memory/memory-service.ts)), so a misconfigured
+  returns `[]` ([memory-service.ts](../../../src/main/memory/memory-service.ts)), so a misconfigured
   or unreachable embedding provider silently ingests sessions with no vector. Worth confirming
   whether a `Rebuild all` restores coverage; if it comes back 23/443, embeddings are failing _now_
   and that is its own investigation.

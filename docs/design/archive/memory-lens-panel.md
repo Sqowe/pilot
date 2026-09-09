@@ -1,11 +1,21 @@
 # Memory Lens Panel — UX Design
 
 **Date:** 2026-05-22  
-**Status:** Concept  
+**Status:** **Implemented** — shipped as [`MemoryLensSection.tsx`](../../../src/renderer/components/MemoryLensSection.tsx) (454 lines).  
 **Author:** Discussion between user and AI  
 **Location:** Right toolbox (ContextPanel), new collapsible section
 
 ---
+
+> ## 🗄️ Archived — 2026-09-09
+>
+> **Verified implemented against the code**, not just marked done. The panel exists as
+> `MemoryLensSection.tsx`, rendered from `ContextPanel.tsx`, and carries all four sections
+> this document specifies: status bar, profile (`memoryLens.profile`), current workspace
+> (session and chunk counts, last-ingested time), and last retrieval (core matches, chunks
+> retrieved and expanded, injected tokens against a reference budget, retrieval time).
+>
+> The `Status: Concept` line above was stale for months. Kept as as-built history.
 
 ## Problem Statement
 
@@ -370,7 +380,7 @@ The "This Workspace" section (§3) is scoped to the _current_ workspace on purpo
 breakdown means aggregating counts per `source_workspace` across the whole store — and today that
 requires loading the entire `experience_memory.json` (~24 MB and growing ~24 MB/month) into memory
 and iterating every session and chunk in JS (`getStatsBySourceWorkspace()`,
-[experience-memory-store.ts:250](../../src/main/memory/experience-memory-store.ts)). That's an
+[experience-memory-store.ts:250](../../../src/main/memory/experience-memory-store.ts)). That's an
 O(all-rows) in-memory scan per call — too heavy to render live or refresh after every turn. That is
 why the cross-workspace toggle in Open Question #1 was never built.
 
@@ -412,11 +422,11 @@ as an expandable mode of the "This Workspace" section:
 Each row hangs off backend verbs that **already exist** — the migration only makes surfacing them
 cheap enough to show live:
 
-| Row action | Backend                                                                                                          | Effect                                             |
-| ---------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| Open       | drill into that workspace's sessions/chunks (read)                                                               | inspect what was learned                           |
-| Rebuild    | `rebuildWorkspace(cwd)` ([memory-service.ts:479](../../src/main/memory/memory-service.ts))                       | re-embed one workspace (e.g. after a model switch) |
-| Clear      | `removeBySourceWorkspace()` ([experience-memory-store.ts:320](../../src/main/memory/experience-memory-store.ts)) | delete one workspace's memory                      |
+| Row action | Backend                                                                                                             | Effect                                             |
+| ---------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Open       | drill into that workspace's sessions/chunks (read)                                                                  | inspect what was learned                           |
+| Rebuild    | `rebuildWorkspace(cwd)` ([memory-service.ts:479](../../../src/main/memory/memory-service.ts))                       | re-embed one workspace (e.g. after a model switch) |
+| Clear      | `removeBySourceWorkspace()` ([experience-memory-store.ts:320](../../../src/main/memory/experience-memory-store.ts)) | delete one workspace's memory                      |
 
 ### New IPC endpoint
 

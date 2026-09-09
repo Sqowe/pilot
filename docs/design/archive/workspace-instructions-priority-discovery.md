@@ -3,8 +3,8 @@
 **Status:** Complete (Phase 1 ✓, Phase 2 ✓, Phase 3 ✓, Phase 4 ✓, Phase 5 ✓, Phase 6 ✓, Phase 7 ✓, Phase 9 ✓)
 **Date:** 2026-07-01
 **Owner:** @obodnikov
-**Related:** [workspace-system-prompt.ts](../../src/main/utils/workspace-system-prompt.ts), [system-prompt-file-choices.ts](../../src/shared/system-prompt-file-choices.ts), [agent-runner.ts](../../src/main/claude/agent-runner.ts), [config-store.ts](../../src/main/config/config-store.ts), [SettingsPrompt.tsx](../../src/renderer/components/settings/SettingsPrompt.tsx), [WorkspaceInstructionsBadge.tsx](../../src/renderer/components/WorkspaceInstructionsBadge.tsx), `node_modules/@earendil-works/pi-coding-agent/docs/usage.md`
-**Prior art:** [pi-code-agent-default-rules-and-instruction-files-2026-06-21.md](../chats/pi-code-agent-default-rules-and-instruction-files-2026-06-21.md), [opencowork-configuration-files-and-system-prompt-selection-2026-04-27.md](../chats/opencowork-configuration-files-and-system-prompt-selection-2026-04-27.md), [workspace-instructions-visibility-badge-implementation-2026-06-03.md](../chats/workspace-instructions-visibility-badge-implementation-2026-06-03.md)
+**Related:** [workspace-system-prompt.ts](../../../src/main/utils/workspace-system-prompt.ts), [system-prompt-file-choices.ts](../../../src/shared/system-prompt-file-choices.ts), [agent-runner.ts](../../../src/main/claude/agent-runner.ts), [config-store.ts](../../../src/main/config/config-store.ts), [SettingsPrompt.tsx](../../../src/renderer/components/settings/SettingsPrompt.tsx), [WorkspaceInstructionsBadge.tsx](../../../src/renderer/components/WorkspaceInstructionsBadge.tsx), `node_modules/@earendil-works/pi-coding-agent/docs/usage.md`
+**Prior art:** [pi-code-agent-default-rules-and-instruction-files-2026-06-21.md](../../chats/pi-code-agent-default-rules-and-instruction-files-2026-06-21.md), [opencowork-configuration-files-and-system-prompt-selection-2026-04-27.md](../../chats/opencowork-configuration-files-and-system-prompt-selection-2026-04-27.md), [workspace-instructions-visibility-badge-implementation-2026-06-03.md](../../chats/workspace-instructions-visibility-badge-implementation-2026-06-03.md)
 
 ---
 
@@ -65,13 +65,13 @@ pi walks **global (`agentDir`) → ancestor dirs → cwd**, injecting each as
 with a **hard-coded** order (`AGENTS.md` beats `CLAUDE.md`) that is not user-configurable.
 
 **The app never passes `noContextFiles`**, which defaults to `false`
-([agent-runner.ts:3257](../../src/main/claude/agent-runner.ts#L3257) constructs the loader with
+([agent-runner.ts:3257](../../../src/main/claude/agent-runner.ts#L3257) constructs the loader with
 only `cwd`, `agentDir`, `additionalSkillPaths`, `appendSystemPrompt`). Therefore **two parallel
 mechanisms are live today**:
 
 1. **pi** prepends discovered `AGENTS.md`/`CLAUDE.md` as `<project_instructions>`.
 2. **The app** independently appends the user-selected file as `<workspace_instructions>`
-   ([agent-runner.ts:3248](../../src/main/claude/agent-runner.ts#L3248)).
+   ([agent-runner.ts:3248](../../../src/main/claude/agent-runner.ts#L3248)).
 
 **Consequence — double injection:** if the workspace root has `CLAUDE.md` (or `AGENTS.md`)
 **and** the user selected that same file, its bytes land in the prompt **twice** (prepended by
@@ -79,24 +79,24 @@ pi, appended by the app), the appended copy getting recency emphasis. Redundant 
 correctness bug. This design **fixes it** by taking ownership: `noContextFiles: true` turns off
 pi's discovery, and the app becomes the single source of truth. (This confirms the open
 question raised in
-[pi-code-agent-default-rules-and-instruction-files-2026-06-21.md](../chats/pi-code-agent-default-rules-and-instruction-files-2026-06-21.md#L204-L217).)
+[pi-code-agent-default-rules-and-instruction-files-2026-06-21.md](../../chats/pi-code-agent-default-rules-and-instruction-files-2026-06-21.md#L204-L217).)
 
 ---
 
 ## 4. Current architecture (as-is)
 
-| Layer                | File                                                                                                                                                      | Behavior                                                                                                                                           |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Whitelist            | [system-prompt-file-choices.ts](../../src/shared/system-prompt-file-choices.ts)                                                                           | `SYSTEM_PROMPT_FILE_CHOICES` incl. `''`; `isValidSystemPromptFileChoice`.                                                                          |
-| Loader               | [workspace-system-prompt.ts](../../src/main/utils/workspace-system-prompt.ts)                                                                             | `loadWorkspaceSystemPrompt(cwd, rawChoice)` — single choice; path-containment + symlink-escape rejection + 64 KB truncation + content fingerprint. |
-| Config               | [config-store.ts](../../src/main/config/config-store.ts)                                                                                                  | `systemPromptFile?: SystemPromptFileChoice` (field ~L133, default `''` ~L322, normalizer ~L1200, update-merge ~L1630).                             |
-| Session              | [agent-runner.ts](../../src/main/claude/agent-runner.ts)                                                                                                  | Loads file (~L2789), fingerprint feeds `buildPiSessionRuntimeSignature` (~L2802), appends as `<workspace_instructions>` (~L3248).                  |
-| IPC                  | [index.ts](../../src/main/index.ts)                                                                                                                       | `workspace-instructions.getStatus` (~L2022); `settings.update` validates `systemPromptFile` (~L4819).                                              |
-| Status type          | [workspace-instructions-status.ts](../../src/shared/workspace-instructions-status.ts)                                                                     | `WorkspaceInstructionsStatus`.                                                                                                                     |
-| UI (settings)        | [SettingsPrompt.tsx](../../src/renderer/components/settings/SettingsPrompt.tsx)                                                                           | `<select>` bound to `systemPromptFile` (~L404).                                                                                                    |
-| UI (badge)           | [WorkspaceInstructionsBadge.tsx](../../src/renderer/components/WorkspaceInstructionsBadge.tsx)                                                            | Shows configured file + loaded/active state.                                                                                                       |
-| Renderer types/store | [types/index.ts](../../src/renderer/types/index.ts), [store/index.ts](../../src/renderer/store/index.ts), [useIPC.ts](../../src/renderer/hooks/useIPC.ts) | `systemPromptFile` field mirrored.                                                                                                                 |
-| i18n                 | `en/zh/hu/ru.json`                                                                                                                                        | `prompt.systemPromptFile*` strings.                                                                                                                |
+| Layer                | File                                                                                                                                                               | Behavior                                                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Whitelist            | [system-prompt-file-choices.ts](../../../src/shared/system-prompt-file-choices.ts)                                                                                 | `SYSTEM_PROMPT_FILE_CHOICES` incl. `''`; `isValidSystemPromptFileChoice`.                                                                          |
+| Loader               | [workspace-system-prompt.ts](../../../src/main/utils/workspace-system-prompt.ts)                                                                                   | `loadWorkspaceSystemPrompt(cwd, rawChoice)` — single choice; path-containment + symlink-escape rejection + 64 KB truncation + content fingerprint. |
+| Config               | [config-store.ts](../../../src/main/config/config-store.ts)                                                                                                        | `systemPromptFile?: SystemPromptFileChoice` (field ~L133, default `''` ~L322, normalizer ~L1200, update-merge ~L1630).                             |
+| Session              | [agent-runner.ts](../../../src/main/claude/agent-runner.ts)                                                                                                        | Loads file (~L2789), fingerprint feeds `buildPiSessionRuntimeSignature` (~L2802), appends as `<workspace_instructions>` (~L3248).                  |
+| IPC                  | [index.ts](../../../src/main/index.ts)                                                                                                                             | `workspace-instructions.getStatus` (~L2022); `settings.update` validates `systemPromptFile` (~L4819).                                              |
+| Status type          | [workspace-instructions-status.ts](../../../src/shared/workspace-instructions-status.ts)                                                                           | `WorkspaceInstructionsStatus`.                                                                                                                     |
+| UI (settings)        | [SettingsPrompt.tsx](../../../src/renderer/components/settings/SettingsPrompt.tsx)                                                                                 | `<select>` bound to `systemPromptFile` (~L404).                                                                                                    |
+| UI (badge)           | [WorkspaceInstructionsBadge.tsx](../../../src/renderer/components/WorkspaceInstructionsBadge.tsx)                                                                  | Shows configured file + loaded/active state.                                                                                                       |
+| Renderer types/store | [types/index.ts](../../../src/renderer/types/index.ts), [store/index.ts](../../../src/renderer/store/index.ts), [useIPC.ts](../../../src/renderer/hooks/useIPC.ts) | `systemPromptFile` field mirrored.                                                                                                                 |
+| i18n                 | `en/zh/hu/ru.json`                                                                                                                                                 | `prompt.systemPromptFile*` strings.                                                                                                                |
 
 ---
 
@@ -125,7 +125,7 @@ normalizer for migration (§7).
 
 ## 6. Implementation phases
 
-### Phase 1 — Shared model ([system-prompt-file-choices.ts](../../src/shared/system-prompt-file-choices.ts))
+### Phase 1 — Shared model ([system-prompt-file-choices.ts](../../../src/shared/system-prompt-file-choices.ts))
 
 Keep the whitelist as the safety allow-list, but factor out the non-empty candidates and add a
 priority validator. Keeping this in `shared/` preserves the invariant that the UI can't offer,
@@ -182,7 +182,7 @@ export function normalizeSystemPromptPriority(v: unknown): SystemPromptFileName[
 `SYSTEM_PROMPT_FILE_CHOICES` / `isValidSystemPromptFileChoice` stay exported (still used by the
 migration path and any external callers) until the migration window closes.
 
-### Phase 2 — Loader ([workspace-system-prompt.ts](../../src/main/utils/workspace-system-prompt.ts))
+### Phase 2 — Loader ([workspace-system-prompt.ts](../../../src/main/utils/workspace-system-prompt.ts))
 
 Generalize the resolver to iterate the ordered list and return the first winner. **All existing
 hardening is preserved per-candidate**: `isPathWithinRoot` on the raw resolved path, `realpath`
@@ -220,7 +220,7 @@ export async function loadWorkspaceSystemPrompt(
 which the caller attaches. Signature-invalid entries are skipped, not fatal, so one bad entry
 never blocks a lower-priority valid file.
 
-### Phase 3 — Agent runner ([agent-runner.ts](../../src/main/claude/agent-runner.ts))
+### Phase 3 — Agent runner ([agent-runner.ts](../../../src/main/claude/agent-runner.ts))
 
 1. **Disable pi's native discovery** on the loader (~L3257) to end double-injection:
 
@@ -248,7 +248,7 @@ never blocks a lower-priority valid file.
    winning file or reordering the list still invalidates the cached pi session correctly. The
    append block (~L3248) is unchanged except the log line uses `workspaceInstructions.resolvedFile`.
 
-### Phase 4 — Config store ([config-store.ts](../../src/main/config/config-store.ts))
+### Phase 4 — Config store ([config-store.ts](../../../src/main/config/config-store.ts))
 
 - **Field** (~L130): remove `systemPromptFile`; add:
 
@@ -264,7 +264,7 @@ never blocks a lower-priority valid file.
 - **update()-merge** (~L1630): merge both new fields with the same
   `updates.x !== undefined ? updates.x : current.x` pattern.
 
-### Phase 5 — IPC + status ([index.ts](../../src/main/index.ts), [workspace-instructions-status.ts](../../src/shared/workspace-instructions-status.ts))
+### Phase 5 — IPC + status ([index.ts](../../../src/main/index.ts), [workspace-instructions-status.ts](../../../src/shared/workspace-instructions-status.ts))
 
 - **Status type**: add `resolvedFile?: string` (which candidate won). `configuredFile` is
   reinterpreted as "the resolved file" for badge display; when nothing resolves it is `''`.
@@ -279,19 +279,19 @@ never blocks a lower-priority valid file.
 
 ### Phase 6 — Renderer
 
-- **Types** ([types/index.ts](../../src/renderer/types/index.ts)): drop `systemPromptFile`; add
+- **Types** ([types/index.ts](../../../src/renderer/types/index.ts)): drop `systemPromptFile`; add
   `systemPromptFileEnabled: boolean` and `systemPromptFilePriority: string[]` to both the
   `Settings` type (~L784) and the partial-update type (~L913).
-- **Store** ([store/index.ts](../../src/renderer/store/index.ts) ~L248) + **hydration**
-  ([useIPC.ts](../../src/renderer/hooks/useIPC.ts) ~L131): default/hydrate the two fields.
-- **Settings UI** ([SettingsPrompt.tsx](../../src/renderer/components/settings/SettingsPrompt.tsx)
+- **Store** ([store/index.ts](../../../src/renderer/store/index.ts) ~L248) + **hydration**
+  ([useIPC.ts](../../../src/renderer/hooks/useIPC.ts) ~L131): default/hydrate the two fields.
+- **Settings UI** ([SettingsPrompt.tsx](../../../src/renderer/components/settings/SettingsPrompt.tsx)
   ~L393–416): replace the `<select>` with:
   - a **master toggle** ("Auto-load workspace instructions") bound to `systemPromptFileEnabled`;
   - a **reorderable list** of the candidate labels bound to `systemPromptFilePriority`, each row
     with up/down buttons (no new dependency — the project has no dnd library). Reordering calls
     `updateSettings({ systemPromptFilePriority: next })`. Disabled/greyed when the toggle is off.
   - Copy: explain that the **first file that exists** in the working directory is used.
-- **Badge** ([WorkspaceInstructionsBadge.tsx](../../src/renderer/components/WorkspaceInstructionsBadge.tsx)):
+- **Badge** ([WorkspaceInstructionsBadge.tsx](../../../src/renderer/components/WorkspaceInstructionsBadge.tsx)):
   already renders `status.configuredFile`; with `resolvedFile` populated it now shows the file
   that actually won. Optionally add a sub-line "matched from priority list".
 
@@ -300,7 +300,7 @@ never blocks a lower-priority valid file.
 Add: `prompt.workspaceInstructionsEnabled`, `...PriorityTitle`, `...PriorityDesc`,
 `...moveUp`, `...moveDown`, plus badge `workspaceInstructions.matchedFrom`. Remove the now-unused
 `...None` string once nothing references it. English first; keep the other three locales in sync
-(the repo already maintains zh/hu/ru — see [en.json:95](../../src/renderer/i18n/locales/en.json#L95)).
+(the repo already maintains zh/hu/ru — see [en.json:95](../../../src/renderer/i18n/locales/en.json#L95)).
 
 ---
 

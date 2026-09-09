@@ -417,7 +417,7 @@ if (chunk.supersededAt) {
 
 ### 6.7 Tool Result Scoping: Prevent MCP-Driven Cross-Workspace Contamination (Effort: Medium)
 
-**Design doc:** [memory-tool-result-scoping.md](./memory-tool-result-scoping.md)
+**Design doc:** [memory-tool-result-scoping.md](./archive/memory-tool-result-scoping.md)
 
 **Problem:** MCP tool responses (especially from the Claude CoWork Memory server) get included in the session transcript fed to the core memory profiler. The profiler treats this content as user-stated facts and extracts core memory entries from it. When the same tool returns similar content in a second workspace, the entry promotes to global visibility and contaminates unrelated workspaces.
 
@@ -448,7 +448,7 @@ if (chunk.supersededAt) {
 | -------- | --------------------------------------------- | ---------- | ------------------------------------------- | ------- |
 | 1        | 6.1 — Aggressive core memory updates          | Low        | Fixes core memory staleness                 | ✅ Done |
 | 2        | 6.3 — Stronger recency + supersession penalty | Low-Medium | Reduces experience staleness                | ✅ Done |
-| 3        | 6.7 — Tool result scoping                     | Medium     | Prevents cross-workspace contamination      |         |
+| 3        | 6.7 — Tool result scoping                     | Medium     | Prevents cross-workspace contamination      | ✅ Done |
 | 4        | 6.2 — Contradiction annotation at retrieval   | Medium     | Model gets explicit warnings                |         |
 | 5        | 6.4 — Fact layer with contradiction tracking  | High       | Comprehensive long-term solution            |         |
 | 6        | 6.5 — Write-time contradiction detection      | High       | Prevents ghost context accumulation         |         |
@@ -465,7 +465,15 @@ Implemented **6.1 + 6.3** together (2026-06-01). This gives:
 - No structural changes to storage format
 - Full i18n support (EN + ZH)
 
-### Suggested second iteration:
+### Second iteration: 6.7 done, 6.2 next
+
+**6.7 shipped** — designed and built as
+[`memory-tool-result-scoping.md`](archive/memory-tool-result-scoping.md) (archived
+2026-09-09): `workspacePinned` on core entries plus configurable `pinnedToolPatterns`
+controlling which tool results reach the profiler at all. Verified in the code on
+2026-09-09; the table above had it open long after it landed.
+
+That leaves **6.2** as the next step.
 
 Add **6.2** (contradiction annotation). This gives the model explicit guidance when it encounters stale experience chunks, without requiring changes to how chunks are stored.
 

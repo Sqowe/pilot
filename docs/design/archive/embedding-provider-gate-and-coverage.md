@@ -5,12 +5,12 @@ on `feat/memory2sql-migration`. Manual verification (§8) pending on a real stor
 **Date:** 2026-07-22
 **Owner:** @obodnikov
 **Branch:** `feat/memory2sql-migration`
-**Related:** [local-embeddings-default.md](archive/local-embeddings-default.md),
-[native-provider-catalog.md](archive/native-provider-catalog.md),
+**Related:** [local-embeddings-default.md](local-embeddings-default.md),
+[native-provider-catalog.md](native-provider-catalog.md),
 [memory-storage-sqlite-migration.md](memory-storage-sqlite-migration.md),
-[memory-llm-client.ts](../../src/main/memory/memory-llm-client.ts),
-[memory-service.ts](../../src/main/memory/memory-service.ts),
-[SettingsMemory.tsx](../../src/renderer/components/settings/SettingsMemory.tsx)
+[memory-llm-client.ts](../../../src/main/memory/memory-llm-client.ts),
+[memory-service.ts](../../../src/main/memory/memory-service.ts),
+[SettingsMemory.tsx](../../../src/renderer/components/settings/SettingsMemory.tsx)
 **Prior discussion:** conversation of 2026-07-22 (embedding-coverage investigation)
 
 ---
@@ -99,7 +99,7 @@ had no vectors.
 
 ## 4. The gate fix
 
-[memory-llm-client.ts](../../src/main/memory/memory-llm-client.ts), in `embed()`:
+[memory-llm-client.ts](../../../src/main/memory/memory-llm-client.ts), in `embed()`:
 
 ```ts
 const override = appConfig.memoryRuntime.embedding;

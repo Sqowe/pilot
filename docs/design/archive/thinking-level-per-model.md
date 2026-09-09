@@ -4,7 +4,7 @@
 **Status:** **Implemented — shipped 2026-07-20** (`9078c543`, `a5b628d2`). See §9 for the
 as-built record, including four defects found in review and three deliberate divergences
 from this design. Extracts and supersedes
-[`pi-sdk-080-feature-adoption-plan.md`](./archive/pi-sdk-080-feature-adoption-plan.md) **§5.4 step 2**
+[`pi-sdk-080-feature-adoption-plan.md`](./pi-sdk-080-feature-adoption-plan.md) **§5.4 step 2**
 (the deferred UX half). Step 1 — importing `ModelThinkingLevel` — already shipped
 (`agent-runner.ts`, 2026-07-18).
 **Author:** AI-assisted design session
@@ -39,7 +39,7 @@ four locales."_
 The per-model capability logic lives in **two pure functions of the resolved `Model`**,
 exported from `@earendil-works/pi-ai/compat` — the _same_ subpath Sqowe already imports
 `getModel`/`getModels` from in
-[`pi-model-resolution.ts:3`](../../src/main/claude/pi-model-resolution.ts#L3):
+[`pi-model-resolution.ts:3`](../../../src/main/claude/pi-model-resolution.ts#L3):
 
 ```js
 // @earendil-works/pi-ai/dist/models.js  (verified, 0.80.10)
@@ -77,19 +77,19 @@ each model's `thinkingLevelMap` in the pi-ai registry. **We inherit those tables
 replicate or hardcode them.** When pi updates a model's map, our UI follows for free.
 
 The `setThinkingLevel` plumbing and session-reuse invalidation already exist and already work
-for _any_ level ([`agent-runner.ts:3287-3295`](../../src/main/claude/agent-runner.ts#L3287)) —
+for _any_ level ([`agent-runner.ts:3287-3295`](../../../src/main/claude/agent-runner.ts#L3287)) —
 only the boolean at the front needs to become a level.
 
 ## 3. Current wiring (what changes touch)
 
-| Concern      | Location                                                                                                                 | Today                               |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
-| Stored value | [`config-store.ts`](../../src/main/config/config-store.ts) — `enableThinking: boolean` per ConfigSet, in `SETTABLE_KEYS` | boolean                             |
-| Type         | [`types/index.ts:897,983`](../../src/renderer/types/index.ts#L897)                                                       | `enableThinking: boolean`           |
-| Read/hydrate | `useApiConfigState.ts` (`enableThinking`), `config-store.ts` `projectFromConfigSet` / `normalizeConfigSet`               | boolean                             |
-| Consumption  | [`agent-runner.ts:2846-2850`](../../src/main/claude/agent-runner.ts#L2846)                                               | `enableThinking ? 'medium' : 'off'` |
-| UI           | [`SettingsAPI.tsx:529-548`](../../src/renderer/components/settings/SettingsAPI.tsx#L529)                                 | `<input type="checkbox">`           |
-| i18n         | `i18n/locales/{en,zh,ru,hu}.json` — `api.enableThinking*` (en.json:365-367)                                              | 3 keys × 4 locales                  |
+| Concern      | Location                                                                                                                    | Today                               |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| Stored value | [`config-store.ts`](../../../src/main/config/config-store.ts) — `enableThinking: boolean` per ConfigSet, in `SETTABLE_KEYS` | boolean                             |
+| Type         | [`types/index.ts:897,983`](../../../src/renderer/types/index.ts#L897)                                                       | `enableThinking: boolean`           |
+| Read/hydrate | `useApiConfigState.ts` (`enableThinking`), `config-store.ts` `projectFromConfigSet` / `normalizeConfigSet`                  | boolean                             |
+| Consumption  | [`agent-runner.ts:2846-2850`](../../../src/main/claude/agent-runner.ts#L2846)                                               | `enableThinking ? 'medium' : 'off'` |
+| UI           | [`SettingsAPI.tsx:529-548`](../../../src/renderer/components/settings/SettingsAPI.tsx#L529)                                 | `<input type="checkbox">`           |
+| i18n         | `i18n/locales/{en,zh,ru,hu}.json` — `api.enableThinking*` (en.json:365-367)                                                 | 3 keys × 4 locales                  |
 
 ## 4. Design — "inherit, don't replicate"
 
@@ -97,7 +97,7 @@ Five pieces. None introduces a hardcoded per-model table.
 
 ### 4.1 Main — capability helper + IPC (S)
 
-Add a pure helper in [`pi-model-resolution.ts`](../../src/main/claude/pi-model-resolution.ts)
+Add a pure helper in [`pi-model-resolution.ts`](../../../src/main/claude/pi-model-resolution.ts)
 next to the existing resolvers:
 
 ```ts
@@ -118,7 +118,7 @@ export function resolveThinkingCapabilities(
 ```
 
 Expose via a new IPC handler `config.getThinkingLevels` in
-[`src/main/index.ts`](../../src/main/index.ts) (mirror the `config.listModels` shape) taking
+[`src/main/index.ts`](../../../src/main/index.ts) (mirror the `config.listModels` shape) taking
 `{ provider, model, customProtocol, baseUrl }` and returning the struct above. Add the channel
 to `src/preload/index.ts` and a typed wrapper in `useIPC`/the renderer API surface.
 
@@ -129,7 +129,7 @@ to `src/preload/index.ts` and a typed wrapper in `useIPC`/the renderer API surfa
 ### 4.2 Config — store the level, migrate the boolean (S)
 
 - Add `thinkingLevel?: ModelThinkingLevel` to the `ConfigSet` type
-  ([`types/index.ts`](../../src/renderer/types/index.ts)) and to `SETTABLE_KEYS`.
+  ([`types/index.ts`](../../../src/renderer/types/index.ts)) and to `SETTABLE_KEYS`.
 - **Migration (no data loss, no reset):** where the store reads `enableThinking` today
   (`projectFromConfigSet`, `normalizeConfigSet`, `normalizeRaw*`), derive:
   `thinkingLevel = configSet.thinkingLevel ?? (enableThinking ? 'medium' : 'off')`.
@@ -155,7 +155,7 @@ we never emit a level the model can't take.
 
 ### 4.4 Renderer — segmented level control (M)
 
-Replace the checkbox in [`SettingsAPI.tsx`](../../src/renderer/components/settings/SettingsAPI.tsx)
+Replace the checkbox in [`SettingsAPI.tsx`](../../../src/renderer/components/settings/SettingsAPI.tsx)
 with a segmented selector driven by `config.getThinkingLevels(provider, model, …)`:
 
 - `supportsThinking === false` → hide the control (or render disabled with a hint).
@@ -215,7 +215,7 @@ a distinct feature (config schema + editor UI) and should not block the core lev
 - **Clamp:** stored `max` + Sonnet-4.6-shaped model → `high`; stored `xhigh` + non-`xhigh`
   model → nearest.
 - **Manual:** switch models in Settings, confirm the segment set changes and runtime logs
-  `thinkingLevel=<clamped>` at [`agent-runner.ts:3255`](../../src/main/claude/agent-runner.ts#L3255).
+  `thinkingLevel=<clamped>` at [`agent-runner.ts:3255`](../../../src/main/claude/agent-runner.ts#L3255).
 
 ---
 
@@ -294,7 +294,7 @@ endpoint being called.
 Still open, now with its own design note: models pi has **never seen** (a proxy serving
 something newer than the pinned pi-ai) remain undetectable, and the panel still asserts
 they lack reasoning support. See
-[`model-reasoning-override.md`](./model-reasoning-override.md).
+[`model-reasoning-override.md`](../model-reasoning-override.md).
 
 ### 9.5 Divergence 3 — small corrections to the design's assumptions
 

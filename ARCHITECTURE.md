@@ -113,6 +113,9 @@ sqowe-pilot/
 ├── docs/                       # Documentation, design records, chat history
 │   ├── design/                # ACTIVE design notes: in-progress features + cross-cutting findings
 │   │   └── archive/          # Design docs for COMPLETED/shipped features (as-built record)
+│   ├── internals/             # How a subsystem works TODAY — maintained, never archived
+│   ├── guides/                # Task-oriented how-to for operators
+│   ├── wiki/                  # End-user documentation (features + reference)
 │   └── chats/                 # Exported conversation logs (context)
 ├── resources/skills/           # Skills shipped with the app (docx, pdf, pptx, etc.)
 ├── adaptations/                # Issue tracking + patch notes
@@ -132,6 +135,17 @@ sqowe-pilot/
 designs and cross-cutting "findings" write-ups (problem analyses, investigations). When a
 feature ships, move its design doc to `docs/design/archive/` as the as-built record. Treat
 archived docs as history — accurate for what was built, not a to-do list.
+
+**`docs/internals/` is not part of that lifecycle.** It documents how a subsystem works
+_today_ — a maintained reference, updated in place when the code changes, never archived,
+because it is never "done". A design doc answers "what are we going to build and why"; an
+internals doc answers "how does this work right now". If a document would be wrong after a
+refactor rather than merely historical, it belongs here.
+
+Seeded 2026-09-09 with `memory-system-architecture.md` and `memory-internals.md`, which had
+been sitting in `docs/design/` while matching neither of its two categories. Note the name:
+`docs/wiki/reference/` already exists and is _user-facing_ (commands, settings), so
+"reference" was not available for this.
 
 ---
 
@@ -190,7 +204,7 @@ uplift must re-assert it — the SDK default is to persist.
 Runtime API keys are injected per-run via `ModelRuntime.setRuntimeApiKey()` and are
 in-memory only (never persisted to `auth.json`). They are ref-counted and released in
 `finally` so concurrent sessions cannot clobber each other's credentials — see
-`docs/design/test-verification-gaps.md` for the coverage gap around this mechanism.
+`docs/design/archive/test-verification-gaps.md` for the coverage gap around this mechanism.
 
 ### 4.2 Renderer (`src/renderer/`)
 
@@ -448,9 +462,9 @@ Four consequences worth knowing before touching this area:
   or before the keyword fallback resolves, silently splits the two paths into slightly
   different embedding spaces.
 
-Design: [docs/design/memory-storage-sqlite-migration.md](docs/design/memory-storage-sqlite-migration.md),
-[docs/design/memory-system-architecture.md](docs/design/memory-system-architecture.md),
-[docs/design/embedding-provider-gate-and-coverage.md](docs/design/embedding-provider-gate-and-coverage.md).
+Design: [docs/design/archive/memory-storage-sqlite-migration.md](docs/design/archive/memory-storage-sqlite-migration.md),
+[docs/internals/memory-system-architecture.md](docs/internals/memory-system-architecture.md),
+[docs/design/archive/embedding-provider-gate-and-coverage.md](docs/design/archive/embedding-provider-gate-and-coverage.md).
 
 ### 4.7 Shared Bash Engine & Pi Extension (`src/shared/bash-restrictions/`, `pi-extensions/`)
 

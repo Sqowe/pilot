@@ -32,7 +32,7 @@ See §2.
 > [`pi-sdk-080-feature-adoption-plan.md`](./pi-sdk-080-feature-adoption-plan.md) —
 > a sequenced, codebase-grounded adoption plan for one uplift's worth of new SDK
 > surface. That doc covered 0.79–0.80; this one covers 0.81–0.82. The
-> [`thinking-level-per-model.md`](../thinking-level-per-model.md) design was
+> [`thinking-level-per-model.md`](./thinking-level-per-model.md) design was
 > extracted from the earlier plan the same way an item here might later be.
 
 ---

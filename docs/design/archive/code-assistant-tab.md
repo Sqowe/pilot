@@ -3,7 +3,7 @@
 **Status:** ❌ Abandoned — implemented instead as a VS Code extension: **sqowe-wingman**
 **Date:** 2026-06-19
 **Owner:** @obodnikov
-**Related:** [agent-runner.ts](../../src/main/claude/agent-runner.ts), [App.tsx](../../src/renderer/App.tsx), [pi-bash-restrictions-extension.md](pi-bash-restrictions-extension.md), [file-tool-path-permissions.md](file-tool-path-permissions.md), `node_modules/@earendil-works/pi-coding-agent/docs/{sdk,rpc}.md`
+**Related:** [agent-runner.ts](../../../src/main/claude/agent-runner.ts), [App.tsx](../../../src/renderer/App.tsx), [pi-bash-restrictions-extension.md](pi-bash-restrictions-extension.md), [file-tool-path-permissions.md](../file-tool-path-permissions.md), `node_modules/@earendil-works/pi-coding-agent/docs/{sdk,rpc}.md`
 
 ---
 
@@ -15,7 +15,7 @@ providers, skills, MCP servers, and permission system** rather than introducing 
 
 ### The core realization (why this is mostly UX, not engine work)
 
-The app **already embeds the `pi` coding agent**. [agent-runner.ts](../../src/main/claude/agent-runner.ts)
+The app **already embeds the `pi` coding agent**. [agent-runner.ts](../../../src/main/claude/agent-runner.ts)
 runs `createAgentSession(...)` with `createCodingTools(effectiveCwd)` (read/write/edit/bash/grep/find/ls),
 **bridges MCP servers as `customTools`** (~line 3114), loads skills, resolves providers/models, and
 installs the permission gate. The current "chat" tab and a "code assistant" tab are the **same
@@ -36,23 +36,23 @@ embedding or re-implementing anything.
 
 ### Reused as-is (zero or near-zero work)
 
-| Capability                                                      | Where it already lives                                                                                                                                                                                                                                                               |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Agent engine + coding tools                                     | `createAgentSession` + `createCodingTools` — [agent-runner.ts](../../src/main/claude/agent-runner.ts)                                                                                                                                                                                |
-| MCP servers (bridged as customTools)                            | `agent-runner.ts` (~3114), `mcp-manager.ts`                                                                                                                                                                                                                                          |
-| Skills (load, pin, workspace profiles)                          | skills loader, `skills-workspace-profile.ts`                                                                                                                                                                                                                                         |
-| **Permissions** (bash trust/deny + the new workspace path-lock) | `decidePermission` — [permission-rules-store.ts](../../src/main/config/permission-rules-store.ts)                                                                                                                                                                                    |
-| Providers / models                                              | `pi-model-resolution.ts`                                                                                                                                                                                                                                                             |
-| Session lifecycle + persistence                                 | `SessionManager` + SQLite                                                                                                                                                                                                                                                            |
-| cwd / workspace model                                           | sessions are already cwd-bound; `cwd`-keyed MCP/skills/workspace profiles                                                                                                                                                                                                            |
-| Message / tool-call / tool-result / code rendering              | [MessageCard](../../src/renderer/components/MessageCard.tsx), [ToolUseBlock](../../src/renderer/components/message/ToolUseBlock.tsx), [ToolResultBlock](../../src/renderer/components/message/ToolResultBlock.tsx), [CodeBlock](../../src/renderer/components/message/CodeBlock.tsx) |
-| IPC streaming                                                   | `session.start`, `server-event`/`client-event`                                                                                                                                                                                                                                       |
-| System-prompt section system                                    | `prompt-loader.ts` (editable sections + workspace overrides)                                                                                                                                                                                                                         |
+| Capability                                                      | Where it already lives                                                                                                                                                                                                                                                                           |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Agent engine + coding tools                                     | `createAgentSession` + `createCodingTools` — [agent-runner.ts](../../../src/main/claude/agent-runner.ts)                                                                                                                                                                                         |
+| MCP servers (bridged as customTools)                            | `agent-runner.ts` (~3114), `mcp-manager.ts`                                                                                                                                                                                                                                                      |
+| Skills (load, pin, workspace profiles)                          | skills loader, `skills-workspace-profile.ts`                                                                                                                                                                                                                                                     |
+| **Permissions** (bash trust/deny + the new workspace path-lock) | `decidePermission` — [permission-rules-store.ts](../../../src/main/config/permission-rules-store.ts)                                                                                                                                                                                             |
+| Providers / models                                              | `pi-model-resolution.ts`                                                                                                                                                                                                                                                                         |
+| Session lifecycle + persistence                                 | `SessionManager` + SQLite                                                                                                                                                                                                                                                                        |
+| cwd / workspace model                                           | sessions are already cwd-bound; `cwd`-keyed MCP/skills/workspace profiles                                                                                                                                                                                                                        |
+| Message / tool-call / tool-result / code rendering              | [MessageCard](../../../src/renderer/components/MessageCard.tsx), [ToolUseBlock](../../../src/renderer/components/message/ToolUseBlock.tsx), [ToolResultBlock](../../../src/renderer/components/message/ToolResultBlock.tsx), [CodeBlock](../../../src/renderer/components/message/CodeBlock.tsx) |
+| IPC streaming                                                   | `session.start`, `server-event`/`client-event`                                                                                                                                                                                                                                                   |
+| System-prompt section system                                    | `prompt-loader.ts` (editable sections + workspace overrides)                                                                                                                                                                                                                                     |
 
 ### Net-new (the actual work)
 
 1. A **third top-level view** + nav state (today it's a `showSettings` boolean toggling
-   `<SettingsPanel>`/`<ChatView>` in [App.tsx:193](../../src/renderer/App.tsx)).
+   `<SettingsPanel>`/`<ChatView>` in [App.tsx:193](../../../src/renderer/App.tsx)).
 2. A **coding persona** — a system-prompt section for the Code mode (reusing `prompt-loader`).
 3. A **project-bound session model** — pick a project directory; Code sessions are scoped to it.
 4. **Code-centric UI** — chiefly a **diff-focused render** for `edit`/`write` results; optionally a
@@ -183,7 +183,7 @@ same message stream + the existing composer.
   the file tools in the project.
 - **e2e (manual + scripted where feasible):** open Code tab → pick project → ask for an edit →
   diff renders → approve/deny via the existing permission dialog; switch projects; reopen persists.
-- **Docs:** user docs for the Code tab; update [ARCHITECTURE.md](../../ARCHITECTURE.md) (renderer
+- **Docs:** user docs for the Code tab; update [ARCHITECTURE.md](../../../ARCHITECTURE.md) (renderer
   views + "one engine, two front-ends" note).
 
 ---

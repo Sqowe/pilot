@@ -4,7 +4,7 @@
 (2026-06-20) — only the manual `pi -e` smoke-test (README checklist) remains to be run by hand.
 **Date:** 2026-06-19
 **Owner:** @obodnikov
-**Related:** [BASH_COMMAND_RESTRICTIONS.md](../../BASH_COMMAND_RESTRICTIONS.md), [permission-rules-store.ts](../../src/main/config/permission-rules-store.ts), [config-store.ts](../../src/main/config/config-store.ts), [SettingsBashCommands.tsx](../../src/renderer/components/settings/SettingsBashCommands.tsx), `node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
+**Related:** [BASH_COMMAND_RESTRICTIONS.md](../../../BASH_COMMAND_RESTRICTIONS.md), [permission-rules-store.ts](../../../src/main/config/permission-rules-store.ts), [config-store.ts](../../../src/main/config/config-store.ts), [SettingsBashCommands.tsx](../../../src/renderer/components/settings/SettingsBashCommands.tsx), `node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
 
 ---
 
@@ -23,7 +23,7 @@ settings** to the **standalone `pi` coding CLI** (`@earendil-works/pi-coding-age
 
 Every bash/permission setting the app exposes must also exist in the extension, and adding a
 **future** setting must be a one-place change. Current app settings (verified in
-[config-store.ts](../../src/main/config/config-store.ts) + [SettingsBashCommands.tsx](../../src/renderer/components/settings/SettingsBashCommands.tsx)):
+[config-store.ts](../../../src/main/config/config-store.ts) + [SettingsBashCommands.tsx](../../../src/renderer/components/settings/SettingsBashCommands.tsx)):
 
 | App field                          | UI label                    | Semantics                                                                                     |
 | ---------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------- |
@@ -109,7 +109,7 @@ open-cowork/
 
 ### `engine.ts` (decision logic — pure)
 
-Moved from [permission-rules-store.ts](../../src/main/config/permission-rules-store.ts), with the
+Moved from [permission-rules-store.ts](../../../src/main/config/permission-rules-store.ts), with the
 module-level lists replaced by an explicit parameter:
 
 ```ts
@@ -186,7 +186,7 @@ The `select`/`input` dialogs take `{ timeout: permissionTimeoutSeconds * 1000 }`
 `permissionTimeoutSeconds > 0`, otherwise **no timeout** (waits forever). `select` returns
 `undefined` on timeout/cancel → treated as **deny** (auto-deny, matching the app). The
 deny-and-suggest `reason` wording is copied verbatim from
-[agent-runner.ts:1806](../../src/main/claude/agent-runner.ts) for behavioral parity.
+[agent-runner.ts:1806](../../../src/main/claude/agent-runner.ts) for behavioral parity.
 
 Skeleton (decision→result extracted as a pure, testable function):
 
@@ -416,14 +416,14 @@ writeFileSync(
   with a real `.pi/bash-restrictions.json`; verify `ls -la` (allow), `rm -rf x` (ask/block),
   `echo $(rm -rf /)` (block via syntax guard), and a no-response timeout (auto-deny).
 - **Docs:** extension `README.md` (install + config format incl. timeout) and a pointer from
-  [BASH_COMMAND_RESTRICTIONS.md](../../BASH_COMMAND_RESTRICTIONS.md).
+  [BASH_COMMAND_RESTRICTIONS.md](../../../BASH_COMMAND_RESTRICTIONS.md).
 
 ---
 
 ## 10. Risks & future triggers
 
 - **SDK version coupling.** `pi-coding-agent` is pre-1.0 and breaks often (see
-  [ARCHITECTURE.md](../../ARCHITECTURE.md) §7). Re-verify the extension API (`tool_call`,
+  [ARCHITECTURE.md](../../../ARCHITECTURE.md) §7). Re-verify the extension API (`tool_call`,
   `ToolCallEventResult`, `isToolCallEventType`, `ExtensionUIDialogOptions.timeout`) on each `pi`
   bump — same discipline as `before-tool-call-hook.ts`.
 - **Headless fail-closed** changes UX vs the GUI (block instead of prompt). Intentional;
