@@ -39,13 +39,13 @@
   },
   "allowScripts": {
     "better-sqlite3@12.8.0": true,
-    "electron@41.3.0": true,
+    "electron@41.10.7": true,
     "esbuild@0.27.2": true,
     "fsevents@2.3.3": true,
     "onnxruntime-node@1.24.3": true,
-    "sharp@0.34.5": true,
-    "protobufjs@7.6.1": true,
-    "electron-winstaller@5.4.0": true
+    "protobufjs@7.6.6": true,
+    "electron-winstaller@5.4.0": true,
+    "sharp@0.35.4": true
   },
   "main": "dist-electron/main/index.js",
   "scripts": {
@@ -89,7 +89,7 @@
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@slack/bolt": "4.7.0",
     "@slack/web-api": "7.15.1",
-    "@turbodocx/html-to-docx": "1.22.0",
+    "@turbodocx/html-to-docx": "1.22.2",
     "archiver": "^7.0.1",
     "better-sqlite3": "^12.8.0",
     "chokidar": "^4.0.3",
@@ -136,9 +136,9 @@
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
     "@vitejs/plugin-react": "^4.7.0",
-    "@vitest/coverage-v8": "4.1.0",
+    "@vitest/coverage-v8": "4.1.11",
     "autoprefixer": "^10.4.27",
-    "electron": "41.3.0",
+    "electron": "41.10.7",
     "electron-builder": "^26.14.0",
     "esbuild": "^0.27.2",
     "eslint": "^8.57.1",
@@ -155,7 +155,8 @@
   },
   "overrides": {
     "fast-xml-parser": "^5.5.6",
-    "tar": "^7.5.11"
+    "tar": "^7.5.11",
+    "sharp": "0.35.4"
   },
   "author": "Sqowe Pilot",
   "license": "MIT",

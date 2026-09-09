@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Cleared 7 of 13 reported dependency vulnerabilities: `electron` 41.3.0 → 41.10.7 (patch
+  releases only — fixes, no breaking changes), `@vitest/coverage-v8` 4.1.0 → 4.1.11 (pulls
+  `vitest` to the same, closing a path-traversal issue in the test mocker),
+  `@turbodocx/html-to-docx` 1.22.0 → 1.22.2 (drops `image-size` for `probe-image-size`
+  outright), and a `sharp` override to 0.35.4, which `@huggingface/transformers` cannot
+  request itself because it pins `^0.34.5`.
+- **`allowScripts` must be updated whenever those packages move.** It keys on exact
+  versions, so bumping `electron` silently blocked its postinstall and left the binary
+  undownloaded — the app would not start. `npm rebuild <pkg>` is then needed, since a plain
+  `npm install` will not re-run an install script for an already-unpacked package. The same
+  applies to `sharp`, `better-sqlite3`, `onnxruntime-node`, `esbuild` and `protobufjs`.
+  A pre-existing mismatch was fixed at the same time: `protobufjs` was allowed at 7.6.1 while
+  7.6.6 was installed, so its postinstall had been blocked.
+- **Do not run `npm audit fix --force` here.** The six remaining advisories have no real fix,
+  and every remedy npm proposes is a downgrade that either fixes nothing or costs a feature:
+  `ngrok@4.3.3` depends on the same vulnerable `extract-zip@^2.0.1` and `uuid@^7||^8` as the
+  version in use, and the `adm-zip` remedy is a rollback of `@huggingface/transformers` from
+  4.2.0 to 3.8.1, which would undo local embeddings. Both remaining paths are narrow:
+  `extract-zip` runs only when ngrok first downloads its binary, and `adm-zip` only from
+  onnxruntime-node's install script — neither during normal operation.
+
 ## [1.0.7] - 2026-09-09
 
 ### Changed
