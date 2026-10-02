@@ -153,7 +153,7 @@ been sitting in `docs/design/` while matching neither of its two categories. Not
 
 ### 4.1 Agent Engine (`src/main/claude/`)
 
-The heart of the app. `ClaudeAgentRunner` (~2600 lines) wraps `@earendil-works/pi-coding-agent`
+The heart of the app. `ClaudeAgentRunner` (~4600 lines) wraps `@earendil-works/pi-coding-agent`
 SDK via `createAgentSession()`. One session per chat — full conversation context sent on
 each reasoning step (ReAct loop). Context compaction is SDK-driven when usage exceeds
 `contextWindow − reserveTokens`.
@@ -593,13 +593,13 @@ the dedicated rule files listed below.
 
 ### Authoritative AI Rule Files
 
-| File                           | Scope                                                                                             | Status    |
-| ------------------------------ | ------------------------------------------------------------------------------------------------- | --------- |
-| `AI_ELECTRON.md`               | Electron packaging, resource paths, window lifecycle, PyInstaller, external tools, sleep recovery | ✅ Active |
-| `BASH_COMMAND_RESTRICTIONS.md` | Bash permission engine internals, trust/denylist semantics, pipeline splitting, shell syntax      | ✅ Active |
-| `AI_FRONTEND.md`               | React/Zustand/Tailwind conventions, i18n, accessibility                                           | ✅ Active |
-| `AI_MAIN_PROCESS.md`           | Pi SDK integration, IPC patterns, MCP bridging, SQLite, security boundaries                       | ✅ Active |
-| `AI_SKILLS_MAINTENANCE.md`     | Builtin skill dependency management, PEP 723 metadata, upstream sync rules                        | ✅ Active |
+| File                           | Scope                                                                                                              | Status    |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------ | --------- |
+| `AI_ELECTRON.md`               | Electron packaging, resource paths, window lifecycle, native modules, `allowScripts`, external tools               | ✅ Active |
+| `BASH_COMMAND_RESTRICTIONS.md` | Bash permission engine internals, trust/denylist semantics, pipeline splitting, shell syntax                       | ✅ Active |
+| `AI_FRONTEND.md`               | React/Zustand/Tailwind conventions, IPC bridge, markdown, i18n, accessibility                                      | ✅ Active |
+| `AI_MAIN_PROCESS.md`           | Pi SDK integration, sessions, IPC patterns, MCP bridging, SQLite, memory, config, permissions, security boundaries | ✅ Active |
+| `AI_SKILLS_MAINTENANCE.md`     | Builtin skill dependency management, PEP 723 metadata, upstream sync rules                                         | ✅ Active |
 
 ### Rule Precedence (Highest → Lowest)
 
