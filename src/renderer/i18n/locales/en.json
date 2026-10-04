@@ -121,7 +121,10 @@
     "trustedDesc": "One pattern per line. Prefix-matched; use `*` as a wildcard. Matching commands run without a prompt. Each sub-command in a chain (&&, ||, ;, |) is checked independently.",
     "denylistTitle": "Denylist (force approval)",
     "denylistDesc": "One pattern per line. Substring-matched. Any command containing a denylist entry always prompts, even if it also matches the trusted list.",
-    "safetyNote": "Shell expansions that cannot be parsed safely (command substitution, process substitution, newlines, lone background &) always prompt, even when a matching trusted pattern exists."
+    "trustedDirectoriesTitle": "Trusted directories",
+    "trustedDirectoriesDesc": "One directory per line. A write inside these directories runs without a prompt; a write anywhere else asks. Applies to the write and edit tools and to the places a bash command visibly writes (output redirections, tee). `./` means the session's workspace. Leave empty to turn the check off.",
+    "trustedDirectoriesNote": "This checks visible writes — it is not a sandbox: what a program writes on its own cannot be seen. The file-system root and the home directory are not accepted as entries. A bash command must still pass the lists above.",
+    "safetyNote": "Shell syntax that cannot be read safely (command substitution, process substitution, subshells, lone background &) always prompts, even when a matching trusted pattern exists. A line break separates commands like `;` — each one is checked on its own."
   },
   "memory": {
     "title": "Memory",
@@ -1364,6 +1367,16 @@
     "allow": "Allow",
     "alwaysAllow": "Always allow this tool",
     "useTool": "Use the {{toolName}} tool",
+    "reasonLabel": "Why you are being asked:",
+    "reasons": {
+      "unsupported-syntax": "The command uses syntax that cannot be checked: {{detail}}.",
+      "denied": "It matches the denylist entry \"{{pattern}}\".",
+      "not-trusted": "This part is not in the trusted list: {{subCommand}}",
+      "empty": "There is nothing to run.",
+      "write-outside": "It writes outside the trusted directories: {{path}}",
+      "write-protected": "It writes to a permission settings file: {{path}}",
+      "write-undetermined": "Where it writes cannot be determined: {{detail}}"
+    },
     "toolDescriptions": {
       "write": "Write to files on your system",
       "edit": "Edit existing files on your system",

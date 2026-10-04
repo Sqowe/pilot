@@ -303,18 +303,39 @@ Stability zone: ⚠️ Experimental. As-built detail lives in
   this boundary** — `sanitizeRules()` validates and coerces everything, with
   unknown actions falling back to `'ask'` so the worst case is an extra prompt.
 - `decidePermission(sessionId, toolName, input)` → `'allow' | 'deny' | 'ask'`.
-  Matching order: bash lists (authoritative when non-empty) → session-scoped
-  "always allow" memory → first matching rule → default `'ask'`.
+  Matching order: bash lists (authoritative when non-empty) → trusted directories
+  (bash visible writes; `write` / `edit` paths) → session-scoped "always allow"
+  memory → first matching rule → default `'ask'`.
+  `decidePermissionDetailed()` returns the same action plus the reason for an
+  `ask`; the permission hook passes that reason to the dialog.
+- **Trusted directories** (`trustedDirectories`, the write zone) sit before the
+  session memory on purpose: one "Allow always" click must not cover writes
+  outside the list. For bash they only add an `ask` — they never turn the lists'
+  `ask` into `allow`. For `write` / `edit`, inside → `allow` (a user `deny` rule
+  still wins), outside → `ask`. The app's own settings file always asks
+  (`setProtectedWriteFiles`). Design: `docs/design/trusted-directories.md`.
 - MCP tools resolve through `mcp-tool-permissions.ts` (annotations, workspace and
   session policy, recorded approvals).
 - Session-scoped "always allow" is dropped via `forgetSessionPermissions()` on
   session delete.
 - **The bash engine is one source of truth**, shared by the app and the `pi` CLI
-  extension: `src/shared/bash-restrictions/` (`engine.ts`, `settings.ts`).
+  extension: `src/shared/bash-restrictions/` (`scan.ts`, `engine.ts`,
+  `write-zone.ts`, `settings.ts`).
   Edit it once, never fork a copy into a host. `permission-rules-store.ts` imports
-  from it — do not reimplement matching logic locally. Semantics are documented in
+  from it — do not reimplement matching logic locally. Its `index.ts` stays free of
+  file-system imports; `write-zone.ts` (which resolves real paths) is imported by its
+  own path, never re-exported from the barrel. Semantics are documented in
   `BASH_COMMAND_RESTRICTIONS.md`. The extension must never enter the Electron main
   bundle.
+- **Command text is read in exactly one place:** `scanBashCommand` in `scan.ts`.
+  The syntax guard, the splitter and the write-target check all consume its
+  result. Do not add a second parser, a regex over the raw command, or a
+  "quick check" beside it — two readers that disagree about what a command says
+  is the whole class of bypass. The property to keep: text the shell executes is
+  never classified as inert (single-quoted strings, quoted-delimiter here-document
+  bodies and dropped comment lines are the only inert regions). When unsure, the
+  scanner reports the command as unsupported and the engine asks.
+  `tests/bash-restrictions-multiline.test.ts` holds the adversarial cases.
 
 ---
 
@@ -322,10 +343,20 @@ Stability zone: ⚠️ Experimental. As-built detail lives in
 
 **Path containment**
 
-- `isPathWithinRoot()` (`src/main/tools/path-containment.ts`) rejects `..`
+- `isPathWithinRoot()` (defined in `src/shared/path-permissions/containment.ts`,
+  re-exported from `src/main/tools/path-containment.ts`) rejects `..`
   traversal, symlink escape, and absolute paths outside the workspace. Used by the
-  executors, `PathGuard`, and the workspace-instructions loader.
-- Resolve with `fs.realpathSync` before comparing, or symlink escape passes.
+  executors, `PathGuard`, the workspace-instructions loader, and the trusted-directories
+  write zone.
+- Resolve with `fs.realpathSync` before comparing, or symlink escape passes. For a
+  path that may not exist yet (a write target), use `realpathExistingPortion()` from
+  `src/shared/path-permissions/` — it also follows a link whose destination does not
+  exist yet, which a plain "resolve the parent" does not.
+- `resolveToolPath()` in the same module **mirrors** pi's unexported `resolveToCwd`
+  (how `write` / `edit` resolve their `path`). If the mirror drifts, the check
+  approves one path while the tool writes another.
+  `tests/path-permissions-pi-parity.test.ts` compares the two against the installed
+  package — on a pi upgrade, fix the mirror, never the test.
 
 **Sandbox adapter**
 
@@ -412,11 +443,13 @@ runner rebuilds a `<conversation_history>` preamble from DB messages.
 Shared between main, renderer, and (for some of it) the `pi` CLI extension. The
 organizing rule is **which host can load it**:
 
-| Module                                                                                                                                                                                                   | Constraint                                                                                   |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `provider-catalog.ts`, `provider-ids.ts`, `thinking-levels.ts`, `ipc-types.ts`, `mcp-tool-classification.ts`, `local-embedding-types.ts`, `workspace-*.ts`, `session-title.ts`, `skill-*.ts`, `network/` | Renderer-safe: **no pi-ai / electron imports**, pure types and helpers.                      |
-| `bash-restrictions/`                                                                                                                                                                                     | Also consumed by the `pi` extension — must stay Node-standalone, no electron, no app config. |
-| `api-model-presets.ts`, `api-provider-guidance.ts`, `ollama-base-url.ts`                                                                                                                                 | Main + renderer, but no electron runtime access.                                             |
+| Module                                                                                                                                                                                                   | Constraint                                                                                              |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `provider-catalog.ts`, `provider-ids.ts`, `thinking-levels.ts`, `ipc-types.ts`, `mcp-tool-classification.ts`, `local-embedding-types.ts`, `workspace-*.ts`, `session-title.ts`, `skill-*.ts`, `network/` | Renderer-safe: **no pi-ai / electron imports**, pure types and helpers.                                 |
+| `bash-restrictions/`                                                                                                                                                                                     | Also consumed by the `pi` extension — must stay Node-standalone, no electron, no app config.            |
+| `path-permissions/`                                                                                                                                                                                      | Same as `bash-restrictions/`, and **not renderer-safe**: it uses `node:fs`. Main + `pi` extension only. |
+| `permission-reason.ts`                                                                                                                                                                                   | Renderer-safe by construction: type-only imports. Keep them `import type`.                              |
+| `api-model-presets.ts`, `api-provider-guidance.ts`, `ollama-base-url.ts`                                                                                                                                 | Main + renderer, but no electron runtime access.                                                        |
 
 - **Never import pi-ai or electron from `src/shared/`.** That is exactly why
   `thinking-levels.ts` reimplements pi's clamp instead of calling it, and why the

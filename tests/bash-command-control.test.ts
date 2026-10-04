@@ -199,7 +199,8 @@ describe('decideBashPermission — denylist beats trust', () => {
 });
 
 describe('decideBashPermission — unsupported shell syntax (fail-closed)', () => {
-  it('returns ask on newline-separated commands (never null — must not reach generic allow)', () => {
+  it('asks when a command after a line break is not trusted (never null — must not reach generic allow)', () => {
+    // A line break separates commands like `;`; `rm -rf /` matches no trusted pattern.
     setBashCommandLists(['npm *'], undefined);
     expect(decideBashPermission('npm install\nrm -rf /')).toBe('ask');
   });

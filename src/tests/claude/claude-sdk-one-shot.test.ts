@@ -67,6 +67,7 @@ function makeConfig(): AppConfig {
     thinkingLevel: 'off' as const,
     bashTrustedCommands: [],
     bashDenylist: [],
+    trustedDirectories: [],
     schedulerCatchUpPolicy: 'ask',
     schedulerConflictPolicy: 'queue',
     schedulerRunHistoryDepth: 10,

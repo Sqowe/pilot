@@ -241,3 +241,38 @@ describe('permissionTimeoutSeconds normalization via ConfigStore', () => {
     expect(cs.get('permissionTimeoutSeconds')).toBe(10);
   });
 });
+
+describe('ConfigStore trusted directories', () => {
+  it('defaults to an empty list (write checks off)', () => {
+    expect(new ConfigStore().get('trustedDirectories')).toEqual([]);
+  });
+
+  it('persists entries as written and survives a restart', () => {
+    new ConfigStore().update({ trustedDirectories: ['./', '/tmp', '~/work'] });
+    // A fresh instance over the same backing store simulates relaunching the app.
+    expect(new ConfigStore().get('trustedDirectories')).toEqual(['./', '/tmp', '~/work']);
+  });
+
+  it('trims entries, drops non-strings and blanks, and removes duplicates', () => {
+    const store = new ConfigStore();
+    store.update({
+      trustedDirectories: [' ./ ', '/tmp', 7, null, '', './', '/tmp'] as unknown as string[],
+    });
+    expect(store.get('trustedDirectories')).toEqual(['./', '/tmp']);
+  });
+
+  it('coerces a non-array value to an empty list', () => {
+    const store = new ConfigStore();
+    store.update({ trustedDirectories: ['./'] });
+    store.update({ trustedDirectories: './' as unknown as string[] });
+    expect(store.get('trustedDirectories')).toEqual([]);
+  });
+
+  it('is left untouched by an update of the command lists', () => {
+    const store = new ConfigStore();
+    store.update({ trustedDirectories: ['./'] });
+    store.update({ bashTrustedCommands: ['npm *'], bashDenylist: ['rm'] });
+    expect(store.get('trustedDirectories')).toEqual(['./']);
+    expect(store.getAll().trustedDirectories).toEqual(['./']);
+  });
+});

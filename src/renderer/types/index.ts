@@ -1,6 +1,7 @@
 import type { SkillSource } from '../../shared/skill-conflict-types';
 import type { TokenUsage } from '../../shared/token-usage';
 import type { SharedModelThinkingLevel } from '../../shared/thinking-levels';
+import type { PermissionAskReason } from '../../shared/permission-reason';
 export type { TokenUsage } from '../../shared/token-usage';
 
 // Session types
@@ -593,6 +594,8 @@ export interface PermissionRequest {
   toolName: string;
   input: Record<string, unknown>;
   sessionId: string;
+  /** What triggered the prompt, when the permission gate knows (bash lists, trusted directories). */
+  reason?: PermissionAskReason;
 }
 
 export type PermissionResult = 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
@@ -825,6 +828,11 @@ export interface Settings {
    * approval, overriding any match in `bashTrustedCommands`.
    */
   bashDenylist: string[];
+  /**
+   * Directories the agent may write to without being asked — visible bash
+   * write targets and the write/edit tools. Empty = the write checks are off.
+   */
+  trustedDirectories: string[];
   globalSkillsPath: string;
   systemPromptFileEnabled: boolean;
   systemPromptFilePriority: string[];
@@ -1019,6 +1027,7 @@ export interface AppConfig {
   // Main's `AppConfig` keeps these required and always non-null.
   bashTrustedCommands?: string[];
   bashDenylist?: string[];
+  trustedDirectories?: string[];
   theme?: AppTheme;
   sandboxEnabled?: boolean;
   memoryEnabled?: boolean;

@@ -179,8 +179,11 @@ describe('containsUnsupportedShellSyntax', () => {
     expect(containsUnsupportedShellSyntax('npm install')).toBe(false);
   });
 
-  it('returns true on newline-separated commands', () => {
-    expect(containsUnsupportedShellSyntax('npm install\nrm -rf /')).toBe(true);
+  it('treats a line break as a command separator, not as unsupported syntax', () => {
+    // Changed deliberately (docs/design/trusted-directories.md §5): a line break
+    // separates commands exactly like `;`, so each one is checked on its own.
+    expect(containsUnsupportedShellSyntax('npm install\nrm -rf /')).toBe(false);
+    expect(splitBashSubCommands('npm install\nrm -rf /')).toEqual(['npm install', 'rm -rf /']);
   });
 
   it('returns true on carriage return', () => {
@@ -489,7 +492,8 @@ describe('decideBashPermission — denylist beats trust', () => {
 // ---------------------------------------------------------------------------
 
 describe('decideBashPermission — unsupported shell syntax', () => {
-  it('returns ask on newline-separated commands (never null)', () => {
+  it('asks when a command after a line break is not trusted (never null)', () => {
+    // The line break splits the command; `rm -rf /` matches no trusted pattern.
     expect(decide('npm install\nrm -rf /', ['npm *'], [])).toBe('ask');
   });
 

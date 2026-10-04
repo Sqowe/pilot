@@ -121,7 +121,10 @@
     "trustedDesc": "Soronként egy minta. Előtag-egyeztetés; használjon `*`-ot helyettesítő karakterként. Egyező parancsok kérés nélkül futnak. Minden alparancs egy láncban (&&, ||, ;, |) külön kerül ellenőrzésre.",
     "denylistTitle": "Tiltólista (jóváhagyás szükséges)",
     "denylistDesc": "Soronként egy minta. Részstring-egyeztetés. A tiltólistás bejegyzést tartalmazó parancsok mindig jóváhagyást kérnek, még ha megbízható mintával is egyeznek.",
-    "safetyNote": "A nem biztonságosan elemezhető shell-kiterjesztések (parancs-behelyettesítés, folyamat-behelyettesítés, sortörések, önálló háttér &) mindig jóváhagyást kérnek, még megbízható minta egyezés esetén is."
+    "trustedDirectoriesTitle": "Megbízható könyvtárak",
+    "trustedDirectoriesDesc": "Soronként egy könyvtár. Az ezeken belüli írás kérés nélkül fut; bármely más helyre történő írás jóváhagyást kér. A write és edit eszközökre, valamint azokra a helyekre vonatkozik, ahová egy bash parancs láthatóan ír (kimenet-átirányítás, tee). A `./` a munkamenet munkaterületét jelenti. Hagyja üresen az ellenőrzés kikapcsolásához.",
+    "trustedDirectoriesNote": "Ez csak a látható írásokat ellenőrzi — nem homokozó: amit egy program önmagától ír, az nem látható. A fájlrendszer gyökere és a saját könyvtár nem fogadható el bejegyzésként. A bash parancsnak továbbra is meg kell felelnie a fenti listáknak.",
+    "safetyNote": "A nem biztonságosan olvasható shell-szintaxis (parancs-behelyettesítés, folyamat-behelyettesítés, alshell, önálló háttér &) mindig jóváhagyást kér, még megbízható minta egyezés esetén is. A sortörés ugyanúgy választja el a parancsokat, mint a `;` — mindegyik külön kerül ellenőrzésre."
   },
   "memory": {
     "title": "Memória",
@@ -1364,6 +1367,16 @@
     "allow": "Engedélyezés",
     "alwaysAllow": "Mindig engedélyezze ezt az eszközt",
     "useTool": "A(z) {{toolName}} eszköz használata",
+    "reasonLabel": "Miért kér jóváhagyást:",
+    "reasons": {
+      "unsupported-syntax": "A parancs olyan szintaxist használ, amely nem ellenőrizhető: {{detail}}.",
+      "denied": "Egyezik a tiltólista „{{pattern}}” bejegyzésével.",
+      "not-trusted": "Ez a rész nincs a megbízható listán: {{subCommand}}",
+      "empty": "Nincs mit futtatni.",
+      "write-outside": "A megbízható könyvtárakon kívülre ír: {{path}}",
+      "write-protected": "Engedélybeállítási fájlba ír: {{path}}",
+      "write-undetermined": "Nem állapítható meg, hová ír: {{detail}}"
+    },
     "toolDescriptions": {
       "write": "Fájlok írása a rendszerre",
       "edit": "Meglévő fájlok szerkesztése",

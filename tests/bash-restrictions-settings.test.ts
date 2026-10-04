@@ -11,6 +11,7 @@ import {
   normalizePermissionTimeout,
   sanitizeBashCommandList,
   sanitizeBashRestrictionsSettings,
+  sanitizeTrustedDirectories,
 } from '../src/shared/bash-restrictions/settings';
 
 // ---------------------------------------------------------------------------
@@ -73,6 +74,25 @@ describe('sanitizeBashCommandList', () => {
 // ---------------------------------------------------------------------------
 // normalizePermissionTimeout
 // ---------------------------------------------------------------------------
+
+describe('sanitizeTrustedDirectories', () => {
+  it('keeps entries as written — they are resolved later, against the session directory', () => {
+    expect(sanitizeTrustedDirectories(['./', '~/work', '/tmp'])).toEqual(['./', '~/work', '/tmp']);
+  });
+
+  it('drops non-strings and blanks, trims, and removes exact duplicates', () => {
+    expect(sanitizeTrustedDirectories([' /tmp ', '/tmp', '', '  ', 7, {}, './'])).toEqual([
+      '/tmp',
+      './',
+    ]);
+  });
+
+  it('returns an empty list for anything that is not an array', () => {
+    expect(sanitizeTrustedDirectories(undefined)).toEqual([]);
+    expect(sanitizeTrustedDirectories('/tmp')).toEqual([]);
+    expect(sanitizeTrustedDirectories({ 0: '/tmp' })).toEqual([]);
+  });
+});
 
 describe('normalizePermissionTimeout', () => {
   // --- Pass-through ---
@@ -170,8 +190,26 @@ describe('sanitizeBashRestrictionsSettings', () => {
     expect(result).toEqual({
       trusted: ['npm *', 'git *'],
       denied: ['rm -rf', 'sudo'],
+      trustedDirectories: [],
       permissionTimeoutSeconds: 120,
     });
+  });
+
+  it('reads trustedDirectories, trimmed and without duplicates', () => {
+    const result = sanitizeBashRestrictionsSettings({
+      trustedDirectories: [' ./ ', '/tmp', './', '', 42, null, '/tmp'],
+    });
+    expect(result.trustedDirectories).toEqual(['./', '/tmp']);
+  });
+
+  it('treats a missing or malformed trustedDirectories as empty (write checks off)', () => {
+    expect(sanitizeBashRestrictionsSettings({}).trustedDirectories).toEqual([]);
+    expect(
+      sanitizeBashRestrictionsSettings({ trustedDirectories: './' }).trustedDirectories
+    ).toEqual([]);
+    expect(
+      sanitizeBashRestrictionsSettings({ trustedDirectories: null }).trustedDirectories
+    ).toEqual([]);
   });
 
   it('also accepts app key names (bashTrustedCommands / bashDenylist)', () => {

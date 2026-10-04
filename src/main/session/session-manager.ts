@@ -25,6 +25,7 @@ import type {
   TraceStep,
   FileAttachmentContent,
 } from '../../renderer/types';
+import type { PermissionAskReason } from '../../shared/permission-reason';
 import type { DatabaseInstance, TraceStepRow } from '../db/database';
 import { PathResolver } from '../sandbox/path-resolver';
 import {
@@ -196,8 +197,9 @@ export class SessionManager {
           sessionId: string,
           toolUseId: string,
           toolName: string,
-          input: Record<string, unknown>
-        ) => this.requestPermission(sessionId, toolUseId, toolName, input),
+          input: Record<string, unknown>,
+          reason?: PermissionAskReason
+        ) => this.requestPermission(sessionId, toolUseId, toolName, input, reason),
         getSessionDisabledMcpServers: (sessionId: string) =>
           this.getSessionDisabledMcpServers(sessionId),
         getSessionPinnedSkills: (sessionId: string) => this.getSessionPinnedSkills(sessionId),
@@ -1654,7 +1656,8 @@ export class SessionManager {
     sessionId: string,
     toolUseId: string,
     toolName: string,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
+    reason?: PermissionAskReason
   ): Promise<PermissionResponse> {
     return new Promise((resolve) => {
       const timeoutSeconds = configStore.get('permissionTimeoutSeconds');
@@ -1677,7 +1680,9 @@ export class SessionManager {
       });
       this.sendToRenderer({
         type: 'permission.request',
-        payload: { toolUseId, toolName, input, sessionId },
+        // `reason` says what triggered the prompt (bash lists, trusted
+        // directories). Omitted when the gate has nothing specific to say.
+        payload: { toolUseId, toolName, input, sessionId, ...(reason ? { reason } : {}) },
       });
 
       // Fire native OS notification if the app is not focused

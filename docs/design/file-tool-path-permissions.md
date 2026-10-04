@@ -1,9 +1,22 @@
 # File-Tool Path Permissions (Workspace Zone) — Implementation Plan
 
-**Status:** Proposed (not yet implemented)
+**Status:** Superseded in part by [trusted-directories.md](trusted-directories.md) (2026-10-03).
+Not implemented.
 **Date:** 2026-06-19
 **Owner:** @obodnikov
 **Related:** [pi-bash-restrictions-extension.md](archive/pi-bash-restrictions-extension.md), [path-containment.ts](../../src/main/tools/path-containment.ts), [permission-rules-store.ts](../../src/main/config/permission-rules-store.ts), [config-store.ts](../../src/main/config/config-store.ts), [agent-runner.ts](../../src/main/claude/agent-runner.ts), `node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
+
+---
+
+> ## Superseded in part — 2026-10-03
+>
+> [trusted-directories.md](trusted-directories.md) is now the plan to implement. It keeps this
+> document's shared path module, tool-agnostic dialog and project-trust rule, and changes three
+> things: the settings model (one `trustedDirectories` list in the bash-restrictions settings
+> instead of a separate `path-permissions.json`), the first-version scope (`write` and `edit`
+> only; the read family is deferred), and bash writes (now in scope, no longer a non-goal).
+> Its §12 maps every part of this document to what replaced it. Read this one for background,
+> not as the specification.
 
 ---
 

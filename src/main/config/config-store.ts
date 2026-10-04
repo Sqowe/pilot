@@ -38,7 +38,7 @@ import {
   type SystemPromptFileChoice,
   type SystemPromptFileName,
 } from '../../shared/system-prompt-file-choices';
-import { sanitizeBashCommandList } from './permission-rules-store';
+import { sanitizeBashCommandList, sanitizeTrustedDirectories } from './permission-rules-store';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { THINKING_LEVELS } from '../../shared/thinking-levels';
 import {
@@ -193,6 +193,12 @@ export interface AppConfig {
   // Bash command denylist (substring patterns). Forces manual approval
   // even when a matching trust pattern exists.
   bashDenylist: string[];
+
+  // Directories the agent may write to without being asked — visible bash
+  // write targets and the write/edit tools. Entries are stored as written
+  // (`./` is relative to each session's workspace). Empty = write checks off.
+  // See docs/design/trusted-directories.md.
+  trustedDirectories: string[];
 
   // Developer logs
   enableDevLogs: boolean;
@@ -416,6 +422,7 @@ const defaultConfig: AppConfig = {
   bashTrustedCommands: [],
 
   bashDenylist: [],
+  trustedDirectories: [],
   enableDevLogs: false,
   theme: 'light',
   sandboxEnabled: false,
@@ -1559,6 +1566,7 @@ export class ConfigStore {
       systemPromptFilePriority: normalizeSystemPromptPriority(raw.systemPromptFilePriority),
       bashTrustedCommands: toStringArray(raw.bashTrustedCommands),
       bashDenylist: toStringArray(raw.bashDenylist),
+      trustedDirectories: sanitizeTrustedDirectories(raw.trustedDirectories),
       enableDevLogs: toBoolean(raw.enableDevLogs, defaultConfig.enableDevLogs),
       theme: isAppTheme(raw.theme) ? raw.theme : defaultConfig.theme,
       sandboxEnabled: toBoolean(raw.sandboxEnabled, defaultConfig.sandboxEnabled),
@@ -2067,6 +2075,10 @@ export class ConfigStore {
         updates.bashDenylist !== undefined
           ? toStringArray(updates.bashDenylist)
           : current.bashDenylist,
+      trustedDirectories:
+        updates.trustedDirectories !== undefined
+          ? sanitizeTrustedDirectories(updates.trustedDirectories)
+          : current.trustedDirectories,
       enableDevLogs:
         updates.enableDevLogs !== undefined ? updates.enableDevLogs : current.enableDevLogs,
       theme: updates.theme !== undefined ? updates.theme : current.theme,

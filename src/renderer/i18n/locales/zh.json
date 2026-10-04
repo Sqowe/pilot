@@ -121,7 +121,10 @@
     "trustedDesc": "每行一个模式。按前缀匹配，`*` 作为通配符。匹配到的命令将不再弹出提示。链式命令（&&、||、;、|）中的每个子命令都会单独检查。",
     "denylistTitle": "禁止列表（强制弹出审批）",
     "denylistDesc": "每行一个模式。按子串匹配。只要命令包含禁止列表中的任一条目，即使同时匹配信任列表也会弹出提示。",
-    "safetyNote": "无法安全解析的 Shell 扩展（命令替换、进程替换、换行符、孤立的后台 & 等）都会弹出审批提示，即使命中了信任模式。"
+    "trustedDirectoriesTitle": "信任目录",
+    "trustedDirectoriesDesc": "每行一个目录。在这些目录内的写入不再弹出提示；写入其他位置则需要审批。适用于 write 和 edit 工具，以及 Bash 命令明确写入的位置（输出重定向、tee）。`./` 表示当前会话的工作区。留空则关闭此检查。",
+    "trustedDirectoriesNote": "此检查只覆盖可见的写入，并不是沙箱：程序自身写入的内容无法识别。不接受文件系统根目录和主目录作为条目。Bash 命令仍需先通过上方的列表。",
+    "safetyNote": "无法安全解析的 Shell 语法（命令替换、进程替换、子 Shell、孤立的后台 & 等）都会弹出审批提示，即使命中了信任模式。换行符与 `;` 一样用于分隔命令，每条命令都会单独检查。"
   },
   "memory": {
     "title": "Memory 机制",
@@ -1302,6 +1305,16 @@
     "allow": "允许",
     "alwaysAllow": "始终允许此工具",
     "useTool": "使用 {{toolName}} 工具",
+    "reasonLabel": "提示原因：",
+    "reasons": {
+      "unsupported-syntax": "命令使用了无法检查的语法：{{detail}}。",
+      "denied": "命中禁止列表条目“{{pattern}}”。",
+      "not-trusted": "这一部分不在信任列表中：{{subCommand}}",
+      "empty": "没有可执行的内容。",
+      "write-outside": "写入位置在信任目录之外：{{path}}",
+      "write-protected": "写入的是权限设置文件：{{path}}",
+      "write-undetermined": "无法确定写入位置：{{detail}}"
+    },
     "toolDescriptions": {
       "write": "写入系统文件",
       "edit": "编辑系统上的现有文件",

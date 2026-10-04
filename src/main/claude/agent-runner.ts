@@ -91,7 +91,7 @@ async function _releaseRuntimeKeys(modelRuntime: ModelRuntime, keys: string[]): 
 import type { Session, Message, TraceStep, ServerEvent, ContentBlock } from '../../renderer/types';
 import { v4 as uuidv4 } from 'uuid';
 import {
-  decidePermission,
+  decidePermissionDetailed,
   rememberAlwaysAllow,
   isSessionAutonomous,
   getAutonomousBlockCallback,
@@ -99,6 +99,7 @@ import {
   setMcpToolAnnotationsLookup,
   setSessionCwd,
 } from '../config/permission-rules-store';
+import type { PermissionAskReason } from '../../shared/permission-reason';
 import { canonicalizeMcpServerName } from '../../shared/mcp-tool-classification';
 import {
   type AgentLike,
@@ -569,7 +570,8 @@ interface AgentRunnerOptions {
     sessionId: string,
     toolUseId: string,
     toolName: string,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
+    reason?: PermissionAskReason
   ) => Promise<{
     result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
     suggestion?: string;
@@ -616,7 +618,8 @@ export class ClaudeAgentRunner {
     sessionId: string,
     toolUseId: string,
     toolName: string,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
+    reason?: PermissionAskReason
   ) => Promise<{
     result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
     suggestion?: string;
@@ -1641,7 +1644,11 @@ RULES:
         return sdkBeforeToolCall ? sdkBeforeToolCall(ctx, signal) : undefined;
       }
 
-      const decision = decidePermission(sessionId, toolName, input);
+      const { action: decision, reason: askReason } = decidePermissionDetailed(
+        sessionId,
+        toolName,
+        input
+      );
 
       if (decision === 'deny') {
         log(`[ClaudeAgentRunner] Tool '${toolName}' denied by rule`);
@@ -1709,7 +1716,13 @@ RULES:
             this.activityTimeoutHandles.delete(sessionId);
           }
 
-          const rawResult = await requestPermission(sessionId, toolUseId, toolName, input);
+          const rawResult = await requestPermission(
+            sessionId,
+            toolUseId,
+            toolName,
+            input,
+            askReason
+          );
           // Normalize: accept both legacy string responses and new object shape.
           // Fail-closed on malformed/unknown values.
           if (typeof rawResult === 'string') {

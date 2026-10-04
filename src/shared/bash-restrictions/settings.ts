@@ -23,6 +23,7 @@
  * Field mapping to the Electron app's configStore:
  *   - `trusted`                ↔ `bashTrustedCommands`
  *   - `denied`                 ↔ `bashDenylist`
+ *   - `trustedDirectories`     ↔ `trustedDirectories`
  *   - `permissionTimeoutSeconds` ↔ `permissionTimeoutSeconds`
  */
 export interface BashRestrictionsSettings {
@@ -30,6 +31,14 @@ export interface BashRestrictionsSettings {
   trusted: string[];
   /** Substring patterns. Matching commands always prompt, even if also trusted. */
   denied: string[];
+  /**
+   * Directories the agent may write to without being asked — for visible bash
+   * write targets and for the `write` / `edit` tools. Entries are kept as
+   * written (`./`, `~/x`, absolute); they are resolved against the session's
+   * working directory when the write zone is built. Empty = the write checks
+   * are off. See docs/design/trusted-directories.md.
+   */
+  trustedDirectories: string[];
   /**
    * How long the permission dialog waits before auto-denying.
    *   - `0` = wait forever (no timeout)
@@ -42,6 +51,7 @@ export interface BashRestrictionsSettings {
 export const DEFAULT_BASH_RESTRICTIONS_SETTINGS: Readonly<BashRestrictionsSettings> = {
   trusted: [],
   denied: [],
+  trustedDirectories: [],
   permissionTimeoutSeconds: 300,
 };
 
@@ -66,6 +76,19 @@ export function sanitizeBashCommandList(input: unknown): string[] {
     if (trimmed) out.push(trimmed);
   }
   return out;
+}
+
+/**
+ * Normalize an unknown value into a clean list of directory entries: drops
+ * non-string entries, trims whitespace, filters out empties and removes exact
+ * duplicates (first occurrence wins).
+ *
+ * Entries are NOT resolved or validated here — whether a directory is accepted
+ * depends on the session's working directory and is decided when the write
+ * zone is built (`buildWriteZone` in `src/shared/path-permissions`).
+ */
+export function sanitizeTrustedDirectories(input: unknown): string[] {
+  return [...new Set(sanitizeBashCommandList(input))];
 }
 
 /**
@@ -109,6 +132,7 @@ export function sanitizeBashRestrictionsSettings(raw: unknown): BashRestrictions
   return {
     trusted: sanitizeBashCommandList(obj['trusted'] ?? obj['bashTrustedCommands'] ?? []),
     denied: sanitizeBashCommandList(obj['denied'] ?? obj['bashDenylist'] ?? []),
+    trustedDirectories: sanitizeTrustedDirectories(obj['trustedDirectories'] ?? []),
     permissionTimeoutSeconds: normalizePermissionTimeout(obj['permissionTimeoutSeconds']),
   };
 }

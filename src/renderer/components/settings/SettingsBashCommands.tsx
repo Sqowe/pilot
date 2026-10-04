@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Terminal, Shield, AlertTriangle, Clock } from 'lucide-react';
+import { Terminal, Shield, AlertTriangle, Clock, FolderCheck } from 'lucide-react';
 import { useAppStore } from '../../store';
 
 /**
- * Settings panel for bash command trust list and denylist.
+ * Settings panel for bash command trust list and denylist, and for the
+ * trusted directories (write zone).
  *
  * The engine behind these fields lives in
  * `src/main/config/permission-rules-store.ts`. See that module for the
  * authoritative-mode precedence model and quote-aware parsing details.
+ * The trusted directories also govern the `write` and `edit` tools, not only
+ * bash — see docs/design/trusted-directories.md.
  *
  * Values are persisted in the main-process `configStore` so they survive
  * app restarts and are applied before the first tool call on startup.
@@ -22,6 +25,7 @@ export function SettingsBashCommands() {
   // We commit to the store on blur by parsing the textarea content into a list.
   const [trustedDraft, setTrustedDraft] = useState('');
   const [denylistDraft, setDenylistDraft] = useState('');
+  const [directoriesDraft, setDirectoriesDraft] = useState('');
 
   // Reset local drafts whenever the store changes (e.g. initial load, or an
   // external update). Avoids stale drafts overwriting newer values on blur.
@@ -32,6 +36,10 @@ export function SettingsBashCommands() {
   useEffect(() => {
     setDenylistDraft((settings.bashDenylist ?? []).join('\n'));
   }, [settings.bashDenylist]);
+
+  useEffect(() => {
+    setDirectoriesDraft((settings.trustedDirectories ?? []).join('\n'));
+  }, [settings.trustedDirectories]);
 
   const parseList = (raw: string): string[] =>
     raw
@@ -52,6 +60,16 @@ export function SettingsBashCommands() {
     const current = settings.bashDenylist ?? [];
     if (next.length !== current.length || next.some((v, i) => v !== current[i])) {
       updateSettings({ bashDenylist: next });
+    }
+  };
+
+  const commitDirectories = () => {
+    // Entries are stored as written; main validates them per session (an entry
+    // that is too broad or cannot be resolved is not accepted there).
+    const next = [...new Set(parseList(directoriesDraft))];
+    const current = settings.trustedDirectories ?? [];
+    if (next.length !== current.length || next.some((v, i) => v !== current[i])) {
+      updateSettings({ trustedDirectories: next });
     }
   };
 
@@ -132,12 +150,44 @@ export function SettingsBashCommands() {
         />
       </div>
 
+      {/* Trusted directories (write zone) */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <FolderCheck className="w-4 h-4 text-text-secondary" />
+          <h4 className="text-sm font-medium text-text-primary">
+            {t('bashCommands.trustedDirectoriesTitle', 'Trusted directories')}
+          </h4>
+        </div>
+        <p className="text-xs leading-5 text-text-muted">
+          {t(
+            'bashCommands.trustedDirectoriesDesc',
+            "One directory per line. A write inside these directories runs without a prompt; a write anywhere else asks. Applies to the write and edit tools and to the places a bash command visibly writes (output redirections, tee). `./` means the session's workspace. Leave empty to turn the check off."
+          )}
+        </p>
+        <textarea
+          value={directoriesDraft}
+          onChange={(e) => setDirectoriesDraft(e.target.value)}
+          onBlur={commitDirectories}
+          spellCheck={false}
+          rows={3}
+          className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm font-mono text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+          placeholder={'./\n/tmp'}
+          aria-label={t('bashCommands.trustedDirectoriesTitle', 'Trusted directories')}
+        />
+        <p className="text-xs leading-5 text-text-muted">
+          {t(
+            'bashCommands.trustedDirectoriesNote',
+            'This checks visible writes — it is not a sandbox: what a program writes on its own cannot be seen. The file-system root and the home directory are not accepted as entries. A bash command must still pass the lists above.'
+          )}
+        </p>
+      </div>
+
       {/* Safety notice */}
       <div className="pt-4 border-t border-border">
         <p className="text-xs leading-5 text-text-muted">
           {t(
             'bashCommands.safetyNote',
-            'Shell expansions that cannot be parsed safely (command substitution, process substitution, newlines, lone background &) always prompt, even when a matching trusted pattern exists.'
+            'Shell syntax that cannot be read safely (command substitution, process substitution, subshells, lone background &) always prompts, even when a matching trusted pattern exists. A line break separates commands like `;` — each one is checked on its own.'
           )}
         </p>
       </div>

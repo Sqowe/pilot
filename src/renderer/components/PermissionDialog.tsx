@@ -15,6 +15,39 @@ export function PermissionDialog({ permission }: PermissionDialogProps) {
   const [showSuggestionInput, setShowSuggestionInput] = useState(false);
   const [suggestion, setSuggestion] = useState('');
 
+  /**
+   * What triggered the prompt, in the user's language. The main-process gate
+   * sends a structured reason (bash lists, trusted directories); the wording
+   * lives here so it can be localized.
+   */
+  const getReasonText = (): string | null => {
+    const reason = permission.reason;
+    if (!reason) return null;
+    const firstLine = (text: string): string => {
+      const line = text.split('\n')[0];
+      return line.length > 120 ? `${line.slice(0, 120)}…` : line;
+    };
+    switch (reason.kind) {
+      case 'unsupported-syntax':
+        return t('permission.reasons.unsupported-syntax', { detail: reason.detail });
+      case 'denied':
+        return t('permission.reasons.denied', { pattern: reason.pattern });
+      case 'not-trusted':
+        return t('permission.reasons.not-trusted', { subCommand: firstLine(reason.subCommand) });
+      case 'empty':
+        return t('permission.reasons.empty');
+      case 'write-outside':
+        return t('permission.reasons.write-outside', { path: reason.path });
+      case 'write-protected':
+        return t('permission.reasons.write-protected', { path: reason.path });
+      case 'write-undetermined':
+        return t('permission.reasons.write-undetermined', { detail: reason.detail });
+      default:
+        return null;
+    }
+  };
+  const reasonText = getReasonText();
+
   const getToolDescription = (toolName: string): string => {
     const key = `permission.toolDescriptions.${toolName}`;
     const translated = t(key);
@@ -83,6 +116,13 @@ export function PermissionDialog({ permission }: PermissionDialogProps) {
               {JSON.stringify(permission.input, null, 2)}
             </pre>
           </div>
+
+          {reasonText && (
+            <div className="mt-3 text-sm text-text-secondary">
+              <span className="font-medium text-text-primary">{t('permission.reasonLabel')}</span>{' '}
+              <span className="break-words">{reasonText}</span>
+            </div>
+          )}
         </div>
 
         {/* Warning */}

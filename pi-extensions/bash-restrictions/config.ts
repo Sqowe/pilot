@@ -13,11 +13,16 @@
  * The project file is honored only when the caller reports the project as
  * trusted (see `projectTrusted`), so an untrusted project cannot loosen the gate.
  *
- * Merge rules (§7 of docs/design/pi-bash-restrictions-extension.md):
+ * Merge rules (§7 of docs/design/archive/pi-bash-restrictions-extension.md):
  *   - trusted / denied  → global ∪ project (union, deduped, global-first order)
  *   - permissionTimeoutSeconds → project value if the key is explicitly present
  *                                in the project file; otherwise global value if
  *                                present; otherwise the shared default (300).
+ *   - trustedDirectories → NOT a plain union. The global file may list any
+ *                          directory; the project file may only add directories
+ *                          inside the project. The two lists are kept apart and
+ *                          handed to `buildWriteZone`, which applies that rule on
+ *                          real paths (docs/design/trusted-directories.md §4.1).
  *
  * Missing or malformed files are silently ignored and treated as absent.
  * The final merged object is passed through sanitizeBashRestrictionsSettings so
@@ -35,9 +40,11 @@ import * as piSdk from '@earendil-works/pi-coding-agent';
 import {
   sanitizeBashCommandList,
   sanitizeBashRestrictionsSettings,
+  sanitizeTrustedDirectories,
   DEFAULT_BASH_RESTRICTIONS_SETTINGS,
   type BashRestrictionsSettings,
 } from '../../src/shared/bash-restrictions';
+import { buildWriteZone, type WriteZone } from '../../src/shared/path-permissions';
 
 /**
  * pi's config directory name. Defaults to ".pi" but rebranded pi distributions
@@ -213,32 +220,56 @@ export function resolveProjectConfigPath(cwd: string): string {
 // Main export
 // ---------------------------------------------------------------------------
 
+export interface LoadBashRestrictionsOptions {
+  /** Override the home directory for the global config path (primarily for testing). */
+  homeDir?: string;
+  /**
+   * Whether to honor the project-local config file. Defaults to `true` for
+   * direct callers/tests; the extension passes `ctx.isProjectTrusted()`. When
+   * `false`, the project file is ignored so an untrusted project cannot widen
+   * `trusted`, add trusted directories, or otherwise loosen the gate — only
+   * global config applies.
+   */
+  projectTrusted?: boolean;
+}
+
+export interface LoadedBashRestrictions {
+  /**
+   * The merged settings. `trustedDirectories` holds the entries of the GLOBAL
+   * file only — entries from the project file are in `projectTrustedDirectories`
+   * because they are subject to the inside-the-project rule.
+   */
+  settings: BashRestrictionsSettings;
+  /** `trustedDirectories` as written in the project file (empty when untrusted). */
+  projectTrustedDirectories: string[];
+  /**
+   * The write zone for this session: both lists resolved to real paths, with
+   * the two config files themselves marked as always-ask.
+   */
+  zone: WriteZone;
+}
+
 /**
- * Load, merge, and normalize bash-restrictions settings.
+ * Load, merge, and normalize bash-restrictions settings, and build the write
+ * zone for the session.
  *
- * @param cwd     - Project working directory; used to find the project config.
- * @param options - Optional overrides.
- *   - homeDir        - Override the home directory for the global config path
- *                      (primarily for testing).
- *   - projectTrusted - Whether to honor the project-local config file. Defaults
- *                      to `true` for direct callers/tests; the extension passes
- *                      `ctx.isProjectTrusted()`. When `false`, the project file
- *                      is ignored so an untrusted project cannot widen `trusted`
- *                      (or otherwise loosen the gate) — only global config applies.
- *
- * @returns A fully normalized BashRestrictionsSettings object. Never throws.
+ * @param cwd     - Project working directory; used to find the project config
+ *                  and to resolve relative trusted directories.
+ * @returns Settings, the project's directory entries, and the write zone. Never throws.
  */
-export function loadBashRestrictionsSettings(
+export function loadBashRestrictions(
   cwd: string,
-  options?: { homeDir?: string; projectTrusted?: boolean }
-): BashRestrictionsSettings {
+  options?: LoadBashRestrictionsOptions
+): LoadedBashRestrictions {
   // Treat an empty / whitespace-only homeDir as "not provided" so callers cannot
   // accidentally redirect the global config to the current working directory.
   const effectiveHomeDir = options?.homeDir?.trim() || undefined;
   const projectTrusted = options?.projectTrusted ?? true;
-  const globalRaw = readJsonFile(resolveGlobalConfigPath(effectiveHomeDir));
+  const globalConfigPath = resolveGlobalConfigPath(effectiveHomeDir);
+  const projectConfigPath = resolveProjectConfigPath(cwd);
+  const globalRaw = readJsonFile(globalConfigPath);
   // Skip the project file entirely for untrusted projects (fail-closed).
-  const projectRaw = projectTrusted ? readJsonFile(resolveProjectConfigPath(cwd)) : null;
+  const projectRaw = projectTrusted ? readJsonFile(projectConfigPath) : null;
 
   // Union-merge lists: global ∪ project, deduped (Set preserves insertion order,
   // so global entries come first, then project-only additions).
@@ -255,6 +286,11 @@ export function loadBashRestrictionsSettings(
     ]),
   ];
 
+  // Trusted directories are deliberately NOT merged here: a project file may
+  // only add directories inside the project, which buildWriteZone enforces.
+  const globalDirectories = sanitizeTrustedDirectories(globalRaw?.['trustedDirectories']);
+  const projectTrustedDirectories = sanitizeTrustedDirectories(projectRaw?.['trustedDirectories']);
+
   // permissionTimeoutSeconds priority: project (if key present) > global (if key
   // present) > shared default. Using hasOwn so that an explicit project value of 0
   // (infinite) is not confused with "not set".
@@ -264,9 +300,39 @@ export function loadBashRestrictionsSettings(
       ? globalRaw!['permissionTimeoutSeconds']
       : DEFAULT_BASH_RESTRICTIONS_SETTINGS.permissionTimeoutSeconds;
 
-  return sanitizeBashRestrictionsSettings({
+  const settings = sanitizeBashRestrictionsSettings({
     trusted: mergedTrusted,
     denied: mergedDenied,
+    trustedDirectories: globalDirectories,
     permissionTimeoutSeconds: rawTimeout,
   });
+
+  const zone = buildWriteZone({
+    entries: globalDirectories,
+    projectEntries: projectTrustedDirectories,
+    cwd,
+    projectDir: cwd,
+    homeDir: effectiveHomeDir,
+    // The gate's own settings files always ask, even inside a trusted directory:
+    // otherwise the agent could rewrite them unasked and loosen the gate.
+    protectedFiles: [globalConfigPath, projectConfigPath],
+  });
+
+  return { settings, projectTrustedDirectories, zone };
+}
+
+/**
+ * Load, merge, and normalize bash-restrictions settings.
+ *
+ * Returns only the settings object. NOTE: its `trustedDirectories` lists the
+ * global file's entries only; callers that need the write zone must use
+ * `loadBashRestrictions`, which also applies the project file's entries.
+ *
+ * @returns A fully normalized BashRestrictionsSettings object. Never throws.
+ */
+export function loadBashRestrictionsSettings(
+  cwd: string,
+  options?: LoadBashRestrictionsOptions
+): BashRestrictionsSettings {
+  return loadBashRestrictions(cwd, options).settings;
 }

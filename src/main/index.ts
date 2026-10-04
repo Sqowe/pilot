@@ -69,6 +69,9 @@ import {
   setPermissionRules,
   setBashCommandLists,
   sanitizeBashCommandList,
+  setTrustedDirectories,
+  setProtectedWriteFiles,
+  sanitizeTrustedDirectories,
   markSessionAutonomous,
   setAutonomousBlockCallback,
   forgetSessionPermissions,
@@ -1018,6 +1021,11 @@ app
     // to send its bootstrap `settings.update`. Closes the startup race
     // window where list control would otherwise be skipped.
     setBashCommandLists(configStore.get('bashTrustedCommands'), configStore.get('bashDenylist'));
+    // Same for the trusted directories (write zone). The app's own settings
+    // file always asks, even inside a trusted directory: otherwise the agent
+    // could rewrite it unasked and loosen its own permissions.
+    setTrustedDirectories(configStore.get('trustedDirectories'));
+    setProtectedWriteFiles([configStore.getPath()]);
 
     // Log environment variables for debugging
     log('=== Sqowe Pilot Starting ===');
@@ -5285,6 +5293,7 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
           permissionRules?: unknown;
           bashTrustedCommands?: unknown;
           bashDenylist?: unknown;
+          trustedDirectories?: unknown;
         };
         const hasOwn = (key: string): boolean => Object.prototype.hasOwnProperty.call(payload, key);
 
@@ -5316,6 +5325,14 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
           if (Object.keys(persistPayload).length > 0) {
             configStore.update(persistPayload);
           }
+        }
+
+        // Trusted directories (write zone): same single-normalization rule —
+        // sanitize once here, then feed both the runtime cache and configStore.
+        if (hasOwn('trustedDirectories')) {
+          const directoriesNext = sanitizeTrustedDirectories(payload.trustedDirectories);
+          setTrustedDirectories(directoriesNext);
+          configStore.update({ trustedDirectories: directoriesNext });
         }
       }
       return null;

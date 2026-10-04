@@ -24,16 +24,26 @@ import type { MCPServerConfig } from '../mcp/mcp-manager';
 import type { McpToolAnnotations } from '../mcp/mcp-tool-permissions';
 import {
   decideBashPermission as _decideBashPermissionEngine,
+  explainBashPermission,
   sanitizeBashCommandList,
+  sanitizeTrustedDirectories,
   type BashCommandLists,
 } from '../../shared/bash-restrictions';
+// The write-zone check resolves real paths; it lives outside the fs-free barrel above.
+import { checkBashWriteZone } from '../../shared/bash-restrictions/write-zone';
+import {
+  buildWriteZone,
+  decideWriteToolZone,
+  type WriteZoneContext,
+} from '../../shared/path-permissions';
+import type { PermissionAskReason } from '../../shared/permission-reason';
 // splitBashSubCommands is a pure re-export (not used locally in this file).
 // sanitizeBashCommandList is imported above (used in setBashCommandLists) and re-exported below.
 // Both re-exports maintain backward compatibility: tests and config-store import
 // these utilities from this module; direct imports from shared/bash-restrictions
 // are equivalent but would require updating every existing import path.
 export { splitBashSubCommands } from '../../shared/bash-restrictions';
-export { sanitizeBashCommandList };
+export { sanitizeBashCommandList, sanitizeTrustedDirectories };
 
 // Mirrors the renderer defaults in src/renderer/store/index.ts
 const DEFAULT_RULES: PermissionRule[] = [
@@ -184,6 +194,49 @@ export function getBashCommandLists(): { trusted: string[]; denied: string[] } {
   return { trusted: [...bashTrustedCommands], denied: [...bashDenylist] };
 }
 
+// ---------------------------------------------------------------------------
+// Trusted directories (write zone)
+// ---------------------------------------------------------------------------
+// Directories the agent may write to without being asked. Governs visible bash
+// write targets and the `write` / `edit` tools; see
+// docs/design/trusted-directories.md. Empty list = the write checks are off.
+// Hydrated from persisted config at startup and mirrored from the renderer via
+// `settings.update` IPC, like the bash lists above.
+
+let trustedDirectories: string[] = [];
+
+/** Files that always ask, even inside a trusted directory (the app's own settings file). */
+let protectedWriteFiles: string[] = [];
+
+export function setTrustedDirectories(directories: unknown): void {
+  trustedDirectories = sanitizeTrustedDirectories(directories);
+}
+
+export function getTrustedDirectories(): string[] {
+  return [...trustedDirectories];
+}
+
+export function setProtectedWriteFiles(files: readonly string[]): void {
+  protectedWriteFiles = files.filter((file) => typeof file === 'string' && file.length > 0);
+}
+
+/**
+ * The write zone for a session, or null when no directory is listed.
+ *
+ * Built per decision rather than cached: roots are resolved to real paths, and
+ * a link created since the last call must be seen. Relative entries resolve
+ * against the session's workspace; a session with no known workspace cannot
+ * resolve them, and every write there asks.
+ */
+function writeZoneContextFor(sessionId: string): WriteZoneContext | null {
+  if (trustedDirectories.length === 0) return null;
+  const cwd = sessionCwdMap.get(sessionId);
+  return {
+    zone: buildWriteZone({ entries: trustedDirectories, cwd, protectedFiles: protectedWriteFiles }),
+    cwd,
+  };
+}
+
 /**
  * Decide a bash command using the current module-level trust/deny lists.
  *
@@ -231,6 +284,38 @@ export function decidePermission(
   toolName: string,
   input: Record<string, unknown>
 ): 'allow' | 'deny' | 'ask' {
+  return decidePermissionDetailed(sessionId, toolName, input).action;
+}
+
+/** A permission decision, with the reason for an `ask` when the gate knows it. */
+export interface PermissionDecision {
+  action: 'allow' | 'deny' | 'ask';
+  reason?: PermissionAskReason;
+}
+
+/** The action of the first generic rule that matches, or null when none does. */
+function matchGenericRule(
+  lowered: string,
+  input: Record<string, unknown>
+): PermissionRule['action'] | null {
+  const inputStr = safeStringify(input);
+  for (const rule of rules) {
+    if (rule.tool.toLowerCase() !== lowered) continue;
+    if (rule.pattern && !matchesPattern(rule.pattern, inputStr)) continue;
+    return VALID_ACTIONS.has(rule.action) ? rule.action : 'ask';
+  }
+  return null;
+}
+
+/**
+ * Same decision as `decidePermission`, plus why it asks. The permission hook
+ * uses this so the dialog can tell the user what triggered the prompt.
+ */
+export function decidePermissionDetailed(
+  sessionId: string,
+  toolName: string,
+  input: Record<string, unknown>
+): PermissionDecision {
   const lowered = toolName.toLowerCase();
 
   // Bash commands get a dedicated trust/deny evaluation BEFORE the session-
@@ -242,11 +327,44 @@ export function decidePermission(
   // ensures the denylist is honoured and only commands that fall through
   // to the generic engine (null decision) can be blanket-allowed for the
   // session.
+  //
+  // The write zone (trusted directories) is consulted right after the lists,
+  // and only when they did not already ask: a visible write outside the zone
+  // turns `allow` — or "no opinion" — into `ask`. It never turns the lists'
+  // `ask` into `allow`, and it never makes an untrusted command trusted.
   if (lowered === 'bash') {
     const rawCmd = input.command;
     const cmd = typeof rawCmd === 'string' ? rawCmd : '';
     const bashDecision = decideBashPermission(cmd);
-    if (bashDecision) return bashDecision;
+    if (bashDecision === 'ask') {
+      const detail = explainBashPermission(cmd, {
+        trusted: [...bashTrustedCommands],
+        denied: [...bashDenylist],
+      });
+      return { action: 'ask', reason: detail.reason };
+    }
+    const zoneContext = writeZoneContextFor(sessionId);
+    if (zoneContext) {
+      const zoneReason = checkBashWriteZone(cmd, zoneContext);
+      if (zoneReason) return { action: 'ask', reason: zoneReason };
+    }
+    if (bashDecision) return { action: bashDecision };
+  }
+
+  // File-writing tools, when trusted directories are configured. Decided
+  // BEFORE the session "always allow" memory for the same reason as bash: one
+  // "Allow always" click on `write` must not cover writes outside the zone.
+  //   - outside, a permission settings file, or undeterminable → ask
+  //   - inside → allow, unless the user's own rule for the tool says deny
+  if (lowered === 'write' || lowered === 'edit') {
+    const zoneContext = writeZoneContextFor(sessionId);
+    if (zoneContext) {
+      const verdict = decideWriteToolZone(lowered, input, zoneContext);
+      if (verdict?.decision === 'ask') return { action: 'ask', reason: verdict.reason };
+      if (verdict?.decision === 'allow') {
+        return { action: matchGenericRule(lowered, input) === 'deny' ? 'deny' : 'allow' };
+      }
+    }
   }
 
   // --- MCP tool permission engine (per-server policies) ---
@@ -275,24 +393,17 @@ export function decidePermission(
     );
     // 'deny' and 'allow' are authoritative — short-circuit immediately.
     // 'ask' falls through to session memory check below.
-    if (mcpDecision === 'deny' || mcpDecision === 'allow') return mcpDecision;
+    if (mcpDecision === 'deny' || mcpDecision === 'allow') return { action: mcpDecision };
   }
 
   const session = alwaysAllowBySession.get(sessionId);
-  if (session?.has(lowered)) return 'allow';
+  if (session?.has(lowered)) return { action: 'allow' };
 
   // If MCP policy said 'ask', honour it (don't fall through to generic rules
   // which might have a blanket allow for the mcp__ prefixed name).
-  if (mcpDecision === 'ask') return 'ask';
+  if (mcpDecision === 'ask') return { action: 'ask' };
 
-  const inputStr = safeStringify(input);
-
-  for (const rule of rules) {
-    if (rule.tool.toLowerCase() !== lowered) continue;
-    if (rule.pattern && !matchesPattern(rule.pattern, inputStr)) continue;
-    return VALID_ACTIONS.has(rule.action) ? rule.action : 'ask';
-  }
-  return 'ask';
+  return { action: matchGenericRule(lowered, input) ?? 'ask' };
 }
 
 export function rememberAlwaysAllow(sessionId: string, toolName: string): void {

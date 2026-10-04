@@ -246,6 +246,7 @@ const defaultSettings: Settings = {
   ],
   bashTrustedCommands: [],
   bashDenylist: [],
+  trustedDirectories: [],
   globalSkillsPath: '',
   systemPromptFileEnabled: true,
   systemPromptFilePriority: [

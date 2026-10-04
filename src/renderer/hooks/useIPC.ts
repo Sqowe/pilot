@@ -139,6 +139,11 @@ export function useIPC() {
         globalSkillsPath: config.globalSkillsPath ?? '',
         bashTrustedCommands: config.bashTrustedCommands ?? [],
         bashDenylist: config.bashDenylist ?? [],
+        // Display only: main hydrates the trusted directories from its own
+        // persisted config at startup, so they are deliberately NOT part of
+        // the bootstrap `settings.update` below. Edits reach main through
+        // `updateSettings()` like every other settings key.
+        trustedDirectories: config.trustedDirectories ?? [],
         permissionTimeoutSeconds: config.permissionTimeoutSeconds ?? 300,
       });
       if (isInitialConfigStatus) {

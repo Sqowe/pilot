@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Trusted directories.** Settings → Bash Commands has a third list: the directories the
+  agent may write to without being asked (for example `./` for the session's workspace, and
+  `/tmp`). A write inside them runs; a write anywhere else asks. It covers the `write` and
+  `edit` tools and the places a shell command visibly writes — output redirections and `tee`.
+  For shell commands it only adds a condition: a command still has to pass the trusted and
+  denied lists. Empty list = off, which is the default. The same setting works in the
+  standalone `pi` extension (`trustedDirectories` in `bash-restrictions.json`), where
+  `write` and `edit` otherwise run with no prompt at all.
+  This is a check of visible writes, **not a sandbox**: what a program writes on its own
+  cannot be seen. The home directory and the file-system root are not accepted as entries,
+  and the permission settings files themselves always ask.
+- The approval dialog now says **why** it appeared: which denied word matched, which part of
+  the command is not on the trust list, what syntax could not be checked, or which path lies
+  outside the trusted directories.
+
+### Changed
+
+- **Multi-line shell commands no longer prompt just for being multi-line.** A line break now
+  separates commands exactly like `;`, and each one is checked against the lists on its own.
+  A here-document (`python3 - <<'PY' … PY`) is read as data for its command; the denied list
+  is still matched against its text. The old unconditional prompt added no protection — the
+  same commands written on one line already went through the normal checks. A few multi-line
+  shapes still ask: a here-document with no terminator, a `$(...)` in a here-document whose
+  delimiter is not quoted, and a `#` comment that starts in the middle of a line. If you
+  relied on "multi-line always asks" as a safety net with a broad trust list, add the
+  commands you care about to the denied list.
+
 ### Security
 
 - Cleared 7 of 13 reported dependency vulnerabilities: `electron` 41.3.0 → 41.10.7 (patch
@@ -22,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies to `sharp`, `better-sqlite3`, `onnxruntime-node`, `esbuild` and `protobufjs`.
   A pre-existing mismatch was fixed at the same time: `protobufjs` was allowed at 7.6.1 while
   7.6.6 was installed, so its postinstall had been blocked.
+- Two shapes that bash runs as commands were being read as harmless arithmetic and now
+  ask: `$((cmd) | other)` — a command substitution — and `((cmd); other)` — a subshell.
+  Arithmetic is still allowed, but only when it really closes with `))`. Also now asking:
+  `cmd >1&`, where a background `&` hid behind a redirection target, and any command that
+  uses `$'…'` or `$"…"` quoting — the shell rewrites those strings before running the
+  command, so their text cannot be checked as written.
 - **Do not run `npm audit fix --force` here.** The six remaining advisories have no real fix,
   and every remedy npm proposes is a downgrade that either fixes nothing or costs a feature:
   `ngrok@4.3.3` depends on the same vulnerable `extract-zip@^2.0.1` and `uuid@^7||^8` as the

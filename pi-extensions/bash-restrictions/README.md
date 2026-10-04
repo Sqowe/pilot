@@ -12,13 +12,15 @@ anything else asks (interactively) or is blocked (headless).
 - **Shared engine.** The decision logic and settings schema are the exact same
   modules the Electron app uses (`src/shared/bash-restrictions/`). Behaviour
   stays in lock-step across both hosts.
-- **Agent bash only.** Only the LLM-invoked `bash` tool is gated. Your own
+- **Agent tools only.** The LLM-invoked `bash` tool is gated — and, once
+  `trustedDirectories` is set, the `write` and `edit` tools too. Your own
   `!` / `!!` (`user_bash`) commands are never intercepted.
 - **Fail-closed.** No UI, a dialog error, a timeout, or any internal error all
   resolve to **block**, never to a silent allow.
 
 For the full semantics of the engine (sub-command splitting, word-boundary
-denylist matching, the shell-syntax guard, pipelines), see
+denylist matching, the shell-syntax guard, pipelines, multi-line commands and
+here-documents, trusted directories), see
 [BASH_COMMAND_RESTRICTIONS.md](../../BASH_COMMAND_RESTRICTIONS.md) — this
 extension reuses that engine unchanged.
 
@@ -111,6 +113,13 @@ The extension reads up to two optional config files and **unions** them:
   // if the command also matches a trusted pattern. Denylist beats trust.
   "denied": ["rm", "--force", "sudo", "git push"],
 
+  // Directories the agent may write to without being asked. Checked for the
+  // `write` / `edit` tools and for the places a bash command visibly writes
+  // (output redirections, tee). Omit or leave empty to turn the check off.
+  // In a PROJECT file only directories inside the project are accepted — put
+  // `/tmp` and the like in the global file. See "Trusted directories" below.
+  "trustedDirectories": ["./"],
+
   // Permission-dialog timeout in seconds.
   //   0          → wait forever (no timeout)
   //   positive   → clamped to [10, 3600]; default 300 (5 min)
@@ -158,6 +167,9 @@ either form:
   (global entries first). Per-project tightening is done by _adding_ denials.
 - `permissionTimeoutSeconds` → project value if the key is present, else global,
   else the shared default (`300`).
+- `trustedDirectories` → global entries, plus those project entries that lie
+  **inside the project**. A project entry outside it is not accepted (a warning
+  is shown at session start).
 
 For example, a global file plus a trusted project file:
 
@@ -188,6 +200,40 @@ commands or otherwise loosen the gate — only the **global** file applies there
 If trust state is unavailable, the extension fails closed (treats the project as
 untrusted).
 
+### Trusted directories
+
+`trustedDirectories` lists where the agent may write without being asked. In
+plain `pi` the `write` and `edit` tools run with no prompt at all; with this
+list set, a write outside it asks.
+
+```jsonc
+// ~/.pi/agent/bash-restrictions.json   (global)
+{ "trustedDirectories": ["./", "/tmp"] }
+```
+
+- `./` is the session's working directory, so one global entry covers every
+  project you start `pi` in. `~/x` is under your home directory.
+- Paths are compared by their **real** location: a full path and a relative
+  one to the same file are equal, and a link inside the project that leads
+  outside counts as outside.
+- **`write` / `edit`:** inside → runs; outside → asks.
+- **`bash`:** output redirections (`>`, `>>`, `&>`, `2>`, …) and `tee` targets
+  are checked the same way. This only adds a condition — the command still has
+  to pass `trusted` / `denied`; a directory never makes a command trusted.
+- The check also runs when `trusted` and `denied` are both empty.
+- **Not accepted:** the file-system root, the home directory or anything
+  containing it (also `./` when you start `pi` in your home directory), and —
+  in a project file — a directory outside the project. The check stays on; if
+  nothing was accepted, every write asks.
+- **Always asks, even inside a trusted directory:** writing either
+  `bash-restrictions.json` file. Otherwise the agent could loosen its own rules.
+
+It checks **visible** writes; it is not a sandbox. What a program writes on its
+own (`python3 script.py`, `sed -i`, `bash -c '…'`) cannot be seen from the
+command text — keep those under `denied`. The full list of what asks and what
+is not seen is in
+[BASH_COMMAND_RESTRICTIONS.md](../../BASH_COMMAND_RESTRICTIONS.md#trusted-directories).
+
 ### Wildcards & blanket trust
 
 `*` is the only wildcard in a `trusted` pattern, and a bare `"*"` compiles to
@@ -198,8 +244,10 @@ then:
 - **Denylist hits.** The `denied` list (global ∪ project) is checked first, so a
   denied pattern still sends the command to **ask** — `"*"` cannot override it.
 - **Unsupported shell syntax.** Command substitution `$(...)`, backticks,
-  newlines, a background `&`, subshells `(...)`, and process substitution `<(...)`
-  fail closed to **ask**.
+  a background `&`, subshells `(...)`, and process substitution `<(...)`
+  fail closed to **ask**. (A line break is not on this list: it separates
+  commands like `;`, and a here-document is read as data for its command.)
+- **Writes outside `trustedDirectories`**, when that list is set.
 
 In a **project** file, `["*"]` obeys the **Project trust** rule above: an
 untrusted project's `["*"]` is ignored (only the global config applies), so a
@@ -215,21 +263,35 @@ on `/reload`, `/new`, `/resume`, and `/fork`. After editing a JSON file, run
 
 ### Opt-in
 
-When **both** lists are empty (no config files, or only a timeout set), the gate
-is **inactive** and every `bash` call defers to `pi`'s own approval flow. The
-engine only takes over once you add at least one `trusted` or `denied` entry.
+When **both** lists are empty (no config files, or only a timeout set), the
+command check is **inactive** and every `bash` call defers to `pi`'s own
+approval flow. The engine only takes over once you add at least one `trusted`
+or `denied` entry.
+
+`trustedDirectories` has its own switch: empty or absent = off. When it is set
+and the two lists are empty, bash commands still run unasked — except those
+that visibly write outside the listed directories.
 
 ---
 
 ## Behaviour
 
-| Situation                                   | Result                                        |
-| ------------------------------------------- | --------------------------------------------- |
-| All sub-commands trusted, no denylist hit   | **allow** — runs without a prompt             |
-| Denylist hit / not trusted / unknown syntax | **ask** (interactive) or **block** (headless) |
-| Lists empty (not opted in)                  | defer to `pi` (no opinion)                    |
+| Situation                                                      | Result                                        |
+| -------------------------------------------------------------- | --------------------------------------------- |
+| All sub-commands trusted, no denylist hit, no outside write    | **allow** — runs without a prompt             |
+| Denylist hit / not trusted / unknown syntax                    | **ask** (interactive) or **block** (headless) |
+| Visible write outside `trustedDirectories` (bash, write, edit) | **ask** (interactive) or **block** (headless) |
+| Nothing configured                                             | defer to `pi` (no opinion)                    |
 
-Interactive `ask` shows a `select` dialog mirroring the app's permission dialog:
+Interactive `ask` shows a `select` dialog mirroring the app's permission dialog.
+Its second line says why it appeared:
+
+```
+Bash restriction
+Reason: writes outside the trusted directories: /Users/me/.zshrc
+
+  echo x >> ~/.zshrc
+```
 
 | Choice                         | Effect                                                                 |
 | ------------------------------ | ---------------------------------------------------------------------- |
@@ -265,6 +327,19 @@ attempt each command:
 anything, and the syntax guard forces a prompt for any `$(...)`. It is only ever
 inert text driving the decision.
 
+For trusted directories, add `"trustedDirectories": ["./"]` to the same file,
+`/reload`, and have the agent attempt:
+
+| Action                                      | Expected                                              |
+| ------------------------------------------- | ----------------------------------------------------- |
+| `echo hi > out.txt`                         | **allow** — inside the project                        |
+| `echo hi >> ~/outside.txt`                  | **ask**, reason "writes outside the trusted …"        |
+| a multi-line `python3 - <<'PY' … PY`        | **ask** with the config above (`python3` not trusted) |
+| the same with `"trusted": ["*"]`            | **allow** — no prompt for the line breaks             |
+| `write` tool to a file in the project       | runs without a prompt                                 |
+| `write` tool to `~/outside.txt`             | **ask**                                               |
+| `edit` tool on `.pi/bash-restrictions.json` | **ask**, reason "writes to a permission settings …"   |
+
 ---
 
 ## Tests
@@ -276,3 +351,5 @@ inert text driving the decision.
 - `tests/pi-bash-extension.e2e.test.ts` — full chain config file → loader →
   engine → mapper with real temp files (no `pi` process).
 - `tests/pi-bash-extension-build.test.ts` — the bundle builds and is importable.
+- `tests/pi-bash-extension-write-zone.test.ts` — trusted directories end to end:
+  config files → write zone → bash / `write` / `edit` → dialog (real temp files).

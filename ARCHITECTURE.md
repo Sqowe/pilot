@@ -104,7 +104,8 @@ sqowe-pilot/
 │   │   ├── store/             # Zustand state stores
 │   │   └── styles/            # Tailwind + custom CSS
 │   ├── shared/                 # Types/utils shared across processes
-│   │   └── bash-restrictions/ # Pure bash engine + settings (app + pi ext)
+│   │   ├── bash-restrictions/ # Bash scanner, engine, write-zone check + settings (app + pi ext)
+│   │   └── path-permissions/  # Trusted directories: real-path resolution, write zone (app + pi ext)
 │   └── tests/                  # Vitest unit tests
 ├── pi-extensions/              # Standalone `pi` CLI extensions (NOT in main bundle)
 │   └── bash-restrictions/     # Drop-in add-on; consumes src/shared engine
@@ -344,7 +345,12 @@ or Native fallback. Currently `sandboxEnabled: false` by default — backend is 
 but UI toggle is hidden pending stabilization.
 
 Security layers: PathGuard (blocks escape from session dir), path containment
-(`isPathWithinRoot`), permission hooks (trust/denylist for bash), workspace path constraints.
+(`isPathWithinRoot`), permission hooks (trust/denylist for bash; trusted directories for
+visible bash writes and the `write` / `edit` tools), workspace path constraints.
+
+The trusted-directories check is a **permission gate, not a sandbox**: it reads where a
+command visibly writes and what path a file tool names. It cannot see what a program writes on
+its own. See Section 4.7 and `docs/design/trusted-directories.md`.
 
 ### 4.5 System Prompt (`src/main/prompts/`)
 
@@ -468,22 +474,37 @@ Design: [docs/design/archive/memory-storage-sqlite-migration.md](docs/design/arc
 
 ### 4.7 Shared Bash Engine & Pi Extension (`src/shared/bash-restrictions/`, `pi-extensions/`)
 
-The bash trust/denylist permission engine is a **pure, stateless** module — the single
+The bash trust/denylist permission engine is a **stateless** module — the single
 source of truth for both engine logic _and_ the settings schema — consumed by two hosts:
 
-1. **Electron app** — the main process imports it inside `before-tool-call-hook.ts`.
+1. **Electron app** — the main process consults it in `decidePermission`
+   (`permission-rules-store.ts`), called from the permission hook in `agent-runner.ts`.
 2. **Standalone `pi` CLI** — a drop-in extension (`pi-extensions/bash-restrictions/`)
    subscribes to `pi`'s public `tool_call` event and returns `{ block, reason }`. No fork
    or modification of `@earendil-works/pi-coding-agent`; it is a pure consumer.
 
 Adding a future bash/permission setting is a **one-place change** in the shared module;
 both hosts pick it up. The extension is bundled separately via `npm run build:pi-extension`
-(esbuild → `dist-pi-extensions/bash-restrictions.mjs`, self-contained because `src/shared/`
-does not exist where the installed file runs) and **must never enter the Electron main
-bundle**. Engine internals and trust/denylist semantics remain documented in
-`BASH_COMMAND_RESTRICTIONS.md` (Section 8).
+(esbuild → the directory `dist-pi-extensions/bash-restrictions/` with `index.js` and a
+manifest, self-contained because `src/shared/` does not exist where the installed files run)
+and **must never enter the Electron main bundle**. Engine internals and trust/denylist
+semantics remain documented in `BASH_COMMAND_RESTRICTIONS.md` (Section 8).
 
-Key files: `src/shared/bash-restrictions/{engine,settings,index}.ts`,
+**How a bash command is read.** One scanner (`scan.ts`) reads the command text once and
+yields its sub-commands, words, redirections and here-documents. The syntax guard, the
+splitter and the write-target check all use that one result, so they cannot disagree. The
+engine (`engine.ts`) stays pure; only the write-zone check touches the file system.
+
+**Trusted directories (write zone).** A third setting, `trustedDirectories`, lists the
+directories the agent may write to without being asked. `src/shared/path-permissions/`
+resolves entries and targets to real paths and classifies them; `write-zone.ts` applies that
+to the places a bash command visibly writes (redirections, `tee`), and `decideWriteToolZone`
+to the `path` of `write` / `edit`. For bash the zone only adds an `ask`. Both hosts treat
+their own permission settings files as always-ask. The reason for a prompt travels with it
+(`src/shared/permission-reason.ts`) so the dialog can say what triggered it.
+
+Key files: `src/shared/bash-restrictions/{scan,engine,write-zone,settings,index}.ts`,
+`src/shared/path-permissions/{containment,resolve,zone,tool-decision,index}.ts`,
 `pi-extensions/bash-restrictions/{extension,config}.ts`, `scripts/build-pi-extension.mjs`.
 
 ### 4.8 Workspace Orphan Cleanup (`src/main/workspace/`)

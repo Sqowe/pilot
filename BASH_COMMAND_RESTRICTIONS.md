@@ -10,11 +10,11 @@ people the most confusion in practice.
 
 ## Quick summary
 
-| You see                                                          | What's happening                                                                                                                                                                                         |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Command ran without a prompt (green check)                       | Every sub-command matched a **Trusted** pattern.                                                                                                                                                         |
-| "Permission Required" dialog appeared                            | At least one sub-command was not trusted, or a denylist match fired, or the command used shell syntax we can't safely parse.                                                                             |
-| You configured the lists but the dialog still appears constantly | Most common cause: a pipeline like `cat foo \| jq .bar \| head` where the tail filters (`jq`, `head`) are not in your trust list. See [Pipelines and chained commands](#pipelines-and-chained-commands). |
+| You see                                                          | What's happening                                                                                                                                                                                                 |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Command ran without a prompt (green check)                       | Every sub-command matched a **Trusted** pattern.                                                                                                                                                                 |
+| "Permission Required" dialog appeared                            | At least one sub-command was not trusted, or a denylist match fired, or the command used shell syntax we can't safely parse, or it visibly writes outside your trusted directories. The dialog names the reason. |
+| You configured the lists but the dialog still appears constantly | Most common cause: a pipeline like `cat foo \| jq .bar \| head` where the tail filters (`jq`, `head`) are not in your trust list. See [Pipelines and chained commands](#pipelines-and-chained-commands).         |
 
 ---
 
@@ -22,10 +22,13 @@ people the most confusion in practice.
 
 Settings → **Bash Commands**.
 
-Two textareas, one pattern per line:
+Three fields, one entry per line:
 
 - **Trusted commands** — prefix patterns with `*` as a wildcard. Matching commands run without a prompt.
 - **Denylist (force approval)** — substring patterns. Matching commands always prompt, even if they also match the trusted list.
+- **Trusted directories** — directories the agent may write to without being asked. See
+  [Trusted directories](#trusted-directories). Independent of the two lists: it has its own
+  on/off (empty = off) and also covers the `write` and `edit` tools.
 
 When either list has any entry, **authoritative mode** is on. The two
 lists become the complete bash policy; the default "ask for bash" rule
@@ -42,11 +45,12 @@ in order. The first check that produces a decision wins.
 1. **Lists opt-in gate.** If both lists are empty, the engine returns
    "no opinion" and the default rule handles it. Stop.
 2. **Unsupported shell syntax guard.** If the command contains any
-   construct that the simple parser can't safely evaluate, the engine
+   construct that the scanner can't safely read, the engine
    returns "ask". This fails closed: unknown shape → manual approval.
    (Details below.)
-3. **Split into sub-commands** on unquoted `&&`, `||`, `;`, `|`. Each
-   piece is evaluated independently.
+3. **Split into sub-commands** on unquoted `&&`, `||`, `;`, `|`, and on
+   unquoted line breaks. Each piece is evaluated independently. A
+   here-document body stays with the command that opened it.
 4. **Denylist check** on each sub-command. Word-boundary match,
    case-insensitive. If any sub contains a denylist entry as a distinct
    word → "ask". The denylist always wins; a trusted sub with a
@@ -54,6 +58,16 @@ in order. The first check that produces a decision wins.
 5. **Trust check** on each sub-command. Prefix match with `*` as
    wildcard, case-insensitive. If every sub matches some trusted
    pattern and none matched the denylist → "allow". Otherwise → "ask".
+6. **Trusted directories** (only when that list is non-empty, and only if
+   the steps above did not already ask). If the command visibly writes
+   outside the listed directories → "ask". This step can only add a
+   prompt; it never turns an "ask" into "allow". It also runs when both
+   lists are empty. See [Trusted directories](#trusted-directories).
+
+Steps 2–5 read the command through one scanner
+(`src/shared/bash-restrictions/scan.ts`), and step 6 reads the same result —
+so the guard, the splitter and the write check cannot disagree about what a
+command says.
 
 If the agent session had an earlier "Allow always" click for the bash
 tool, the bash list engine runs **before** that memory, so your
@@ -195,8 +209,8 @@ cat *
 Here's what the engine does:
 
 1. **Opt-in gate.** Trust list is non-empty, so authoritative mode is on.
-2. **Syntax guard.** No backticks, no `$(...)`, no `<(...)`, no newlines,
-   no lone `&`. The pipeline passes.
+2. **Syntax guard.** No backticks, no `$(...)`, no `<(...)`, no lone `&`.
+   The pipeline passes.
 3. **Split on unquoted `|`.** Three sub-commands:
    - `cat data.json`
    - `jq '.users'`
@@ -324,13 +338,30 @@ simple parser can't prove the command doesn't smuggle something in:
 | -------------------- | --------------------------- | ------------------------------------------------------------- |
 | Command substitution | `echo $(date)`, `cat \`x\`` | A trusted outer command could execute an untrusted inner one. |
 | Process substitution | `diff <(cmd1) <(cmd2)`      | Inner commands run in a subshell.                             |
-| Newline separators   | `cmd1⏎cmd2`                 | Effectively chains without `;`.                               |
-| Lone background `&`  | `sleep 60 &`                | Detaches the command from our control.                        |
+| Subshell             | `(cmd)`, `((cmd); other)`   | Commands run in a subshell.                                   |
+| Lone background `&`  | `sleep 60 &`, `cmd >1&`     | Detaches the command from our control.                        |
 | Unclosed quotes      | `echo "unterminated`        | Parse is ambiguous.                                           |
+| Carriage return      | `cmd1\r\ncmd2`              | Not a line break the shell splits on.                         |
+| `$'…'` / `$"…"`      | `echo x > $'/etc/hosts'`    | The shell rewrites the string before using it; see below.     |
+
+A line break is **not** on this list — it separates commands like `;`. A few
+multi-line shapes still ask; see
+[Multi-line commands and here-documents](#multi-line-commands-and-here-documents).
 
 Backticks and `$(...)` are scanned for **even inside double quotes**,
 because bash expands them there. Single-quoted substrings are fully
 inert.
+
+`$'…'` (ANSI-C quoting) and `$"…"` (locale quoting) ask because the shell
+turns them into something else before the command runs: `$'/etc/hosts'` _is_
+`/etc/hosts`, and `$'\''` is a single quote character. Read as "a `$` and then
+a quoted string" they would name a file that the shell never touches, and an
+escaped quote inside would shift where every later quote begins and ends.
+Inside double quotes the two forms are not special and do not ask.
+
+`$((expr))` and `((expr))` are arithmetic and allowed — but only when they
+really close with `))`. Bash reads `$((cmd) | other)` as a command
+substitution and `((cmd); other)` as a subshell, and runs `cmd`; both ask.
 
 ---
 
@@ -353,6 +384,150 @@ the trust list decide:
 the background operator, which broke common shapes like `cmd 2>&1 \|
 head`. Fixed; the scanner now distinguishes redirection from
 backgrounding.
+
+---
+
+## Multi-line commands and here-documents
+
+An unquoted line break separates commands exactly like `;`. Each line is then
+checked against the lists on its own:
+
+```
+cd build
+ls -la          → [cd build] [ls -la]   — same as `cd build ; ls -la`
+```
+
+This used to ask unconditionally. That prompt added no protection — the same
+commands joined by `;` already went through the normal checks — so it was
+removed. Line breaks inside quotes do not split (`python3 -c '…'` over several
+lines is one command), and a backslash at the end of a line joins it to the next.
+
+### Here-documents
+
+```
+python3 - <<'PY'
+import os
+print(os.getcwd())
+PY
+```
+
+- The body belongs to the command that opened it. Its lines are **data**, not
+  commands: only `python3 - <<'PY'` has to be trusted.
+- **The denylist is matched against the body too.** Otherwise
+  `bash <<'EOF'` + `rm -rf ~/Documents` + `EOF` would pass a broad trust list
+  although `bash -c 'rm -rf ~/Documents'` asks. The cost: a denied word in
+  script text prompts (`.find(` with `find` denied). Narrower entries avoid
+  it — `find /` still catches `find / -name x` but not `.find(`.
+- Whatever follows the terminator line is a normal command again, and the rest
+  of the opening line still counts (`cat <<EOF | sh` → `sh` must be trusted).
+- `<<-` (tab-indented terminator) is supported. The one-line here-string
+  `<<<` was never affected.
+
+A here-document asks when:
+
+| Shape                                                              | Why                                                                                                     |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| No terminator line (also: indented without `<<-`, trailing spaces) | The shell would keep reading; what follows is not commands.                                             |
+| Unquoted delimiter and `$(...)` or backticks in the body           | The shell runs them while expanding the body. Quote the delimiter (`<<'EOF'`) to make the body literal. |
+| More than one here-document on a line                              | Not supported yet.                                                                                      |
+| A delimiter that is empty or not a plain word                      | Cannot be read reliably.                                                                                |
+
+### Comments
+
+- A line that starts with `#` in a multi-line command is dropped. It is not
+  executed, so the lists are not applied to it.
+- A `#` comment that starts **inside** a line and is followed by more lines
+  asks. A quote character in such a comment could otherwise hide the lines
+  after it from the check:
+
+  ```
+  ls   # don't
+  echo x >> ~/.zshrc   # it's
+  ```
+
+- In a one-line command `#` is ordinary text, as before.
+- A line break inside `${ … }` asks.
+
+---
+
+## Trusted directories
+
+A list of directories the agent may write to without being asked. Empty list =
+the check is off. Typical value:
+
+```
+./
+/tmp
+```
+
+It governs two things:
+
+1. **`write` and `edit` tools.** A target inside a listed directory runs
+   without a prompt; anything else asks.
+2. **Bash — the places a command _visibly_ writes.** Output redirections
+   (`>`, `>>`, `&>`, `&>>`, `2>`, `<>`, `>&file`) and the operands of `tee`.
+
+For bash it only **adds** a condition: a command still has to pass the two
+lists, and a directory never makes an untrusted command trusted.
+
+| Command (with `./` and `/tmp` trusted, `*` in the trust list) | Result                                |
+| ------------------------------------------------------------- | ------------------------------------- |
+| `echo x > out.txt`, `echo x > /tmp/a.txt`                     | allow                                 |
+| `echo x >> ~/.zshrc`                                          | ask — outside                         |
+| `cd /etc && echo x > hosts`                                   | ask — outside                         |
+| `make \| tee /var/log/build.log`                              | ask — outside                         |
+| `echo x > "$OUT/file"`                                        | ask — target cannot be determined     |
+| `cmd > /dev/null 2>&1`                                        | allow — no file involved              |
+| `python3 script.py` (writes wherever it likes)                | allow — **not visible from the text** |
+
+### How entries are read
+
+| Entry                    | Means                                                   |
+| ------------------------ | ------------------------------------------------------- |
+| `./`, `out/cache`        | relative to the session's working directory (workspace) |
+| `~/work`                 | under your home directory                               |
+| `/tmp`, `/Users/me/data` | as written                                              |
+
+Both the entry and the target are resolved to their **real path** before they
+are compared, so a full path and a relative one to the same file are the same
+thing, and a symbolic link inside the project that leads outside counts as
+outside.
+
+Entries that are **not accepted** (the check stays on; with nothing accepted,
+every write asks):
+
+- the file-system root, your home directory, or a directory that contains it —
+  including `./` when the session runs in the home directory;
+- in the standalone `pi` extension: a directory outside the project listed in
+  the **project** file (list those in the global file instead).
+
+### What always asks
+
+- **The permission settings files themselves** — the project and global
+  `bash-restrictions.json` in `pi`, the app's settings file in the app — even
+  inside a trusted directory. Otherwise the agent could loosen its own rules.
+- A target that cannot be determined: a variable other than `$HOME` / `$PWD`,
+  a wildcard, `~user`, a missing target.
+- A relative target after a directory change that cannot be followed:
+  `cd "$DIR"`, `cd -`, `pushd`, a `cd` inside a function or an `if`.
+- A relative target after `cd dir ;` (or a line break) when it would be
+  outside had the `cd` failed. Use `cd dir && …`: then the write only happens
+  if the `cd` worked.
+- `~` or `$HOME` in a command that itself assigns `HOME`.
+
+### What it does not see
+
+This is a check of visible writes, **not a sandbox**:
+
+- anything a program writes on its own (`python3 script.py`, `npm run …`,
+  `sed -i`, `sort -o`, `bash -c '…'`, `eval`);
+- path arguments of `cp`, `mv`, `rm`, `mkdir`, `touch`, `ln`, `curl -o`, …;
+- a link created and written through in the same command
+  (`ln -s /etc x && echo a > x/hosts`);
+- reads — `cat ~/.ssh/id_rsa` is not a write.
+
+Keep using the denylist for those. Only isolation by the operating system
+closes them completely.
 
 ---
 
@@ -411,6 +586,12 @@ _before_ that memory is consulted. This means:
 For non-bash tools (`write`, `edit`, `read`, etc.) "Allow always"
 works as it always did: approving once short-circuits the rules for
 the rest of the session.
+
+One exception, when **trusted directories** are configured: a `write` or
+`edit` outside them is decided before the session memory, so "Allow always"
+on `write` does not cover writes outside the list — each one still asks.
+Writes inside the list run without a prompt either way, unless your own rule
+for the tool says `deny`.
 
 ---
 
@@ -497,6 +678,15 @@ rm
 - Pattern matching is case-insensitive by design. If you need
   case-sensitive blocking, you'll need to include both cases as
   separate denylist entries.
+- `>|` (overwrite despite `noclobber`) is still split at the `|`, as before:
+  the piece after it must be trusted on its own, and with trusted directories
+  on the command asks.
+- A trailing `# comment` on a line of a multi-line command asks (see
+  [Comments](#comments)). Put comments on their own lines.
+- On Windows (Git Bash), a write target such as `/tmp/x` or `/etc/x` cannot be
+  mapped to a real Windows path and asks; drive forms (`/c/…`, `C:/…`) work.
+- Trusted directories check visible writes only — see
+  [What it does not see](#what-it-does-not-see).
 
 ---
 
@@ -507,7 +697,9 @@ for the standalone [`pi`](https://www.npmjs.com/package/@earendil-works/pi-codin
 coding CLI. It gates the agent's `bash` tool through the identical
 `decideBashPermission` engine and settings schema (shared from
 `src/shared/bash-restrictions/`), so trust/denylist/timeout behaviour matches
-the app exactly. Configuration is a JSON file (`~/.pi/agent/bash-restrictions.json`
+the app exactly. With `trustedDirectories` set it also checks the `write` and
+`edit` tools — which in `pi` otherwise run with no prompt at all.
+Configuration is a JSON file (`~/.pi/agent/bash-restrictions.json`
 globally and/or `.pi/bash-restrictions.json` per project) instead of the
 Settings UI.
 
@@ -518,21 +710,31 @@ for install, config format, and the interactive/headless behaviour table.
 
 ## Where the code lives
 
+- Command scanner (pure — the only reader of command text):
+  `src/shared/bash-restrictions/scan.ts` (`scanBashCommand`)
 - Decision engine (pure): `src/shared/bash-restrictions/engine.ts`
-  (`decideBashPermission`, `splitBashSubCommands`,
+  (`decideBashPermission`, `explainBashPermission`, `splitBashSubCommands`,
   `containsUnsupportedShellSyntax`, `matchesTrustedPrefix`,
   `matchesDenylistPattern`)
+- Trusted directories for bash: `src/shared/bash-restrictions/write-zone.ts`
+  (`checkBashWriteZone`, `decideBashWithZone`, `describeBashReason`)
+- Trusted directories — paths, zone, `write` / `edit`:
+  `src/shared/path-permissions/` (`buildWriteZone`, `decideWriteToolZone`,
+  `resolveToolPath`, `realpathExistingPortion`, `isPathWithinRoot`)
 - Settings schema & normalizers: `src/shared/bash-restrictions/settings.ts`
-  (`sanitizeBashCommandList`, `normalizePermissionTimeout`,
-  `sanitizeBashRestrictionsSettings`)
+  (`sanitizeBashCommandList`, `sanitizeTrustedDirectories`,
+  `normalizePermissionTimeout`, `sanitizeBashRestrictionsSettings`)
 - Main-process state & 1-arg wrapper: `src/main/config/permission-rules-store.ts`
-  (`decideBashPermission`, `setBashCommandLists`, `getBashCommandLists`)
+  (`decideBashPermission`, `decidePermissionDetailed`, `setBashCommandLists`,
+  `getBashCommandLists`, `setTrustedDirectories`, `setProtectedWriteFiles`)
+- Reason shown in the dialog: `src/shared/permission-reason.ts` (type),
+  `src/renderer/components/PermissionDialog.tsx`
 - Main-process installation of the permission gate:
   `src/main/claude/agent-runner.ts#installPermissionHook`
 - Hook installer (SDK shape detection): `src/main/claude/before-tool-call-hook.ts`
 - Settings UI: `src/renderer/components/settings/SettingsBashCommands.tsx`
 - Persistence: `src/main/config/config-store.ts`
-  (`bashTrustedCommands`, `bashDenylist` fields)
+  (`bashTrustedCommands`, `bashDenylist`, `trustedDirectories` fields)
 - Standalone pi CLI extension: `pi-extensions/bash-restrictions/`
   (`extension.ts` mapper, `config.ts` loader, `README.md`)
 - Tests: `tests/bash-command-control.test.ts`,
@@ -543,4 +745,12 @@ for install, config format, and the interactive/headless behaviour table.
   `tests/pi-bash-extension-config.test.ts`,
   `tests/pi-bash-extension-mapping.test.ts`,
   `tests/pi-bash-extension-build.test.ts`,
-  `tests/pi-bash-extension.e2e.test.ts`
+  `tests/pi-bash-extension.e2e.test.ts`,
+  `tests/bash-restrictions-multiline.test.ts`,
+  `tests/bash-restrictions-write-zone.test.ts`,
+  `tests/path-permissions-resolve.test.ts`,
+  `tests/path-permissions-zone.test.ts`,
+  `tests/path-permissions-pi-parity.test.ts`,
+  `tests/pi-bash-extension-write-zone.test.ts`,
+  `tests/trusted-directories-app-decide.test.ts`
+- Design: `docs/design/trusted-directories.md`
