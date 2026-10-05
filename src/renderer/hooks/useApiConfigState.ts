@@ -2140,16 +2140,24 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
             ? baseUrl.trim()
             : (currentPreset.baseUrl || baseUrl).trim();
 
-        const persistedProfiles = toPersistedProfiles(profiles);
-
+        // Phase 2b: `profiles` and `activeProfileKey` are no longer sent.
+        //
+        // The top-level `provider` / `apiKey` / `baseUrl` / `customProtocol` /
+        // `model` fields carry everything the store needs: it routes the credential
+        // to `providerCredentials` or the referenced custom endpoint, and the model
+        // onto the active set. Sending the per-set profile map as well is what let a
+        // stale snapshot slot overwrite a key rotated elsewhere, so the write path
+        // drops it entirely — design §9.4 holds structurally from here.
+        //
+        // `profiles` remains on `AppConfig` as a **read-only** projection that this
+        // hook still hydrates from; Phase 3 moves that read onto
+        // `providerCredentials` / `customEndpoints` and removes the field.
         const payload: Partial<AppConfig> = {
           provider,
           apiKey: apiKey.trim(),
           baseUrl: resolvedBaseUrl || undefined,
           customProtocol,
           model: finalModel,
-          activeProfileKey,
-          profiles: persistedProfiles,
           activeConfigSetId,
           enableThinking,
           thinkingLevel,
@@ -2189,7 +2197,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     },
     [
       activeConfigSetId,
-      activeProfileKey,
       apiKey,
       applyPersistedConfigToStore,
       baseUrl,
@@ -2202,7 +2209,6 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       model,
       onSave,
       presets,
-      profiles,
       provider,
       requiresApiKey,
       clearError,

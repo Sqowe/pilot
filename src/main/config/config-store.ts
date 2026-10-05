@@ -189,16 +189,19 @@ export interface ApiConfigSet {
   contextWindow?: number;
   maxTokens?: number;
   /**
-   * @deprecated Phase 2a: read-only legacy input. Normalization still reads
-   * these to migrate pre-split configs and to keep the renderer compiling until
-   * Phase 2b, but **no write path puts credentials back into a set**. Phase 2b
+   * @deprecated **Read-only as of Phase 2b.** No write path puts a credential
+   * here: `handleSave` stopped sending the field, and `update()` ignores it for
+   * credential purposes. Normalization still reads it to migrate a pre-split
+   * config, and `projectFromConfigSet` still mirrors the resolved credentials back
+   * onto it because the renderer hydrates its form from `AppConfig.profiles`.
+   * Phase 3 moves that read onto `providerCredentials` / `customEndpoints` and
    * removes `profiles` and `activeProfileKey`; `customProtocol` survives on the
    * projection only, sourced from the resolved endpoint.
    */
   customProtocol: CustomProtocolType;
-  /** @deprecated See `customProtocol`. Removed in Phase 2b. */
+  /** @deprecated See `customProtocol`. Read-only; removed in Phase 3. */
   activeProfileKey: ProviderProfileKey;
-  /** @deprecated See `customProtocol`. Removed in Phase 2b. */
+  /** @deprecated See `customProtocol`. Read-only; removed in Phase 3. */
   profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
   enableThinking: boolean;
   /** Replaces enableThinking. Always a valid ModelThinkingLevel after normalization. */
@@ -227,18 +230,22 @@ export interface AppConfig {
   /**
    * Provider credentials — global, one slot per provider id.
    *
-   * **Phase 2a: authoritative.** `resolveCredentials` reads this (or the
-   * referenced `customEndpoints` entry) to build the runtime projection, and
-   * `update({ apiKey, baseUrl })` writes here rather than into a config set.
+   * **Authoritative, and the only credential write target.**
+   * `resolveCredentials` reads this (or the referenced `customEndpoints` entry)
+   * to build the runtime projection, and `update({ apiKey, baseUrl })` writes
+   * here rather than into a config set.
    *
-   * Still *populated by derivation* from the sets' legacy `profiles` on read, so
-   * a pre-split config migrates without a schema bump (design §5). That input
-   * disappears in Phase 2b once the renderer stops sending `profiles`; until
-   * then `applyProfilesToCredentials` forwards a renderer-supplied profile map
-   * here so a key typed in the old UI is not lost.
+   * Phase 2b closed the loop: no write path puts a credential into an
+   * `ApiConfigSet` any more (design §9.4). The sets' legacy `profiles` remain a
+   * **read-only** input — still used to migrate a pre-split config on first read
+   * (design §5), and still mirrored onto the projection because the renderer
+   * hydrates its form from there. Phase 3 moves that read onto this map and
+   * removes the field.
    *
-   * Precedence matters: a profile edit must win over a previously derived value,
-   * or rotating a key silently no-ops. See `deriveProviderCredentials`.
+   * Precedence: the persisted map wins; legacy profiles only fill slots it does
+   * not already hold. Getting that backwards makes key rotation a silent no-op.
+   * An **empty** slot is a cleared credential, not a missing one — see
+   * `deriveProviderCredentials`.
    */
   providerCredentials: ProviderCredentialMap;
 
@@ -1830,67 +1837,6 @@ export class ConfigStore {
     return { customEndpoints: input.customEndpoints, endpointId: input.endpointId };
   }
 
-  /**
-   * Forward a renderer-supplied `profiles` map into the global credential store.
-   *
-   * Phase 2a-only bridge. `handleSave` still sends the whole per-set profile map,
-   * and ignoring it would lose a key the user just typed.
-   *
-   * **Scoped to the active slot on purpose.** Writing every non-empty slot looks
-   * harmless but reverts key rotation: the renderer's map is a snapshot, so an
-   * inactive slot can hold a value that was authoritative when the UI loaded and
-   * is stale by the time the user saves. A save of set A would then overwrite a
-   * key rotated on set B. Only the slot the save is actually about is written; the
-   * others are already mirrored back from the store by `projectFromConfigSet`.
-   *
-   * Empty values never overwrite a populated one — the renderer sends all eight
-   * builtin slots on every save, most of them blank.
-   */
-  private applyProfilesToCredentials(
-    profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>,
-    providerCredentials: ProviderCredentialMap,
-    customEndpoints: CustomEndpoint[],
-    activeSlot: ProviderProfileKey
-  ): void {
-    for (const [rawKey, profile] of Object.entries(profiles)) {
-      if (!isProfileKey(rawKey) || !profile) continue;
-      if (rawKey !== activeSlot) continue; // see the note above — scoped write
-      const key = rawKey as ProviderProfileKey;
-      const apiKey = typeof profile.apiKey === 'string' ? profile.apiKey : '';
-      const baseUrl = typeof profile.baseUrl === 'string' ? profile.baseUrl.trim() : '';
-
-      if (rawKey.startsWith('custom:')) {
-        if (!baseUrl) continue;
-        const { customProtocol } = profileKeyToProvider(key);
-        if (!isCustomProtocol(customProtocol)) continue;
-        const target = customEndpoints.find(
-          (candidate) =>
-            customEndpointKey(candidate.protocol, candidate.baseUrl) ===
-            customEndpointKey(customProtocol, baseUrl)
-        );
-        if (target && apiKey.trim() && target.apiKey !== apiKey) {
-          target.apiKey = apiKey;
-          target.updatedAt = nowISO();
-        }
-        continue;
-      }
-
-      const defaultBaseUrl = this.getDefaultProfile(key).baseUrl || '';
-      const hasKey = Boolean(apiKey.trim());
-      const hasOwnBaseUrl =
-        Boolean(baseUrl) && canonicalBaseUrl(baseUrl) !== canonicalBaseUrl(defaultBaseUrl);
-      if (!hasKey && !hasOwnBaseUrl) continue;
-
-      const existing = providerCredentials[key];
-      const next: ProviderCredentials = {
-        apiKey: hasKey ? apiKey : (existing?.apiKey ?? ''),
-      };
-      const effectiveBaseUrl = hasOwnBaseUrl ? baseUrl : existing?.baseUrl;
-      if (effectiveBaseUrl) next.baseUrl = effectiveBaseUrl;
-      providerCredentials[key] = next;
-    }
-  }
-
   /** Mint an unused custom-endpoint id, mirroring generateConfigSetId. */
   private generateCustomEndpointId(existing: CustomEndpoint[]): string {
     const used = new Set(existing.map((endpoint) => endpoint.id));
@@ -3076,7 +3022,13 @@ export class ConfigStore {
       // (where it is authoritative), so the edit would vanish. Drop the pin only
       // when the incoming payload *itself* carries a contradicting URL — not when
       // the set's existing mirror merely differs, which is the normal state after
-      // any CRUD change to the endpoint. Phase 2b removes this with `profiles`.
+      // any CRUD change to the endpoint.
+      //
+      // Phase 2b note: `handleSave` no longer sends `profiles`, so the app itself
+      // never reaches this. It is kept because `update({ configSets })` is a public
+      // store API that still accepts the legacy shape — dropping support silently
+      // would make a profile-URL edit a no-op. It goes away in Phase 3 together
+      // with the field.
       const incomingById = new Map(
         updates.configSets
           .filter((set): set is ApiConfigSet => Boolean(set && typeof set.id === 'string'))
@@ -3160,8 +3112,12 @@ export class ConfigStore {
       );
     }
 
+    // Phase 2b: `profiles` is deliberately **not** a trigger. It no longer
+    // influences anything — the credential forward and the copy onto the set are
+    // both gone, and `projectFromConfigSet` rebuilds the mirror from the
+    // authoritative store — so treating it as a mutation only churned the set's
+    // `updatedAt` for a payload that changed nothing.
     const mutatesActiveSet =
-      updates.profiles !== undefined ||
       updates.activeProfileKey !== undefined ||
       updates.provider !== undefined ||
       updates.customProtocol !== undefined ||
@@ -3174,29 +3130,6 @@ export class ConfigStore {
       updates.thinkingLevel !== undefined;
 
     if (mutatesActiveSet) {
-      if (updates.profiles) {
-        // Phase 2a: `profiles` is accepted but **credential-inert**. The renderer
-        // still sends it from handleSave until Phase 2b, and dropping it here
-        // would lose a key the user just typed — so each slot is forwarded into
-        // the global map rather than stored on the set. The set's own `profiles`
-        // is kept in sync only as the legacy mirror the renderer reads back.
-        for (const key of PROFILE_KEYS) {
-          if (updates.profiles[key]) {
-            nextProfiles[key] = this.normalizeProfile(key, updates.profiles[key]);
-          }
-        }
-        // Native slots (native:<id>) aren't in PROFILE_KEYS — apply them too so
-        // native credential updates sent via top-level `profiles` aren't dropped.
-        for (const key of Object.keys(updates.profiles)) {
-          if (isNativeProfileKey(key) && updates.profiles[key as ProviderProfileKey]) {
-            const nativeKey = key as ProviderProfileKey;
-            nextProfiles[nativeKey] = this.normalizeProfile(nativeKey, updates.profiles[nativeKey]);
-          }
-        }
-        // Forwarding into the global store happens below, once provider /
-        // protocol resolution has settled which slot this save is actually about.
-      }
-
       if (isProfileKey(updates.activeProfileKey)) {
         nextActiveProfileKey = updates.activeProfileKey;
         const fromProfile = profileKeyToProvider(nextActiveProfileKey);
@@ -3239,17 +3172,11 @@ export class ConfigStore {
 
       // --- credentials -> the global map, or the referenced endpoint ---
       //
-      // Order matters: forward the renderer's profile map first (scoped to the
-      // active slot), then let an explicit `apiKey`/`baseUrl` in the same payload
-      // win over it — those are the fields the user edited most directly.
-      if (updates.profiles) {
-        this.applyProfilesToCredentials(
-          updates.profiles,
-          nextProviderCredentials,
-          nextCustomEndpoints,
-          nextActiveProfileKey
-        );
-      }
+      // Phase 2b: a `profiles` map in the payload no longer influences credentials
+      // at all. The renderer stopped sending it, and forwarding it was what let a
+      // stale snapshot slot overwrite a key rotated elsewhere. `profiles` is now
+      // write-ignored here and read-only on the projection.
+      //
       // A protocol change on a custom set is also a credential-location change:
       // the endpoint owns the routing protocol, so it must be written through too,
       // not only when a key or URL accompanies it.

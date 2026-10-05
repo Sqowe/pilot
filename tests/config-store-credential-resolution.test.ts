@@ -657,6 +657,177 @@ describe('legacy profile URL edits (Phase 2a bridge)', () => {
   });
 });
 
+describe('Phase 2b — the write path no longer carries profiles', () => {
+  beforeEach(() => {
+    mocks.seed = {};
+  });
+
+  /**
+   * The exact payload `handleSave` sends after Phase 2b: top-level provider /
+   * credential / model fields, and **no** `profiles` or `activeProfileKey`.
+   */
+  function handleSavePayload(fields: Record<string, unknown>) {
+    return {
+      activeConfigSetId: 'default',
+      enableThinking: false,
+      thinkingLevel: 'off' as const,
+      ...fields,
+    };
+  }
+
+  it('persists a catalog credential from the slimmed payload', () => {
+    const store = new ConfigStore();
+    store.update(
+      handleSavePayload({
+        provider: 'anthropic',
+        apiKey: 'sk-ant',
+        baseUrl: 'https://api.anthropic.com',
+        customProtocol: 'anthropic',
+        model: 'claude-opus-5',
+      }) as never
+    );
+
+    const config = store.getAll();
+    expect(config.apiKey).toBe('sk-ant');
+    expect(config.model).toBe('claude-opus-5');
+    expect(config.providerCredentials.anthropic?.apiKey).toBe('sk-ant');
+  });
+
+  it('mints and pins a custom endpoint from the slimmed payload', () => {
+    const store = new ConfigStore();
+    store.update(
+      handleSavePayload({
+        provider: 'custom',
+        customProtocol: 'anthropic',
+        apiKey: 'gw-key',
+        baseUrl: 'http://127.0.0.1:9000',
+        model: 'claude-opus-5',
+      }) as never
+    );
+
+    const config = store.getAll();
+    expect(config.customEndpoints).toHaveLength(1);
+    expect(config.apiKey).toBe('gw-key');
+    expect(config.configSets[0].endpointId).toBe(config.customEndpoints[0].id);
+  });
+
+  it('rotates a shared key across sets without a profiles payload', () => {
+    const store = new ConfigStore();
+    const payload = {
+      provider: 'anthropic',
+      baseUrl: 'https://api.anthropic.com',
+      customProtocol: 'anthropic',
+      model: 'claude-opus-5',
+    };
+    store.update(handleSavePayload({ ...payload, apiKey: 'ANT-V1' }) as never);
+    store.createSet({ name: 'Second', mode: 'blank' });
+    expect(store.getAll().apiKey).toBe('ANT-V1');
+
+    store.update(handleSavePayload({ ...payload, apiKey: 'ANT-V2' }) as never);
+    store.switchSet({ id: 'default' });
+
+    expect(store.getAll().apiKey).toBe('ANT-V2');
+  });
+
+  it('still mirrors every slot back for the renderer to hydrate from', () => {
+    // `profiles` is read-only now, but the renderer's form still reads it, so the
+    // projection must keep it current until Phase 3 moves that read.
+    const store = new ConfigStore();
+    store.update(
+      handleSavePayload({
+        provider: 'anthropic',
+        apiKey: 'ANT',
+        customProtocol: 'anthropic',
+        model: 'm',
+      }) as never
+    );
+    store.update(
+      handleSavePayload({
+        provider: 'openai',
+        apiKey: 'OAI',
+        customProtocol: 'openai',
+        model: 'gpt-5.4',
+      }) as never
+    );
+
+    const profiles = store.getAll().profiles;
+    expect(profiles.anthropic?.apiKey).toBe('ANT');
+    expect(profiles.openai?.apiKey).toBe('OAI');
+  });
+
+  it('renders a profiles map wholly inert, including the stored mirror (§9.4)', () => {
+    // Nothing sends this any more, but the field is still accepted on the type, so
+    // the invariant has to hold against a caller that supplies it anyway. It must
+    // reach neither the credential (the rotation-reversal vector Phase 2a guarded
+    // against with a scoped write) nor the projection nor the set's own stored
+    // mirror — `projectFromConfigSet` overlays every slot from the authoritative
+    // store, so a hostile value is overwritten rather than merely ignored.
+    const store = new ConfigStore();
+    store.update(
+      handleSavePayload({
+        provider: 'anthropic',
+        apiKey: 'AUTHORITATIVE',
+        customProtocol: 'anthropic',
+        model: 'm',
+      }) as never
+    );
+
+    store.update({
+      profiles: {
+        anthropic: { apiKey: 'FROM-PROFILES', baseUrl: '', model: 'm' },
+      },
+    } as never);
+
+    const config = store.getAll();
+    expect(config.providerCredentials.anthropic?.apiKey).toBe('AUTHORITATIVE');
+    expect(config.apiKey).toBe('AUTHORITATIVE');
+    expect(config.profiles.anthropic?.apiKey).toBe('AUTHORITATIVE');
+    expect(config.configSets[0].profiles?.anthropic?.apiKey).toBe('AUTHORITATIVE');
+  });
+
+  it('does not invent a credential slot from a profiles payload', () => {
+    // A slot the store never knew about must stay unknown — the payload cannot
+    // introduce one, only fail to change existing ones.
+    const store = new ConfigStore();
+    store.update(
+      handleSavePayload({
+        provider: 'anthropic',
+        apiKey: 'REAL',
+        customProtocol: 'anthropic',
+        model: 'm',
+      }) as never
+    );
+
+    store.update({
+      profiles: { 'native:zai': { apiKey: 'INVENTED', baseUrl: '', model: 'glm-5' } },
+    } as never);
+
+    expect(store.getAll().providerCredentials['native:zai']).toBeUndefined();
+    expect(store.getAll().profiles['native:zai']).toBeUndefined();
+  });
+
+  it('treats a profiles-only payload as a no-op, without churning updatedAt', () => {
+    // `profiles` is not in the `mutatesActiveSet` trigger: rewriting the set for a
+    // payload that cannot change anything only moved its timestamp.
+    const store = new ConfigStore();
+    store.update(
+      handleSavePayload({
+        provider: 'anthropic',
+        apiKey: 'k',
+        customProtocol: 'anthropic',
+        model: 'm',
+      }) as never
+    );
+    const before = store.getAll().configSets[0].updatedAt;
+
+    store.update({
+      profiles: { anthropic: { apiKey: 'k', baseUrl: '', model: 'm' } },
+    } as never);
+
+    expect(store.getAll().configSets[0].updatedAt).toBe(before);
+  });
+});
+
 describe('migration — derive, never invent (§5)', () => {
   beforeEach(() => {
     mocks.seed = {};

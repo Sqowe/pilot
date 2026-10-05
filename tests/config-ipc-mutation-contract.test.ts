@@ -110,6 +110,81 @@ describe('main returns the shape each handler declares', () => {
   });
 });
 
+describe('the save payload no longer carries credentials per set (Phase 2b)', () => {
+  const hook = read('src/renderer/hooks/useApiConfigState.ts');
+  const payload = hook.slice(
+    hook.indexOf('const payload: Partial<AppConfig> = {'),
+    hook.indexOf('if (onSave) {')
+  );
+
+  /**
+   * The literal's top-level keys, so assertions do not depend on trailing commas.
+   * Matches shorthand (`provider,`), longhand (`apiKey: x,`) and a final key with
+   * no delimiter at all (`activeProfileKey` before the closing brace).
+   */
+  const payloadKeys = [...payload.matchAll(/^\s{10}([A-Za-z_$][\w$]*)\s*[,:}]?\s*$/gm)]
+    .map((match) => match[1])
+    .concat([...payload.matchAll(/^\s{10}([A-Za-z_$][\w$]*)\s*:/gm)].map((match) => match[1]));
+
+  it('sends the credential as top-level fields', () => {
+    expect(payload).toContain('provider,');
+    expect(payload).toContain('apiKey: apiKey.trim(),');
+    expect(payload).toContain('baseUrl: resolvedBaseUrl || undefined,');
+    expect(payload).toContain('customProtocol,');
+    expect(payload).toContain('model: finalModel,');
+  });
+
+  it('parses the payload keys so the shape is asserted, not a substring', () => {
+    // Guards the two assertions below: if this regex ever stops matching the
+    // literal, they would silently pass against an empty list.
+    expect(payloadKeys).toEqual(
+      expect.arrayContaining([
+        'provider',
+        'apiKey',
+        'baseUrl',
+        'customProtocol',
+        'model',
+        'activeConfigSetId',
+        'enableThinking',
+        'thinkingLevel',
+      ])
+    );
+  });
+
+  it('no longer sends profiles or activeProfileKey', () => {
+    // Sending the per-set profile map is what let a stale snapshot slot overwrite
+    // a key rotated elsewhere. Dropping it is what makes design §9.4 structural:
+    // no write path puts a credential into a config set.
+    //
+    // Asserted against the parsed key list rather than a substring: a trailing
+    // `activeProfileKey,` match would miss both `activeProfileKey: value` and the
+    // same key written last without a comma.
+    expect(payloadKeys).not.toContain('profiles');
+    expect(payloadKeys).not.toContain('activeProfileKey');
+  });
+
+  it('keeps toPersistedProfiles for local use only', () => {
+    // Still used for the dirty-tracking signature and the in-memory fallback set;
+    // it must not feed an IPC payload any more.
+    expect(payload).not.toContain('toPersistedProfiles');
+    expect(hook).toContain('const persisted = toPersistedProfiles(profiles);');
+  });
+});
+
+describe('the store has no credential write path into a config set (§9.4)', () => {
+  const store = read('src/main/config/config-store.ts');
+
+  it('no longer forwards a renderer profiles map into the credential store', () => {
+    // applyProfilesToCredentials was the Phase 2a bridge that existed only because
+    // handleSave still sent the field. Deleted with its sole caller.
+    expect(store).not.toContain('applyProfilesToCredentials');
+  });
+
+  it('routes credential writes through writeCredential only', () => {
+    expect(store).toContain('const written = this.writeCredential({');
+  });
+});
+
 describe('call sites handle both failure modes', () => {
   it('App.tsx catches rejections and checks the discriminant', () => {
     const app = read('src/renderer/App.tsx');
