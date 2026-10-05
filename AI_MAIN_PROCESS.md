@@ -16,7 +16,7 @@ packaging in [AI_ELECTRON.md](AI_ELECTRON.md).
 
 - **Always version-lock both packages.** They ship from one repo and must be
   uplifted together; a mismatch produces type errors and runtime failures.
-  Currently pinned to **0.85.1** in `package.json` (`dependencies`).
+  Currently pinned to **0.87.1** in `package.json` (`dependencies`).
 - The old `@mariozechner/pi-*` scope was deprecated at 0.73.1; this app migrated
   to `@earendil-works/pi-*` at 0.74.0. Do not reintroduce the old scope.
 - Both are pre-1.0 — breaking changes land between minors. Budget adaptation time
@@ -30,7 +30,13 @@ packaging in [AI_ELECTRON.md](AI_ELECTRON.md).
   `appendSystemPrompt` `string` → `string[]`, `tools` → `customTools` in
   `createAgentSession`, event-type renames in the subscribe callback. Later
   minors (0.80, 0.82, 0.85.1) needed no source change — verify that claim, don't
-  assume it.
+  assume it. 0.87.1 looked source-free too and was not: since 0.86 pi reports a
+  `system` message with empty content (its tool declaration, from
+  `declareToolChanges` in `pi-agent-core/dist/agent-loop.js`) through `message_end`,
+  and `resolveMessageEndPayload` (`src/main/claude/agent-runner-message-end.ts`)
+  showed it as an empty model result until it learned to skip non-assistant roles;
+  a cast on the event's message hid the new role from `typecheck`, and no test
+  covered a non-assistant role.
 
 ### The SDK-only boundary — in-memory session & settings managers
 
