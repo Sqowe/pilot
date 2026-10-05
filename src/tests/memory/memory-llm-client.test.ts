@@ -86,6 +86,8 @@ function makeConfig(timeoutMs: number): AppConfig {
     model: 'test-model',
     activeProfileKey: 'custom:openai',
     profiles: {},
+    providerCredentials: {},
+    customEndpoints: [],
     activeConfigSetId: 'default',
     configSets: [],
     claudeCodePath: '',

@@ -927,6 +927,34 @@ export interface ProviderProfile {
   maxTokens?: number;
 }
 
+/**
+ * Mirrors `ProviderCredentials` in src/main/config/config-store.ts.
+ * Credentials for one provider id — global, one slot per provider.
+ */
+export interface ProviderCredentials {
+  apiKey: string;
+  /** Endpoint override: ollama, or a native provider's own base URL. */
+  baseUrl?: string;
+}
+
+/** Mirrors `ProviderCredentialMap` in main — one slot per provider id. */
+export type ProviderCredentialMap = Partial<Record<ProviderProfileKey, ProviderCredentials>>;
+
+/**
+ * Mirrors `CustomEndpoint` in main. The only user-named credential object —
+ * catalog providers are already named by the catalog itself.
+ */
+export interface CustomEndpoint {
+  id: string;
+  name: string;
+  protocol: CustomProtocolType;
+  baseUrl: string;
+  apiKey: string;
+  /** Pre-fills the model step when a set first points at this endpoint. */
+  defaultModel?: string;
+  updatedAt: string;
+}
+
 /** Re-exported from shared/thinking-levels to keep renderer types consistent with main. */
 export type ModelThinkingLevel = SharedModelThinkingLevel;
 
@@ -1014,6 +1042,18 @@ export interface AppConfig {
   maxTokens?: number;
   activeProfileKey: ProviderProfileKey;
   profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
+  /**
+   * Global credential map, one slot per provider id.
+   *
+   * Optional on the renderer side because the Settings bootstrap predates these
+   * fields and hydrates defensively; main's `AppConfig` keeps them required and
+   * always populated. **Phase 1: a derived cache recomputed from `profiles` on
+   * every read — not authoritative, so do not write to these yet.** See
+   * docs/design/provider-credentials-and-model-sets.md §9.4.
+   */
+  providerCredentials?: ProviderCredentialMap;
+  /** User-created custom endpoints. Same Phase 1 caveat as above. */
+  customEndpoints?: CustomEndpoint[];
   activeConfigSetId: ConfigSetId;
   configSets: ApiConfigSet[];
   claudeCodePath?: string;

@@ -121,6 +121,56 @@ export interface ProviderProfile {
   maxTokens?: number;
 }
 
+/**
+ * Credentials for one provider id — global, one slot per provider.
+ *
+ * Replaces the per-config-set `ProviderProfile` for the credential half of the
+ * old shape: `model` / `contextWindow` / `maxTokens` are model selection and
+ * live on `ApiConfigSet` instead. See
+ * `docs/design/provider-credentials-and-model-sets.md` §3.1.
+ */
+export interface ProviderCredentials {
+  apiKey: string;
+  /** Endpoint override: ollama, or a native provider's own base URL. */
+  baseUrl?: string;
+}
+
+/**
+ * Keyed by the existing `ProviderProfileKey` space — one slot per provider id.
+ * The slot space is unchanged; only its *owner* moves from the config set to
+ * `AppConfig` (design §4).
+ */
+export type ProviderCredentialMap = Partial<Record<ProviderProfileKey, ProviderCredentials>>;
+
+/**
+ * A user-created custom endpoint — the only user-named credential object.
+ *
+ * Catalog providers need no such type: the catalog already names them, one
+ * endpoint and normally one key each (design §2.1). Only `custom` lets the user
+ * supply protocol *and* base URL, and legitimately run several at once
+ * (kiro-gateway, LiteLLM, an internal gateway).
+ */
+export interface CustomEndpoint {
+  /** Stable id, never renumbered once minted. */
+  id: string;
+  /** User-facing label; defaults to the base URL host on migration. */
+  name: string;
+  protocol: CustomProtocolType;
+  baseUrl: string;
+  apiKey: string;
+  /**
+   * Optional model to pre-fill when a set first points at this endpoint.
+   *
+   * `custom` is in `BUILTIN_NO_REGISTRY_MODELS`
+   * (`provider-catalog-native.ts`), so it ships `modelOptions: []`, and unlike
+   * `ollama` it has no Discover fallback. Without this, the first-run wizard's
+   * model step is an empty picker for exactly the gateway users most likely to
+   * reach it. Design decision #10.
+   */
+  defaultModel?: string;
+  updatedAt: string;
+}
+
 export interface ApiConfigSet {
   id: ConfigSetId;
   name: string;
@@ -152,6 +202,37 @@ export interface AppConfig {
   // Active profile
   activeProfileKey: ProviderProfileKey;
   profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
+
+  /**
+   * Provider credentials — global, one slot per provider id.
+   *
+   * **Phase 1 status: a derived cache, not yet authoritative.**
+   * `normalizeConfig` recomputes this from the config sets' `profiles` on every
+   * read, so it is a pure function of them (plus any slot no set describes — see
+   * `deriveProviderCredentials`). It *is* written to disk, because `saveConfig`
+   * persists the whole normalized config; that copy is a cache and is never
+   * allowed to outvote a live profile.
+   *
+   * This does not breach design §9.4 ("never both live"): §9.4 is about which
+   * store is **authoritative**, and in Phase 1 that is unambiguously `profiles`
+   * — nothing reads this map for runtime resolution and no write path targets
+   * it. Phase 2 inverts the direction: this becomes the source of truth and
+   * `profiles` becomes read-only legacy input.
+   *
+   * The precedence matters more than it looks. If a persisted value could win
+   * over a newer profile credential, rotating an API key would silently
+   * no-op and Phase 2 would inherit a poisoned map.
+   */
+  providerCredentials: ProviderCredentialMap;
+
+  /**
+   * User-created custom endpoints, derived from the sets' `custom:*` profiles —
+   * one entry per distinct protocol + base URL. Same Phase 1 contract as
+   * `providerCredentials`: recomputed every read, persisted only as a cache.
+   * Persisted entries contribute `id` and a user-edited `name`; an endpoint no
+   * profile still describes is pruned.
+   */
+  customEndpoints: CustomEndpoint[];
 
   // Active config set
   activeConfigSetId: ConfigSetId;
@@ -322,6 +403,14 @@ export interface MemoryRuntimeConfig {
 
 const DEFAULT_CONFIG_SET_ID = 'default';
 const MAX_CONFIG_SET_COUNT = 20;
+/**
+ * Separate from MAX_CONFIG_SET_COUNT on purpose (design decision #11): the
+ * renderer recovers the config-set cap by parsing the thrown message
+ * (`useApiConfigState.ts` — /^Config set limit reached: max\s+(\d+)$/), so one
+ * shared constant across two entity types would make that parse ambiguous.
+ */
+const MAX_CUSTOM_ENDPOINT_COUNT = 20;
+const CUSTOM_ENDPOINT_ID_PREFIX = 'custom-endpoint-';
 const LOCAL_ANTHROPIC_PLACEHOLDER_KEY = 'sk-ant-local-proxy';
 const DIRECT_READ_KEYS = new Set<keyof AppConfig>([
   'provider',
@@ -410,6 +499,10 @@ const defaultConfig: AppConfig = {
   model: defaultProfiles.openrouter.model,
   activeProfileKey: defaultConfigSet.activeProfileKey,
   profiles: defaultProfiles,
+  // Derived by normalizeConfig from the sets' profiles (Phase 1); empty here so
+  // a fresh install starts with no credential claims and nothing to migrate.
+  providerCredentials: {},
+  customEndpoints: [],
   activeConfigSetId: DEFAULT_CONFIG_SET_ID,
   configSets: [defaultConfigSet],
   claudeCodePath: '',
@@ -846,6 +939,54 @@ function normalizeThinkingLevel(value: unknown, fallback: ModelThinkingLevel): M
   return fallback;
 }
 
+/**
+ * Canonical form of a base URL for *comparison*: lowercased host, no trailing
+ * slash. Shared by endpoint identity (`customEndpointKey`) and the
+ * "is this slot still at its default?" checks in both derivation helpers, so
+ * slash/case noise can never be mistaken for user intent and invent a
+ * credential the user never configured.
+ */
+function canonicalBaseUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed);
+    parsed.hostname = parsed.hostname.toLowerCase();
+    // toString() canonicalizes the path, so a trailing slash is already
+    // normalized away here; the catch branch below handles it explicitly.
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    // Not a parseable URL — compare the trimmed string rather than dropping it.
+    // A malformed base URL is still the user's data.
+    return trimmed.toLowerCase().replace(/\/+$/, '');
+  }
+}
+
+/**
+ * Canonical key for deduplicating custom endpoints: protocol + canonical base
+ * URL. Two sets pointing at the same gateway with the same protocol must yield
+ * one endpoint entry, not two (design §5.1 rule 1, idempotence).
+ */
+function customEndpointKey(protocol: CustomProtocolType, baseUrl: string): string {
+  return `${protocol}::${canonicalBaseUrl(baseUrl)}`;
+}
+
+/**
+ * Default display name for a migrated endpoint: the base URL's host (with port
+ * when present), falling back to the raw string. Design §5.1 rule 3 — names come
+ * from what exists, because the host is the only thing the old data knows. The
+ * user can rename afterwards.
+ */
+function defaultCustomEndpointName(baseUrl: string): string {
+  const trimmed = baseUrl.trim();
+  if (!trimmed) return 'Custom endpoint';
+  try {
+    return new URL(trimmed).host || trimmed;
+  } catch {
+    return trimmed;
+  }
+}
+
 /** Derive a ModelThinkingLevel from either the new thinkingLevel field or the
  * legacy enableThinking boolean. New field wins when present and valid. */
 function resolveThinkingLevelFromRaw(
@@ -1160,6 +1301,203 @@ export class ConfigStore {
       }
     }
     return cloned;
+  }
+
+  /**
+   * Order config sets for credential derivation: active set first, then array
+   * order. Design §5.1 rule 2 — "first non-empty wins", and *which* set is first
+   * must be deterministic, so the lossy case (two different keys for one
+   * provider) resolves the same way on every read.
+   */
+  private orderSetsForDerivation(
+    configSets: ApiConfigSet[],
+    activeConfigSetId: string
+  ): ApiConfigSet[] {
+    const activeIndex = configSets.findIndex((set) => set.id === activeConfigSetId);
+    if (activeIndex <= 0) return configSets;
+    return [configSets[activeIndex], ...configSets.filter((_, i) => i !== activeIndex)];
+  }
+
+  /**
+   * Derive the global credential map from the config sets' per-set profiles.
+   *
+   * **Phase 1: a pure function of the current config sets.** The persisted copy
+   * is deliberately *not* an input. In Phase 1 no write path targets this map,
+   * so anything already on disk can only be the output of an earlier derivation
+   * — a cache. Feeding it back in would let a stale value outvote the profile it
+   * came from, which makes credential rotation silently no-op and would hand
+   * Phase 2 a poisoned map. Phase 2 adds real writes and, with them, authority.
+   *
+   * Rules (design §5.1):
+   * - **First non-empty wins**, active set first (`orderSetsForDerivation`), so
+   *   the lossy case resolves identically on every read.
+   * - A credential counts as populated when it has a non-empty `apiKey`, or a
+   *   `baseUrl` differing from the slot's default. The latter matters for
+   *   `ollama`, which is a legitimately keyless slot (decision #4) — keying only
+   *   on `apiKey` would drop a user's custom Ollama URL.
+   * - `custom:*` slots are excluded: those become `customEndpoints` entries
+   *   instead (decision #3), since the user supplies protocol *and* base URL
+   *   there and may run several at once.
+   *
+   * Note that `cloneProfiles` materializes all 8 builtin slots on every set, so
+   * a slot's *presence* in `profiles` means nothing — only its contents do.
+   */
+  private deriveProviderCredentials(
+    configSets: ApiConfigSet[],
+    activeConfigSetId: string
+  ): ProviderCredentialMap {
+    const derived: ProviderCredentialMap = {};
+
+    for (const set of this.orderSetsForDerivation(configSets, activeConfigSetId)) {
+      for (const [rawKey, profile] of Object.entries(set.profiles || {})) {
+        if (!isProfileKey(rawKey) || rawKey.startsWith('custom:')) continue;
+        const key = rawKey as ProviderProfileKey;
+        if (derived[key]) continue; // an earlier set already won this slot
+        if (!profile) continue;
+
+        const apiKey = typeof profile.apiKey === 'string' ? profile.apiKey : '';
+        const baseUrl = typeof profile.baseUrl === 'string' ? profile.baseUrl.trim() : '';
+        const defaultBaseUrl = this.getDefaultProfile(key).baseUrl || '';
+        const hasKey = Boolean(apiKey.trim());
+        // Compare canonically: a default URL that differs only by trailing slash
+        // or host case is still the default, not a customization.
+        const hasMeaningfulBaseUrl =
+          Boolean(baseUrl) && canonicalBaseUrl(baseUrl) !== canonicalBaseUrl(defaultBaseUrl);
+        if (!hasKey && !hasMeaningfulBaseUrl) continue;
+
+        derived[key] = baseUrl ? { apiKey, baseUrl } : { apiKey };
+      }
+    }
+
+    return derived;
+  }
+
+  /**
+   * Derive custom endpoints from the sets' `custom:*` profiles — one entry per
+   * distinct protocol + base URL (design §5, decision #3).
+   *
+   * **Phase 1: a pure function of the current config sets**, same contract as
+   * `deriveProviderCredentials`. The persisted list contributes only *identity*
+   * (`id` and a user-edited `name`) for endpoints the profiles still describe;
+   * credentials and URLs always come from the live profile. An endpoint no
+   * profile produces any more is pruned rather than kept forever — otherwise
+   * editing a gateway URL leaves the old entry behind, and accumulated orphans
+   * would consume `MAX_CUSTOM_ENDPOINT_COUNT` and start evicting real ones.
+   *
+   * Idempotence (§5.1 rule 1) comes from `customEndpointKey`: re-running this
+   * over already-derived data matches existing entries and reuses their id and
+   * name rather than minting a second entry.
+   */
+  private deriveCustomEndpoints(
+    configSets: ApiConfigSet[],
+    activeConfigSetId: string,
+    existing: unknown
+  ): CustomEndpoint[] {
+    // Identity of previously persisted endpoints, keyed by protocol+baseUrl.
+    // Config sets will reference these ids from Phase 2 on, so a matching
+    // endpoint must keep its id across reads. `apiKey` / `defaultModel` are
+    // carried only to decide whether `updatedAt` should be re-stamped — their
+    // values always come from the live profile.
+    const persistedByKey = new Map<
+      string,
+      { id: string; name?: string; apiKey: string; defaultModel?: string; updatedAt: string }
+    >();
+    const usedIds = new Set<string>();
+    if (Array.isArray(existing)) {
+      for (const raw of existing) {
+        if (!raw || typeof raw !== 'object') continue;
+        const candidate = raw as Partial<CustomEndpoint>;
+        const baseUrl = typeof candidate.baseUrl === 'string' ? candidate.baseUrl.trim() : '';
+        const id = toNonEmptyString(candidate.id);
+        if (!baseUrl || !id || usedIds.has(id)) continue;
+        const protocol: CustomProtocolType = isCustomProtocol(candidate.protocol)
+          ? candidate.protocol
+          : 'anthropic';
+        const key = customEndpointKey(protocol, baseUrl);
+        if (persistedByKey.has(key)) continue;
+        usedIds.add(id);
+        persistedByKey.set(key, {
+          id,
+          name: toNonEmptyString(candidate.name) ?? undefined,
+          apiKey: typeof candidate.apiKey === 'string' ? candidate.apiKey : '',
+          defaultModel: toNonEmptyString(candidate.defaultModel) ?? undefined,
+          updatedAt: toNonEmptyString(candidate.updatedAt) || nowISO(),
+        });
+      }
+    }
+
+    let counter = 1;
+    const mintId = (): string => {
+      let candidate = `${CUSTOM_ENDPOINT_ID_PREFIX}${counter}`;
+      while (usedIds.has(candidate)) {
+        counter += 1;
+        candidate = `${CUSTOM_ENDPOINT_ID_PREFIX}${counter}`;
+      }
+      usedIds.add(candidate);
+      return candidate;
+    };
+
+    const byKey = new Map<string, CustomEndpoint>();
+    for (const set of this.orderSetsForDerivation(configSets, activeConfigSetId)) {
+      for (const [rawKey, profile] of Object.entries(set.profiles || {})) {
+        // Validate the key before deriving: a hand-edited `custom:bogus` must be
+        // skipped, not turned into an endpoint with a guessed protocol.
+        if (!isProfileKey(rawKey) || !rawKey.startsWith('custom:') || !profile) continue;
+        const baseUrl = typeof profile.baseUrl === 'string' ? profile.baseUrl.trim() : '';
+        if (!baseUrl) continue;
+
+        const { customProtocol } = profileKeyToProvider(rawKey as ProviderProfileKey);
+        if (!isCustomProtocol(customProtocol)) continue;
+        const apiKey = typeof profile.apiKey === 'string' ? profile.apiKey : '';
+        // A slot left at its untouched default carries no user intent — deriving
+        // from it would invent an endpoint the user never configured. Compared
+        // canonically so slash/case noise does not read as a customization.
+        const defaultBaseUrl = this.getDefaultProfile(rawKey as ProviderProfileKey).baseUrl || '';
+        if (!apiKey.trim() && canonicalBaseUrl(baseUrl) === canonicalBaseUrl(defaultBaseUrl)) {
+          continue;
+        }
+
+        const key = customEndpointKey(customProtocol, baseUrl);
+        const found = byKey.get(key);
+        if (found) {
+          // Same endpoint reached from another set: fill in what the winning set
+          // left blank, but never overwrite a value it did provide.
+          if (!found.apiKey.trim() && apiKey.trim()) found.apiKey = apiKey;
+          if (!found.defaultModel) {
+            const otherModel = typeof profile.model === 'string' ? profile.model.trim() : '';
+            if (otherModel) found.defaultModel = otherModel;
+          }
+          continue;
+        }
+
+        const carried = persistedByKey.get(key);
+        // Store the canonical URL, not the first-seen spelling: otherwise which
+        // set is ordered first decides whether the trailing slash is kept, and
+        // the stored value churns with set order.
+        const canonicalUrl = canonicalBaseUrl(baseUrl) || baseUrl;
+        const model = typeof profile.model === 'string' ? profile.model.trim() : '';
+        const entry: CustomEndpoint = {
+          id: carried?.id ?? mintId(),
+          name: carried?.name ?? defaultCustomEndpointName(canonicalUrl),
+          protocol: customProtocol,
+          baseUrl: canonicalUrl,
+          apiKey,
+          // Preserve the persisted timestamp when nothing material changed, so a
+          // plain update() does not churn it. A real edit (key, model) re-stamps.
+          updatedAt:
+            carried && carried.apiKey === apiKey && (carried.defaultModel ?? '') === model
+              ? carried.updatedAt
+              : nowISO(),
+        };
+        if (model) entry.defaultModel = model;
+        byKey.set(key, entry);
+      }
+    }
+
+    // Cap defensively (decision #11). With orphans pruned above this is a
+    // last-resort guard, not the eviction policy: derivation is bounded by
+    // MAX_CONFIG_SET_COUNT × 3 custom slots.
+    return [...byKey.values()].slice(0, MAX_CUSTOM_ENDPOINT_COUNT);
   }
 
   private normalizeLegacyProjection(raw: Partial<AppConfig>): {
@@ -1539,6 +1877,14 @@ export class ConfigStore {
       ...(typeof projected.maxTokens === 'number' ? { maxTokens: projected.maxTokens } : {}),
       activeProfileKey: projected.activeProfileKey,
       profiles: projected.profiles,
+      // Phase 1: recomputed from the sets' profiles on every read — a derived
+      // cache, not an authoritative store. See the AppConfig field docs.
+      providerCredentials: this.deriveProviderCredentials(configSets, activeConfigSetId),
+      customEndpoints: this.deriveCustomEndpoints(
+        configSets,
+        activeConfigSetId,
+        raw.customEndpoints
+      ),
       activeConfigSetId,
       configSets,
       claudeCodePath:
@@ -1633,6 +1979,15 @@ export class ConfigStore {
       model: projected.model,
       activeProfileKey: projected.activeProfileKey,
       profiles: projected.profiles,
+      // Re-derive so a credential edit that lands via update() is reflected
+      // immediately. Credentials come purely from the sets; the persisted
+      // endpoint list contributes only identity (ids / user-edited names).
+      providerCredentials: this.deriveProviderCredentials(nextConfigSets, activeConfigSet.id),
+      customEndpoints: this.deriveCustomEndpoints(
+        nextConfigSets,
+        activeConfigSet.id,
+        base.customEndpoints
+      ),
       enableThinking: projected.enableThinking,
       thinkingLevel: projected.thinkingLevel,
       activeConfigSetId: activeConfigSet.id,
