@@ -1,13 +1,19 @@
 /**
  * Phase 1 of docs/design/provider-credentials-and-model-sets.md.
  *
- * `providerCredentials` and `customEndpoints` are *derived* from the config
- * sets' per-set `profiles` on every read. They are deliberately NOT yet
- * authoritative — the runtime projection (`apiKey` / `baseUrl` /
- * `customProtocol`) is still produced from `profiles`, so that `profiles` and
- * `providerCredentials` are never both live (design §9.4). These tests pin the
- * derivation rules from §5.1 and the Phase 1 boundary itself; Phase 2 will
- * invert the direction and these expectations move with it.
+ * These tests cover the *derivation* half of the feature: how
+ * `providerCredentials` and `customEndpoints` are populated, deduplicated,
+ * pruned and canonicalized (design §5.1).
+ *
+ * Updated for **Phase 2a**, which inverted the precedence. In Phase 1 nothing
+ * wrote these fields, so a persisted copy could only be a stale cache and was
+ * ignored outright. Phase 2a routes `update()` and the endpoint CRUD here, so
+ * the persisted map is authoritative and legacy per-set `profiles` act only as a
+ * migration source for slots it does not already hold. Rotation stays correct
+ * because the write targets the map itself — see the persist→edit round-trips.
+ *
+ * Resolution (how a set turns into a running credential) lives in
+ * `config-store-credential-resolution.test.ts`.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -59,7 +65,7 @@ function seedSets(sets: Array<Record<string, unknown>>, activeConfigSetId = 'def
   mocks.seed = { configSets: sets, activeConfigSetId };
 }
 
-describe('ConfigStore providerCredentials derivation (Phase 1)', () => {
+describe('ConfigStore providerCredentials derivation', () => {
   beforeEach(() => {
     mocks.seed = {};
   });
@@ -338,15 +344,16 @@ describe('ConfigStore providerCredentials derivation (Phase 1)', () => {
     expect(second.providerCredentials).toEqual(first.providerCredentials);
   });
 
-  it('ignores a persisted credential map entirely — config sets are the only input', () => {
-    // Phase 1 has no write path into providerCredentials, so anything on disk is
-    // the output of an earlier derivation. Feeding it back in would let a stale
-    // value outvote the profile it came from, breaking key rotation. The map is
-    // therefore recomputed from scratch; Phase 2 adds writes and authority.
+  it('keeps a persisted credential that no config set describes (Phase 2a: authoritative)', () => {
+    // Phase 1 ignored the persisted map entirely: nothing wrote it, so anything
+    // on disk could only be a stale cache. Phase 2a routes `update({ apiKey })`
+    // here, so a persisted slot is the user's real credential and must survive a
+    // read even with no matching profile. Rotation is still correct because the
+    // write updates this map directly — see the round-trip tests below.
     mocks.seed = {
       providerCredentials: {
-        gemini: { apiKey: 'stale-cached-gemini' },
-        anthropic: { apiKey: 'stale-cached-anthropic' },
+        gemini: { apiKey: 'written-directly' },
+        anthropic: { apiKey: 'also-written' },
       },
       configSets: [
         {
@@ -356,7 +363,9 @@ describe('ConfigStore providerCredentials derivation (Phase 1)', () => {
           provider: 'anthropic',
           customProtocol: 'anthropic',
           activeProfileKey: 'anthropic',
-          profiles: { anthropic: { apiKey: 'sk-ant-real', baseUrl: '', model: 'claude-opus-5' } },
+          profiles: {
+            anthropic: { apiKey: 'legacy-profile', baseUrl: '', model: 'claude-opus-5' },
+          },
         },
       ],
       activeConfigSetId: 'default',
@@ -364,16 +373,15 @@ describe('ConfigStore providerCredentials derivation (Phase 1)', () => {
 
     const config = new ConfigStore().getAll();
 
-    expect(config.providerCredentials.anthropic?.apiKey).toBe('sk-ant-real');
-    // No profile configures gemini, so no credential — the cache does not revive it.
-    expect(config.providerCredentials.gemini).toBeUndefined();
+    expect(config.providerCredentials.gemini?.apiKey).toBe('written-directly');
+    // Persisted wins over the legacy profile for the same slot — the profile is
+    // only a migration source for slots the map does not already hold.
+    expect(config.providerCredentials.anthropic?.apiKey).toBe('also-written');
   });
 
-  it('lets a live profile win over a stale persisted slot for the same provider', () => {
-    // The precedence that matters: a persisted cache entry must never outvote
-    // the profile it was derived from, or key rotation silently no-ops.
+  it('migrates from a legacy profile only when the persisted map has no such slot', () => {
     mocks.seed = {
-      providerCredentials: { anthropic: { apiKey: 'STALE-CACHED' } },
+      providerCredentials: { gemini: { apiKey: 'gem' } },
       configSets: [
         {
           id: 'default',
@@ -382,22 +390,47 @@ describe('ConfigStore providerCredentials derivation (Phase 1)', () => {
           provider: 'anthropic',
           customProtocol: 'anthropic',
           activeProfileKey: 'anthropic',
-          profiles: { anthropic: { apiKey: 'FRESH-FROM-PROFILE', baseUrl: '', model: 'm' } },
+          profiles: { anthropic: { apiKey: 'from-legacy', baseUrl: '', model: 'm' } },
         },
       ],
       activeConfigSetId: 'default',
     };
 
-    expect(new ConfigStore().getAll().providerCredentials.anthropic?.apiKey).toBe(
-      'FRESH-FROM-PROFILE'
-    );
+    const config = new ConfigStore().getAll();
+
+    expect(config.providerCredentials.anthropic?.apiKey).toBe('from-legacy');
+    expect(config.providerCredentials.gemini?.apiKey).toBe('gem');
   });
 
-  it('drops a persisted slot once its profile is emptied', () => {
-    // The profile still *describes* the slot, it is just no longer configured —
-    // so the cached credential must not resurrect it.
+  it('lets the persisted map win over a legacy profile for the same provider', () => {
+    // Phase 2a: the persisted map is authoritative. Rotation stays correct
+    // because `update()` writes this map, not the profile — proven by the
+    // persist→edit round-trip tests further down.
     mocks.seed = {
-      providerCredentials: { anthropic: { apiKey: 'STALE-CACHED' } },
+      providerCredentials: { anthropic: { apiKey: 'AUTHORITATIVE' } },
+      configSets: [
+        {
+          id: 'default',
+          name: 'Default',
+          isSystem: true,
+          provider: 'anthropic',
+          customProtocol: 'anthropic',
+          activeProfileKey: 'anthropic',
+          profiles: { anthropic: { apiKey: 'LEGACY-PROFILE', baseUrl: '', model: 'm' } },
+        },
+      ],
+      activeConfigSetId: 'default',
+    };
+
+    expect(new ConfigStore().getAll().providerCredentials.anthropic?.apiKey).toBe('AUTHORITATIVE');
+  });
+
+  it('keeps a persisted slot even when the legacy profile is empty', () => {
+    // The Phase 1 rule was the opposite (an emptied profile cleared the slot).
+    // Clearing a credential is now an explicit write of an empty value through
+    // update(), not a side effect of the legacy mirror going blank.
+    mocks.seed = {
+      providerCredentials: { anthropic: { apiKey: 'STILL-SET' } },
       configSets: [
         {
           id: 'default',
@@ -412,7 +445,7 @@ describe('ConfigStore providerCredentials derivation (Phase 1)', () => {
       activeConfigSetId: 'default',
     };
 
-    expect(new ConfigStore().getAll().providerCredentials.anthropic).toBeUndefined();
+    expect(new ConfigStore().getAll().providerCredentials.anthropic?.apiKey).toBe('STILL-SET');
   });
 
   it('reflects a rotated key through a persist → edit round-trip', () => {
@@ -482,7 +515,7 @@ describe('ConfigStore providerCredentials derivation (Phase 1)', () => {
   });
 });
 
-describe('ConfigStore customEndpoints derivation (Phase 1)', () => {
+describe('ConfigStore customEndpoints derivation', () => {
   beforeEach(() => {
     mocks.seed = {};
   });
@@ -609,7 +642,10 @@ describe('ConfigStore customEndpoints derivation (Phase 1)', () => {
     expect(endpoints[0].name).toBe('kiro-gateway');
   });
 
-  it('takes the apiKey from the live profile, not the persisted copy', () => {
+  it('takes the apiKey from the persisted endpoint, not the legacy profile', () => {
+    // Phase 2a inverted this. The persisted endpoint is authoritative for the
+    // key, so a rotation through `updateCustomEndpoint` is not reverted by the
+    // set's `custom:*` mirror, which still holds the pre-rotation value.
     mocks.seed = {
       customEndpoints: [
         {
@@ -617,26 +653,77 @@ describe('ConfigStore customEndpoints derivation (Phase 1)', () => {
           name: 'kiro-gateway',
           protocol: 'anthropic',
           baseUrl: 'http://127.0.0.1:9000',
-          apiKey: 'STALE-CACHED',
+          apiKey: 'ROTATED',
           updatedAt: '2026-01-01T00:00:00.000Z',
         },
       ],
-      configSets: sharedGateway, // profile key is 'gw-key'
+      configSets: sharedGateway, // legacy profile key is 'gw-key'
+      activeConfigSetId: 'default',
+    };
+
+    expect(new ConfigStore().getAll().customEndpoints[0].apiKey).toBe('ROTATED');
+  });
+
+  it('falls back to the legacy profile key when the persisted entry has no apiKey property', () => {
+    // Migration path: an endpoint persisted *without* an apiKey property picks one
+    // up from the profile that describes it. Note the property is omitted, not
+    // empty — `apiKey: ''` means "explicitly cleared" and is covered below.
+    mocks.seed = {
+      customEndpoints: [
+        {
+          id: 'custom-endpoint-7',
+          name: 'kiro-gateway',
+          protocol: 'anthropic',
+          baseUrl: 'http://127.0.0.1:9000',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      configSets: sharedGateway,
       activeConfigSetId: 'default',
     };
 
     expect(new ConfigStore().getAll().customEndpoints[0].apiKey).toBe('gw-key');
   });
 
-  it('prunes a persisted endpoint that no profile describes any more', () => {
+  it('keeps an explicitly cleared endpoint key empty, ignoring the legacy mirror', () => {
+    // Empty and missing are different states for endpoints too, exactly as for
+    // `providerCredentials`. `carried.apiKey || apiKey` would treat '' as missing
+    // and revive the pre-clear value from the profile.
+    mocks.seed = {
+      customEndpoints: [
+        {
+          id: 'custom-endpoint-7',
+          name: 'kiro-gateway',
+          protocol: 'anthropic',
+          baseUrl: 'http://127.0.0.1:9000',
+          apiKey: '',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      configSets: sharedGateway, // legacy mirror still holds 'gw-key'
+      activeConfigSetId: 'default',
+    };
+
+    const config = new ConfigStore().getAll();
+    expect(config.customEndpoints[0].apiKey).toBe('');
+    expect(config.apiKey).toBe('');
+  });
+
+  it('keeps a persisted endpoint that no profile describes (Phase 2a: authoritative)', () => {
+    // Phase 1 pruned this as an orphan, because every endpoint was derived from a
+    // `custom:*` profile and anything else was stale cache. Phase 2a makes
+    // `customEndpoints` authoritative: an entry created through the CRUD API has
+    // no profile behind it by construction, so pruning it would delete the user's
+    // own data. The orphan case that mattered — a *derived* endpoint whose source
+    // profile changed — is still pruned; see the gateway-URL-edit test below.
     mocks.seed = {
       customEndpoints: [
         {
           id: 'custom-endpoint-1',
-          name: 'retired-gateway',
+          name: 'standalone-gateway',
           protocol: 'anthropic',
-          baseUrl: 'http://retired:9000',
-          apiKey: 'old',
+          baseUrl: 'http://standalone:9000',
+          apiKey: 'own',
           updatedAt: '2026-01-01T00:00:00.000Z',
         },
       ],
@@ -646,7 +733,10 @@ describe('ConfigStore customEndpoints derivation (Phase 1)', () => {
 
     const endpoints = new ConfigStore().getAll().customEndpoints;
 
-    expect(endpoints.map((e) => e.baseUrl)).toEqual(['http://127.0.0.1:9000']);
+    expect(endpoints.map((e) => e.baseUrl).sort()).toEqual([
+      'http://127.0.0.1:9000',
+      'http://standalone:9000',
+    ]);
   });
 
   it('does not leave an orphan when a gateway URL is edited after persisting', () => {
@@ -881,7 +971,9 @@ describe('ConfigStore customEndpoints derivation (Phase 1)', () => {
     );
   });
 
-  it('re-stamps updatedAt when the credential actually changes', () => {
+  it('re-stamps updatedAt when something material actually changes', () => {
+    // The persisted key now wins, so a differing profile key is no longer a
+    // change. A differing model still is.
     mocks.seed = {
       customEndpoints: [
         {
@@ -889,12 +981,12 @@ describe('ConfigStore customEndpoints derivation (Phase 1)', () => {
           name: 'kiro-gateway',
           protocol: 'anthropic',
           baseUrl: 'http://127.0.0.1:9000',
-          apiKey: 'OLD-KEY',
-          defaultModel: 'claude-opus-5',
+          apiKey: 'gw-key',
+          defaultModel: 'some-older-model',
           updatedAt: '2026-01-01T00:00:00.000Z',
         },
       ],
-      configSets: sharedGateway, // profile key is 'gw-key'
+      configSets: sharedGateway, // profile model is 'claude-opus-5'
       activeConfigSetId: 'default',
     };
 
@@ -922,15 +1014,17 @@ describe('ConfigStore customEndpoints derivation (Phase 1)', () => {
   });
 });
 
-describe('Phase 1 boundary — the projection is unchanged', () => {
+describe('legacy projection mirror stays byte-compatible', () => {
   beforeEach(() => {
     mocks.seed = {};
   });
 
-  it('still projects runtime credentials from profiles, not from the derived map', () => {
-    // The whole point of Phase 1: every runtime consumer (agent-runner,
-    // diagnostics, memory, scheduler) keeps reading the flat projection, so the
-    // derived map must not yet influence it.
+  it('projects a migrated legacy config to the same runtime values', () => {
+    // Phase 2a: the projection is built by `resolveCredentials` from the global
+    // map, not read out of `profiles`. For a pre-split config the two agree by
+    // construction — the map was migrated from that very profile — which is what
+    // makes the change invisible to every runtime consumer (agent-runner,
+    // diagnostics, memory, scheduler).
     seedSets([
       {
         id: 'default',

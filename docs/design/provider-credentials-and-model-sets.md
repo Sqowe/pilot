@@ -1,8 +1,8 @@
 # Provider Credentials & Model Sets — Design & Implementation Plan
 
 **Created:** 2026-10-02
-**Status:** Design approved. **Phases 0–1 complete** (2026-10-03). Phase 2 next. Each phase stops
-for review.
+**Status:** Design approved. **Phases 0, 1, 2a complete** (2026-10-03). Phase 2b next. Each phase
+stops for review.
 **Author:** AI-assisted design session
 **Baseline:** pi-ai / pi-coding-agent **0.87.1**, app **1.0.8** (HEAD `90136401`). Verified against
 source 2026-10-03; §13 records what the original 0.85.1/1.0.7 draft got wrong.
@@ -478,15 +478,16 @@ that setup's `exampleModel` ([`api-provider-guidance.ts`](../../src/shared/api-p
 
 ### 7.0 Progress
 
-| Phase                       | Status                 | Landed                                                                |
-| --------------------------- | ---------------------- | --------------------------------------------------------------------- |
-| 0 — baseline + doc fix      | ✅ **done** 2026-10-03 | ABI unblocked, doc corrected against HEAD, open questions → decisions |
-| 1 — main-process model      | ✅ **done** 2026-10-03 | types + one-directional derivation, 40 new tests, external review ✔️  |
-| 2 — invert direction, tests | ⏳ next                | —                                                                     |
-| 3 — renderer state          | —                      | —                                                                     |
-| 4 — UI                      | —                      | —                                                                     |
-| 5 — first-run wizard        | —                      | —                                                                     |
-| 6 — docs                    | —                      | —                                                                     |
+| Phase                  | Status                 | Landed                                                                |
+| ---------------------- | ---------------------- | --------------------------------------------------------------------- |
+| 0 — baseline + doc fix | ✅ **done** 2026-10-03 | ABI unblocked, doc corrected against HEAD, open questions → decisions |
+| 1 — main-process model | ✅ **done** 2026-10-03 | types + one-directional derivation, 40 new tests, external review ✔️  |
+| 2a — store inversion   | ✅ **done** 2026-10-03 | resolveCredentials + endpointId + CRUD/IPC, 28 new tests              |
+| 2b — renderer cutover  | ⏳ next                | drop `profiles`; handleSave payload                                   |
+| 3 — renderer state     | —                      | —                                                                     |
+| 4 — UI                 | —                      | —                                                                     |
+| 5 — first-run wizard   | —                      | —                                                                     |
+| 6 — docs               | —                      | —                                                                     |
 
 Every phase ends with `npm run typecheck` and `npm test` clean. Two of the three gates
 (`AI_MAIN_PROCESS.md` preamble) must pass; `npm run test:coverage` is the CI gate and its
@@ -621,8 +622,35 @@ meaningful only in Phase 2, together with real writes.
 
 ### Phase 2 — invert the direction, migrate the tests
 
-Phase 1 left the new fields derived-but-unused. Phase 2 makes them authoritative and retires the
-old shape. It carries the items the Phase 1 table listed but that could not land without breaking
+**Split into 2a (store) and 2b (renderer cutover)** — decided 2026-10-03, before any code.
+
+The original single-phase plan could not land. Phase 2 is specified as main-process-only ("no UI
+change") while also requiring `profiles` to be dropped from `ApiConfigSet` — but the renderer writes
+that field back on every save. `handleSave`
+([`useApiConfigState.ts:2119-2130`](../../src/renderer/hooks/useApiConfigState.ts#L2119)) sends
+`profiles` and `activeProfileKey` in its `config.save` payload, and it is the **only** credential
+write path in the app (the other `config.save` callers — `App.tsx:139`,
+`SettingsGeneral.tsx:80`, `SettingsSkills.tsx:388`, `SettingsMemory.tsx:652,2068` — touch unrelated
+fields). Removing the field therefore breaks the renderer, and repairing it _is_ Phase 3's
+`useApiConfigState` split.
+
+A second consequence: §9.4's post-Phase-2 claim that "no write path writes credentials back into a
+set" is false for as long as `handleSave` sends `profiles`, whatever the store does with it. The
+split makes that invariant true at an identifiable commit instead of aspirationally.
+
+- **Phase 2a — store only.** `endpointId` on `ApiConfigSet`; `model`/`contextWindow`/`maxTokens`
+  hoisted up; `resolveCredentials()` with the §4 precedence; `projectFromConfigSet` reads
+  credentials instead of profiles; `update()` routes `apiKey`/`baseUrl` to `providerCredentials` or
+  the referenced endpoint; endpoint CRUD + delete guard + IPC. `profiles` **stays on the type** as
+  accepted-but-never-written legacy input, read once for migration. The renderer keeps compiling
+  untouched. The §8.1 assertions land here.
+- **Phase 2b — renderer cutover.** `handleSave` stops sending `profiles`/`activeProfileKey`;
+  `profiles` is deleted from `ApiConfigSet` and `AppConfig`. Small and surgical — it is a payload
+  change plus a type removal, not the state-management rework. §9.4 becomes true at this commit.
+
+Phase 3 is unchanged: the full `useApiConfigState` split into two slices.
+
+It carries the items the Phase 1 table listed but that could not land without breaking
 §9.4's "never both live" invariant:
 
 | File                                        | Change                                                                                                                                                                                                                                                                                                              |
@@ -636,6 +664,103 @@ and no write path writes credentials back into a set (§9.4).
 
 Ships with the ten new assertions in §8.1 **and** the test-migration pass over the 11 files in §8.2.
 Both land before any UI work, so the riskiest phase is reviewable on its own.
+
+#### Phase 2a as built (**done** 2026-10-03)
+
+| File                                               | Change                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main/config/config-store.ts`                  | `endpointId` + hoisted `model`/`contextWindow`/`maxTokens` on `ApiConfigSet`; `resolveCredentials`; `linkCustomEndpointIds`; `writeCredential`; `applyProfilesToCredentials`; `generateCustomEndpointId`; endpoint CRUD + delete guard; `projectFromConfigSet` and `composeProjectedConfig` now take credentials explicitly |
+| `src/main/index.ts`                                | three IPC handlers (`config.createCustomEndpoint` / `updateCustomEndpoint` / `deleteCustomEndpoint`), each through `syncConfigAfterMutation`                                                                                                                                                                                |
+| `src/preload/index.ts`                             | matching bridge methods + `ElectronAPI` declarations                                                                                                                                                                                                                                                                        |
+| `src/renderer/types/index.ts`                      | mirrored `ApiConfigSet` fields; deprecation markers on the legacy trio                                                                                                                                                                                                                                                      |
+| `src/renderer/hooks/useApiConfigState.ts`          | two `ApiConfigSet` literals gained `model` (sourced from the active profile — the same migration the store does). Not the Phase 3 rework.                                                                                                                                                                                   |
+| `tests/config-store-credential-resolution.test.ts` | **new**, 49 tests — §4 precedence, credential writes (incl. clearing), migration, the Phase 2a profiles bridge, CRUD + guards                                                                                                                                                                                               |
+| `tests/config-store-provider-credentials.test.ts`  | 43 tests — precedence inverted to match, plus endpoint empty-vs-missing                                                                                                                                                                                                                                                     |
+| `tests/config-store-profiles.test.ts`              | 3 tests updated — all three were asserting pre-split behaviour the design deliberately changes                                                                                                                                                                                                                              |
+
+**Gates:** typecheck clean; `npm test` **3493 passed / 232 files**; lint 0 errors (16 pre-existing
+warnings).
+
+**The precedence had to invert, and that is the phase.** In Phase 1 nothing wrote
+`providerCredentials`, so a persisted copy could only be a stale cache and was ignored outright —
+feeding it back would have broken key rotation (the bug external review caught). Phase 2a routes
+`update()` and the CRUD API there, so the persisted map is now **authoritative** and legacy per-set
+`profiles` are consulted only for slots it does not already hold. Rotation stays correct because the
+write targets the map itself rather than a profile. Four Phase 1 tests encoded the old rule and were
+rewritten; the persist→edit round-trips that guard rotation still pass untouched.
+
+**Three behavioural changes fell out of the design, each visible as an updated test:**
+
+- A **new config set is immediately usable** — it resolves the global slot for its provider instead
+  of starting with an empty key. This is §1.2 consequence 1, the original complaint.
+- **Switching a set's provider no longer swaps its model.** `model` is now a property of the set, so
+  it survives a provider change; the user picks a new one explicitly.
+- **A native provider's `baseUrl` projects as `undefined`** rather than `''`, because the credential
+  object omits the key entirely when there is nothing to store. The original concern behind that
+  assertion (never persisting a literal `undefined`) still holds.
+
+**Two implementation traps worth recording:**
+
+- `saveConfig` re-normalizes, so an endpoint created through CRUD was initially **pruned as an
+  orphan** — derivation only kept entries a `custom:*` profile described. Fixed by keeping
+  explicitly persisted endpoints that no profile describes, while still pruning _derived_ ones whose
+  source profile changed (the gateway-URL-edit case from Phase 1 review still prunes).
+- `composeProjectedConfig` had to start accepting credentials explicitly. Re-deriving inside it
+  would have discarded the write `update()` had just made.
+
+`applyProfilesToCredentials` is the Phase 2a-only bridge: `handleSave` still sends the whole profile
+map, and silently ignoring it would lose a key the user just typed, so each slot is forwarded to its
+global home. It is deleted in Phase 2b along with the field.
+
+**External review: 5 iterations, 9 blocking bugs found and fixed.** Not approved at the cap; the
+remaining item is deferred by decision (see below). Every bug was reproduced with a failing probe
+before the fix and re-verified by mutation. They cluster into one theme — **two sources of truth on
+the read path while `profiles` is still live** — which is exactly what Phase 2b removes:
+
+1. **Rotation silently no-opped.** The derived map was seeded from its own persisted output and
+   skipped slots it already held, so a later profile edit could never update it.
+2. **Gateway-URL edit left an orphan** endpoint; repeated edits would fill the cap and evict live
+   entries.
+3. **`update({ configSets })` deleted CRUD-created endpoints and their API keys.** The prune
+   predicate ("unreferenced and undescribed") is precisely the shape of a user-created endpoint. The
+   original test missed it by exercising `update({ provider, apiKey })`, which skips that path — a
+   reminder that a test naming an invariant is not the same as a test reaching it.
+4. **A stale inactive profile slot reverted a rotated key.** Fixed on both sides: writes are scoped
+   to the active slot, and the projection re-mirrors _every_ slot from the authoritative store.
+5. **`contextWindow` / `maxTokens` could never be cleared** — `...targetSet` copied the old value and
+   the conditional spreads only add. Same three-state problem as `endpointId`.
+6. **A profile URL could override a live `endpointId`**, so `updateCustomEndpoint({ baseUrl })` was
+   silently retargeted back to a twin at the old address. A valid pin now always wins on read.
+7. **Delete was undone by leftover mirrors** — derivation resurrected the endpoint (new id, key off
+   the profile) on the next read. Delete now scrubs the matching `custom:*` profiles.
+8. **A credential-only write reset the endpoint's protocol** from the set's diverged mirror.
+   `writeCredential` now defaults to the endpoint's own protocol/URL and takes an explicit protocol
+   only when the caller asked for one.
+9. **A cleared endpoint key was revived from the legacy mirror** — the empty-vs-missing rule had been
+   applied to `providerCredentials` but not to `customEndpoints`. Now symmetric.
+
+**Deferred, not dropped — IPC error shape.** Review asked (four times) that the three endpoint CRUD
+handlers return `{ success: false, error }` instead of throwing. Investigated and **deliberately not
+changed in this phase**, because the premise is half right and the suggested fix would make things
+worse:
+
+- The `config.*` handlers split by purpose, not by accident: **queries** (`get`, `getPresets`,
+  `isConfigured`, `test`, `diagnose`, `discover-local`) try/catch and return a safe fallback;
+  **mutations** (`save`, `createSet`, `renameSet`, `deleteSet`, `switchSet`) throw and the renderer
+  catches + translates (`useApiConfigState.ts:2422-2436`). The new handlers are mutations and follow
+  the mutation pattern, so changing only them would make them the sole outlier.
+- **But the declared type is wrong for all of them.** `preload/index.ts` promises
+  `{ success: boolean; config: AppConfig }` while `success` is only ever `true`. That has already
+  misled one call site: `App.tsx:139-143` guards on `if (result.success)` — dead code — with no
+  try/catch, so a failed `config.save` silently does nothing.
+
+The honest fix is to make the type tell the truth across **all** mutation handlers plus the `App.tsx`
+call site. That is six pre-existing sites this phase did not introduce, so it lands as its own
+commit rather than as a footnote inside a credential refactor. Tracked as the next job.
+
+**Verification:** five mutations injected into the new logic — custom sets falling through to a
+catalog slot, the endpoint's protocol being overridden by a stale set value, the delete guard
+removed, model-hoisting disabled, and endpoint linking disabled. All five were caught.
 
 ### Phase 3 — renderer state
 
@@ -751,10 +876,17 @@ notice on that provider row.
 
 ### 9.4 Two sources of truth during the transition
 
-`profiles` on a set and `providerCredentials` on `AppConfig` must never both be live. Mitigation:
-after Phase 2, `profiles` is **read-only legacy input** — normalization reads it once, and no write
-path writes credentials back into a set. Deleting it entirely from the type in Phase 3 removes the
-ambiguity rather than documenting it.
+`profiles` on a set and `providerCredentials` on `AppConfig` must never both be **authoritative**.
+
+As of Phase 2a: `providerCredentials` / `customEndpoints` are authoritative — `resolveCredentials`
+reads them and `update()` writes them. `profiles` is demoted to two narrow jobs, both read-only as
+far as credentials go: a migration source for slots the global map does not yet hold, and a mirror on
+the projection that the renderer still reads. **No write path puts a credential into a config set.**
+
+The one remaining seam is that `handleSave` still _sends_ `profiles`, which Phase 2a forwards into
+the global map via `applyProfilesToCredentials` rather than discarding (dropping it would lose a key
+the user just typed in the current UI). Phase 2b removes the field from both types and deletes that
+bridge, at which point the invariant holds structurally rather than by convention.
 
 ### 9.5 Test-coverage thresholds
 

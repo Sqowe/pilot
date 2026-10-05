@@ -176,8 +176,29 @@ export interface ApiConfigSet {
   name: string;
   isSystem?: boolean;
   provider: ProviderType;
+  /**
+   * Which `customEndpoints` entry supplies the credential. Set only when
+   * `provider === 'custom'`; ignored otherwise. Design §3.3.
+   */
+  endpointId?: string;
+  /**
+   * Model selection, hoisted out of `profiles` — these describe the model, not
+   * the credential (design §3.3). `model` is always present after normalization.
+   */
+  model: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  /**
+   * @deprecated Phase 2a: read-only legacy input. Normalization still reads
+   * these to migrate pre-split configs and to keep the renderer compiling until
+   * Phase 2b, but **no write path puts credentials back into a set**. Phase 2b
+   * removes `profiles` and `activeProfileKey`; `customProtocol` survives on the
+   * projection only, sourced from the resolved endpoint.
+   */
   customProtocol: CustomProtocolType;
+  /** @deprecated See `customProtocol`. Removed in Phase 2b. */
   activeProfileKey: ProviderProfileKey;
+  /** @deprecated See `customProtocol`. Removed in Phase 2b. */
   profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
   enableThinking: boolean;
   /** Replaces enableThinking. Always a valid ModelThinkingLevel after normalization. */
@@ -206,31 +227,30 @@ export interface AppConfig {
   /**
    * Provider credentials — global, one slot per provider id.
    *
-   * **Phase 1 status: a derived cache, not yet authoritative.**
-   * `normalizeConfig` recomputes this from the config sets' `profiles` on every
-   * read, so it is a pure function of them (plus any slot no set describes — see
-   * `deriveProviderCredentials`). It *is* written to disk, because `saveConfig`
-   * persists the whole normalized config; that copy is a cache and is never
-   * allowed to outvote a live profile.
+   * **Phase 2a: authoritative.** `resolveCredentials` reads this (or the
+   * referenced `customEndpoints` entry) to build the runtime projection, and
+   * `update({ apiKey, baseUrl })` writes here rather than into a config set.
    *
-   * This does not breach design §9.4 ("never both live"): §9.4 is about which
-   * store is **authoritative**, and in Phase 1 that is unambiguously `profiles`
-   * — nothing reads this map for runtime resolution and no write path targets
-   * it. Phase 2 inverts the direction: this becomes the source of truth and
-   * `profiles` becomes read-only legacy input.
+   * Still *populated by derivation* from the sets' legacy `profiles` on read, so
+   * a pre-split config migrates without a schema bump (design §5). That input
+   * disappears in Phase 2b once the renderer stops sending `profiles`; until
+   * then `applyProfilesToCredentials` forwards a renderer-supplied profile map
+   * here so a key typed in the old UI is not lost.
    *
-   * The precedence matters more than it looks. If a persisted value could win
-   * over a newer profile credential, rotating an API key would silently
-   * no-op and Phase 2 would inherit a poisoned map.
+   * Precedence matters: a profile edit must win over a previously derived value,
+   * or rotating a key silently no-ops. See `deriveProviderCredentials`.
    */
   providerCredentials: ProviderCredentialMap;
 
   /**
-   * User-created custom endpoints, derived from the sets' `custom:*` profiles —
-   * one entry per distinct protocol + base URL. Same Phase 1 contract as
-   * `providerCredentials`: recomputed every read, persisted only as a cache.
-   * Persisted entries contribute `id` and a user-edited `name`; an endpoint no
-   * profile still describes is pruned.
+   * User-created custom endpoints — the only user-named credential object.
+   *
+   * **Phase 2a: authoritative.** A `provider:'custom'` set resolves its
+   * credential *and* routing protocol from the entry its `endpointId` names.
+   * Entries created through the CRUD API have no legacy profile behind them and
+   * are preserved as-is; entries that were derived from a `custom:*` profile are
+   * pruned when that profile stops describing them, so editing a gateway URL
+   * does not leave a stale twin.
    */
   customEndpoints: CustomEndpoint[];
 
@@ -483,6 +503,7 @@ const defaultConfigSet: ApiConfigSet = {
   name: 'Default',
   isSystem: true,
   provider: 'openrouter',
+  model: defaultProfiles.openrouter.model,
   customProtocol: 'anthropic',
   activeProfileKey: 'openrouter',
   profiles: defaultProfiles,
@@ -1321,12 +1342,19 @@ export class ConfigStore {
   /**
    * Derive the global credential map from the config sets' per-set profiles.
    *
-   * **Phase 1: a pure function of the current config sets.** The persisted copy
-   * is deliberately *not* an input. In Phase 1 no write path targets this map,
-   * so anything already on disk can only be the output of an earlier derivation
-   * — a cache. Feeding it back in would let a stale value outvote the profile it
-   * came from, which makes credential rotation silently no-op and would hand
-   * Phase 2 a poisoned map. Phase 2 adds real writes and, with them, authority.
+   * **Phase 2a: the persisted map wins; legacy profiles only fill gaps.**
+   *
+   * This is the inverse of Phase 1, and the inversion is the point of the phase.
+   * In Phase 1 nothing wrote this map, so anything on disk could only be a stale
+   * cache and had to be ignored. Now `update()` and the endpoint CRUD write here,
+   * so a persisted slot is the user's actual credential and must survive a read
+   * even when no `profiles` entry describes it.
+   *
+   * Legacy `profiles` are therefore consulted **only for slots the persisted map
+   * does not already hold** — that is the migration (§5), and it is why a
+   * pre-split config still works with no schema bump. Once Phase 2b stops the
+   * renderer sending `profiles`, this second pass becomes dead and is deleted
+   * along with the field.
    *
    * Rules (design §5.1):
    * - **First non-empty wins**, active set first (`orderSetsForDerivation`), so
@@ -1344,15 +1372,43 @@ export class ConfigStore {
    */
   private deriveProviderCredentials(
     configSets: ApiConfigSet[],
-    activeConfigSetId: string
+    activeConfigSetId: string,
+    persisted?: unknown
   ): ProviderCredentialMap {
     const derived: ProviderCredentialMap = {};
 
+    // Pass 1 — the authoritative persisted map.
+    //
+    // A slot that is *present* wins, even when empty. Empty and missing are
+    // different states: `update({ apiKey: '' })` clears a credential on purpose,
+    // and if an empty slot counted as missing, pass 2 would resurrect the old key
+    // from any other set whose legacy `profiles` still carried it.
+    const persistedSlots = new Set<string>();
+    if (persisted && typeof persisted === 'object' && !Array.isArray(persisted)) {
+      for (const [key, value] of Object.entries(persisted as Record<string, unknown>)) {
+        if (!isProfileKey(key) || key.startsWith('custom:')) continue;
+        if (!value || typeof value !== 'object') continue;
+        const raw = value as Partial<ProviderCredentials>;
+        const apiKey = typeof raw.apiKey === 'string' ? raw.apiKey : '';
+        const baseUrl = typeof raw.baseUrl === 'string' ? raw.baseUrl.trim() : '';
+        // Claim the slot so pass 2 cannot migrate over it. An empty slot is a
+        // *cleared* credential and is kept verbatim: dropping it here would make
+        // it indistinguishable from "never configured" on the next read, and the
+        // legacy-profile migration would revive the old key.
+        persistedSlots.add(key);
+        const next: ProviderCredentials = { apiKey };
+        if (baseUrl) next.baseUrl = baseUrl;
+        derived[key as ProviderProfileKey] = next;
+      }
+    }
+
+    // Pass 2 — migrate from legacy per-set profiles for slots still unfilled.
     for (const set of this.orderSetsForDerivation(configSets, activeConfigSetId)) {
       for (const [rawKey, profile] of Object.entries(set.profiles || {})) {
         if (!isProfileKey(rawKey) || rawKey.startsWith('custom:')) continue;
         const key = rawKey as ProviderProfileKey;
-        if (derived[key]) continue; // an earlier set already won this slot
+        if (derived[key]) continue; // persisted, or an earlier set already won it
+        if (persistedSlots.has(rawKey)) continue; // explicitly cleared — do not revive
         if (!profile) continue;
 
         const apiKey = typeof profile.apiKey === 'string' ? profile.apiKey : '';
@@ -1400,7 +1456,7 @@ export class ConfigStore {
     // values always come from the live profile.
     const persistedByKey = new Map<
       string,
-      { id: string; name?: string; apiKey: string; defaultModel?: string; updatedAt: string }
+      { id: string; name?: string; apiKey?: string; defaultModel?: string; updatedAt: string }
     >();
     const usedIds = new Set<string>();
     if (Array.isArray(existing)) {
@@ -1419,7 +1475,9 @@ export class ConfigStore {
         persistedByKey.set(key, {
           id,
           name: toNonEmptyString(candidate.name) ?? undefined,
-          apiKey: typeof candidate.apiKey === 'string' ? candidate.apiKey : '',
+          // Preserved as-is, including `''`. Collapsing a missing property to `''`
+          // would erase the empty-vs-missing distinction the clear path relies on.
+          apiKey: typeof candidate.apiKey === 'string' ? candidate.apiKey : undefined,
           defaultModel: toNonEmptyString(candidate.defaultModel) ?? undefined,
           updatedAt: toNonEmptyString(candidate.updatedAt) || nowISO(),
         });
@@ -1437,12 +1495,35 @@ export class ConfigStore {
       return candidate;
     };
 
+    // Slots whose set already names a live persisted endpoint. Their legacy
+    // profile is a **stale mirror**, not a source: deriving from it would mint a
+    // twin at the old address every time CRUD changed the endpoint's URL or
+    // protocol, and resurrect a deleted endpoint from the leftover mirror.
+    // The endpoint itself is still kept — see the persisted pass below.
+    const pinnedSlots = new Set<string>();
+    const pinnedIds = new Set<string>();
+    if (Array.isArray(existing)) {
+      const persistedIds = new Set(
+        (existing as Array<Partial<CustomEndpoint>>)
+          .map((candidate) => toNonEmptyString(candidate?.id))
+          .filter((id): id is string => Boolean(id))
+      );
+      for (const set of configSets) {
+        if (set.provider !== 'custom' || !set.endpointId) continue;
+        if (!persistedIds.has(set.endpointId)) continue;
+        const protocol = isCustomProtocol(set.customProtocol) ? set.customProtocol : 'anthropic';
+        pinnedSlots.add(`${set.id}::${profileKeyFromProvider('custom', protocol)}`);
+        pinnedIds.add(set.endpointId);
+      }
+    }
+
     const byKey = new Map<string, CustomEndpoint>();
     for (const set of this.orderSetsForDerivation(configSets, activeConfigSetId)) {
       for (const [rawKey, profile] of Object.entries(set.profiles || {})) {
         // Validate the key before deriving: a hand-edited `custom:bogus` must be
         // skipped, not turned into an endpoint with a guessed protocol.
         if (!isProfileKey(rawKey) || !rawKey.startsWith('custom:') || !profile) continue;
+        if (pinnedSlots.has(`${set.id}::${rawKey}`)) continue;
         const baseUrl = typeof profile.baseUrl === 'string' ? profile.baseUrl.trim() : '';
         if (!baseUrl) continue;
 
@@ -1461,8 +1542,14 @@ export class ConfigStore {
         const found = byKey.get(key);
         if (found) {
           // Same endpoint reached from another set: fill in what the winning set
-          // left blank, but never overwrite a value it did provide.
-          if (!found.apiKey.trim() && apiKey.trim()) found.apiKey = apiKey;
+          // left blank, but never overwrite a value it did provide. A persisted
+          // entry's key is authoritative even when empty, so a second set's stale
+          // mirror cannot refill a cleared one.
+          const persisted = persistedByKey.get(key);
+          const keyIsAuthoritative = typeof persisted?.apiKey === 'string';
+          if (!keyIsAuthoritative && !found.apiKey.trim() && apiKey.trim()) {
+            found.apiKey = apiKey;
+          }
           if (!found.defaultModel) {
             const otherModel = typeof profile.model === 'string' ? profile.model.trim() : '';
             if (otherModel) found.defaultModel = otherModel;
@@ -1476,16 +1563,28 @@ export class ConfigStore {
         // the stored value churns with set order.
         const canonicalUrl = canonicalBaseUrl(baseUrl) || baseUrl;
         const model = typeof profile.model === 'string' ? profile.model.trim() : '';
+        // The persisted endpoint is authoritative for the key (Phase 2a), exactly
+        // as `providerCredentials` is for catalog slots — including the
+        // empty-vs-missing distinction. An explicitly cleared key is `''`, not
+        // "absent": treating `''` as missing would revive the pre-clear value from
+        // any set's legacy mirror, including an unpinned one that still points at
+        // this URL. Fall back to the profile only when the persisted entry has no
+        // `apiKey` property at all, which is the migration case.
+        const effectiveApiKey = carried
+          ? typeof carried.apiKey === 'string'
+            ? carried.apiKey
+            : apiKey
+          : apiKey;
         const entry: CustomEndpoint = {
           id: carried?.id ?? mintId(),
           name: carried?.name ?? defaultCustomEndpointName(canonicalUrl),
           protocol: customProtocol,
           baseUrl: canonicalUrl,
-          apiKey,
+          apiKey: effectiveApiKey,
           // Preserve the persisted timestamp when nothing material changed, so a
           // plain update() does not churn it. A real edit (key, model) re-stamps.
           updatedAt:
-            carried && carried.apiKey === apiKey && (carried.defaultModel ?? '') === model
+            carried && carried.apiKey === effectiveApiKey && (carried.defaultModel ?? '') === model
               ? carried.updatedAt
               : nowISO(),
         };
@@ -1494,10 +1593,446 @@ export class ConfigStore {
       }
     }
 
+    // Pass 2 — keep explicitly persisted endpoints that no profile describes.
+    //
+    // Phase 2a: `customEndpoints` is authoritative, so an entry created through
+    // the CRUD API (or Phase 2b's UI) has no legacy `custom:*` profile behind it
+    // and must not be pruned as an orphan. Only entries that *were* derived and
+    // whose source profile has since changed get dropped, which is what keeps a
+    // gateway-URL edit from leaving a stale twin.
+    if (Array.isArray(existing)) {
+      const derivedKeys = new Set(byKey.keys());
+      const profileKeys = new Set<string>();
+      for (const set of configSets) {
+        for (const [rawKey, profile] of Object.entries(set.profiles || {})) {
+          if (!isProfileKey(rawKey) || !rawKey.startsWith('custom:') || !profile) continue;
+          const baseUrl = typeof profile.baseUrl === 'string' ? profile.baseUrl.trim() : '';
+          if (!baseUrl) continue;
+          const { customProtocol } = profileKeyToProvider(rawKey as ProviderProfileKey);
+          if (!isCustomProtocol(customProtocol)) continue;
+          profileKeys.add(customEndpointKey(customProtocol, baseUrl));
+        }
+      }
+
+      for (const raw of existing) {
+        if (!raw || typeof raw !== 'object') continue;
+        const candidate = raw as Partial<CustomEndpoint>;
+        const baseUrl = typeof candidate.baseUrl === 'string' ? candidate.baseUrl.trim() : '';
+        const id = toNonEmptyString(candidate.id);
+        if (!baseUrl || !id) continue;
+        const protocol: CustomProtocolType = isCustomProtocol(candidate.protocol)
+          ? candidate.protocol
+          : 'anthropic';
+        const key = customEndpointKey(protocol, baseUrl);
+        if (derivedKeys.has(key)) continue;
+        // A key some profile still points at was handled by pass 1; anything else
+        // here is a standalone entry worth keeping. A **pinned** endpoint is kept
+        // regardless: a set names it by id, and its matching profile is a stale
+        // mirror whose derivation was suppressed above.
+        if (profileKeys.has(key) && !pinnedIds.has(id)) continue;
+        if (byKey.size >= MAX_CUSTOM_ENDPOINT_COUNT) break;
+        const entry: CustomEndpoint = {
+          id,
+          name: toNonEmptyString(candidate.name) || defaultCustomEndpointName(baseUrl),
+          protocol,
+          baseUrl,
+          apiKey: typeof candidate.apiKey === 'string' ? candidate.apiKey : '',
+          updatedAt: toNonEmptyString(candidate.updatedAt) || nowISO(),
+        };
+        const defaultModel = toNonEmptyString(candidate.defaultModel);
+        if (defaultModel) entry.defaultModel = defaultModel;
+        byKey.set(key, entry);
+      }
+    }
+
     // Cap defensively (decision #11). With orphans pruned above this is a
     // last-resort guard, not the eviction policy: derivation is bounded by
     // MAX_CONFIG_SET_COUNT × 3 custom slots.
     return [...byKey.values()].slice(0, MAX_CUSTOM_ENDPOINT_COUNT);
+  }
+
+  /**
+   * Fill a **missing or dangling** `endpointId` on a `provider:'custom'` set from
+   * the endpoint its legacy `custom:*` profile describes (design §5).
+   *
+   * Runs after `deriveCustomEndpoints` because it needs the minted ids.
+   *
+   * **A valid pin always wins.** An earlier revision let a profile URL override a
+   * live `endpointId`, on the theory that the profile edit was the newer intent.
+   * That broke CRUD: `updateCustomEndpoint({ baseUrl })` changes the endpoint while
+   * the set's mirror still holds the old URL, so the next read derived a twin at
+   * the old address and silently retargeted the set back to it. The write path
+   * handles the genuine profile-edit case instead — `update()` drops a pin the
+   * incoming payload contradicts, and this function then re-links it.
+   *
+   * A custom set whose profile matches no endpoint keeps whatever pin it has, or
+   * none — resolving to an empty credential, which is the honest outcome.
+   *
+   * Phase 2b deletes this: once `profiles` is gone, `endpointId` is the only
+   * pointer and nothing can contradict it.
+   */
+  private linkCustomEndpointIds(
+    configSets: ApiConfigSet[],
+    customEndpoints: CustomEndpoint[]
+  ): ApiConfigSet[] {
+    if (customEndpoints.length === 0) return configSets;
+    const byKey = new Map(
+      customEndpoints.map((endpoint) => [
+        customEndpointKey(endpoint.protocol, endpoint.baseUrl),
+        endpoint.id,
+      ])
+    );
+    const validIds = new Set(customEndpoints.map((endpoint) => endpoint.id));
+
+    return configSets.map((set) => {
+      if (set.provider !== 'custom') return set;
+      if (set.endpointId && validIds.has(set.endpointId)) return set;
+
+      const protocol = isCustomProtocol(set.customProtocol) ? set.customProtocol : 'anthropic';
+      const slot = profileKeyFromProvider('custom', protocol) as ProviderProfileKey;
+      const baseUrl = set.profiles?.[slot]?.baseUrl?.trim();
+      if (!baseUrl) return set;
+
+      const endpointId = byKey.get(customEndpointKey(protocol, baseUrl));
+      if (!endpointId) return set;
+      return { ...set, endpointId };
+    });
+  }
+
+  /**
+   * Write `apiKey` / `baseUrl` to wherever the active set's provider keeps them
+   * (design §4.1): the referenced custom endpoint, or the global slot.
+   *
+   * Mutates `providerCredentials` in place and returns the (possibly extended)
+   * endpoint list plus the endpoint id the set should now reference — writing to
+   * a custom provider with no endpoint yet mints one, which is what makes the
+   * first-run and "paste a gateway URL" flows work before any Providers UI
+   * exists.
+   */
+  private writeCredential(input: {
+    provider: ProviderType;
+    customProtocol: CustomProtocolType;
+    endpointId?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    /**
+     * Set only when the caller actually asked for a protocol change. Absent means
+     * "leave the endpoint's protocol alone" — `customProtocol` below is the set's
+     * legacy mirror and may have diverged, so it must not be written implicitly.
+     */
+    explicitProtocol?: CustomProtocolType;
+    providerCredentials: ProviderCredentialMap;
+    customEndpoints: CustomEndpoint[];
+  }): { customEndpoints: CustomEndpoint[]; endpointId?: string } {
+    const trimmedBaseUrl = input.baseUrl?.trim();
+    const explicitProtocol = input.explicitProtocol;
+
+    if (input.provider === 'custom') {
+      const endpoints = [...input.customEndpoints];
+      const existingIndex = input.endpointId
+        ? endpoints.findIndex((candidate) => candidate.id === input.endpointId)
+        : -1;
+
+      if (existingIndex >= 0) {
+        const existing = endpoints[existingIndex];
+        // Default to the **endpoint's own** protocol and URL. `input.customProtocol`
+        // comes from the set's legacy mirror, which can have diverged from the
+        // endpoint (the read path already prefers the endpoint's). Taking it
+        // unconditionally would reset the protocol as a side effect of rotating a
+        // key — and could collide with another protocol+URL entry.
+        const nextProtocol = explicitProtocol ?? existing.protocol;
+        const nextBaseUrl =
+          trimmedBaseUrl !== undefined
+            ? canonicalBaseUrl(trimmedBaseUrl) || trimmedBaseUrl
+            : existing.baseUrl;
+
+        // Re-pointing this endpoint must not duplicate another one. Two entries
+        // sharing protocol + URL would make every key-based lookup
+        // (`deriveCustomEndpoints`, `linkCustomEndpointIds`) last-write-wins, and
+        // sets could silently retarget. `updateCustomEndpoint` enforces the same
+        // rule; this path is reachable from `update()`, so it needs it too.
+        const nextKey = customEndpointKey(nextProtocol, nextBaseUrl);
+        const collisionIndex = endpoints.findIndex(
+          (candidate) =>
+            candidate.id !== existing.id &&
+            customEndpointKey(candidate.protocol, candidate.baseUrl) === nextKey
+        );
+        if (collisionIndex >= 0) {
+          // An endpoint for this protocol + URL already exists: retarget the set
+          // to it rather than creating a duplicate or throwing at the user, and
+          // carry over the key they just supplied.
+          const collision = endpoints[collisionIndex];
+          endpoints[collisionIndex] = {
+            ...collision,
+            ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
+            updatedAt: nowISO(),
+          };
+          return { customEndpoints: endpoints, endpointId: collision.id };
+        }
+
+        endpoints[existingIndex] = {
+          ...existing,
+          protocol: nextProtocol,
+          baseUrl: nextBaseUrl,
+          ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
+          updatedAt: nowISO(),
+        };
+        return { customEndpoints: endpoints, endpointId: existing.id };
+      }
+
+      // No endpoint referenced yet. Match an existing one by protocol + URL
+      // before minting, so repeated saves of the same gateway do not accumulate
+      // duplicates (the same idempotence rule derivation uses).
+      const effectiveUrl = trimmedBaseUrl ?? '';
+      if (!effectiveUrl) {
+        // Nothing to key an endpoint on; drop the write rather than create a
+        // nameless entry with no URL.
+        return { customEndpoints: endpoints, endpointId: input.endpointId };
+      }
+      const key = customEndpointKey(input.customProtocol, effectiveUrl);
+      const matchIndex = endpoints.findIndex(
+        (candidate) => customEndpointKey(candidate.protocol, candidate.baseUrl) === key
+      );
+      if (matchIndex >= 0) {
+        const match = endpoints[matchIndex];
+        endpoints[matchIndex] = {
+          ...match,
+          ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
+          updatedAt: nowISO(),
+        };
+        return { customEndpoints: endpoints, endpointId: match.id };
+      }
+
+      if (endpoints.length >= MAX_CUSTOM_ENDPOINT_COUNT) {
+        throw new Error(`Custom endpoint limit reached: max ${MAX_CUSTOM_ENDPOINT_COUNT}`);
+      }
+      const canonical = canonicalBaseUrl(effectiveUrl) || effectiveUrl;
+      const minted: CustomEndpoint = {
+        id: this.generateCustomEndpointId(endpoints),
+        name: defaultCustomEndpointName(canonical),
+        protocol: input.customProtocol,
+        baseUrl: canonical,
+        apiKey: input.apiKey ?? '',
+        updatedAt: nowISO(),
+      };
+      endpoints.push(minted);
+      return { customEndpoints: endpoints, endpointId: minted.id };
+    }
+
+    // Catalog provider: one global slot, keyed exactly as before (design §4).
+    const slot = profileKeyFromProvider(input.provider, defaultProtocolForProvider(input.provider));
+    const existing = input.providerCredentials[slot];
+    const apiKey = input.apiKey !== undefined ? input.apiKey : (existing?.apiKey ?? '');
+    const baseUrl = trimmedBaseUrl !== undefined ? trimmedBaseUrl : existing?.baseUrl;
+    const next: ProviderCredentials = { apiKey };
+    if (baseUrl) next.baseUrl = baseUrl;
+    input.providerCredentials[slot] = next;
+    return { customEndpoints: input.customEndpoints, endpointId: input.endpointId };
+  }
+
+  /**
+   * Forward a renderer-supplied `profiles` map into the global credential store.
+   *
+   * Phase 2a-only bridge. `handleSave` still sends the whole per-set profile map,
+   * and ignoring it would lose a key the user just typed.
+   *
+   * **Scoped to the active slot on purpose.** Writing every non-empty slot looks
+   * harmless but reverts key rotation: the renderer's map is a snapshot, so an
+   * inactive slot can hold a value that was authoritative when the UI loaded and
+   * is stale by the time the user saves. A save of set A would then overwrite a
+   * key rotated on set B. Only the slot the save is actually about is written; the
+   * others are already mirrored back from the store by `projectFromConfigSet`.
+   *
+   * Empty values never overwrite a populated one — the renderer sends all eight
+   * builtin slots on every save, most of them blank.
+   */
+  private applyProfilesToCredentials(
+    profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>,
+    providerCredentials: ProviderCredentialMap,
+    customEndpoints: CustomEndpoint[],
+    activeSlot: ProviderProfileKey
+  ): void {
+    for (const [rawKey, profile] of Object.entries(profiles)) {
+      if (!isProfileKey(rawKey) || !profile) continue;
+      if (rawKey !== activeSlot) continue; // see the note above — scoped write
+      const key = rawKey as ProviderProfileKey;
+      const apiKey = typeof profile.apiKey === 'string' ? profile.apiKey : '';
+      const baseUrl = typeof profile.baseUrl === 'string' ? profile.baseUrl.trim() : '';
+
+      if (rawKey.startsWith('custom:')) {
+        if (!baseUrl) continue;
+        const { customProtocol } = profileKeyToProvider(key);
+        if (!isCustomProtocol(customProtocol)) continue;
+        const target = customEndpoints.find(
+          (candidate) =>
+            customEndpointKey(candidate.protocol, candidate.baseUrl) ===
+            customEndpointKey(customProtocol, baseUrl)
+        );
+        if (target && apiKey.trim() && target.apiKey !== apiKey) {
+          target.apiKey = apiKey;
+          target.updatedAt = nowISO();
+        }
+        continue;
+      }
+
+      const defaultBaseUrl = this.getDefaultProfile(key).baseUrl || '';
+      const hasKey = Boolean(apiKey.trim());
+      const hasOwnBaseUrl =
+        Boolean(baseUrl) && canonicalBaseUrl(baseUrl) !== canonicalBaseUrl(defaultBaseUrl);
+      if (!hasKey && !hasOwnBaseUrl) continue;
+
+      const existing = providerCredentials[key];
+      const next: ProviderCredentials = {
+        apiKey: hasKey ? apiKey : (existing?.apiKey ?? ''),
+      };
+      const effectiveBaseUrl = hasOwnBaseUrl ? baseUrl : existing?.baseUrl;
+      if (effectiveBaseUrl) next.baseUrl = effectiveBaseUrl;
+      providerCredentials[key] = next;
+    }
+  }
+
+  /** Mint an unused custom-endpoint id, mirroring generateConfigSetId. */
+  private generateCustomEndpointId(existing: CustomEndpoint[]): string {
+    const used = new Set(existing.map((endpoint) => endpoint.id));
+    let index = existing.length + 1;
+    let candidate = `${CUSTOM_ENDPOINT_ID_PREFIX}${index}`;
+    while (used.has(candidate)) {
+      index += 1;
+      candidate = `${CUSTOM_ENDPOINT_ID_PREFIX}${index}`;
+    }
+    return candidate;
+  }
+
+  /**
+   * Collect the protocol+URL keys that config sets' legacy `custom:*` profiles
+   * describe. Phase 2a only — removed with `profiles` in Phase 2b.
+   */
+  private customEndpointKeysFromProfiles(configSets: ApiConfigSet[]): Set<string> {
+    const keys = new Set<string>();
+    for (const set of configSets) {
+      for (const [rawKey, profile] of Object.entries(set.profiles || {})) {
+        if (!isProfileKey(rawKey) || !rawKey.startsWith('custom:') || !profile) continue;
+        const url = typeof profile.baseUrl === 'string' ? profile.baseUrl.trim() : '';
+        if (!url) continue;
+        const { customProtocol } = profileKeyToProvider(rawKey as ProviderProfileKey);
+        if (!isCustomProtocol(customProtocol)) continue;
+        keys.add(customEndpointKey(customProtocol, url));
+      }
+    }
+    return keys;
+  }
+
+  /**
+   * Re-derive endpoints for a config-set write, then evict only the **stale
+   * derived twin** a profile URL edit leaves behind.
+   *
+   * The single eviction policy for `update()`. Getting the predicate wrong here
+   * destroys credentials: an endpoint created through the CRUD API is by design
+   * unreferenced and has no legacy profile, so a predicate of "unreferenced and
+   * undescribed" deletes it and its API key on the next `handleSave`. An endpoint
+   * is therefore pruned only when **a profile used to describe it and no longer
+   * does** — which is exactly the gateway-URL-edit case, and nothing else.
+   *
+   * Without eviction, repeatedly editing a URL accumulates entries until
+   * `MAX_CUSTOM_ENDPOINT_COUNT` starts evicting live ones.
+   */
+  private evictStaleDerivedEndpoints(
+    priorConfigSets: ApiConfigSet[],
+    nextConfigSets: ApiConfigSet[],
+    activeConfigSetId: string,
+    endpoints: CustomEndpoint[]
+  ): CustomEndpoint[] {
+    // Keys a profile described *before* this write. Only these are candidates:
+    // anything never described by a profile is user-created and untouchable.
+    const priorProfileKeys = this.customEndpointKeysFromProfiles(priorConfigSets);
+    const derived = this.deriveCustomEndpoints(nextConfigSets, activeConfigSetId, endpoints);
+    const nextProfileKeys = this.customEndpointKeysFromProfiles(nextConfigSets);
+    const referencedIds = new Set(
+      nextConfigSets
+        .filter((set) => set.provider === 'custom' && set.endpointId)
+        .map((set) => set.endpointId as string)
+    );
+
+    return derived.filter((endpoint) => {
+      if (referencedIds.has(endpoint.id)) return true;
+      const key = customEndpointKey(endpoint.protocol, endpoint.baseUrl);
+      if (nextProfileKeys.has(key)) return true;
+      // Prune only a former profile-derived entry that no profile names any more.
+      return !priorProfileKeys.has(key);
+    });
+  }
+
+  /**
+   * Resolve the credential a config set should run with — the single seam the
+   * whole design turns on (§4).
+   *
+   * Precedence, in order:
+   * 1. `customEndpoints[set.endpointId]` when `provider === 'custom'`. The
+   *    endpoint also supplies the routing `protocol`, since for a custom
+   *    gateway the user chooses it.
+   * 2. `providerCredentials[profileKeyFromProvider(provider, protocol)]`.
+   * 3. **Empty** — `apiKey: ''`, no `baseUrl`. Never a value belonging to a
+   *    different provider. A set pointing at an unconfigured provider must fail
+   *    loudly downstream (`hasAnyUsableCredentials`, the diagnostics panel)
+   *    rather than silently borrow someone else's key.
+   *
+   * `baseUrl` falls back to the slot default so builtin providers keep their
+   * preset endpoint (`https://api.anthropic.com`, `http://localhost:11434/v1`)
+   * when the credential carries no override. It is **always a string, never
+   * `undefined`** — the value lands on `AppConfig.baseUrl`, and electron-store
+   * persists via JSON, which rejects undefined. A native provider has no default
+   * base URL, so this is the exact path that once crashed `config.save`.
+   */
+  private resolveCredentials(
+    set: Pick<ApiConfigSet, 'provider' | 'endpointId' | 'customProtocol'>,
+    providerCredentials: ProviderCredentialMap,
+    customEndpoints: CustomEndpoint[]
+  ): { apiKey: string; baseUrl: string; customProtocol: CustomProtocolType } {
+    const provider = set.provider;
+
+    if (provider === 'custom') {
+      const endpointId = toNonEmptyString(set.endpointId);
+      const endpoint = endpointId
+        ? customEndpoints.find((candidate) => candidate.id === endpointId)
+        : undefined;
+      if (endpoint) {
+        return {
+          apiKey: endpoint.apiKey,
+          // '' not undefined — see the note on the catalog branch below.
+          baseUrl: endpoint.baseUrl || '',
+          customProtocol: endpoint.protocol,
+        };
+      }
+      // A custom set with a dangling or absent endpointId resolves empty rather
+      // than falling through to a catalog slot: 'custom' has no slot of its own,
+      // and borrowing `custom:<protocol>` would resurrect the per-set behaviour
+      // this design removes.
+      return {
+        apiKey: '',
+        baseUrl: '',
+        customProtocol: isCustomProtocol(set.customProtocol)
+          ? set.customProtocol
+          : defaultProtocolForProvider(provider),
+      };
+    }
+
+    const customProtocol = defaultProtocolForProvider(provider);
+    const slot = profileKeyFromProvider(provider, customProtocol);
+    const credential = providerCredentials[slot];
+    // Coerce to '' — never undefined. This value reaches `AppConfig.baseUrl`,
+    // which electron-store persists as JSON and which rejects undefined, so a
+    // native provider (no default base URL) would crash config.save. Regression
+    // guard: see tests/config-store-profiles.test.ts.
+    const fallbackBaseUrl = this.getDefaultProfile(slot).baseUrl || '';
+
+    if (!credential) {
+      return { apiKey: '', baseUrl: fallbackBaseUrl, customProtocol };
+    }
+    return {
+      apiKey: credential.apiKey,
+      baseUrl: credential.baseUrl || fallbackBaseUrl,
+      customProtocol,
+    };
   }
 
   private normalizeLegacyProjection(raw: Partial<AppConfig>): {
@@ -1589,7 +2124,21 @@ export class ConfigStore {
     };
   }
 
-  private projectFromConfigSet(configSet: ApiConfigSet): {
+  /**
+   * Turn a config set into runtime configuration — one of the two seams the
+   * whole design turns on (§4).
+   *
+   * Phase 2a: credentials now come from `resolveCredentials` (global map or the
+   * referenced custom endpoint), **not** from the set's `profiles`. Model
+   * selection comes from the set itself, where it was hoisted. `profiles` is
+   * still cloned onto the projection because the renderer reads it until Phase
+   * 2b; it is output only and no longer feeds any credential decision.
+   */
+  private projectFromConfigSet(
+    configSet: ApiConfigSet,
+    providerCredentials: ProviderCredentialMap,
+    customEndpoints: CustomEndpoint[]
+  ): {
     provider: ProviderType;
     customProtocol: CustomProtocolType;
     activeProfileKey: ProviderProfileKey;
@@ -1602,26 +2151,64 @@ export class ConfigStore {
     enableThinking: boolean;
     thinkingLevel: ModelThinkingLevel;
   } {
-    const profiles = this.cloneProfiles(configSet.profiles);
-    const activeProfileKey = isProfileKey(configSet.activeProfileKey)
-      ? configSet.activeProfileKey
-      : profileKeyFromProvider(configSet.provider, configSet.customProtocol);
-    const activeProfile = profiles[activeProfileKey] || this.getDefaultProfile(activeProfileKey);
+    const resolved = this.resolveCredentials(configSet, providerCredentials, customEndpoints);
     const thinkingLevel = resolveThinkingLevelFromRaw(
       configSet.thinkingLevel,
       configSet.enableThinking
     );
+    // Legacy mirrors, kept byte-compatible for the renderer until Phase 2b.
+    //
+    // **Every** slot is overlaid from the authoritative store, not just the
+    // active one. The renderer hydrates its whole `profiles` map from here and
+    // sends it all back on save, so a stale inactive slot would be written over
+    // the global credential and silently revert a key rotated while a different
+    // provider was active — the exact failure this phase exists to prevent.
+    const activeProfileKey = profileKeyFromProvider(configSet.provider, resolved.customProtocol);
+    const profiles = this.cloneProfiles(configSet.profiles);
+    for (const slot of Object.keys(profiles) as ProviderProfileKey[]) {
+      if (slot.startsWith('custom:')) continue; // handled below, keyed by endpoint
+      const credential = providerCredentials[slot];
+      if (!credential) continue;
+      profiles[slot] = this.normalizeProfile(slot, {
+        ...profiles[slot],
+        apiKey: credential.apiKey,
+        baseUrl: credential.baseUrl || profiles[slot]?.baseUrl,
+      });
+    }
+    // `custom:*` slots mirror the endpoint matching their protocol + URL, so a
+    // key changed through `updateCustomEndpoint` cannot be reverted either.
+    for (const slot of Object.keys(profiles) as ProviderProfileKey[]) {
+      if (!slot.startsWith('custom:')) continue;
+      const slotUrl = profiles[slot]?.baseUrl?.trim();
+      if (!slotUrl) continue;
+      const { customProtocol } = profileKeyToProvider(slot);
+      if (!isCustomProtocol(customProtocol)) continue;
+      const match = customEndpoints.find(
+        (endpoint) =>
+          customEndpointKey(endpoint.protocol, endpoint.baseUrl) ===
+          customEndpointKey(customProtocol, slotUrl)
+      );
+      if (!match) continue;
+      profiles[slot] = this.normalizeProfile(slot, { ...profiles[slot], apiKey: match.apiKey });
+    }
+    profiles[activeProfileKey] = this.normalizeProfile(activeProfileKey, {
+      apiKey: resolved.apiKey,
+      baseUrl: resolved.baseUrl,
+      model: configSet.model,
+      contextWindow: configSet.contextWindow,
+      maxTokens: configSet.maxTokens,
+    });
 
     return {
       provider: configSet.provider,
-      customProtocol: configSet.customProtocol,
+      customProtocol: resolved.customProtocol,
       activeProfileKey,
       profiles,
-      apiKey: activeProfile.apiKey,
-      baseUrl: activeProfile.baseUrl,
-      model: activeProfile.model,
-      contextWindow: activeProfile.contextWindow,
-      maxTokens: activeProfile.maxTokens,
+      apiKey: resolved.apiKey,
+      baseUrl: resolved.baseUrl,
+      model: configSet.model,
+      contextWindow: configSet.contextWindow,
+      maxTokens: configSet.maxTokens,
       enableThinking: thinkingLevel !== 'off',
       thinkingLevel,
     };
@@ -1661,6 +2248,29 @@ export class ConfigStore {
     const name = toNonEmptyString(rawSet?.name) || fallback.name;
     const updatedAt = toNonEmptyString(rawSet?.updatedAt) || nowISO();
 
+    // `endpointId` only means something for a custom set. Preserved verbatim
+    // here; legacy sets that predate it get linked to a derived endpoint by
+    // `linkCustomEndpointIds`, which runs once the endpoint list exists.
+    const endpointId = provider === 'custom' ? toNonEmptyString(rawSet?.endpointId) : null;
+
+    // Hoist model selection out of `profiles` (design §3.3). A set written before
+    // the split has no top-level `model`, so fall back to the active profile's —
+    // that is the migration. `cloneProfiles` has already substituted the slot
+    // default for an empty model, so this is never blank for a known slot.
+    const legacyActive = profiles[activeProfileKey];
+    const model =
+      typeof rawSet?.model === 'string' && rawSet.model.trim()
+        ? rawSet.model.trim()
+        : legacyActive?.model || '';
+    const contextWindow =
+      typeof rawSet?.contextWindow === 'number' && rawSet.contextWindow > 0
+        ? rawSet.contextWindow
+        : legacyActive?.contextWindow;
+    const maxTokens =
+      typeof rawSet?.maxTokens === 'number' && rawSet.maxTokens > 0
+        ? rawSet.maxTokens
+        : legacyActive?.maxTokens;
+
     // Only treat rawSet.thinkingLevel as 'present' when it's a recognized valid level.
     // Invalid/unknown strings (e.g. future levels from a newer pi-ai) fall through to
     // the enableThinking migration or the fallback, preserving user intent.
@@ -1684,6 +2294,10 @@ export class ConfigStore {
       name,
       isSystem: toBoolean(rawSet?.isSystem, Boolean(fallback.isSystem)),
       provider,
+      ...(endpointId ? { endpointId } : {}),
+      model,
+      ...(typeof contextWindow === 'number' ? { contextWindow } : {}),
+      ...(typeof maxTokens === 'number' ? { maxTokens } : {}),
       customProtocol,
       activeProfileKey,
       profiles,
@@ -1831,7 +2445,12 @@ export class ConfigStore {
       return false;
     }
 
-    const projected = this.projectFromConfigSet(onlySet);
+    // Compare against a projection resolved from this one set's own credentials,
+    // so the check stays self-consistent with how the set would actually run.
+    const onlyCredentials = this.deriveProviderCredentials([onlySet], onlySet.id);
+    const onlyEndpoints = this.deriveCustomEndpoints([onlySet], onlySet.id, undefined);
+    const linked = this.linkCustomEndpointIds([onlySet], onlyEndpoints)[0];
+    const projected = this.projectFromConfigSet(linked, onlyCredentials, onlyEndpoints);
     const legacyActive =
       legacy.profiles[legacy.activeProfileKey] ?? this.getDefaultProfile(legacy.activeProfileKey);
     return !(
@@ -1853,17 +2472,35 @@ export class ConfigStore {
     const raw = rawConfig || {};
     const legacy = this.normalizeLegacyProjection(raw);
     const normalizedFromRaw = this.normalizeConfigSets(raw.configSets, legacy);
-    const configSets = this.shouldPreferLegacyConfigSetProjection(normalizedFromRaw, legacy)
+    const preLinkSets = this.shouldPreferLegacyConfigSetProjection(normalizedFromRaw, legacy)
       ? [this.makeDefaultConfigSetFromLegacy(legacy)]
       : normalizedFromRaw;
 
     const requestedActiveSetId = toNonEmptyString(raw.activeConfigSetId);
-    const activeConfigSetId = configSets.some((set) => set.id === requestedActiveSetId)
+    const activeConfigSetId = preLinkSets.some((set) => set.id === requestedActiveSetId)
       ? (requestedActiveSetId as string)
-      : configSets[0].id;
+      : preLinkSets[0].id;
+
+    // Credentials and endpoints must exist before the projection can resolve
+    // anything, and before legacy custom sets can be linked to an endpoint id.
+    const providerCredentials = this.deriveProviderCredentials(
+      preLinkSets,
+      activeConfigSetId,
+      raw.providerCredentials
+    );
+    const customEndpoints = this.deriveCustomEndpoints(
+      preLinkSets,
+      activeConfigSetId,
+      raw.customEndpoints
+    );
+    const configSets = this.linkCustomEndpointIds(preLinkSets, customEndpoints);
 
     const activeConfigSet = configSets.find((set) => set.id === activeConfigSetId) || configSets[0];
-    const projected = this.projectFromConfigSet(activeConfigSet);
+    const projected = this.projectFromConfigSet(
+      activeConfigSet,
+      providerCredentials,
+      customEndpoints
+    );
 
     const result: AppConfig = {
       provider: projected.provider,
@@ -1877,14 +2514,12 @@ export class ConfigStore {
       ...(typeof projected.maxTokens === 'number' ? { maxTokens: projected.maxTokens } : {}),
       activeProfileKey: projected.activeProfileKey,
       profiles: projected.profiles,
-      // Phase 1: recomputed from the sets' profiles on every read — a derived
-      // cache, not an authoritative store. See the AppConfig field docs.
-      providerCredentials: this.deriveProviderCredentials(configSets, activeConfigSetId),
-      customEndpoints: this.deriveCustomEndpoints(
-        configSets,
-        activeConfigSetId,
-        raw.customEndpoints
-      ),
+      // Phase 2a: authoritative for credential resolution. Still *derived* from
+      // the sets' legacy `profiles` on read, so a pre-split config migrates
+      // without a schema bump (design §5); Phase 2b removes that input once the
+      // renderer stops writing it.
+      providerCredentials,
+      customEndpoints,
       activeConfigSetId,
       configSets,
       claudeCodePath:
@@ -1962,14 +2597,31 @@ export class ConfigStore {
     this.store.set(normalized);
   }
 
+  /**
+   * Build the projected `AppConfig` for a given set list + active id.
+   *
+   * Phase 2a: credentials are passed in explicitly rather than derived here.
+   * `update()` is the one caller that mutates them, and it must be able to hand
+   * over the post-write map — re-deriving from `profiles` at this point would
+   * discard the write it just made.
+   */
   private composeProjectedConfig(
     base: AppConfig,
     nextConfigSets: ApiConfigSet[],
-    requestedActiveConfigSetId: string
+    requestedActiveConfigSetId: string,
+    credentials?: { providerCredentials: ProviderCredentialMap; customEndpoints: CustomEndpoint[] }
   ): AppConfig {
     const activeConfigSet =
       nextConfigSets.find((set) => set.id === requestedActiveConfigSetId) || nextConfigSets[0];
-    const projected = this.projectFromConfigSet(activeConfigSet);
+    const providerCredentials =
+      credentials?.providerCredentials ??
+      this.deriveProviderCredentials(nextConfigSets, activeConfigSet.id, base.providerCredentials);
+    const customEndpoints =
+      credentials?.customEndpoints ??
+      this.deriveCustomEndpoints(nextConfigSets, activeConfigSet.id, base.customEndpoints);
+    const linkedSets = this.linkCustomEndpointIds(nextConfigSets, customEndpoints);
+    const linkedActive = linkedSets.find((set) => set.id === activeConfigSet.id) || linkedSets[0];
+    const projected = this.projectFromConfigSet(linkedActive, providerCredentials, customEndpoints);
     return {
       ...base,
       provider: projected.provider,
@@ -1979,19 +2631,12 @@ export class ConfigStore {
       model: projected.model,
       activeProfileKey: projected.activeProfileKey,
       profiles: projected.profiles,
-      // Re-derive so a credential edit that lands via update() is reflected
-      // immediately. Credentials come purely from the sets; the persisted
-      // endpoint list contributes only identity (ids / user-edited names).
-      providerCredentials: this.deriveProviderCredentials(nextConfigSets, activeConfigSet.id),
-      customEndpoints: this.deriveCustomEndpoints(
-        nextConfigSets,
-        activeConfigSet.id,
-        base.customEndpoints
-      ),
+      providerCredentials,
+      customEndpoints,
       enableThinking: projected.enableThinking,
       thinkingLevel: projected.thinkingLevel,
-      activeConfigSetId: activeConfigSet.id,
-      configSets: nextConfigSets,
+      activeConfigSetId: linkedActive.id,
+      configSets: linkedSets,
     };
   }
 
@@ -2053,6 +2698,10 @@ export class ConfigStore {
       name: payload.name,
       isSystem: false,
       provider: payload.provider,
+      // A blank set starts on the provider's default model. It carries no
+      // credential of its own — that now comes from the global map, which is the
+      // entire point of the split (design §1.2, consequence 1).
+      model: defaultProfile.model,
       customProtocol: payload.customProtocol,
       activeProfileKey,
       profiles,
@@ -2232,6 +2881,177 @@ export class ConfigStore {
     return this.getAll();
   }
 
+  // -------------------------------------------------------------------------
+  // Custom endpoint CRUD (design §3.2, §6.2)
+  //
+  // The only user-named credential object. Catalog providers need no CRUD — the
+  // catalog already names them and `update({ apiKey })` writes their global slot.
+  // -------------------------------------------------------------------------
+
+  createCustomEndpoint(payload: {
+    name: string;
+    protocol: CustomProtocolType;
+    baseUrl: string;
+    apiKey?: string;
+    defaultModel?: string;
+  }): AppConfig {
+    const current = this.getAll();
+    if (current.customEndpoints.length >= MAX_CUSTOM_ENDPOINT_COUNT) {
+      throw new Error(`Custom endpoint limit reached: max ${MAX_CUSTOM_ENDPOINT_COUNT}`);
+    }
+    const baseUrl = payload.baseUrl?.trim();
+    if (!baseUrl) {
+      throw new Error('Endpoint base URL is required');
+    }
+    const protocol: CustomProtocolType = isCustomProtocol(payload.protocol)
+      ? payload.protocol
+      : 'anthropic';
+    const canonical = canonicalBaseUrl(baseUrl) || baseUrl;
+    const key = customEndpointKey(protocol, canonical);
+    if (
+      current.customEndpoints.some(
+        (candidate) => customEndpointKey(candidate.protocol, candidate.baseUrl) === key
+      )
+    ) {
+      throw new Error('An endpoint with this protocol and base URL already exists');
+    }
+
+    const endpoint: CustomEndpoint = {
+      id: this.generateCustomEndpointId(current.customEndpoints),
+      name: toNonEmptyString(payload.name) || defaultCustomEndpointName(canonical),
+      protocol,
+      baseUrl: canonical,
+      apiKey: typeof payload.apiKey === 'string' ? payload.apiKey : '',
+      updatedAt: nowISO(),
+    };
+    const defaultModel = toNonEmptyString(payload.defaultModel);
+    if (defaultModel) endpoint.defaultModel = defaultModel;
+
+    this.saveConfig({
+      ...current,
+      customEndpoints: [...current.customEndpoints, endpoint],
+    });
+    return this.getAll();
+  }
+
+  updateCustomEndpoint(payload: {
+    id: string;
+    name?: string;
+    protocol?: CustomProtocolType;
+    baseUrl?: string;
+    apiKey?: string;
+    defaultModel?: string;
+  }): AppConfig {
+    const current = this.getAll();
+    const index = current.customEndpoints.findIndex((candidate) => candidate.id === payload.id);
+    if (index < 0) {
+      throw new Error('Custom endpoint not found');
+    }
+    const existing = current.customEndpoints[index];
+
+    const protocol: CustomProtocolType = isCustomProtocol(payload.protocol)
+      ? payload.protocol
+      : existing.protocol;
+    const rawBaseUrl = payload.baseUrl !== undefined ? payload.baseUrl.trim() : existing.baseUrl;
+    if (!rawBaseUrl) {
+      throw new Error('Endpoint base URL is required');
+    }
+    const baseUrl = canonicalBaseUrl(rawBaseUrl) || rawBaseUrl;
+
+    // Renaming or re-pointing must not collide with another endpoint.
+    const key = customEndpointKey(protocol, baseUrl);
+    if (
+      current.customEndpoints.some(
+        (candidate) =>
+          candidate.id !== payload.id &&
+          customEndpointKey(candidate.protocol, candidate.baseUrl) === key
+      )
+    ) {
+      throw new Error('An endpoint with this protocol and base URL already exists');
+    }
+
+    const next: CustomEndpoint = {
+      ...existing,
+      name:
+        payload.name !== undefined
+          ? toNonEmptyString(payload.name) || existing.name
+          : existing.name,
+      protocol,
+      baseUrl,
+      apiKey: payload.apiKey !== undefined ? payload.apiKey : existing.apiKey,
+      updatedAt: nowISO(),
+    };
+    if (payload.defaultModel !== undefined) {
+      const defaultModel = toNonEmptyString(payload.defaultModel);
+      if (defaultModel) next.defaultModel = defaultModel;
+      else delete next.defaultModel;
+    }
+
+    const nextEndpoints = [...current.customEndpoints];
+    nextEndpoints[index] = next;
+    this.saveConfig({ ...current, customEndpoints: nextEndpoints });
+    return this.getAll();
+  }
+
+  /**
+   * Delete a custom endpoint.
+   *
+   * **Refused while any config set references it** (design §3.2) — enforced here
+   * in the store, not only in the UI, so an IPC caller cannot strand a set on a
+   * dangling `endpointId`. The error names the sets so the UI can tell the user
+   * what to change first.
+   */
+  deleteCustomEndpoint(payload: { id: string }): AppConfig {
+    const current = this.getAll();
+    const target = current.customEndpoints.find((candidate) => candidate.id === payload.id);
+    if (!target) {
+      throw new Error('Custom endpoint not found');
+    }
+
+    const referencing = current.configSets.filter(
+      (set) => set.provider === 'custom' && set.endpointId === payload.id
+    );
+    if (referencing.length > 0) {
+      throw new Error(
+        `Endpoint is in use by config set(s): ${referencing.map((set) => set.name).join(', ')}`
+      );
+    }
+
+    // Scrub the legacy `custom:*` mirrors that describe this endpoint. Without
+    // this the delete appears to succeed and `deriveCustomEndpoints` resurrects it
+    // (with a fresh id, and the key off the profile) on the very next read — the
+    // leftover mirror of any set that once pointed here, including one since
+    // switched to a catalog provider. Phase 2b removes this with `profiles`.
+    const targetKey = customEndpointKey(target.protocol, target.baseUrl);
+    const scrubbedSets = current.configSets.map((set) => {
+      let changed = false;
+      const profiles = { ...(set.profiles || {}) };
+      for (const rawKey of Object.keys(profiles)) {
+        if (!isProfileKey(rawKey) || !rawKey.startsWith('custom:')) continue;
+        const slot = rawKey as ProviderProfileKey;
+        const url = profiles[slot]?.baseUrl?.trim();
+        if (!url) continue;
+        const { customProtocol } = profileKeyToProvider(slot);
+        if (!isCustomProtocol(customProtocol)) continue;
+        if (customEndpointKey(customProtocol, url) !== targetKey) continue;
+        profiles[slot] = this.normalizeProfile(slot, {
+          ...profiles[slot],
+          apiKey: '',
+          baseUrl: this.getDefaultProfile(slot).baseUrl,
+        });
+        changed = true;
+      }
+      return changed ? { ...set, profiles } : set;
+    });
+
+    this.saveConfig({
+      ...current,
+      configSets: scrubbedSets,
+      customEndpoints: current.customEndpoints.filter((candidate) => candidate.id !== payload.id),
+    });
+    return this.getAll();
+  }
+
   /**
    * Update multiple config values
    */
@@ -2251,7 +3071,48 @@ export class ConfigStore {
         enableThinking: current.enableThinking,
         thinkingLevel: current.thinkingLevel ?? 'off',
       });
-      nextConfigSets = normalizedSets;
+      // A caller that rewrites a custom set's legacy `custom:*` profile URL means
+      // to re-point that set. The pinned `endpointId` would otherwise win on read
+      // (where it is authoritative), so the edit would vanish. Drop the pin only
+      // when the incoming payload *itself* carries a contradicting URL — not when
+      // the set's existing mirror merely differs, which is the normal state after
+      // any CRUD change to the endpoint. Phase 2b removes this with `profiles`.
+      const incomingById = new Map(
+        updates.configSets
+          .filter((set): set is ApiConfigSet => Boolean(set && typeof set.id === 'string'))
+          .map((set) => [set.id, set])
+      );
+      nextConfigSets = normalizedSets.map((set) => {
+        if (set.provider !== 'custom' || !set.endpointId) return set;
+        const pinned = current.customEndpoints.find((endpoint) => endpoint.id === set.endpointId);
+        if (!pinned) return set;
+        const incoming = incomingById.get(set.id);
+        const protocol = isCustomProtocol(set.customProtocol) ? set.customProtocol : 'anthropic';
+        const slot = profileKeyFromProvider('custom', protocol) as ProviderProfileKey;
+        const profileUrl = incoming?.profiles?.[slot]?.baseUrl?.trim();
+        if (!profileUrl) return set;
+        // Only a *changed* URL counts as intent to re-point. Callers routinely
+        // echo the whole set back (handleSave, or any read-modify-write), and its
+        // mirror legitimately differs from the endpoint after a CRUD edit —
+        // treating that as a re-point would unpin the set on every save.
+        const priorSet = current.configSets.find((candidate) => candidate.id === set.id);
+        const priorUrl = priorSet?.profiles?.[slot]?.baseUrl?.trim();
+        if (
+          priorUrl &&
+          customEndpointKey(protocol, profileUrl) === customEndpointKey(protocol, priorUrl)
+        ) {
+          return set;
+        }
+        if (
+          customEndpointKey(protocol, profileUrl) ===
+          customEndpointKey(pinned.protocol, pinned.baseUrl)
+        ) {
+          return set;
+        }
+        const repointed: ApiConfigSet = { ...set };
+        delete repointed.endpointId;
+        return repointed;
+      });
     }
 
     const requestedActiveConfigSetId =
@@ -2269,10 +3130,35 @@ export class ConfigStore {
     const nextProfiles = this.cloneProfiles(targetSet.profiles);
     let nextActiveProfileKey = targetSet.activeProfileKey;
     let nextProvider = targetSet.provider;
+    let nextEndpointId = targetSet.endpointId;
     let nextCustomProtocol: CustomProtocolType = normalizeCustomProtocol(
       targetSet.customProtocol,
       defaultProtocolForProvider(targetSet.provider)
     );
+    let nextModel = targetSet.model;
+    let nextContextWindow = targetSet.contextWindow;
+    let nextMaxTokens = targetSet.maxTokens;
+
+    // Phase 2a: credential writes leave the config set. These start from the
+    // current global state and are handed to composeProjectedConfig, so a write
+    // is not discarded by a re-derivation from `profiles` (design §4.1).
+    const nextProviderCredentials: ProviderCredentialMap = { ...current.providerCredentials };
+    let nextCustomEndpoints: CustomEndpoint[] = current.customEndpoints.map((endpoint) => ({
+      ...endpoint,
+    }));
+
+    // When the payload rewrites config sets, their legacy `custom:*` profiles may
+    // name a gateway no endpoint covers yet. Re-derive so such a URL mints an
+    // endpoint rather than resolving to an empty credential; explicitly persisted
+    // entries are preserved by `deriveCustomEndpoints` itself.
+    if (Array.isArray(updates.configSets) && updates.configSets.length > 0) {
+      nextCustomEndpoints = this.evictStaleDerivedEndpoints(
+        current.configSets,
+        nextConfigSets,
+        activeConfigSetId,
+        nextCustomEndpoints
+      );
+    }
 
     const mutatesActiveSet =
       updates.profiles !== undefined ||
@@ -2282,11 +3168,18 @@ export class ConfigStore {
       updates.apiKey !== undefined ||
       updates.baseUrl !== undefined ||
       updates.model !== undefined ||
+      updates.contextWindow !== undefined ||
+      updates.maxTokens !== undefined ||
       updates.enableThinking !== undefined ||
       updates.thinkingLevel !== undefined;
 
     if (mutatesActiveSet) {
       if (updates.profiles) {
+        // Phase 2a: `profiles` is accepted but **credential-inert**. The renderer
+        // still sends it from handleSave until Phase 2b, and dropping it here
+        // would lose a key the user just typed — so each slot is forwarded into
+        // the global map rather than stored on the set. The set's own `profiles`
+        // is kept in sync only as the legacy mirror the renderer reads back.
         for (const key of PROFILE_KEYS) {
           if (updates.profiles[key]) {
             nextProfiles[key] = this.normalizeProfile(key, updates.profiles[key]);
@@ -2300,6 +3193,8 @@ export class ConfigStore {
             nextProfiles[nativeKey] = this.normalizeProfile(nativeKey, updates.profiles[nativeKey]);
           }
         }
+        // Forwarding into the global store happens below, once provider /
+        // protocol resolution has settled which slot this save is actually about.
       }
 
       if (isProfileKey(updates.activeProfileKey)) {
@@ -2325,24 +3220,67 @@ export class ConfigStore {
         nextCustomProtocol = fromProfile.customProtocol;
       }
 
-      const nextActiveProfile = {
-        ...nextProfiles[nextActiveProfileKey],
-      };
-      if (updates.apiKey !== undefined) {
-        nextActiveProfile.apiKey = updates.apiKey;
-      }
-      if (updates.baseUrl !== undefined) {
-        const baseUrl = updates.baseUrl?.trim();
-        nextActiveProfile.baseUrl = baseUrl ?? '';
-      }
+      // --- model selection -> the set ---
       if (updates.model !== undefined) {
-        const model = updates.model?.trim();
-        nextActiveProfile.model = model ?? '';
+        nextModel = updates.model?.trim() ?? '';
       }
-      nextProfiles[nextActiveProfileKey] = this.normalizeProfile(
-        nextActiveProfileKey,
-        nextActiveProfile
-      );
+      if (updates.contextWindow !== undefined) {
+        nextContextWindow =
+          typeof updates.contextWindow === 'number' && updates.contextWindow > 0
+            ? updates.contextWindow
+            : undefined;
+      }
+      if (updates.maxTokens !== undefined) {
+        nextMaxTokens =
+          typeof updates.maxTokens === 'number' && updates.maxTokens > 0
+            ? updates.maxTokens
+            : undefined;
+      }
+
+      // --- credentials -> the global map, or the referenced endpoint ---
+      //
+      // Order matters: forward the renderer's profile map first (scoped to the
+      // active slot), then let an explicit `apiKey`/`baseUrl` in the same payload
+      // win over it — those are the fields the user edited most directly.
+      if (updates.profiles) {
+        this.applyProfilesToCredentials(
+          updates.profiles,
+          nextProviderCredentials,
+          nextCustomEndpoints,
+          nextActiveProfileKey
+        );
+      }
+      // A protocol change on a custom set is also a credential-location change:
+      // the endpoint owns the routing protocol, so it must be written through too,
+      // not only when a key or URL accompanies it.
+      const changesCustomProtocol =
+        nextProvider === 'custom' &&
+        updates.customProtocol !== undefined &&
+        isCustomProtocol(updates.customProtocol);
+      if (updates.apiKey !== undefined || updates.baseUrl !== undefined || changesCustomProtocol) {
+        const written = this.writeCredential({
+          provider: nextProvider,
+          customProtocol: nextCustomProtocol,
+          ...(updates.customProtocol !== undefined && isCustomProtocol(updates.customProtocol)
+            ? { explicitProtocol: updates.customProtocol }
+            : {}),
+          endpointId: nextEndpointId,
+          apiKey: updates.apiKey,
+          baseUrl: updates.baseUrl,
+          providerCredentials: nextProviderCredentials,
+          customEndpoints: nextCustomEndpoints,
+        });
+        nextCustomEndpoints = written.customEndpoints;
+        nextEndpointId = written.endpointId;
+      }
+
+      // Keep the legacy mirror consistent so the renderer, which still reads
+      // `profiles` until Phase 2b, sees what it just wrote.
+      const mirrored = { ...nextProfiles[nextActiveProfileKey] };
+      if (updates.apiKey !== undefined) mirrored.apiKey = updates.apiKey;
+      if (updates.baseUrl !== undefined) mirrored.baseUrl = updates.baseUrl?.trim() ?? '';
+      if (updates.model !== undefined) mirrored.model = nextModel;
+      nextProfiles[nextActiveProfileKey] = this.normalizeProfile(nextActiveProfileKey, mirrored);
 
       const resolvedThinkingLevel: ModelThinkingLevel =
         updates.thinkingLevel !== undefined
@@ -2355,6 +3293,14 @@ export class ConfigStore {
       const updatedSet: ApiConfigSet = {
         ...targetSet,
         provider: nextProvider,
+        // `endpointId` is meaningful only for a custom set. Spreading `targetSet`
+        // would otherwise carry a stale pin across a switch to a catalog
+        // provider: harmless for resolution (which ignores it) but it makes the
+        // set look like a referrer to `deleteCustomEndpoint`'s in-use check.
+        ...(nextProvider === 'custom' && nextEndpointId ? { endpointId: nextEndpointId } : {}),
+        model: nextModel,
+        ...(typeof nextContextWindow === 'number' ? { contextWindow: nextContextWindow } : {}),
+        ...(typeof nextMaxTokens === 'number' ? { maxTokens: nextMaxTokens } : {}),
         customProtocol: nextCustomProtocol,
         activeProfileKey: nextActiveProfileKey,
         profiles: nextProfiles,
@@ -2363,12 +3309,33 @@ export class ConfigStore {
         updatedAt: nowISO(),
       };
 
+      if (nextProvider !== 'custom') {
+        // Belt-and-braces: the spread above copies `targetSet.endpointId`, so a
+        // set switched to a catalog provider would still advertise a pin.
+        delete updatedSet.endpointId;
+      }
+      // Same three-state problem for the numeric overrides: `...targetSet` copies
+      // the old value, and the conditional spreads only *add* when a number is
+      // present. Without an explicit delete, a clear (0 / null / undefined) can
+      // never remove a limit once it has been set.
+      if (updates.contextWindow !== undefined && nextContextWindow === undefined) {
+        delete updatedSet.contextWindow;
+      }
+      if (updates.maxTokens !== undefined && nextMaxTokens === undefined) {
+        delete updatedSet.maxTokens;
+      }
+
       if (targetIndex >= 0) {
         nextConfigSets[targetIndex] = updatedSet;
       }
     }
 
-    const projectedConfig = this.composeProjectedConfig(current, nextConfigSets, activeConfigSetId);
+    const projectedConfig = this.composeProjectedConfig(
+      current,
+      nextConfigSets,
+      activeConfigSetId,
+      { providerCredentials: nextProviderCredentials, customEndpoints: nextCustomEndpoints }
+    );
     const mergedForSave: AppConfig = {
       ...projectedConfig,
       claudeCodePath:
@@ -2601,7 +3568,11 @@ export class ConfigStore {
   hasAnyUsableCredentials(config: AppConfig = this.getAll()): boolean {
     const normalized = this.normalizeConfig(config);
     return normalized.configSets.some((configSet) => {
-      const projected = this.projectFromConfigSet(configSet);
+      const projected = this.projectFromConfigSet(
+        configSet,
+        normalized.providerCredentials,
+        normalized.customEndpoints
+      );
       return this.hasUsableCredentialsForProjection({
         provider: projected.provider,
         customProtocol: projected.customProtocol,

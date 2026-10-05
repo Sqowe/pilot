@@ -598,6 +598,31 @@ export function buildApiConfigSets(
         name:
           typeof set.name === 'string' && set.name.trim() ? set.name : `Config Set ${index + 1}`,
         provider,
+        // Phase 2a hoisted `model` onto the set. Prefer the persisted value and
+        // fall back to the active profile's, which is where it used to live — the
+        // same migration the store performs. Phase 3 removes the profile path.
+        model:
+          typeof set.model === 'string' && set.model.trim()
+            ? set.model
+            : (normalizedProfiles[activeProfileKey]?.model ?? ''),
+        // Carried explicitly: these are not part of the UI draft, so without this
+        // a renderer save would strip a custom set's credential pointer and its
+        // per-set token limits. `endpointId` is only partially recoverable (via
+        // linkCustomEndpointIds, and only while the legacy profile still holds
+        // the URL); contextWindow/maxTokens would simply be lost.
+        ...(typeof set.endpointId === 'string' && set.endpointId.trim()
+          ? { endpointId: set.endpointId }
+          : {}),
+        ...(typeof set.contextWindow === 'number' && set.contextWindow > 0
+          ? { contextWindow: set.contextWindow }
+          : typeof normalizedProfiles[activeProfileKey]?.contextWindow === 'number'
+            ? { contextWindow: normalizedProfiles[activeProfileKey]?.contextWindow }
+            : {}),
+        ...(typeof set.maxTokens === 'number' && set.maxTokens > 0
+          ? { maxTokens: set.maxTokens }
+          : typeof normalizedProfiles[activeProfileKey]?.maxTokens === 'number'
+            ? { maxTokens: normalizedProfiles[activeProfileKey]?.maxTokens }
+            : {}),
         customProtocol,
         activeProfileKey,
         profiles: normalizedProfiles,
@@ -625,6 +650,7 @@ export function buildApiConfigSets(
       name: DEFAULT_CONFIG_SET_NAME,
       isSystem: true,
       provider: activeMeta.provider,
+      model: snapshot.profiles[snapshot.activeProfileKey]?.model ?? '',
       customProtocol: activeMeta.customProtocol,
       activeProfileKey: snapshot.activeProfileKey,
       profiles: toPersistedProfiles(snapshot.profiles),

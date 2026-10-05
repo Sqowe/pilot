@@ -56,6 +56,7 @@ import {
   type AppConfig,
   type AppTheme,
   type CreateConfigSetPayload,
+  type CustomProtocolType,
   type MemoryRuntimeConfig,
 } from './config/config-store';
 import { runConfigApiTest } from './config/config-test-routing';
@@ -2123,6 +2124,65 @@ ipcMain.handle('config.isConfigured', () => {
     logError('[Config] Error checking configured status:', error);
     return false;
   }
+});
+
+// ---------------------------------------------------------------------------
+// Custom endpoint CRUD (design §3.2). These mutate credentials, so each goes
+// through syncConfigAfterMutation like the config-set handlers — otherwise a
+// key change would not reach a live agent session.
+//
+// Never log payloads: they carry API keys.
+// ---------------------------------------------------------------------------
+
+ipcMain.handle(
+  'config.createCustomEndpoint',
+  async (
+    _event,
+    payload: {
+      name: string;
+      protocol: CustomProtocolType;
+      baseUrl: string;
+      apiKey?: string;
+      defaultModel?: string;
+    }
+  ) => {
+    log('[Config] Creating custom endpoint:', payload?.name);
+    const previousConfig = configStore.getAll();
+    configStore.createCustomEndpoint(payload);
+    const updatedConfig = await syncConfigAfterMutation(previousConfig);
+    return { success: true, config: updatedConfig };
+  }
+);
+
+ipcMain.handle(
+  'config.updateCustomEndpoint',
+  async (
+    _event,
+    payload: {
+      id: string;
+      name?: string;
+      protocol?: CustomProtocolType;
+      baseUrl?: string;
+      apiKey?: string;
+      defaultModel?: string;
+    }
+  ) => {
+    log('[Config] Updating custom endpoint:', payload?.id);
+    const previousConfig = configStore.getAll();
+    configStore.updateCustomEndpoint(payload);
+    const updatedConfig = await syncConfigAfterMutation(previousConfig);
+    return { success: true, config: updatedConfig };
+  }
+);
+
+ipcMain.handle('config.deleteCustomEndpoint', async (_event, payload: { id: string }) => {
+  log('[Config] Deleting custom endpoint:', payload?.id);
+  const previousConfig = configStore.getAll();
+  // Throws when a config set still references it — the store is the enforcement
+  // point, not the UI, so an IPC caller cannot strand a set on a dangling id.
+  configStore.deleteCustomEndpoint(payload);
+  const updatedConfig = await syncConfigAfterMutation(previousConfig);
+  return { success: true, config: updatedConfig };
 });
 
 ipcMain.handle('workspace-instructions.getStatus', async (_event, requestedCwd?: string) => {

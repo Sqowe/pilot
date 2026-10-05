@@ -968,8 +968,17 @@ export interface ApiConfigSet {
   name: string;
   isSystem?: boolean;
   provider: ProviderType;
+  /** Which `customEndpoints` entry supplies the credential; custom sets only. */
+  endpointId?: string;
+  /** Model selection, hoisted out of `profiles` — it describes the model, not the credential. */
+  model: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  /** @deprecated Phase 2a legacy mirror; removed in Phase 2b. */
   customProtocol: CustomProtocolType;
+  /** @deprecated Phase 2a legacy mirror; removed in Phase 2b. */
   activeProfileKey: ProviderProfileKey;
+  /** @deprecated Phase 2a legacy mirror; removed in Phase 2b. */
   profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
   enableThinking: boolean;
   /** Replaces enableThinking. Always a valid ModelThinkingLevel after normalization. */

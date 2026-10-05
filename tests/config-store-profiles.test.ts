@@ -73,12 +73,24 @@ describe('ConfigStore provider profiles', () => {
     expect(activeSet?.activeProfileKey).toBe('native:zai');
     expect(activeSet?.profiles['native:zai']?.apiKey).toBe('zai-secret-key');
 
-    // Regression: native profiles have no default baseUrl. It must be '' (a
-    // string), never undefined — electron-store persists via JSON and rejects
-    // undefined values, which crashed config.save with a JSON type error.
-    expect(config.baseUrl).toBe('');
+    // Regression: native providers have no default baseUrl. Phase 2a routes the
+    // credential to the global `native:zai` slot, which omits baseUrl entirely
+    // when there is nothing to store, so the projection reports undefined rather
+    // than the '' the per-set profile used to carry. The original concern (never
+    // persisting a literal `undefined` into electron-store) is still covered:
+    // the credential object simply has no baseUrl key.
+    expect(config.providerCredentials['native:zai']?.apiKey).toBe('zai-secret-key');
+    expect(config.providerCredentials['native:zai']?.baseUrl).toBeUndefined();
     expect(activeSet?.profiles['native:zai']?.baseUrl).toBe('');
+
+    // The flat projection must stay JSON-safe: electron-store persists via JSON
+    // and throws TypeError on an undefined value. Native providers have no
+    // default base URL, so this is the exact path that crashed config.save once.
+    expect(config.baseUrl).toBe('');
     expect(typeof config.baseUrl).toBe('string');
+    for (const [key, value] of Object.entries(config)) {
+      expect(value, `AppConfig.${key} must not be undefined`).not.toBeUndefined();
+    }
   });
 
   it('preserves native profile slots when re-normalizing persisted config', () => {
@@ -237,18 +249,42 @@ describe('ConfigStore provider profiles', () => {
     const geminiView = store.getAll();
     expect(geminiView.provider).toBe('gemini');
     expect(geminiView.apiKey).toBe('AIza-official');
-    expect(geminiView.model).toBe('gemini-2.5-flash');
+    // Phase 2a: `model` is a property of the config set, not of the credential,
+    // so switching the set's provider no longer swaps the model with it. The set
+    // keeps the last model chosen (gemini-2.5-pro) and the user picks a new one
+    // explicitly. Before the split, model travelled inside the profile and this
+    // read back 'gemini-2.5-flash'.
+    expect(geminiView.model).toBe('gemini-2.5-pro');
   });
 
-  it('treats global configured state as any set usable while active set can still be unusable', () => {
+  it('gives a blank set the global credential for its provider', () => {
     const store = new ConfigStore();
 
     store.update({ provider: 'openrouter', apiKey: 'sk-or-global' });
     store.createSet({ name: 'Blank Active', mode: 'blank' });
 
-    expect(store.hasUsableCredentialsForActiveSet()).toBe(false);
+    // Phase 2a inverts the pre-split behaviour this test used to assert. A new
+    // set no longer starts with an empty key (design §1.2, consequence 1) — it
+    // resolves the global slot for its provider, so it is immediately usable.
+    expect(store.hasUsableCredentialsForActiveSet()).toBe(true);
     expect(store.hasAnyUsableCredentials()).toBe(true);
     expect(store.isConfigured()).toBe(true);
+    expect(store.getAll().apiKey).toBe('sk-or-global');
+  });
+
+  it('does not let a set borrow a key from a different provider', () => {
+    const store = new ConfigStore();
+
+    store.update({ provider: 'openrouter', apiKey: 'sk-or-global' });
+    store.createSet({ name: 'Blank Active', mode: 'blank' });
+    store.update({ provider: 'anthropic' });
+
+    // §4 precedence rule 3: an unconfigured provider resolves empty rather than
+    // silently inheriting another provider's credential.
+    const config = store.getAll();
+    expect(config.provider).toBe('anthropic');
+    expect(config.apiKey).toBe('');
+    expect(store.hasUsableCredentialsForActiveSet()).toBe(false);
   });
 
   it('treats local custom anthropic gateway as usable without api key', () => {

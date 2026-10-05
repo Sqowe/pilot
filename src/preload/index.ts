@@ -4,6 +4,7 @@ import type {
   ClientEvent,
   ServerEvent,
   AppConfig,
+  CustomProtocolType,
   CreateSetPayload,
   ProviderPresets,
   Skill,
@@ -205,6 +206,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('config.deleteSet', payload),
     switchSet: (payload: { id: string }): Promise<{ success: boolean; config: AppConfig }> =>
       ipcRenderer.invoke('config.switchSet', payload),
+    // Custom endpoint CRUD. Returns the full config like the config-set methods,
+    // so the renderer re-hydrates from one authoritative payload.
+    createCustomEndpoint: (payload: {
+      name: string;
+      protocol: CustomProtocolType;
+      baseUrl: string;
+      apiKey?: string;
+      defaultModel?: string;
+    }): Promise<{ success: boolean; config: AppConfig }> =>
+      ipcRenderer.invoke('config.createCustomEndpoint', payload),
+    updateCustomEndpoint: (payload: {
+      id: string;
+      name?: string;
+      protocol?: CustomProtocolType;
+      baseUrl?: string;
+      apiKey?: string;
+      defaultModel?: string;
+    }): Promise<{ success: boolean; config: AppConfig }> =>
+      ipcRenderer.invoke('config.updateCustomEndpoint', payload),
+    /** Rejects when a config set still references the endpoint (design §3.2). */
+    deleteCustomEndpoint: (payload: {
+      id: string;
+    }): Promise<{ success: boolean; config: AppConfig }> =>
+      ipcRenderer.invoke('config.deleteCustomEndpoint', payload),
     isConfigured: (): Promise<boolean> => ipcRenderer.invoke('config.isConfigured'),
     test: (config: ApiTestInput): Promise<ApiTestResult> =>
       ipcRenderer.invoke('config.test', config),
@@ -751,6 +776,24 @@ declare global {
         }) => Promise<{ success: boolean; config: AppConfig }>;
         deleteSet: (payload: { id: string }) => Promise<{ success: boolean; config: AppConfig }>;
         switchSet: (payload: { id: string }) => Promise<{ success: boolean; config: AppConfig }>;
+        createCustomEndpoint: (payload: {
+          name: string;
+          protocol: CustomProtocolType;
+          baseUrl: string;
+          apiKey?: string;
+          defaultModel?: string;
+        }) => Promise<{ success: boolean; config: AppConfig }>;
+        updateCustomEndpoint: (payload: {
+          id: string;
+          name?: string;
+          protocol?: CustomProtocolType;
+          baseUrl?: string;
+          apiKey?: string;
+          defaultModel?: string;
+        }) => Promise<{ success: boolean; config: AppConfig }>;
+        deleteCustomEndpoint: (payload: {
+          id: string;
+        }) => Promise<{ success: boolean; config: AppConfig }>;
         isConfigured: () => Promise<boolean>;
         test: (config: ApiTestInput) => Promise<ApiTestResult>;
         listModels: (payload: {
