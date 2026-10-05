@@ -58,6 +58,54 @@ describe('resolveMessageEndPayload', () => {
       'Model returned an empty success result. There may be a compatibility issue with the current model or gateway. Please retry or try switching the protocol.'
     );
   });
+
+  it('ignores the empty system message pi emits to declare tool changes', () => {
+    // Shape produced by declareToolChanges in pi-agent-core (pi >= 0.86) on the first
+    // request of a session: empty string content, tools carried in toolsAdded.
+    const toolDeclaration = {
+      role: 'system',
+      content: '',
+      toolsAdded: [{ name: 'read', description: 'Read a file', parameters: {} }],
+      timestamp: 0,
+    };
+
+    const result = resolveMessageEndPayload({ message: toolDeclaration, streamedText: '' });
+
+    expect(result.errorText).toBeUndefined();
+    expect(result.shouldEmitMessage).toBe(false);
+    expect(result.effectiveContent).toEqual([]);
+    expect(result.nextStreamedText).toBe('');
+  });
+
+  it.each([
+    ['user', { role: 'user', content: [] }],
+    ['toolResult', { role: 'toolResult', content: [] }],
+    ['compactionSummary', { role: 'compactionSummary', summary: 'earlier turns' }],
+  ])('does not report empty_success_result for an empty %s message', (_role, message) => {
+    const result = resolveMessageEndPayload({ message, streamedText: '' });
+
+    expect(result.errorText).toBeUndefined();
+    expect(result.shouldEmitMessage).toBe(false);
+    expect(result.effectiveContent).toEqual([]);
+  });
+
+  it('never emits a non-assistant message, even when it carries text', () => {
+    const userPrompt = { role: 'user', content: [{ type: 'text', text: 'hello' }] };
+
+    const result = resolveMessageEndPayload({ message: userPrompt, streamedText: '' });
+
+    expect(result.errorText).toBeUndefined();
+    expect(result.shouldEmitMessage).toBe(false);
+    expect(result.effectiveContent).toEqual([]);
+  });
+
+  it('still resolves streamed text when message_end carries no message', () => {
+    const result = resolveMessageEndPayload({ streamedText: 'streamed only' });
+
+    expect(result.errorText).toBeUndefined();
+    expect(result.shouldEmitMessage).toBe(true);
+    expect(result.effectiveContent).toEqual([{ type: 'text', text: 'streamed only' }]);
+  });
 });
 
 describe('toUserFacingErrorText', () => {

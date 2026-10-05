@@ -8,7 +8,24 @@ import { splitThinkTagBlocks } from './think-tag-parser';
 
 type MessageEndContentBlock = TextContent | ThinkingContent | ToolCall;
 
-type MessageEndMessage = Pick<AssistantMessage, 'role' | 'content' | 'stopReason' | 'errorMessage'>;
+type AssistantMessageEnd = Pick<
+  AssistantMessage,
+  'role' | 'content' | 'stopReason' | 'errorMessage'
+>;
+
+// pi reports every transcript entry through message_end, not only model responses: user
+// prompts, tool results, pi-coding-agent's custom roles, and (since pi 0.86) the system
+// message that declares tool changes, whose content is an empty string — see
+// declareToolChanges in pi-agent-core/dist/agent-loop.js. Only their role is read here.
+interface NonAssistantMessageEnd {
+  role: string;
+}
+
+type MessageEndMessage = AssistantMessageEnd | NonAssistantMessageEnd;
+
+function isAssistantMessageEnd(message: MessageEndMessage): message is AssistantMessageEnd {
+  return message.role === 'assistant';
+}
 
 interface ResolveMessageEndPayloadOptions {
   message?: MessageEndMessage;
@@ -83,6 +100,16 @@ export function resolveMessageEndPayload(
   const { message, streamedText } = options;
   const nextStreamedText = '';
 
+  // Only the model can produce an "empty success result". A non-assistant entry without
+  // content blocks is normal and must not be reported as a failed response.
+  if (message && !isAssistantMessageEnd(message)) {
+    return {
+      effectiveContent: [],
+      nextStreamedText,
+      shouldEmitMessage: false,
+    };
+  }
+
   if (message?.stopReason === 'error' && message.errorMessage) {
     return {
       effectiveContent: [],
@@ -132,6 +159,6 @@ export function resolveMessageEndPayload(
   return {
     effectiveContent,
     nextStreamedText,
-    shouldEmitMessage: effectiveContent.length > 0 && (message?.role === 'assistant' || !message),
+    shouldEmitMessage: effectiveContent.length > 0,
   };
 }
