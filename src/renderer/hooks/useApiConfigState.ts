@@ -496,6 +496,21 @@ export function buildApiConfigSnapshot(
   };
 }
 
+/**
+ * Parse a token-limit form field (`contextWindow` / `maxTokens`) for the save
+ * payload.
+ *
+ * Empty, non-numeric and non-positive input all mean "no override" and are sent
+ * as `0`, never left out: IPC drops `undefined`, and the store reads an absent
+ * key as "leave the stored limit unchanged" — so omitting the field would make
+ * a cleared limit impossible to save. The store treats any non-positive number
+ * as a clear.
+ */
+export function parseTokenLimitField(value: string): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 function toPersistedProfiles(
   profiles: Record<ProviderProfileKey, UIProviderProfile>
 ): Partial<Record<ProviderProfileKey, ProviderProfile>> {
@@ -531,6 +546,10 @@ export function buildApiConfigDraftSignature(
       apiKey: persisted[key]?.apiKey || '',
       baseUrl: persisted[key]?.baseUrl || '',
       model: persisted[key]?.model || '',
+      // Saved on the config set, so an edit here is an unsaved change like any
+      // other — left out, switching sets dropped it without asking.
+      contextWindow: persisted[key]?.contextWindow || 0,
+      maxTokens: persisted[key]?.maxTokens || 0,
     })),
   });
 }
@@ -2152,12 +2171,18 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
         // `profiles` remains on `AppConfig` as a **read-only** projection that this
         // hook still hydrates from; Phase 3 moves that read onto
         // `providerCredentials` / `customEndpoints` and removes the field.
+        //
+        // `contextWindow` / `maxTokens` are sent explicitly for the same reason:
+        // they used to reach the store only inside `profiles`, so dropping that
+        // field stopped the two form fields from being saved at all.
         const payload: Partial<AppConfig> = {
           provider,
           apiKey: apiKey.trim(),
           baseUrl: resolvedBaseUrl || undefined,
           customProtocol,
           model: finalModel,
+          contextWindow: parseTokenLimitField(contextWindow),
+          maxTokens: parseTokenLimitField(maxTokens),
           activeConfigSetId,
           enableThinking,
           thinkingLevel,
@@ -2200,12 +2225,14 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
       apiKey,
       applyPersistedConfigToStore,
       baseUrl,
+      contextWindow,
       currentDraftSignature,
       currentPreset.baseUrl,
       customModel,
       customProtocol,
       enableThinking,
       thinkingLevel,
+      maxTokens,
       model,
       onSave,
       presets,

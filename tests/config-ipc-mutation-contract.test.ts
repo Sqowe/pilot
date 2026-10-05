@@ -134,21 +134,33 @@ describe('the save payload no longer carries credentials per set (Phase 2b)', ()
     expect(payload).toContain('model: finalModel,');
   });
 
-  it('parses the payload keys so the shape is asserted, not a substring', () => {
-    // Guards the two assertions below: if this regex ever stops matching the
-    // literal, they would silently pass against an empty list.
-    expect(payloadKeys).toEqual(
-      expect.arrayContaining([
+  it('sends exactly the fields the store routes, token limits included', () => {
+    // An exact list, not `arrayContaining`: the looser form is what let the
+    // payload lose `contextWindow` / `maxTokens` unnoticed. Both used to travel
+    // inside `profiles`, so dropping that field in Phase 2b silently stopped the
+    // two form fields from being saved at all.
+    //
+    // This also guards the assertions below: if the regex ever stops matching
+    // the literal, they would pass against an empty list.
+    expect([...new Set(payloadKeys)].sort()).toEqual(
+      [
         'provider',
         'apiKey',
         'baseUrl',
         'customProtocol',
         'model',
+        'contextWindow',
+        'maxTokens',
         'activeConfigSetId',
         'enableThinking',
         'thinkingLevel',
-      ])
+      ].sort()
     );
+  });
+
+  it('sends the token limits as numbers, never as an absent key', () => {
+    expect(payload).toContain('contextWindow: parseTokenLimitField(contextWindow),');
+    expect(payload).toContain('maxTokens: parseTokenLimitField(maxTokens),');
   });
 
   it('no longer sends profiles or activeProfileKey', () => {

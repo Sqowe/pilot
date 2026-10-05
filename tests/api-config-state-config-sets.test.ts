@@ -6,6 +6,7 @@ import {
   buildApiConfigDraftSignature,
   buildApiConfigSets,
   buildApiConfigSnapshot,
+  parseTokenLimitField,
 } from '../src/renderer/hooks/useApiConfigState';
 
 describe('api config set helpers', () => {
@@ -121,6 +122,41 @@ describe('api config set helpers', () => {
       snapshot.enableThinking
     );
     expect(signatureC).not.toBe(signatureA);
+  });
+
+  it('treats an edited context window or max tokens as an unsaved change', () => {
+    // Both limits are persisted on the config set. A draft that differs only
+    // there used to look clean, so switching sets dropped the edit without the
+    // unsaved-changes dialog ever appearing.
+    const snapshot = buildApiConfigSnapshot(undefined, FALLBACK_PROVIDER_PRESETS);
+    const key = 'custom:anthropic' as const;
+    const base = buildApiConfigDraftSignature(key, snapshot.profiles, 'off');
+
+    const withContextWindow = buildApiConfigDraftSignature(
+      key,
+      { ...snapshot.profiles, [key]: { ...snapshot.profiles[key], contextWindow: '200000' } },
+      'off'
+    );
+    const withMaxTokens = buildApiConfigDraftSignature(
+      key,
+      { ...snapshot.profiles, [key]: { ...snapshot.profiles[key], maxTokens: '8192' } },
+      'off'
+    );
+
+    expect(withContextWindow).not.toBe(base);
+    expect(withMaxTokens).not.toBe(base);
+    expect(withContextWindow).not.toBe(withMaxTokens);
+  });
+
+  it('parses a token-limit field to a number the store can act on', () => {
+    expect(parseTokenLimitField('200000')).toBe(200000);
+    // Empty, non-numeric and non-positive all mean "no override". They are sent
+    // as 0 rather than left out: IPC drops `undefined`, and the store reads an
+    // absent key as "leave the stored limit unchanged".
+    expect(parseTokenLimitField('')).toBe(0);
+    expect(parseTokenLimitField('abc')).toBe(0);
+    expect(parseTokenLimitField('-5')).toBe(0);
+    expect(parseTokenLimitField('0')).toBe(0);
   });
 
   it('builds bootstrap state in one pass with a valid active set', () => {
