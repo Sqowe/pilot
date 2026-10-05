@@ -19,7 +19,7 @@ export type SharedModelThinkingLevel = (typeof THINKING_LEVELS)[number];
  * byte-for-byte equivalent to pi's algorithm — if the two disagree, Settings
  * shows one level while the agent runs at another.
  *
- * Verified against `@earendil-works/pi-ai/dist/models.js:404-422` (0.80.10).
+ * Verified against `@earendil-works/pi-ai/dist/models.js:566-584` (0.87.1).
  */
 export function clampToSupportedLevel(
   supported: readonly SharedModelThinkingLevel[],

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-10-05
+
 ### Added
 
 - **Trusted directories.** Settings → Bash Commands has a third list: the directories the
@@ -25,6 +27,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outside the trusted directories.
 
 ### Changed
+
+- **Updated the pi SDK from 0.85.1 to 0.87.1** (`@earendil-works/pi-ai` and
+  `@earendil-works/pi-coding-agent`), six releases. No source change was required. The
+  practical gain is model coverage: Claude Opus 5.5, GPT-6 Sol and GPT-6 Luna become
+  selectable on the providers that carry them, Anthropic's Opus 5.5 with adaptive thinking
+  and a 1M context window, and new xAI sessions now default to Grok 4.7.
+  Six breaking changes ship in this range and none reaches this app, because all of them
+  land on surfaces it does not use: the removed `shouldStopAfterTurn` agent option, the
+  `ContextEditEntry` addition to the `SessionEntry` union, the expanded `TurnEndEvent` and
+  `ExtensionEvent` unions, `user_bash` failing closed, the custom-provider switch from
+  `Context` to `TranscriptContext`, and the narrowing of `ToolCall.arguments` /
+  `ToolResultMessage.details` to JSON-compatible values. This app imports only
+  `SessionManager`, `ModelRuntime`, `ToolDefinition`, `completeSimple` and a handful of
+  types, and registers no extensions or custom providers.
+  One change does touch a boundary this app depends on and was re-verified rather than
+  assumed: 0.87.0 made `SessionManager` canonical for provider context, but
+  `SessionManager.inMemory()` keeps its signature and merely gained an optional third
+  `entries` parameter, so pi sessions still stay out of `~/.pi/agent/sessions/` and the app's
+  own history remains authoritative. The thinking-level clamp that mirrors pi's algorithm was
+  re-checked line by line against the new build and still matches.
 
 - **Multi-line shell commands no longer prompt just for being multi-line.** A line break now
   separates commands exactly like `;`, and each one is checked against the lists on its own.
@@ -485,7 +507,8 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.6...HEAD
+[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.8...HEAD
+[1.0.8]: https://github.com/sqowe/pilot/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/sqowe/pilot/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/sqowe/pilot/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/sqowe/pilot/compare/v1.0.4...v1.0.5
