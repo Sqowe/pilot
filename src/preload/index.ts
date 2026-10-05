@@ -6,6 +6,8 @@ import type {
   AppConfig,
   CustomProtocolType,
   CreateSetPayload,
+  ConfigSaveResult,
+  ConfigMutationResult,
   ProviderPresets,
   Skill,
   BuiltinSkillStatus,
@@ -193,18 +195,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getPresets: (): Promise<ProviderPresets> => ipcRenderer.invoke('config.getPresets'),
     getProviderCatalog: (): Promise<ProviderCatalogEntry[]> =>
       ipcRenderer.invoke('config.getProviderCatalog'),
-    save: (config: Partial<AppConfig>): Promise<{ success: boolean; config: AppConfig }> =>
+    /**
+     * Saves config. **Can reject without throwing** — `httpProxy` is validated in
+     * main, so callers must check the `success` discriminant, not just catch.
+     */
+    save: (config: Partial<AppConfig>): Promise<ConfigSaveResult> =>
       ipcRenderer.invoke('config.save', config),
-    createSet: (payload: CreateSetPayload): Promise<{ success: boolean; config: AppConfig }> =>
+    // The config-set and custom-endpoint mutations signal failure by **rejecting**
+    // (cap reached, duplicate URL, endpoint in use, not found). They return no
+    // `success` flag: one that is always true only invites a dead branch.
+    createSet: (payload: CreateSetPayload): Promise<ConfigMutationResult> =>
       ipcRenderer.invoke('config.createSet', payload),
-    renameSet: (payload: {
-      id: string;
-      name: string;
-    }): Promise<{ success: boolean; config: AppConfig }> =>
+    renameSet: (payload: { id: string; name: string }): Promise<ConfigMutationResult> =>
       ipcRenderer.invoke('config.renameSet', payload),
-    deleteSet: (payload: { id: string }): Promise<{ success: boolean; config: AppConfig }> =>
+    deleteSet: (payload: { id: string }): Promise<ConfigMutationResult> =>
       ipcRenderer.invoke('config.deleteSet', payload),
-    switchSet: (payload: { id: string }): Promise<{ success: boolean; config: AppConfig }> =>
+    switchSet: (payload: { id: string }): Promise<ConfigMutationResult> =>
       ipcRenderer.invoke('config.switchSet', payload),
     // Custom endpoint CRUD. Returns the full config like the config-set methods,
     // so the renderer re-hydrates from one authoritative payload.
@@ -214,8 +220,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       baseUrl: string;
       apiKey?: string;
       defaultModel?: string;
-    }): Promise<{ success: boolean; config: AppConfig }> =>
-      ipcRenderer.invoke('config.createCustomEndpoint', payload),
+    }): Promise<ConfigMutationResult> => ipcRenderer.invoke('config.createCustomEndpoint', payload),
     updateCustomEndpoint: (payload: {
       id: string;
       name?: string;
@@ -223,12 +228,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       baseUrl?: string;
       apiKey?: string;
       defaultModel?: string;
-    }): Promise<{ success: boolean; config: AppConfig }> =>
-      ipcRenderer.invoke('config.updateCustomEndpoint', payload),
+    }): Promise<ConfigMutationResult> => ipcRenderer.invoke('config.updateCustomEndpoint', payload),
     /** Rejects when a config set still references the endpoint (design §3.2). */
-    deleteCustomEndpoint: (payload: {
-      id: string;
-    }): Promise<{ success: boolean; config: AppConfig }> =>
+    deleteCustomEndpoint: (payload: { id: string }): Promise<ConfigMutationResult> =>
       ipcRenderer.invoke('config.deleteCustomEndpoint', payload),
     isConfigured: (): Promise<boolean> => ipcRenderer.invoke('config.isConfigured'),
     test: (config: ApiTestInput): Promise<ApiTestResult> =>
@@ -768,21 +770,18 @@ declare global {
         get: () => Promise<AppConfig>;
         getPresets: () => Promise<ProviderPresets>;
         getProviderCatalog: () => Promise<ProviderCatalogEntry[]>;
-        save: (config: Partial<AppConfig>) => Promise<{ success: boolean; config: AppConfig }>;
-        createSet: (payload: CreateSetPayload) => Promise<{ success: boolean; config: AppConfig }>;
-        renameSet: (payload: {
-          id: string;
-          name: string;
-        }) => Promise<{ success: boolean; config: AppConfig }>;
-        deleteSet: (payload: { id: string }) => Promise<{ success: boolean; config: AppConfig }>;
-        switchSet: (payload: { id: string }) => Promise<{ success: boolean; config: AppConfig }>;
+        save: (config: Partial<AppConfig>) => Promise<ConfigSaveResult>;
+        createSet: (payload: CreateSetPayload) => Promise<ConfigMutationResult>;
+        renameSet: (payload: { id: string; name: string }) => Promise<ConfigMutationResult>;
+        deleteSet: (payload: { id: string }) => Promise<ConfigMutationResult>;
+        switchSet: (payload: { id: string }) => Promise<ConfigMutationResult>;
         createCustomEndpoint: (payload: {
           name: string;
           protocol: CustomProtocolType;
           baseUrl: string;
           apiKey?: string;
           defaultModel?: string;
-        }) => Promise<{ success: boolean; config: AppConfig }>;
+        }) => Promise<ConfigMutationResult>;
         updateCustomEndpoint: (payload: {
           id: string;
           name?: string;
@@ -790,10 +789,8 @@ declare global {
           baseUrl?: string;
           apiKey?: string;
           defaultModel?: string;
-        }) => Promise<{ success: boolean; config: AppConfig }>;
-        deleteCustomEndpoint: (payload: {
-          id: string;
-        }) => Promise<{ success: boolean; config: AppConfig }>;
+        }) => Promise<ConfigMutationResult>;
+        deleteCustomEndpoint: (payload: { id: string }) => Promise<ConfigMutationResult>;
         isConfigured: () => Promise<boolean>;
         test: (config: ApiTestInput) => Promise<ApiTestResult>;
         listModels: (payload: {

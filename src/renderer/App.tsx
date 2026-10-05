@@ -136,10 +136,20 @@ function App() {
         return;
       }
 
-      const result = await window.electronAPI.config.save(newConfig);
-      if (result.success) {
+      // `config.save` signals failure two ways: a rejection (store-level errors)
+      // and a `success: false` result (main's httpProxy validation, which carries
+      // no `config`). Neither was handled here before, so a failed save silently
+      // did nothing.
+      try {
+        const result = await window.electronAPI.config.save(newConfig);
+        if (!result.success) {
+          console.error('[App] Config save rejected:', result.error);
+          return;
+        }
         setIsConfigured(Boolean(result.config?.isConfigured));
         setAppConfig(result.config);
+      } catch (saveError) {
+        console.error('[App] Config save failed:', saveError);
       }
     },
     [setIsConfigured, setAppConfig]

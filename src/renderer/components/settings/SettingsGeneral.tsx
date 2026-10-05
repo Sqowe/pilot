@@ -77,7 +77,14 @@ export function SettingsGeneral() {
       }
     }
     try {
-      await window.electronAPI.config.save({ httpProxy: trimmed });
+      const result = await window.electronAPI.config.save({ httpProxy: trimmed });
+      // Main re-validates httpProxy because the checks above can be bypassed via
+      // devtools or a corrupted config on disk. Ignoring that rejection showed
+      // "Saved" for a value the store refused.
+      if (!result.success) {
+        setHttpProxyError(result.error || t('general.httpProxySaveFailed'));
+        return;
+      }
       setHttpProxyCommitted(trimmed);
       setHttpProxySaved(true);
       if (savedTimeoutRef.current !== null) clearTimeout(savedTimeoutRef.current);

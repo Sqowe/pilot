@@ -755,8 +755,19 @@ worse:
   try/catch, so a failed `config.save` silently does nothing.
 
 The honest fix is to make the type tell the truth across **all** mutation handlers plus the `App.tsx`
-call site. That is six pre-existing sites this phase did not introduce, so it lands as its own
-commit rather than as a footnote inside a credential refactor. Tracked as the next job.
+call site. That is six pre-existing sites this phase did not introduce, so it landed as its own
+commit rather than as a footnote inside a credential refactor.
+
+**Done** (2026-10-03, the commit after this one). Investigating it corrected the claim above: the
+contract is not uniformly dishonest, it is **inconsistent**. `config.save` genuinely does return
+`success: false` — three times, for `httpProxy` validation — and that branch carries **no `config`**,
+which the old type promised was always present. So the shape was wrong in both directions: a dead
+`success` flag on the seven throwing mutations, and an absent `config` the type guaranteed on the one
+fallible mutation. `ConfigSaveResult` (a discriminated union) and `ConfigMutationResult` (config only)
+now distinguish them, which made the compiler surface the unguarded `result.config` read immediately.
+Two further latent bugs were fixed at the same time: `App.tsx`'s dead `if (result.success)` with no
+`catch`, and `SettingsGeneral`'s ignored `success: false` that reported “Saved” for a proxy the store
+had refused — masked only because the renderer duplicates main's validation.
 
 **Verification:** five mutations injected into the new logic — custom sets falling through to a
 catalog slot, the endpoint's protocol being overridden by a stale set value, the delete guard

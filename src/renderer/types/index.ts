@@ -992,6 +992,36 @@ export interface CreateSetPayload {
   fromSetId?: string;
 }
 
+/**
+ * Result of a config mutation that can fail **without throwing**.
+ *
+ * Only `config.save` needs this: it performs server-side `httpProxy` validation
+ * and returns a structured rejection, because the renderer's own validation can
+ * be bypassed via devtools or a corrupted config on disk
+ * (`src/main/index.ts`, the `config.save` handler).
+ *
+ * A discriminated union rather than `{ success: boolean; config: AppConfig }`
+ * because the failure branch carries **no `config`**. The old shape claimed one
+ * was always present and let three call sites each get it wrong in a different
+ * way — a dead `if (result.success)` with no catch, an ignored `success: false`
+ * that reported "Saved", and an unguarded `result.config` read.
+ */
+export type ConfigSaveResult =
+  | { success: true; config: AppConfig }
+  | { success: false; error: string };
+
+/**
+ * Result of a config mutation whose only failure mode is a rejected promise.
+ *
+ * The config-set and custom-endpoint handlers validate by throwing (cap reached,
+ * duplicate URL, endpoint in use, not found) and the renderer catches and
+ * translates the message. They therefore carry no `success` flag: one that is
+ * always `true` is an invitation to write a dead branch.
+ */
+export interface ConfigMutationResult {
+  config: AppConfig;
+}
+
 /** Shared fields for both LLM and embedding memory runtime sub-configs. */
 export interface MemoryModelRuntimeConfigBase {
   inheritFromActive: boolean;

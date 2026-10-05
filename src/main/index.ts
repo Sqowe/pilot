@@ -2079,7 +2079,7 @@ ipcMain.handle('config.createSet', async (_event, payload: CreateConfigSetPayloa
   const previousConfig = configStore.getAll();
   configStore.createSet(payload);
   const updatedConfig = await syncConfigAfterMutation(previousConfig);
-  return { success: true, config: updatedConfig };
+  return { config: updatedConfig };
 });
 
 ipcMain.handle('config.renameSet', async (_event, payload: { id: string; name: string }) => {
@@ -2087,7 +2087,7 @@ ipcMain.handle('config.renameSet', async (_event, payload: { id: string; name: s
   const previousConfig = configStore.getAll();
   configStore.renameSet(payload);
   const updatedConfig = await syncConfigAfterMutation(previousConfig);
-  return { success: true, config: updatedConfig };
+  return { config: updatedConfig };
 });
 
 ipcMain.handle('config.deleteSet', async (_event, payload: { id: string }) => {
@@ -2106,7 +2106,7 @@ ipcMain.handle('config.deleteSet', async (_event, payload: { id: string }) => {
     scheduledTaskManager.handleConfigSetDeleted(payload.id);
   }
 
-  return { success: true, config: updatedConfig };
+  return { config: updatedConfig };
 });
 
 ipcMain.handle('config.switchSet', async (_event, payload: { id: string }) => {
@@ -2114,7 +2114,7 @@ ipcMain.handle('config.switchSet', async (_event, payload: { id: string }) => {
   const previousConfig = configStore.getAll();
   configStore.switchSet(payload);
   const updatedConfig = await syncConfigAfterMutation(previousConfig);
-  return { success: true, config: updatedConfig };
+  return { config: updatedConfig };
 });
 
 ipcMain.handle('config.isConfigured', () => {
@@ -2150,7 +2150,7 @@ ipcMain.handle(
     const previousConfig = configStore.getAll();
     configStore.createCustomEndpoint(payload);
     const updatedConfig = await syncConfigAfterMutation(previousConfig);
-    return { success: true, config: updatedConfig };
+    return { config: updatedConfig };
   }
 );
 
@@ -2171,7 +2171,7 @@ ipcMain.handle(
     const previousConfig = configStore.getAll();
     configStore.updateCustomEndpoint(payload);
     const updatedConfig = await syncConfigAfterMutation(previousConfig);
-    return { success: true, config: updatedConfig };
+    return { config: updatedConfig };
   }
 );
 
@@ -2182,7 +2182,7 @@ ipcMain.handle('config.deleteCustomEndpoint', async (_event, payload: { id: stri
   // point, not the UI, so an IPC caller cannot strand a set on a dangling id.
   configStore.deleteCustomEndpoint(payload);
   const updatedConfig = await syncConfigAfterMutation(previousConfig);
-  return { success: true, config: updatedConfig };
+  return { config: updatedConfig };
 });
 
 ipcMain.handle('workspace-instructions.getStatus', async (_event, requestedCwd?: string) => {

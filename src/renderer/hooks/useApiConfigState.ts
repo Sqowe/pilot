@@ -2159,6 +2159,13 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
           await onSave(payload);
         } else {
           const result = await window.electronAPI.config.save(payload);
+          // `config.save` can reject without throwing (main validates httpProxy),
+          // and that branch carries no `config`. Surface the reason rather than
+          // reading an absent field and reporting success.
+          if (!result.success) {
+            showErrorText(translateApiConfigErrorMessage(result.error, t));
+            return false;
+          }
           applyPersistedConfigToStore(result.config, presets);
         }
 
