@@ -133,8 +133,6 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     baseUrl: 'https://api.openai.com/v1',
     customProtocol: 'openai',
     model: 'gpt-5.4',
-    activeProfileKey: 'openai',
-    profiles: {},
     activeConfigSetId: 'default',
     configSets: [],
     claudeCodePath: '',
@@ -217,7 +215,6 @@ describe('probeWithClaudeSdk', () => {
         apiKey: '',
         baseUrl: 'http://127.0.0.1:8082',
         model: 'glm-5',
-        activeProfileKey: 'custom:anthropic',
       })
     );
 
@@ -326,7 +323,6 @@ describe('probeWithClaudeSdk', () => {
         apiKey: '',
         baseUrl: 'http://localhost:11434',
         model: 'qwen3.5:0.8b',
-        activeProfileKey: 'ollama',
       })
     );
 
@@ -352,7 +348,6 @@ describe('probeWithClaudeSdk', () => {
         apiKey: 'sk-test',
         baseUrl: 'http://127.0.0.1:8080',
         model: 'gpt-4.1-mini',
-        activeProfileKey: 'custom:openai',
       })
     );
 
@@ -381,7 +376,6 @@ describe('probeWithClaudeSdk', () => {
         apiKey: '',
         baseUrl: 'http://localhost:11434',
         model: 'qwen3.5:0.8b',
-        activeProfileKey: 'ollama',
       })
     );
 
@@ -417,7 +411,6 @@ describe('probeWithClaudeSdk', () => {
         baseUrl: 'https://openrouter.ai/api/v1',
         customProtocol: 'anthropic',
         model: 'z-ai/glm-5-turbo',
-        activeProfileKey: 'openrouter',
       })
     );
 

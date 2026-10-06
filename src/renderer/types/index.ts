@@ -919,14 +919,6 @@ export type BuiltinProfileKey =
 export type ProviderProfileKey = BuiltinProfileKey | `native:${string}`;
 export type ConfigSetId = string;
 
-export interface ProviderProfile {
-  apiKey: string;
-  baseUrl?: string;
-  model: string;
-  contextWindow?: number;
-  maxTokens?: number;
-}
-
 /**
  * Mirrors `ProviderCredentials` in src/main/config/config-store.ts.
  * Credentials for one provider id — global, one slot per provider.
@@ -955,6 +947,17 @@ export interface CustomEndpoint {
   updatedAt: string;
 }
 
+/**
+ * Mirrors `CredentialConflict` in main: a credential the one-time migration
+ * could not carry over, because two config sets held different keys for one
+ * provider. Ids only, never a key — `target` is a credential slot or a custom
+ * endpoint id, `setIds` the sets whose key was dropped.
+ */
+export interface CredentialConflict {
+  target: string;
+  setIds: string[];
+}
+
 /** Re-exported from shared/thinking-levels to keep renderer types consistent with main. */
 export type ModelThinkingLevel = SharedModelThinkingLevel;
 
@@ -970,16 +973,10 @@ export interface ApiConfigSet {
   provider: ProviderType;
   /** Which `customEndpoints` entry supplies the credential; custom sets only. */
   endpointId?: string;
-  /** Model selection, hoisted out of `profiles` — it describes the model, not the credential. */
+  /** Model selection — a set picks a provider and a model, and holds no credential. */
   model: string;
   contextWindow?: number;
   maxTokens?: number;
-  /** @deprecated Phase 2a legacy mirror; removed in Phase 2b. */
-  customProtocol: CustomProtocolType;
-  /** @deprecated Phase 2a legacy mirror; removed in Phase 2b. */
-  activeProfileKey: ProviderProfileKey;
-  /** @deprecated Phase 2a legacy mirror; removed in Phase 2b. */
-  profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
   enableThinking: boolean;
   /** Replaces enableThinking. Always a valid ModelThinkingLevel after normalization. */
   thinkingLevel: ModelThinkingLevel;
@@ -1076,23 +1073,21 @@ export interface AppConfig {
   apiKey: string;
   baseUrl?: string;
   customProtocol?: CustomProtocolType;
+  /** The custom endpoint the active set points at; custom sets only. */
+  endpointId?: string;
   model: string;
   contextWindow?: number;
   maxTokens?: number;
-  activeProfileKey: ProviderProfileKey;
-  profiles: Partial<Record<ProviderProfileKey, ProviderProfile>>;
   /**
-   * Global credential map, one slot per provider id.
-   *
-   * Optional on the renderer side because the Settings bootstrap predates these
-   * fields and hydrates defensively; main's `AppConfig` keeps them required and
-   * always populated. **Phase 1: a derived cache recomputed from `profiles` on
-   * every read — not authoritative, so do not write to these yet.** See
-   * docs/design/provider-credentials-and-model-sets.md §9.4.
+   * Global credential map, one slot per provider id. Authoritative: this is
+   * where a catalog provider's key and base URL live, and what the Settings
+   * form hydrates from. Written through `config.setProviderCredential`.
    */
-  providerCredentials?: ProviderCredentialMap;
-  /** User-created custom endpoints. Same Phase 1 caveat as above. */
-  customEndpoints?: CustomEndpoint[];
+  providerCredentials: ProviderCredentialMap;
+  /** User-created custom endpoints. Authoritative; written through the endpoint CRUD calls. */
+  customEndpoints: CustomEndpoint[];
+  /** Credentials the migration could not carry over. See `CredentialConflict`. */
+  credentialConflicts: CredentialConflict[];
   activeConfigSetId: ConfigSetId;
   configSets: ApiConfigSet[];
   claudeCodePath?: string;

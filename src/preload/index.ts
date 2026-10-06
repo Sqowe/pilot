@@ -232,6 +232,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** Rejects when a config set still references the endpoint (design §3.2). */
     deleteCustomEndpoint: (payload: { id: string }): Promise<ConfigMutationResult> =>
       ipcRenderer.invoke('config.deleteCustomEndpoint', payload),
+    /**
+     * Saves one catalog provider's credential without touching any config set.
+     * A field left out is left unchanged; `baseUrl: ''` removes the override.
+     * Rejects for `custom` — those credentials are endpoints.
+     */
+    setProviderCredential: (payload: {
+      provider: string;
+      apiKey?: string;
+      baseUrl?: string;
+    }): Promise<ConfigMutationResult> =>
+      ipcRenderer.invoke('config.setProviderCredential', payload),
     isConfigured: (): Promise<boolean> => ipcRenderer.invoke('config.isConfigured'),
     test: (config: ApiTestInput): Promise<ApiTestResult> =>
       ipcRenderer.invoke('config.test', config),
@@ -791,6 +802,11 @@ declare global {
           defaultModel?: string;
         }) => Promise<ConfigMutationResult>;
         deleteCustomEndpoint: (payload: { id: string }) => Promise<ConfigMutationResult>;
+        setProviderCredential: (payload: {
+          provider: string;
+          apiKey?: string;
+          baseUrl?: string;
+        }) => Promise<ConfigMutationResult>;
         isConfigured: () => Promise<boolean>;
         test: (config: ApiTestInput) => Promise<ApiTestResult>;
         listModels: (payload: {

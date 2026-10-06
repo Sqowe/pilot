@@ -74,7 +74,7 @@ describe('ConfigStore lightweight reads', () => {
     expect(normalizeSpy).toHaveBeenCalled();
   });
 
-  it('preserves behavior for profile reads through getAll()', () => {
+  it('preserves behavior for model and credential reads through getAll()', () => {
     const store = new ConfigStore();
 
     store.update({
@@ -88,6 +88,7 @@ describe('ConfigStore lightweight reads', () => {
     const config = store.getAll();
     expect(config.provider).toBe('openai');
     expect(config.apiKey).toBe('sk-openai');
-    expect(config.profiles.openai?.model).toBe('gpt-5.4');
+    expect(config.model).toBe('gpt-5.4');
+    expect(config.providerCredentials.openai?.apiKey).toBe('sk-openai');
   });
 });

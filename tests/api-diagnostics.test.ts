@@ -61,8 +61,6 @@ vi.mock('../src/main/config/config-store', () => ({
       apiKey: 'sk-test',
       baseUrl: 'https://api.openai.com/v1',
       model: 'gpt-4.1',
-      activeProfileKey: 'openai',
-      profiles: {},
       activeConfigSetId: 'default',
       configSets: [],
       isConfigured: true,

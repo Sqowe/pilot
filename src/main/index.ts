@@ -2185,6 +2185,26 @@ ipcMain.handle('config.deleteCustomEndpoint', async (_event, payload: { id: stri
   return { config: updatedConfig };
 });
 
+// Save one catalog provider's credential without touching any config set
+// (design §6.4). `config.save` cannot do this: it writes to the active set's
+// provider, and naming another provider there switches the set to it.
+//
+// Returns nothing the renderer could not already read — `config.get` carries
+// `providerCredentials`. The store validates the provider id and refuses
+// `custom`, whose credentials are endpoints with their own handlers above.
+//
+// Never log the payload: it carries an API key.
+ipcMain.handle(
+  'config.setProviderCredential',
+  async (_event, payload: { provider: string; apiKey?: string; baseUrl?: string }) => {
+    log('[Config] Saving provider credential:', payload?.provider);
+    const previousConfig = configStore.getAll();
+    configStore.setProviderCredential(payload);
+    const updatedConfig = await syncConfigAfterMutation(previousConfig);
+    return { config: updatedConfig };
+  }
+);
+
 ipcMain.handle('workspace-instructions.getStatus', async (_event, requestedCwd?: string) => {
   try {
     const { computeWorkspaceInstructionsStatus } = await import('./utils/workspace-system-prompt');

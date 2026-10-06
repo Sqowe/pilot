@@ -31,6 +31,10 @@ vi.mock('electron-store', () => {
       };
     }
 
+    delete(key: string): void {
+      delete this.store[key];
+    }
+
     clear(): void {
       this.store = {};
     }
@@ -52,7 +56,7 @@ describe('ConfigStore provider profiles', () => {
     const store = new ConfigStore();
 
     // Reproduces the config.save crash: saving a native catalog provider
-    // (activeProfileKey "native:zai") previously threw
+    // (credential slot "native:zai") previously threw
     // "Cannot read properties of undefined (reading 'apiKey')" because
     // getDefaultProfile()/cloneProfiles() only knew the 8 builtin profile keys.
     expect(() =>
@@ -70,18 +74,18 @@ describe('ConfigStore provider profiles', () => {
     expect(config.model).toBe('glm-5.2');
 
     const activeSet = config.configSets.find((s) => s.id === config.activeConfigSetId);
-    expect(activeSet?.activeProfileKey).toBe('native:zai');
-    expect(activeSet?.profiles['native:zai']?.apiKey).toBe('zai-secret-key');
+    expect(activeSet?.provider).toBe('zai');
+    expect(activeSet?.model).toBe('glm-5.2');
+    // The set selects a provider and a model; it holds no credential.
+    expect(JSON.stringify(activeSet)).not.toContain('zai-secret-key');
 
-    // Regression: native providers have no default baseUrl. Phase 2a routes the
-    // credential to the global `native:zai` slot, which omits baseUrl entirely
-    // when there is nothing to store, so the projection reports undefined rather
-    // than the '' the per-set profile used to carry. The original concern (never
-    // persisting a literal `undefined` into electron-store) is still covered:
-    // the credential object simply has no baseUrl key.
+    // Regression: native providers have no default baseUrl. The credential goes
+    // to the global `native:zai` slot, which omits baseUrl entirely when there is
+    // nothing to store. The original concern (never persisting a literal
+    // `undefined` into electron-store) is covered: the credential object simply
+    // has no baseUrl key.
     expect(config.providerCredentials['native:zai']?.apiKey).toBe('zai-secret-key');
     expect(config.providerCredentials['native:zai']?.baseUrl).toBeUndefined();
-    expect(activeSet?.profiles['native:zai']?.baseUrl).toBe('');
 
     // The flat projection must stay JSON-safe: electron-store persists via JSON
     // and throws TypeError on an undefined value. Native providers have no
@@ -93,7 +97,7 @@ describe('ConfigStore provider profiles', () => {
     }
   });
 
-  it('preserves native profile slots when re-normalizing persisted config', () => {
+  it('migrates a native provider credential out of the set and keeps it across reads', () => {
     mocks.seed = {
       // Realistic persisted shape: top-level legacy mirror reflects the active set.
       provider: 'minimax',
@@ -118,14 +122,22 @@ describe('ConfigStore provider profiles', () => {
       ],
     };
 
+    // `native:*` slots are dynamic, so a reader that walks only the eight
+    // builtin keys drops them — the bug the native catalog work fixed once
+    // already. Here it would lose the key during migration.
     const store = new ConfigStore();
     const config = store.getAll();
     const activeSet = config.configSets.find((s) => s.id === 'default');
-    expect(activeSet?.profiles['native:minimax']?.apiKey).toBe('mm-key');
-    expect(activeSet?.profiles['native:minimax']?.model).toBe('MiniMax-M2');
+    expect(config.providerCredentials['native:minimax']?.apiKey).toBe('mm-key');
+    expect(activeSet?.provider).toBe('minimax');
+    expect(activeSet?.model).toBe('MiniMax-M2');
+    expect(config.apiKey).toBe('mm-key');
+
+    // Reading again changes nothing: the migrated shape is stable.
+    expect(store.getAll()).toEqual(config);
   });
 
-  it('migrates legacy single-profile fields into active profile', () => {
+  it('migrates legacy single-profile fields into the provider credential', () => {
     mocks.seed = {
       provider: 'openai',
       customProtocol: 'openai',
@@ -141,14 +153,17 @@ describe('ConfigStore provider profiles', () => {
     const store = new ConfigStore();
     const config = store.getAll();
 
-    expect(config.activeProfileKey).toBe('openai');
+    expect(config.provider).toBe('openai');
     expect(config.apiKey).toBe('sk-legacy-openai');
-    expect(config.profiles.openai?.apiKey).toBe('sk-legacy-openai');
-    expect(config.profiles.openrouter?.apiKey).toBe('');
-    expect(config.profiles['custom:anthropic']?.apiKey).toBe('');
+    expect(config.model).toBe('gpt-5.2-mini');
+    expect(config.providerCredentials.openai?.apiKey).toBe('sk-legacy-openai');
+    // Derive, never invent: no other provider gains a slot, and no endpoint is
+    // made up for a custom provider the user never configured.
+    expect(Object.keys(config.providerCredentials)).toEqual(['openai']);
+    expect(config.customEndpoints).toEqual([]);
   });
 
-  it('switches provider without overwriting other provider profiles', () => {
+  it('switches provider without overwriting other providers credentials', () => {
     mocks.seed = {
       provider: 'openai',
       customProtocol: 'anthropic',
@@ -192,7 +207,13 @@ describe('ConfigStore provider profiles', () => {
 
     expect(switched.provider).toBe('openrouter');
     expect(switched.apiKey).toBe('sk-openrouter');
-    expect(switched.profiles.openai?.apiKey).toBe('sk-openai');
+    expect(switched.providerCredentials.openai?.apiKey).toBe('sk-openai');
+    expect(switched.providerCredentials.anthropic?.apiKey).toBe('sk-ant');
+    // The two custom slots each named a gateway, so each became an endpoint.
+    expect(switched.customEndpoints.map((e) => `${e.protocol} ${e.baseUrl}`).sort()).toEqual([
+      'anthropic https://custom.example/anthropic',
+      'openai https://custom.example/openai/v1',
+    ]);
 
     store.update({ provider: 'openai' });
     const back = store.getAll();
@@ -243,7 +264,7 @@ describe('ConfigStore provider profiles', () => {
     expect(customGeminiView.provider).toBe('custom');
     expect(customGeminiView.customProtocol).toBe('gemini');
     expect(customGeminiView.apiKey).toBe('AIza-relay');
-    expect(customGeminiView.profiles.gemini?.apiKey).toBe('AIza-official');
+    expect(customGeminiView.providerCredentials.gemini?.apiKey).toBe('AIza-official');
 
     store.update({ provider: 'gemini' });
     const geminiView = store.getAll();

@@ -401,10 +401,7 @@ export function ChatView() {
     if (!targetConfigSetId && activeSession.model) {
       // Fallback: match by model name for sessions created before configSetId was stored.
       // Only apply when exactly one config set matches to avoid ambiguous selection.
-      const matchingSets = configSets.filter((set) => {
-        const profile = set.profiles?.[set.activeProfileKey];
-        return profile?.model === activeSession.model;
-      });
+      const matchingSets = configSets.filter((set) => set.model === activeSession.model);
       if (matchingSets.length === 1) {
         targetConfigSetId = matchingSets[0].id;
       }

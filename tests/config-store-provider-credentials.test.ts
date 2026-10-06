@@ -140,8 +140,9 @@ describe('ConfigStore providerCredentials derivation', () => {
 
     const config = new ConfigStore().getAll();
 
-    expect(config.configSets[0].profiles.anthropic?.baseUrl).toBe('https://api.anthropic.com/');
     expect(config.providerCredentials.anthropic).toBeUndefined();
+    // And the set still runs against the default endpoint.
+    expect(config.baseUrl).toBe('https://api.anthropic.com');
   });
 
   it('does not invent a credential when the default URL differs only by host case', () => {
@@ -919,12 +920,11 @@ describe('ConfigStore customEndpoints derivation', () => {
 
   it('drops a hand-edited custom:* key with an invalid protocol before derivation', () => {
     // `cloneProfiles` only materializes the 8 valid builtin slots and preserves
-    // `native:*`, so an invalid key like `custom:bogus` is stripped during set
-    // normalization and never reaches the endpoint derivation. The guard inside
-    // `deriveCustomEndpoints` is defence-in-depth for a future caller that passes
-    // un-normalized sets; this test pins the invariant that makes it unreachable
-    // today, so a change to `cloneProfiles` fails here rather than silently
-    // emitting an endpoint with a guessed protocol.
+    // `native:*`, so an invalid key like `custom:bogus` is stripped when the
+    // legacy set is read and never reaches the endpoint derivation. The guard
+    // inside `deriveCustomEndpoints` is defence-in-depth; this test pins the
+    // outcome, so weakening either fails here rather than silently emitting an
+    // endpoint with a guessed protocol.
     seedSets([
       {
         id: 'default',
@@ -942,7 +942,7 @@ describe('ConfigStore customEndpoints derivation', () => {
 
     const config = new ConfigStore().getAll();
 
-    expect(Object.keys(config.configSets[0].profiles)).not.toContain('custom:bogus');
+    expect(JSON.stringify(config)).not.toContain('bogus');
     expect(config.customEndpoints.map((e) => e.baseUrl)).toEqual(['http://real:9000']);
     expect(
       config.customEndpoints.every((e) => ['anthropic', 'openai', 'gemini'].includes(e.protocol))

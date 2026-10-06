@@ -38,6 +38,10 @@ vi.mock('electron-store', () => {
       this.store = { ...this.store, ...key };
     }
 
+    delete(key: string): void {
+      delete this.store[key];
+    }
+
     clear(): void {
       this.store = {};
     }
@@ -415,12 +419,11 @@ describe('credential writes leave the config set (§4.1)', () => {
     expect(store.getAll().providerCredentials.openai?.apiKey).toBe('OAI-V1');
   });
 
-  it('mirrors every credential slot back onto the legacy profiles map', () => {
-    // The read half of the guard: the renderer hydrates `profiles` from the
-    // projection, so a slot it is about to re-send must already be current.
-    // Seeded so the stored mirror genuinely disagrees with the authoritative map
-    // — going through update() alone keeps them in sync and would not prove the
-    // overlay runs for *inactive* slots.
+  it('lets the stored credential outrank a stale legacy profile, active slot or not', () => {
+    // A config written by the Phase 1–2b builds: it already has the global map,
+    // and its per-set profiles are older than it. Migration must keep the map's
+    // value for every slot, not only the one the set points at — otherwise a key
+    // rotated while a different provider was active would be reverted.
     mocks.seed = {
       providerCredentials: {
         anthropic: { apiKey: 'ANT-NEW' },
@@ -444,10 +447,11 @@ describe('credential writes leave the config set (§4.1)', () => {
       activeConfigSetId: 'default',
     };
 
-    const profiles = new ConfigStore().getAll().profiles;
+    const config = new ConfigStore().getAll();
 
-    expect(profiles.openai?.apiKey).toBe('OAI-NEW'); // active slot
-    expect(profiles.anthropic?.apiKey).toBe('ANT-NEW'); // inactive slot
+    expect(config.providerCredentials.openai?.apiKey).toBe('OAI-NEW'); // active slot
+    expect(config.providerCredentials.anthropic?.apiKey).toBe('ANT-NEW'); // inactive slot
+    expect(config.apiKey).toBe('OAI-NEW');
   });
 
   it('does not let a stale custom:* slot revert an endpoint key', () => {
@@ -510,7 +514,7 @@ describe('credential writes leave the config set (§4.1)', () => {
   });
 });
 
-describe('legacy profile URL edits (Phase 2a bridge)', () => {
+describe('gateway URL edits', () => {
   beforeEach(() => {
     mocks.seed = {};
   });
@@ -527,29 +531,14 @@ describe('legacy profile URL edits (Phase 2a bridge)', () => {
     },
   };
 
-  /** Rewrite the set's legacy custom profile URL, as handleSave's payload does. */
-  function rewriteProfileUrl(store: ConfigStore, url: string): void {
-    store.update({
-      configSets: store.getAll().configSets.map((set) => ({
-        ...set,
-        profiles: {
-          ...set.profiles,
-          'custom:anthropic': { apiKey: 'k', baseUrl: url, model: 'm' },
-        },
-      })),
-    });
-  }
-
-  it('re-points a set when its legacy profile URL moves, leaving no stale twin', () => {
-    // `projectFromConfigSet` rebuilds the profile mirror from the resolved
-    // endpoint, so a pinned endpointId would otherwise win and the edit would
-    // vanish. And without pruning, each edit accumulates an endpoint until the
-    // cap starts evicting live ones.
+  it('re-points a set through its endpoint, leaving no stale twin', () => {
+    // The endpoint is the one place a gateway URL lives, so editing it moves the
+    // set and cannot leave the old address behind as a second entry.
     mocks.seed = { configSets: [legacyCustomSet], activeConfigSetId: 'default' };
     const store = new ConfigStore();
     expect(store.getAll().baseUrl).toBe('http://old-gw:9000');
 
-    rewriteProfileUrl(store, 'http://new-gw:9000');
+    store.update({ baseUrl: 'http://new-gw:9000' });
     const config = store.getAll();
 
     expect(config.baseUrl).toBe('http://new-gw:9000');
@@ -562,7 +551,7 @@ describe('legacy profile URL edits (Phase 2a bridge)', () => {
     const store = new ConfigStore();
 
     for (const url of ['http://gw-a:9000', 'http://gw-b:9000', 'http://gw-c:9000']) {
-      rewriteProfileUrl(store, url);
+      store.update({ baseUrl: url });
     }
 
     const config = store.getAll();
@@ -570,11 +559,33 @@ describe('legacy profile URL edits (Phase 2a bridge)', () => {
     expect(config.baseUrl).toBe('http://gw-c:9000');
   });
 
+  it('ignores a pre-split profiles map on an incoming config set', () => {
+    // `update({ configSets })` takes the current shape only. The migration reads
+    // the persisted file once; it never runs over a caller's payload, so a
+    // legacy `profiles` map supplied here can neither move the set nor mint an
+    // endpoint at the address it names.
+    mocks.seed = { configSets: [legacyCustomSet], activeConfigSetId: 'default' };
+    const store = new ConfigStore();
+
+    store.update({
+      configSets: store.getAll().configSets.map((set) => ({
+        ...set,
+        profiles: {
+          'custom:anthropic': { apiKey: 'other', baseUrl: 'http://elsewhere:9000', model: 'm' },
+        },
+      })),
+    } as never);
+
+    const config = store.getAll();
+    expect(config.baseUrl).toBe('http://old-gw:9000');
+    expect(config.apiKey).toBe('k');
+    expect(config.customEndpoints.map((e) => e.baseUrl)).toEqual(['http://old-gw:9000']);
+    expect(config.configSets[0]).not.toHaveProperty('profiles');
+  });
+
   it('keeps a CRUD-created endpoint across a config-set save', () => {
-    // The counterpart to pruning, and the case that matters most: a user-created
-    // endpoint has no legacy profile behind it and is referenced by no set, so a
-    // naive "unreferenced and undescribed" prune deletes it and its API key on
-    // the next handleSave. `update({ configSets })` is exactly that payload.
+    // A user-created endpoint is referenced by no set, so anything that pruned
+    // "unreferenced" entries would delete it and its API key on the next save.
     const store = new ConfigStore();
     store.createCustomEndpoint({
       name: 'standalone',
@@ -591,8 +602,6 @@ describe('legacy profile URL edits (Phase 2a bridge)', () => {
   });
 
   it('keeps a CRUD-created endpoint while another gateway URL is rewritten', () => {
-    // Eviction must be scoped to the endpoint whose own profile moved, not to
-    // every unreferenced entry in the list.
     mocks.seed = { configSets: [legacyCustomSet], activeConfigSetId: 'default' };
     const store = new ConfigStore();
     store.createCustomEndpoint({
@@ -602,7 +611,7 @@ describe('legacy profile URL edits (Phase 2a bridge)', () => {
       apiKey: 'own',
     });
 
-    rewriteProfileUrl(store, 'http://new-gw:9000');
+    store.update({ baseUrl: 'http://new-gw:9000' });
 
     const endpoints = store.getAll().customEndpoints;
     expect(endpoints.map((e) => e.baseUrl).sort()).toEqual([
@@ -729,9 +738,9 @@ describe('Phase 2b — the write path no longer carries profiles', () => {
     expect(store.getAll().apiKey).toBe('ANT-V2');
   });
 
-  it('still mirrors every slot back for the renderer to hydrate from', () => {
-    // `profiles` is read-only now, but the renderer's form still reads it, so the
-    // projection must keep it current until Phase 3 moves that read.
+  it('keeps every saved credential in the store the renderer hydrates from', () => {
+    // The form reads `providerCredentials` directly, so a key saved while one
+    // provider was active must still be there after the set moves to another.
     const store = new ConfigStore();
     store.update(
       handleSavePayload({
@@ -750,18 +759,15 @@ describe('Phase 2b — the write path no longer carries profiles', () => {
       }) as never
     );
 
-    const profiles = store.getAll().profiles;
-    expect(profiles.anthropic?.apiKey).toBe('ANT');
-    expect(profiles.openai?.apiKey).toBe('OAI');
+    const config = store.getAll();
+    expect(config.providerCredentials.anthropic?.apiKey).toBe('ANT');
+    expect(config.providerCredentials.openai?.apiKey).toBe('OAI');
   });
 
-  it('renders a profiles map wholly inert, including the stored mirror (§9.4)', () => {
-    // Nothing sends this any more, but the field is still accepted on the type, so
-    // the invariant has to hold against a caller that supplies it anyway. It must
-    // reach neither the credential (the rotation-reversal vector Phase 2a guarded
-    // against with a scoped write) nor the projection nor the set's own stored
-    // mirror — `projectFromConfigSet` overlays every slot from the authoritative
-    // store, so a hostile value is overwritten rather than merely ignored.
+  it('renders a profiles payload wholly inert (§9.4)', () => {
+    // Nothing sends this any more and the type no longer has it, but the
+    // invariant has to hold against a caller that supplies it anyway. It must
+    // reach neither the credential nor the projection, and must not be stored.
     const store = new ConfigStore();
     store.update(
       handleSavePayload({
@@ -781,8 +787,9 @@ describe('Phase 2b — the write path no longer carries profiles', () => {
     const config = store.getAll();
     expect(config.providerCredentials.anthropic?.apiKey).toBe('AUTHORITATIVE');
     expect(config.apiKey).toBe('AUTHORITATIVE');
-    expect(config.profiles.anthropic?.apiKey).toBe('AUTHORITATIVE');
-    expect(config.configSets[0].profiles?.anthropic?.apiKey).toBe('AUTHORITATIVE');
+    expect(config).not.toHaveProperty('profiles');
+    expect(config.configSets[0]).not.toHaveProperty('profiles');
+    expect(JSON.stringify(config)).not.toContain('FROM-PROFILES');
   });
 
   it('does not invent a credential slot from a profiles payload', () => {
@@ -803,7 +810,7 @@ describe('Phase 2b — the write path no longer carries profiles', () => {
     } as never);
 
     expect(store.getAll().providerCredentials['native:zai']).toBeUndefined();
-    expect(store.getAll().profiles['native:zai']).toBeUndefined();
+    expect(JSON.stringify(store.getAll())).not.toContain('INVENTED');
   });
 
   it('treats a profiles-only payload as a no-op, without churning updatedAt', () => {

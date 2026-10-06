@@ -1,8 +1,8 @@
 # Provider Credentials & Model Sets — Design & Implementation Plan
 
 **Created:** 2026-10-02
-**Status:** Design approved. **Phases 0, 1, 2a, 2b complete** (2026-10-03). Phase 3 next. Each phase
-stops for review.
+**Status:** Design approved. **Phases 0, 1, 2a, 2b, 3 complete** (Phase 3: 2026-10-05). Phase 4
+next. Each phase stops for review.
 **Author:** AI-assisted design session
 **Baseline:** pi-ai / pi-coding-agent **0.87.1**, app **1.0.8** (HEAD `90136401`). Verified against
 source 2026-10-03; §13 records what the original 0.85.1/1.0.7 draft got wrong.
@@ -484,7 +484,7 @@ that setup's `exampleModel` ([`api-provider-guidance.ts`](../../src/shared/api-p
 | 1 — main-process model  | ✅ **done** 2026-10-03 | types + one-directional derivation, 40 new tests, external review ✔️  |
 | 2a — store inversion    | ✅ **done** 2026-10-03 | resolveCredentials + endpointId + CRUD/IPC, 28 new tests              |
 | 2b — write-path cutover | ✅ **done** 2026-10-03 | handleSave drops `profiles`; §9.4 holds structurally                  |
-| 3 — renderer state      | —                      | —                                                                     |
+| 3 — renderer state      | ✅ **done** 2026-10-05 | old fields removed end to end; two state slices; 141 new tests        |
 | 4 — UI                  | —                      | —                                                                     |
 | 5 — first-run wizard    | —                      | —                                                                     |
 | 6 — docs                | —                      | —                                                                     |
@@ -815,21 +815,286 @@ reaches it, but `update({ configSets })` is a public store API that still accept
 removing support would silently turn a profile-URL edit into a no-op. Verified by deleting it: three
 Phase 2a bridge tests fail. It goes in Phase 3 with the field.
 
-### Phase 3 — renderer state (now also owns the type removal)
+### Phase 3 — renderer state and the type removal (**done** 2026-10-05)
 
-Rework `useApiConfigState.ts` (2511 lines today) into two slices — `useProviderCredentials` and
-`useModelSets` — with independent dirty tracking (§6.4).
+The plan for this phase was: rework `useApiConfigState.ts` into two slices —
+`useProviderCredentials` and `useModelSets` — with independent dirty tracking (§6.4); hydrate from
+`providerCredentials` / `customEndpoints` instead of `config.profiles`; then delete `profiles` and
+`activeProfileKey` from `ApiConfigSet` and `AppConfig`, the mirror overlay in `projectFromConfigSet`,
+and the `update({ configSets })` pin-drop bridge.
 
-**Inherited from Phase 2b:** hydrate from `providerCredentials` / `customEndpoints` instead of
-`config.profiles`, then delete `profiles` and `activeProfileKey` from `ApiConfigSet` and `AppConfig`,
-the mirror overlay in `projectFromConfigSet`, and the `update({ configSets })` pin-drop bridge. The
-work does not grow: those reads live in the same helpers already listed here.
+All of that landed. Reading the code before starting turned up four things the plan did not have,
+and each changed what was built.
 
-The coupled helpers that must be re-expressed: `buildApiConfigSnapshot` (`:437`), `toPersistedProfiles` (`:499`),
-`buildApiConfigDraftSignature` (`:520`), `buildApiConfigSets` (`:538`), `buildApiConfigBootstrap`
-(`:638`), `handleSave` (`:2091`). Also
-[`ChatView.tsx:405`](../../src/renderer/components/ChatView.tsx#L405) — the last `.profiles` read
-outside the hook, a model-matching fallback for sessions predating `configSetId`.
+#### What the pre-implementation read found
+
+1. **`contextWindow` / `maxTokens` had stopped being saved in Phase 2b.** They never had top-level
+   keys in the save payload — they travelled inside `profiles`, so dropping that field dropped them.
+   `update()` only changes a limit when its key is present. The payload-shape test asserted
+   `arrayContaining`, which is why nobody noticed. Fixed first, as its own commit (`ddecc9c6`). A
+   second, older half of the same bug went with it: neither field was in the draft signature, so
+   switching config sets dropped an edit to them without the unsaved-changes dialog (present in the
+   released 1.0.8).
+2. **Removing the fields from the types does not remove them from the file.** `saveConfig` calls
+   `store.set(normalized)`, and conf's `set(object)` assigns the keys it is given and removes none
+   (`conf/dist/source/index.js`, `set()`; the store's own comment on `httpProxy` says the same). The
+   top-level `profiles` map would have stayed on disk for good: a frozen copy of every API key, and —
+   because the legacy reader trusts those fields over a lone default set — an input that rolls a
+   single-set install back to the frozen values. **Reproduced by mutation:** with the delete
+   disabled, `keeps a model change on a single-set install across a restart` fails. `ensureNormalized`
+   now deletes both keys once the migrated result is persisted.
+3. **§9.3 had no phase, and this phase destroys its evidence.** Nothing recorded which sets lost a
+   key, and once per-set `profiles` leave the file the disagreement can no longer be detected.
+   Recorded now — see `credentialConflicts` below.
+4. **There was no way to save a catalog provider's key without touching the active set.** The only
+   write route was `config.save`, which writes to the active set's provider, and naming another
+   provider there switches the set to it. Independent saves (§6.4) need one more call:
+   `config.setProviderCredential`.
+
+#### Decisions taken with the user before starting
+
+| #   | Question                                               | Decision                                                                                   |
+| --- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| 1   | Token-limit fix inside Phase 3 or before it?           | Own commit, before.                                                                        |
+| 2   | How do the current screens keep working until Phase 4? | `useApiConfigState` stays, as a thin layer over the two slices with the same interface.    |
+| 3   | Add the credential-save call now?                      | Yes.                                                                                       |
+| 4   | Which model shows when a set's provider changes?       | The new provider's default; what was typed per provider is remembered until save or close. |
+| 5   | Remove `customProtocol` from the set too (§3.3)?       | Yes.                                                                                       |
+| 6   | Record which providers had disagreeing keys (§9.3)?    | Yes — ids only, never a key.                                                               |
+| 7   | Is "1.0.8 or older will not find the keys" acceptable? | Yes, with a changelog note.                                                                |
+
+#### As built — main process
+
+| File                                        | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main/config/config-store.ts`           | `ApiConfigSet` loses `profiles` / `activeProfileKey` / `customProtocol`; `AppConfig` loses `profiles` / `activeProfileKey` and gains `endpointId?` and `credentialConflicts`. The legacy reader becomes a **one-time migration** (`needsLegacyMigration` → `migrateLegacyCredentialShape`); the mirror overlay, the pin-drop bridge, `evictStaleDerivedEndpoints` and the profile scrub in `deleteCustomEndpoint` are deleted. New: `setProviderCredential`, `normalizeProviderCredentials`, `normalizeCustomEndpoints`, `detectCredentialConflicts`, `normalizeCredentialConflicts`. `update()` accepts `endpointId`. |
+| `src/shared/custom-endpoint-key.ts`         | **new** — `canonicalBaseUrl` / `customEndpointKey` / `defaultCustomEndpointName`, moved out of the store so the renderer compares endpoint addresses the same way main does.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `src/main/index.ts`, `src/preload/index.ts` | `config.setProviderCredential` handler, bridge method and `ElectronAPI` declaration. Goes through `syncConfigAfterMutation`; logs the provider id only.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+
+**From "derive on every read" to "migrate once".** Through Phase 2b the legacy reader ran on every
+`getAll()`, because the data it read (`profiles`) was still part of the shape. With the fields gone
+it has nothing to read after the first start — but it must not _run_ either, since it also contains
+the rule that rebuilds a lone default set from the flat fields. `needsLegacyMigration` decides from
+what the config contains: a pre-split key anywhere, no config sets, or — for a config older than
+`profiles` itself — flat fields that hold something the credential store and the lone default set do
+not account for. In a current config the flat fields are _projected from_ the sets and the store, so
+that last test can never be true. No `configSchemaVersion` bump: §5's "validate-and-coerce" holds.
+
+**`AppConfig.endpointId`.** Not in §3.4. It is the active custom set's endpoint, projected like
+`provider` and `model`, and accepted by `update()` — which is how a set is re-pointed (`''` unpins;
+an unknown id is refused rather than stored as a dangling pointer; ignored for a catalog provider).
+§4.1 lists `endpointId` among the fields `update()` routes to the active set, but there was no key
+to carry it.
+
+**`credentialConflicts`** (§9.3): `Array<{ target, setIds }>`. `target` is a credential slot or an
+endpoint id, `setIds` the sets whose differing key was dropped — compared against the credential
+that was _kept_, so the record says exactly what was lost. An entry clears when the user saves that
+credential again (by any route) and is dropped when every set it names has been deleted. Phase 4
+surfaces it on the provider row. Known imprecision: on a machine that ran the Phase 2a/2b
+development builds, a key rotated there reads as a conflict, because those builds mirrored the new
+key onto the active set's legacy profile only. It affects no released version.
+
+**`update({ configSets })` takes the current shape only.** A pre-split `profiles` map on an incoming
+set is ignored, not migrated: the migration reads the persisted file once and never a caller's
+payload. Nothing in the app sends one (verified: no main-process caller passes `configSets`).
+
+#### As built — renderer
+
+| File                                                                                                              | Role                                                                                                                                                             |
+| ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hooks/provider-credentials-state.ts`                                                                             | **new**, pure. Credential _targets_ (a provider slot, an endpoint, an endpoint not created yet), drafts per target, dirty detection, and the plan of save calls. |
+| `hooks/model-sets-state.ts`                                                                                       | **new**, pure. Set list, the active set's draft, signature, save payload, per-session model memory, reducer.                                                     |
+| `hooks/useProviderCredentials.ts`                                                                                 | **new**. Saves each edited credential through its own call: `setProviderCredential`, or the endpoint CRUD calls.                                                 |
+| `hooks/useModelSets.ts`                                                                                           | **new**. Saves the active set through `config.save` with a payload that names no credential field; set CRUD; thinking capabilities.                              |
+| `hooks/useApiConfigState.ts`                                                                                      | **rewritten**, 2577 → 759 lines. Composes the two slices behind the interface `SettingsAPI` and `ConfigModal` already use.                                       |
+| `hooks/api-config-shared.ts`                                                                                      | **new**, pure. Helpers both slices use; the catalog and slot helpers moved here verbatim and are still re-exported from `useApiConfigState`.                     |
+| `hooks/useApiConnectivity.ts`, `useCustomEndpointGuidance.ts`, `useApiConfigSource.ts`, `useApiConfigMessages.ts` | **new**. Connection test / diagnostics / Ollama discovery, custom-endpoint hints, loading, and the message line — moved out of the old hook.                     |
+| `types/index.ts`                                                                                                  | Old fields removed; `providerCredentials` / `customEndpoints` / `credentialConflicts` required; `endpointId?`.                                                   |
+| `components/ChatView.tsx`                                                                                         | The model-matching fallback reads `set.model`.                                                                                                                   |
+
+`SettingsAPI.tsx` and `ConfigModal.tsx` are untouched.
+
+**The two dirty domains (§6.4).** A credential edit is tracked against the credential it changes,
+not against the open set — so a key typed for one provider is still pending after the form moves to
+another, and Save writes every edited credential, not only the visible one. (Since Phase 2b a key
+typed on another provider tab was dropped on save without notice.) Save runs credentials first, then
+the set: an endpoint created in the first step is what the set has to point at. Each step is its own
+call, so a failure in one leaves the other exactly as it was.
+
+The one place both halves share a payload is `buildCombinedSavePayload`, used only when the caller
+performs the save itself (`onSave` — the first-run dialog and the browser preview). There is one
+provider and one set on first run, so the store routing the credential is exactly what is wanted.
+Phase 5 replaces that dialog.
+
+**Custom endpoints in a form that has no endpoint list yet.** Until Phase 4 the form is still "this
+set's URL and key", so three rules stand in for the missing picker:
+
+- A custom set shows the endpoint it points at; switching a catalog set to Custom shows a blank
+  endpoint. An existing endpoint is never picked on the user's behalf — it may be shared, and typing
+  into it would move every set on it.
+- Typing an address that already has an endpoint points the set at that endpoint instead of creating
+  a twin. The key on screen is passed on only if the user typed it in the same edit; otherwise it
+  belongs to the endpoint being left.
+- Editing the address or key of a set's own endpoint edits the endpoint in place, exactly as
+  `update()` has done since Phase 2a. **This also moves every other set on that endpoint**, which
+  the form cannot show. Phase 4's endpoint list is what makes that visible.
+
+#### Behaviour that changed, each visible as a test
+
+- **A blank set on a custom provider points at the same endpoint** as the set it was created from,
+  and is usable straight away. Before, it resolved to an empty credential — the §1.2 complaint, left
+  unfixed for the one provider where the "provider" is an endpoint.
+- **A custom set is never given an invented model.** `defaultModelFor('custom')` returns the
+  endpoint's own `defaultModel` or nothing; it used to fall back to the slot default (`glm-5` for an
+  Anthropic-protocol gateway). The renderer shows a custom set's model as typed in every case —
+  before, one that shared an id with a "More Models" preset was treated as picked, leaving the typed
+  field empty while a model was in fact saved.
+- **A new custom endpoint starts with an empty address** on the Anthropic protocol. The form used to
+  show the store's default for that slot (`https://open.bigmodel.cn/api/anthropic`).
+- **Saving a custom provider requires a base URL.** An endpoint is identified by its address; before,
+  the store silently dropped the write.
+- **Renaming a set, or deleting another one, keeps unsaved edits.** Both used to reload the whole
+  form.
+- **A legacy "Ollama on a custom OpenAI endpoint" set** is still shown as Ollama, but Ollama's own
+  credential now shows its usual local address, not a copy of the endpoint's.
+
+#### Tests
+
+| File                                                  | Tests | Covers                                                                                                                                                               |
+| ----------------------------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/config-store-credential-migration.test.ts`     | 41    | **new** — migration from the 1.0.8 shape, on-disk key removal, one-time-ness across restarts, conflict record, `setProviderCredential`, set-only saves, `endpointId` |
+| `tests/api-config-provider-credentials-state.test.ts` | 39    | **new** — targets, hydration, dirty detection, the save plan                                                                                                         |
+| `tests/api-config-draft-independence.test.ts`         | 11    | **new** — §8.1's "Draft independence": the renderer's payloads fed to the real store, each half compared before and after                                            |
+| `tests/api-config-state-render.test.ts`               | 9     | **new** — first render of the composed hook for eight config shapes                                                                                                  |
+| `tests/api-config-state-config-sets.test.ts`          | 36    | rewritten for the set slice (was 8)                                                                                                                                  |
+| `tests/api-config-state-thinking-level.test.ts`       | 15    | re-pointed at `modelSetsReducer`                                                                                                                                     |
+| `tests/api-config-state.test.ts`                      | 48    | the eight snapshot and source-text tests re-expressed against the slices; the rest untouched                                                                         |
+| 15 further files                                      | —     | assertions on the removed fields replaced; fixtures lose the two keys                                                                                                |
+
+**Gates:** typecheck clean; `npm test` **3662 passed / 237 files** (3521 after the token-limit
+commit); lint 0 errors, the same 16 pre-existing warnings.
+
+**Verification beyond "tests pass":** 31 mutations were injected into the new store and state logic.
+28 were caught at once. The other three were all informative:
+
+- Two rules had no test reaching them — a flat-only config that differs from the defaults _only_ by
+  its key, and an unknown `endpointId` sent for a catalog provider. Tests added; both mutations now
+  fail.
+- One piece of code was redundant: `migrateLegacyCredentialShape` stripped the pre-split fields from
+  its output, but the rest of normalization reads only current fields, so they never reached the
+  result anyway. Removed, and the comment that credited it with making the migration one-time was
+  corrected — what does that is the persisted result plus the on-disk delete.
+
+**External review: split into three parts, one approved, two not re-checked.** The change is
+499,969 characters of diff against a 250,000 limit per review, and the two largest files alone come
+to 224,000, so it could not go in two parts either. It was reviewed as three self-contained parts
+from a scratch clone, so nothing in the working tree was staged, stashed or committed for the sake
+of a review. The refused first run counts against the cap of five, which left one pass per part and
+a single re-check:
+
+| Part                                | First pass                  | After fixes                         |
+| ----------------------------------- | --------------------------- | ----------------------------------- |
+| A — store, IPC, store tests         | 1 blocking, 1 medium, 1 low | **not re-reviewed**                 |
+| B — pure state modules and tests    | 1 blocking, 2 medium, 1 low | **not re-reviewed**                 |
+| C — hooks and the tests beside them | 1 blocking, 3 medium        | **approved** (3 medium, 1 low left) |
+
+What the review found, by outcome:
+
+- **Real, fixed — a stale `endpointId` / `contextWindow` / `maxTokens` in the file** (part A). The
+  same mechanism as finding 2 above, in a place it had not been applied: the optional projected
+  fields are present only while the active set has them, and `set(object)` never removes one.
+  `saveConfig` now deletes them. Harmless to every reader — none trusts the raw value — but the
+  stored projection described a set that was no longer active.
+- **Real, fixed — three rules for one address** (part B). What the form showed, what it compared and
+  what it sent each treated the base URL slightly differently (Ollama's `/v1` normalization, a cloud
+  provider's preset, an endpoint's canonical form). In practice the saved edit is dropped after a
+  save, so nothing stuck — but that was the caller covering for the module. `savedBaseUrl` is now the
+  one rule, and the store normalizes an Ollama address on write, as it did before the split.
+- **Real, fixed — a config dropped in the browser preview** (part C). The loaded-config handler was
+  put in a ref from an effect that runs _after_ the loader's. With IPC the loader awaits first and
+  the order does not matter; with nothing to await it reported back to a ref that was still empty.
+  Both refs are now assigned during render.
+- **Real, fixed — two races the old hook already had** (part C): a connection test or diagnosis
+  answer arriving after the form had moved on was still shown, and an Ollama discovery that changed
+  the address triggered the address-change reset, which threw away the list discovery had just
+  filled. Results are now generation-checked, and the reset fires only on a real change.
+- **Real, fixed — a capability query that ran a render late** (part C): the protocol and address
+  were handed to `useModelSets` as state set from an effect, so the first query after every open
+  went to the wrong place. Now resolved during render.
+- **Hardening, done** (part B): `buildConfigSets` copies the known fields instead of spreading what
+  came over IPC, so nothing else on an incoming set can reach renderer state.
+- **Not real, disproved by test** (part A, its blocking finding): "`setProviderCredential` never
+  re-projects the flat fields, so `get('apiKey')` keeps the old key". `saveConfig` normalizes before
+  it writes. Two tests now assert it against both the direct read and the file.
+- **Not real** (part A): "`isFreshInstall` is unused" — it is used further down `normalizeConfig`,
+  outside the lines the reviewer was shown. And part C's blocking finding overstated its reach:
+  opening Settings did not wipe a saved Ollama model, because one that is not built-in loads as
+  typed and the reset only ever cleared a _picked_ one.
+
+The remarks left on part C's approval were applied afterwards and have **not** been reviewed: the
+created-endpoint id handoff now fails loudly instead of saving a set that points at nothing, the
+connection test asks for an address wherever Save does, and the custom-model debounce no longer
+carries the previous set's model across a switch.
+
+Five mutations of the review fixes were run afterwards; all five are caught.
+
+**Manual pass (2026-10-06), partial.** The development build was started against the user's real
+settings — backed up first, restored byte for byte afterwards — and the main-process log was
+followed while the user worked in Settings → API. The suite cannot run the hooks' effects (there is
+no component-test setup: `environment: 'node'`, no DOM library), so this is the only evidence for
+them.
+
+Seen working, each without an error in the log:
+
+- **The conversion of a real 1.0.8 file.** `config.json` went from 12,305 to 5,841 bytes; the active
+  set came up on its provider with its key, and the app reported itself configured.
+- **A set save carries no credential.** Model and thinking-level changes sent only the set's fields,
+  and the key was still set after each.
+- **Token limits are saved**, as numbers, including an edit to max tokens alone.
+- **Switching sets**, including to a custom set, which resolved its own address, key and model.
+- **Renaming a set.**
+- **A blank set created from a custom set** pointed at the same endpoint and started on that
+  endpoint's default model.
+- **Re-pointing by address.** Typing an address that already had an endpoint pointed the set at it,
+  with no call that changes an endpoint; the key that was on screen from the previous endpoint was
+  not written over the new one's.
+
+Not exercised — none of these calls appears in the log: changing a key (`setProviderCredential` and
+`updateCustomEndpoint` were never invoked), creating an endpoint from scratch, deleting a set, Ollama
+discovery, and a restart of the converted build. Whether the unsaved-changes dialog appeared on the
+switches cannot be told from the log.
+
+**Found by the user: two custom providers cannot be told apart or chosen.** With a local gateway
+and a hosted one both configured, the provider field says "Custom" for either, the endpoint's name
+is shown nowhere, and the only way to move a set to the other is to retype its address. The store
+keeps them apart correctly (each set ran against its own endpoint); what is missing is the chooser.
+This is Phase 4's endpoint list and the provider control on the set — confirmed as the next thing
+to build, not patched into the screen Phase 4 retires. Also now untrue on that screen: the hint
+under API Key, `api.apiKeyDescription` ("Saved locally and scoped to the active configuration set").
+
+Two practical notes for the next manual run. The development build uses the **same** data folder
+as the installed app (`app.setName('sqowe-pilot')`,
+[`migration/bootstrap.ts:22`](../../src/main/migration/bootstrap.ts#L22)), so its first start
+converts the installed app's settings file one-way: quit the installed app and back the file up
+first. And when it is started from a terminal that an editor spawned, `ELECTRON_RUN_AS_NODE=1` is
+inherited and Electron starts as plain Node (`electron.app` is undefined at the first line that uses
+it) — start it with `env -u ELECTRON_RUN_AS_NODE npm run dev`.
+
+**Left for later phases:** the error strings main throws for endpoints (duplicate address, cap
+reached, in use) are shown untranslated — the form can now reach the first two. They belong with
+Phase 4's endpoint UI and its four locale files.
+
+#### What §§1–12 say that is no longer current
+
+- §3.3 / §3.4 are now the shape in the code, plus `AppConfig.endpointId?` and
+  `AppConfig.credentialConflicts`.
+- §4: `projectFromConfigSet` and `composeProjectedConfig` take the credential store as it is; nothing
+  is derived from a set outside the one-time migration.
+- §9.4 is closed: there is one source of truth, and no code path that could create a second.
+- §8.2's eleven coupled test files are all migrated. `chat-view-config-set-restore.test.ts` asserts
+  source text, so it needed a new assertion rather than a migration; `provider-type-widening.test.ts`
+  was missing from that list and needed no change, because the helpers it imports are still exported
+  from `useApiConfigState`.
 
 ### Phase 4 — UI
 
@@ -933,7 +1198,14 @@ Providers tab should flag any provider whose credential came from more than one 
 honest version: record the losing value's origin during normalization and surface a one-line
 notice on that provider row.
 
+**Recorded since Phase 3** as `AppConfig.credentialConflicts` — ids only, never a key. It had to
+land with the migration rather than with the UI: once per-set `profiles` leave the file, the
+disagreement can no longer be detected. Showing it is Phase 4.
+
 ### 9.4 Two sources of truth during the transition
+
+> **Closed in Phase 3.** `profiles` no longer exists on any type or in the persisted file, so there
+> is nothing left to disagree with `providerCredentials`. The text below is the history.
 
 `profiles` on a set and `providerCredentials` on `AppConfig` must never both be **authoritative**.
 

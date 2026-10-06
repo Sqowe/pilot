@@ -58,7 +58,13 @@ describe('ChatView config set restore on session open', () => {
   });
 
   it('only applies model-based fallback when exactly one config set matches', () => {
-    expect(source).toContain('const matchingSets = configSets.filter((set) => {');
+    // The model is a field of the config set itself; it used to be read out of
+    // the set's per-provider credential map.
+    expect(source).toContain(
+      'const matchingSets = configSets.filter((set) => set.model === activeSession.model);'
+    );
+    expect(source).not.toMatch(/\.profiles\b/);
+    expect(source).not.toContain('activeProfileKey');
     expect(source).toContain('if (matchingSets.length === 1) {');
   });
 

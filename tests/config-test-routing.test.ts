@@ -19,8 +19,6 @@ function createConfig(): AppConfig {
     baseUrl: 'https://api.openai.com/v1',
     customProtocol: 'openai',
     model: 'gpt-4.1',
-    activeProfileKey: 'openai',
-    profiles: {},
     activeConfigSetId: 'default',
     configSets: [],
     claudeCodePath: '',
@@ -72,7 +70,6 @@ describe('runConfigApiTest', () => {
         apiKey: '',
         baseUrl: 'http://localhost:11434',
         model: 'qwen3.5:0.8b',
-        activeProfileKey: 'ollama',
       }
     );
 
@@ -96,7 +93,6 @@ describe('runConfigApiTest', () => {
         ...createConfig(),
         provider: 'gemini',
         customProtocol: 'gemini',
-        activeProfileKey: 'gemini',
         apiKey: 'AIza-test',
         baseUrl: 'https://generativelanguage.googleapis.com',
         model: 'gemini/gemini-2.5-flash',

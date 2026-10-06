@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Where API keys are stored.** Keys and base URLs are now kept once per provider, and
+  custom endpoints as a list of their own, instead of inside each config set. Existing
+  settings are converted on the first start; config sets, their names, models and thinking
+  levels are kept as they are. Where two config sets held different keys for the same
+  provider, one key is kept — the active set's first.
+  The conversion is one-way: if an older version of the app (1.0.8 or earlier) is started
+  afterwards, it will not find the keys, and they have to be entered again there.
+
+### Fixed
+
+- An edit to the **Context window** or **Max output tokens** field in Settings → API now
+  counts as an unsaved change. Before, a form that differed only there looked saved, so
+  switching to another config set dropped the edit without asking.
+
 ## [1.0.8] - 2026-10-05
 
 ### Added

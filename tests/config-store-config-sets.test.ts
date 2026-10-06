@@ -135,15 +135,20 @@ describe('ConfigStore config sets', () => {
     const blankSet = created.configSets.find((set) => set.id !== 'default');
     expect(blankSet).toBeTruthy();
     expect(blankSet?.provider).toBe('custom');
-    expect(blankSet?.customProtocol).toBe('openai');
     expect(blankSet?.enableThinking).toBe(false);
-    expect(blankSet?.profiles['custom:openai']?.apiKey).toBe('');
-    expect(blankSet?.profiles['custom:openai']?.baseUrl).toBe('https://api.openai.com/v1');
-    expect(blankSet?.profiles['custom:openai']?.model).toBe('gpt-5.4');
+    // For a custom provider the endpoint *is* the provider, so a blank set points
+    // at the same one and starts on that endpoint's default model. It carries no
+    // credential of its own, and it is usable straight away — the same promise a
+    // blank set on a catalog provider already kept.
+    expect(created.customEndpoints).toHaveLength(1);
+    expect(blankSet?.endpointId).toBe(created.customEndpoints[0].id);
+    expect(blankSet?.model).toBe('custom-model');
+    expect(blankSet).not.toHaveProperty('profiles');
     expect(created.activeConfigSetId).toBe(blankSet?.id);
     expect(created.provider).toBe('custom');
     expect(created.customProtocol).toBe('openai');
-    expect(created.apiKey).toBe('');
+    expect(created.baseUrl).toBe('https://example.com/v1');
+    expect(created.apiKey).toBe('sk-existing');
   });
 
   it('allows renaming default set but still blocks deleting it', () => {
@@ -169,9 +174,13 @@ describe('ConfigStore config sets', () => {
     const blankSet = created.configSets.find((set) => set.id !== 'default');
 
     expect(blankSet?.provider).toBe('gemini');
-    expect(blankSet?.profiles.gemini?.apiKey).toBe('');
-    expect(blankSet?.profiles.gemini?.baseUrl).toBe('https://generativelanguage.googleapis.com');
-    expect(blankSet?.profiles.gemini?.model).toBe('gemini-2.5-flash');
+    // The provider's default model, not the one the source set was on.
+    expect(blankSet?.model).toBe('gemini-2.5-flash');
+    // The credential is the provider's global slot, so the blank set runs on the
+    // key that is already there.
+    expect(created.activeConfigSetId).toBe(blankSet?.id);
+    expect(created.apiKey).toBe('AIza-existing');
+    expect(created.baseUrl).toBe('https://generativelanguage.googleapis.com');
   });
 
   it('persists theme preference across config mutations', () => {

@@ -7,8 +7,6 @@ const mockConfigState = vi.hoisted(() => ({
     baseUrl: 'https://openrouter.ai/api/v1',
     customProtocol: 'anthropic',
     model: 'anthropic/claude-sonnet-4-6',
-    activeProfileKey: 'openrouter',
-    profiles: {},
     activeConfigSetId: 'default',
     configSets: [],
     claudeCodePath: '',
