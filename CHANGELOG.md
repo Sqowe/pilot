@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An edit to the **Context window** or **Max output tokens** field in Settings → API now
   counts as an unsaved change. Before, a form that differed only there looked saved, so
   switching to another config set dropped the edit without asking.
+- A config set on OpenRouter that still held a Claude model id in an older spelling
+  (`anthropic/claude-sonnet-4-5`) is now stored in the current one (`…-4.5`), so a chat runs
+  on the id that Settings shows. An id that ends in a date (`…-4-20250514`) is left as typed;
+  before, opening Settings rewrote it.
 
 ## [1.0.8] - 2026-10-05
 

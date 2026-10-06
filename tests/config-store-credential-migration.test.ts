@@ -833,6 +833,23 @@ describe('pointing a custom set at an endpoint', () => {
     expect(persisted()).toMatchObject({ endpointId: first.id, contextWindow: 64000 });
   });
 
+  it('drops the pointer when the set moves to a catalog provider, for good', () => {
+    // The form names no `endpointId` for a catalog provider. The pointer must
+    // go anyway, or it would come back when the set returns to a custom
+    // provider and would keep the endpoint from being deleted meanwhile.
+    const { store, first } = storeWithTwoEndpoints();
+    store.update({ provider: 'custom', endpointId: first.id });
+
+    store.update({ provider: 'anthropic' });
+    expect(store.getAll().configSets[0]).not.toHaveProperty('endpointId');
+    expect(persisted()).not.toHaveProperty('endpointId');
+    expect(() => store.deleteCustomEndpoint({ id: first.id })).not.toThrow();
+
+    store.update({ provider: 'custom' });
+    expect(store.getAll().configSets[0]).not.toHaveProperty('endpointId');
+    expect(store.getAll().endpointId).toBeUndefined();
+  });
+
   it('ignores an endpoint id on a catalog provider', () => {
     const { store, first } = storeWithTwoEndpoints();
 
@@ -869,5 +886,171 @@ describe('pointing a custom set at an endpoint', () => {
     expect(blank?.endpointId).toBe(first.id);
     expect(blank?.model).toBe('claude-opus-5');
     expect(created.apiKey).toBe('kiro-key');
+  });
+});
+
+describe('legacy spellings are corrected where they are stored', () => {
+  beforeEach(() => {
+    mocks.seed = {};
+    mocks.last = null;
+  });
+
+  /** A 1.0.8 config whose inactive set still holds OpenRouter's pre-`/v1` address. */
+  function configWithOldOpenRouterAddress(): Record<string, unknown> {
+    const config = release108Config();
+    (config.configSets as Array<Record<string, unknown>>).push({
+      id: 'set-3',
+      name: 'Router',
+      provider: 'openrouter',
+      customProtocol: 'anthropic',
+      activeProfileKey: 'openrouter',
+      enableThinking: false,
+      thinkingLevel: 'off',
+      updatedAt: '2026-09-03T00:00:00.000Z',
+      profiles: {
+        openrouter: {
+          apiKey: 'sk-or-old',
+          baseUrl: 'https://openrouter.ai/api',
+          model: 'anthropic/claude-sonnet-4-5',
+        },
+      },
+    });
+    return config;
+  }
+
+  it('moves an old OpenRouter address to /v1 in the credential store, not only in the projection', () => {
+    // The form and the connection test read the credential store directly, so
+    // correcting only the projected `baseUrl` would leave them on the old address.
+    mocks.seed = configWithOldOpenRouterAddress();
+    const store = new ConfigStore();
+
+    expect(store.getAll().providerCredentials.openrouter?.baseUrl).toBe(
+      'https://openrouter.ai/api/v1'
+    );
+    expect(
+      (persisted().providerCredentials as Record<string, { baseUrl?: string }>).openrouter.baseUrl
+    ).toBe('https://openrouter.ai/api/v1');
+    expect(store.switchSet({ id: 'set-3' }).baseUrl).toBe('https://openrouter.ai/api/v1');
+  });
+
+  it('corrects an old OpenRouter address in a store that was migrated earlier', () => {
+    const store = new ConfigStore();
+    store.setProviderCredential({
+      provider: 'openrouter',
+      apiKey: 'sk-or',
+      baseUrl: 'https://openrouter.ai/api/',
+    });
+
+    expect(restart().getAll().providerCredentials.openrouter).toEqual({
+      apiKey: 'sk-or',
+      baseUrl: 'https://openrouter.ai/api/v1',
+    });
+  });
+
+  it('leaves any other OpenRouter address as it was typed', () => {
+    const store = new ConfigStore();
+    store.setProviderCredential({
+      provider: 'openrouter',
+      apiKey: 'sk-or',
+      baseUrl: 'https://proxy.example/openrouter/api',
+    });
+
+    expect(store.getAll().providerCredentials.openrouter?.baseUrl).toBe(
+      'https://proxy.example/openrouter/api'
+    );
+  });
+
+  it('stores a dashed OpenRouter Claude id from an old set in the dotted form the registry uses', () => {
+    mocks.seed = configWithOldOpenRouterAddress();
+    const store = new ConfigStore();
+
+    const router = store.getAll().configSets.find((set) => set.id === 'set-3');
+    expect(router?.model).toBe('anthropic/claude-sonnet-4.5');
+    expect(store.switchSet({ id: 'set-3' }).model).toBe('anthropic/claude-sonnet-4.5');
+  });
+
+  it('starts a blank OpenRouter set on a model id the registry knows', () => {
+    // A blank set is usable straight away, so its model reaches a chat without
+    // ever passing through the form, which is the only other place the dashed
+    // spelling is corrected.
+    const store = new ConfigStore();
+    store.update({ provider: 'openrouter', apiKey: 'sk-or' });
+
+    const created = store.createSet({ name: 'Second', mode: 'blank' });
+    const blank = created.configSets.find((set) => set.id !== 'default');
+
+    expect(blank?.model).toBe('anthropic/claude-sonnet-4.6');
+    expect(created.model).toBe('anthropic/claude-sonnet-4.6');
+  });
+
+  it('does not touch a dashed id on a provider other than OpenRouter', () => {
+    const store = new ConfigStore();
+    store.update({ provider: 'anthropic', apiKey: 'sk-ant', model: 'claude-sonnet-4-5' });
+
+    expect(store.getAll().model).toBe('claude-sonnet-4-5');
+  });
+});
+
+describe('pre-split keys that come back into the file', () => {
+  beforeEach(() => {
+    mocks.seed = {};
+    mocks.last = null;
+  });
+
+  it('finishes a first start that was interrupted between its two writes', () => {
+    // The migration persists in two steps: write the migrated config, then
+    // delete the old top-level keys. A process killed in between leaves both in
+    // the file. The next start has to end in the same place a clean one does.
+    mocks.seed = release108Config();
+    const clean = new ConfigStore().getAll();
+
+    const original = release108Config();
+    mocks.seed = {
+      ...JSON.parse(JSON.stringify(persisted())),
+      profiles: original.profiles,
+      activeProfileKey: original.activeProfileKey,
+    };
+    const healed = new ConfigStore().getAll();
+
+    for (const field of PRE_SPLIT_FIELDS) {
+      expect(persisted(), `top-level ${field}`).not.toHaveProperty(field);
+    }
+    expect(healed.configSets).toEqual(clean.configSets);
+    expect(healed.providerCredentials).toEqual(clean.providerCredentials);
+    expect(healed.customEndpoints).toEqual(clean.customEndpoints);
+    expect(healed.activeConfigSetId).toBe(clean.activeConfigSetId);
+  });
+
+  it('removes them on the next save, so the save is not rolled back', () => {
+    // An older build pointed at the same file writes the top-level `profiles`
+    // map back. The migration trusts that map over a lone default set, so while
+    // it stays in the file every read rebuilds the set from it.
+    mocks.seed = {
+      provider: 'anthropic',
+      apiKey: 'sk-ant',
+      model: 'claude-opus-5',
+      configSchemaVersion: 2,
+    };
+    const store = new ConfigStore();
+    expect(store.getAll().model).toBe('claude-opus-5');
+
+    Object.assign(persisted(), {
+      activeProfileKey: 'anthropic',
+      profiles: {
+        anthropic: {
+          apiKey: 'sk-ant',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-opus-5',
+        },
+      },
+    });
+
+    store.update({ model: 'claude-sonnet-5' });
+
+    expect(store.getAll().model).toBe('claude-sonnet-5');
+    for (const field of PRE_SPLIT_FIELDS) {
+      expect(persisted(), `top-level ${field}`).not.toHaveProperty(field);
+    }
+    expect(restart().getAll().model).toBe('claude-sonnet-5');
   });
 });

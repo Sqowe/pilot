@@ -265,6 +265,39 @@ describe('unsaved changes to a credential', () => {
 
     expect(hasUnsavedCredentialChanges(afterDelete, presets)).toBe(false);
   });
+
+  it('does not count a key typed for an endpoint that has no address yet', () => {
+    // An endpoint is created at an address, so until one is typed this edit has
+    // nowhere to be saved and a save skips it. Counting it anyway left the form
+    // reading as changed after a save that had succeeded.
+    const edited = edit(state(), newEndpoint, { apiKey: 'k' });
+
+    expect(planCredentialSave(edited, presets)).toEqual([]);
+    expect(hasUnsavedCredentialChanges(edited, presets)).toBe(false);
+
+    // The address is what turns it into something to save.
+    const withAddress = edit(edited, newEndpoint, { baseUrl: 'http://127.0.0.1:9000' });
+    expect(hasUnsavedCredentialChanges(withAddress, presets)).toBe(true);
+    expect(planCredentialSave(withAddress, presets)).toHaveLength(1);
+  });
+
+  it('counts exactly the edits a save would send', () => {
+    // One list feeds both, so the "unsaved" mark and the save cannot disagree.
+    const existing: CredentialTarget = { kind: 'endpoint', id: 'custom-endpoint-1' };
+    for (const edited of [
+      edit(state(), anthropic, { apiKey: 'sk-ant' }),
+      edit(state({ customEndpoints: [endpoint({})] }), existing, { apiKey: 'rotated' }),
+      edit(state({ customEndpoints: [endpoint({})] }), existing, { baseUrl: '' }),
+      edit(state(), newEndpoint, { apiKey: 'k', baseUrl: 'http://127.0.0.1:9000' }),
+      edit(state(), newEndpoint, { apiKey: 'k' }),
+      edit(state({ customProtocol: 'openai' }), newEndpoint, { apiKey: 'k' }),
+      edit(edit(state(), anthropic, { apiKey: 'a' }), newEndpoint, { apiKey: 'k' }),
+    ]) {
+      expect(planCredentialSave(edited, presets)).toHaveLength(
+        dirtyCredentialTargets(edited, presets).length
+      );
+    }
+  });
 });
 
 describe('an edit reads as saved once what it was saved as is persisted', () => {
@@ -552,6 +585,43 @@ describe('which call saves a credential', () => {
     const edited = edit(state(), newEndpoint, { apiKey: 'k', baseUrl: '   ' });
 
     expect(planCredentialSave(edited, presets)).toEqual([]);
+  });
+
+  it('creates an endpoint at the pre-filled address when only a key is typed', () => {
+    // On the OpenAI and Gemini protocols the address field starts on that
+    // provider's own address. It is the value of the field, on screen, not a
+    // hint — so saving stores what the form shows, as it did before endpoints
+    // existed. Refusing it would leave no way to use that address at all.
+    const edited = edit(state({ customProtocol: 'openai' }), newEndpoint, { apiKey: 'sk' });
+
+    expect(planCredentialSave(edited, presets)).toEqual([
+      {
+        kind: 'create-endpoint',
+        targetKey: 'endpoint:new',
+        payload: {
+          name: '',
+          protocol: 'openai',
+          baseUrl: defaultCustomBaseUrl('openai', presets),
+          apiKey: 'sk',
+        },
+      },
+    ]);
+    expect(defaultCustomBaseUrl('openai', presets)).not.toBe('');
+  });
+
+  it('sends a cleared address of an existing endpoint instead of dropping the edit', () => {
+    // Main refuses an endpoint without an address and the form shows the
+    // reason. Leaving the call out would discard the edit without a word.
+    const target: CredentialTarget = { kind: 'endpoint', id: 'custom-endpoint-1' };
+    const edited = edit(state({ customEndpoints: [endpoint({})] }), target, { baseUrl: '' });
+
+    expect(planCredentialSave(edited, presets)).toEqual([
+      {
+        kind: 'update-endpoint',
+        targetKey: 'endpoint:custom-endpoint-1',
+        payload: { id: 'custom-endpoint-1', protocol: 'anthropic', baseUrl: '', apiKey: 'gw-key' },
+      },
+    ]);
   });
 
   it('saves catalog providers before endpoints', () => {

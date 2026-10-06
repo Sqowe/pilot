@@ -197,10 +197,6 @@ export function useModelSets(options: UseModelSetsOptions) {
     []
   );
 
-  const setEndpointId = useCallback((endpointId: string) => {
-    dispatch({ type: 'SET_ENDPOINT_ID', endpointId });
-  }, []);
-
   const setModel = useCallback(
     (value: string) => {
       updateModelFields((prev) => ({ ...prev, model: value, useCustomModel: false }));
@@ -447,7 +443,6 @@ export function useModelSets(options: UseModelSetsOptions) {
     configSetLimit: CONFIG_SET_LIMIT,
     applyPersistedConfig,
     changeProvider,
-    setEndpointId,
     updateModelFields,
     setModel,
     setCustomModel,

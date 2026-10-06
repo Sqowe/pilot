@@ -63,6 +63,7 @@ import {
   customEndpointKey,
   defaultCustomEndpointName,
 } from '../../shared/custom-endpoint-key';
+import { normalizeLegacyModelId } from '../../shared/legacy-model-id';
 import {
   createDefaultSkillConflictConfig,
   normalizeSkillConflictConfig,
@@ -1070,9 +1071,14 @@ function resolveThinkingLevelFromRaw(
   return typeof enableThinking === 'boolean' && enableThinking ? 'medium' : 'off';
 }
 
-/** Legacy "gemini/gemini-*" → "gemini-*". Idempotent. */
-function stripLegacyGeminiPrefix(model: string): string {
-  return model?.startsWith('gemini/') ? model.slice('gemini/'.length) : model;
+/**
+ * OpenRouter's address from before it moved under `/v1`. Older versions stored
+ * it as the provider's base URL. Idempotent.
+ */
+function upgradeLegacyOpenRouterBaseUrl(baseUrl: string): string {
+  return canonicalBaseUrl(baseUrl) === 'https://openrouter.ai/api'
+    ? 'https://openrouter.ai/api/v1'
+    : baseUrl;
 }
 
 function hasOwn(value: unknown, key: string): boolean {
@@ -1285,17 +1291,6 @@ export class ConfigStore {
     this.store.set('memoryRuntime.useEmbedding' as unknown as keyof AppConfig, useEmbedding);
   }
 
-  private normalizeModelIds(config: AppConfig): void {
-    // Fix legacy "gemini/gemini-*" → "gemini-*" on the projected model (pi-ai's
-    // google provider uses bare model ids). `normalizeConfigSet` applies the same
-    // rule to each set, so the projection and the set it came from agree.
-    config.model = stripLegacyGeminiPrefix(config.model);
-    // Fix flat baseUrl for openrouter: /api → /api/v1
-    if (config.baseUrl === 'https://openrouter.ai/api' && config.provider === 'openrouter') {
-      config.baseUrl = 'https://openrouter.ai/api/v1';
-    }
-  }
-
   private getDefaultProfile(profileKey: ProviderProfileKey): ProviderProfile {
     const fallback = defaultProfiles[profileKey];
     // Native provider slots (native:*) are dynamic and have no static default
@@ -1401,7 +1396,11 @@ export class ConfigStore {
       if (!value || typeof value !== 'object') continue;
       const raw = value as Partial<ProviderCredentials>;
       const apiKey = typeof raw.apiKey === 'string' ? raw.apiKey : '';
-      const baseUrl = typeof raw.baseUrl === 'string' ? raw.baseUrl.trim() : '';
+      const rawBaseUrl = typeof raw.baseUrl === 'string' ? raw.baseUrl.trim() : '';
+      // Corrected here, in the store, and not on the projection: the form and
+      // the connection test read this map directly.
+      const baseUrl =
+        key === 'openrouter' ? upgradeLegacyOpenRouterBaseUrl(rawBaseUrl) : rawBaseUrl;
       const next: ProviderCredentials = { apiKey };
       if (baseUrl) next.baseUrl = baseUrl;
       normalized[key as ProviderProfileKey] = next;
@@ -2068,7 +2067,12 @@ export class ConfigStore {
       : undefined;
 
     const rawModel = typeof rawSet?.model === 'string' ? rawSet.model.trim() : '';
-    const model = stripLegacyGeminiPrefix(rawModel || this.defaultModelFor(provider, endpoint));
+    // Legacy spellings are corrected on the set itself. The projection is read
+    // from the set, so a chat runs on exactly the id that is stored and shown.
+    const model = normalizeLegacyModelId(
+      provider,
+      rawModel || this.defaultModelFor(provider, endpoint)
+    );
     const contextWindow =
       typeof rawSet?.contextWindow === 'number' && rawSet.contextWindow > 0
         ? rawSet.contextWindow
@@ -2560,7 +2564,11 @@ export class ConfigStore {
 
     const flatModel = typeof raw.model === 'string' ? raw.model.trim() : '';
     const setModel = typeof onlySet.model === 'string' ? onlySet.model.trim() : '';
-    if (flatModel && stripLegacyGeminiPrefix(flatModel) !== stripLegacyGeminiPrefix(setModel)) {
+    if (
+      flatModel &&
+      normalizeLegacyModelId(setProvider, flatModel) !==
+        normalizeLegacyModelId(setProvider, setModel)
+    ) {
       return true;
     }
 
@@ -2757,7 +2765,6 @@ export class ConfigStore {
         ? { httpProxy: raw.httpProxy.trim() }
         : {}),
     };
-    this.normalizeModelIds(result);
     return result;
   }
 
@@ -2781,6 +2788,18 @@ export class ConfigStore {
     for (const key of OPTIONAL_PROJECTED_KEYS) {
       if (!(key in normalized) && key in stored) {
         this.store.delete(key);
+      }
+    }
+
+    // `ensureNormalized` removes the pre-split keys at start, so this app never
+    // leaves one behind. An older build pointed at the same file writes them
+    // back, though, and while one is there every read re-runs the migration,
+    // which trusts it over a lone default set and would roll this save back.
+    // What is being saved was read through that migration, so it already holds
+    // everything those keys carry.
+    for (const key of LEGACY_TOP_LEVEL_KEYS) {
+      if (key in stored) {
+        this.store.delete(key as unknown as keyof AppConfig);
       }
     }
   }

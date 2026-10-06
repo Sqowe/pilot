@@ -15,6 +15,7 @@ import type {
   ProviderType,
 } from '../types';
 import { isLoopbackBaseUrl } from '../../shared/network/loopback';
+import { normalizeLegacyModelId } from '../../shared/legacy-model-id';
 import { API_PROVIDER_PRESETS, type SharedProviderPreset } from '../../shared/api-model-presets';
 import {
   getCatalogEntry,
@@ -365,31 +366,10 @@ export function finalModelOf(
   return fields.useCustomModel ? fields.customModel.trim() : fields.model;
 }
 
-/**
- * Two legacy spellings of a model id that older versions stored and newer ones
- * no longer accept as written:
- *
- * - `gemini/gemini-*` — pi-ai's google provider uses the bare id.
- * - `anthropic/claude-sonnet-4-5` on OpenRouter — the registry spells the
- *   version with a dot (`4.5`).
- *
- * Applied when a stored model is loaded into the form, so the picker can find
- * it in its list. The pre-split store did the same on the per-provider profile
- * the form used to read.
- */
-export function normalizeLegacyModelId(provider: ProviderType, model: string): string {
-  const trimmed = model.trim();
-  const withoutGeminiPrefix = trimmed.startsWith('gemini/')
-    ? trimmed.slice('gemini/'.length)
-    : trimmed;
-  if (provider === 'openrouter') {
-    return withoutGeminiPrefix.replace(
-      /^(anthropic\/claude-(?:sonnet|opus|haiku)-\d+)-(\d+)/,
-      '$1.$2'
-    );
-  }
-  return withoutGeminiPrefix;
-}
+// Applied when a stored model is loaded into the form, so the picker can find
+// it in its list. Main applies the same rule to the sets it stores; the rule
+// lives in `shared/` so the two cannot drift apart.
+export { normalizeLegacyModelId };
 
 /**
  * The preset list a provider's models are picked from. `custom` borrows the

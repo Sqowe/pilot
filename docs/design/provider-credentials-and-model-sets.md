@@ -484,7 +484,7 @@ that setup's `exampleModel` ([`api-provider-guidance.ts`](../../src/shared/api-p
 | 1 — main-process model  | ✅ **done** 2026-10-03 | types + one-directional derivation, 40 new tests, external review ✔️  |
 | 2a — store inversion    | ✅ **done** 2026-10-03 | resolveCredentials + endpointId + CRUD/IPC, 28 new tests              |
 | 2b — write-path cutover | ✅ **done** 2026-10-03 | handleSave drops `profiles`; §9.4 holds structurally                  |
-| 3 — renderer state      | ✅ **done** 2026-10-05 | old fields removed end to end; two state slices; 141 new tests        |
+| 3 — renderer state      | ✅ **done** 2026-10-05 | old fields removed; two slices; 141 new tests; external review ✔️     |
 | 4 — UI                  | —                      | —                                                                     |
 | 5 — first-run wizard    | —                      | —                                                                     |
 | 6 — docs                | —                      | —                                                                     |
@@ -985,7 +985,9 @@ commit); lint 0 errors, the same 16 pre-existing warnings.
   result anyway. Removed, and the comment that credited it with making the migration one-time was
   corrected — what does that is the persisted result plus the on-disk delete.
 
-**External review: split into three parts, one approved, two not re-checked.** The change is
+**External review: split into three parts, one approved, two not re-checked.** (Parts A and B
+were reviewed again after the commit and approved — see "Second review of parts A and B" below.)
+The change is
 499,969 characters of diff against a 250,000 limit per review, and the two largest files alone come
 to 224,000, so it could not go in two parts either. It was reviewed as three self-contained parts
 from a scratch clone, so nothing in the working tree was staged, stashed or committed for the sake
@@ -1079,6 +1081,81 @@ converts the installed app's settings file one-way: quit the installed app and b
 first. And when it is started from a terminal that an editor spawned, `ELECTRON_RUN_AS_NODE=1` is
 inherited and Electron starts as plain Node (`electron.app` is undefined at the first line that uses
 it) — start it with `env -u ELECTRON_RUN_AS_NODE npm run dev`.
+
+**Second review of parts A and B (2026-10-06, after the commit).** Phase 3 went in as `c381f8c3`
+with parts A and B reviewed once. The review script only sees uncommitted changes, so each part was
+rebuilt as one: a scratch clone checked out at the parent commit (`ddecc9c6`) with that part's files
+copied in from the working tree. Part A now also holds `src/shared/legacy-model-id.ts` and its test.
+Four runs of the cap of five:
+
+| Run | Part | Result                                         |
+| --- | ---- | ---------------------------------------------- |
+| 1   | A    | approved — 2 medium, 2 low                     |
+| 2   | B    | needs changes — 2 blocking, 3 medium, 1 low    |
+| 3   | B    | **approved** — 3 low, none needing a change    |
+| 4   | A    | **approved** — 2 low, neither needing a change |
+
+Every finding was checked against the code and settled with a test before anything was changed.
+By outcome:
+
+- **Real, fixed — an old OpenRouter address corrected on the projection only** (part A). A
+  credential migrated with `https://openrouter.ai/api` kept that value in `providerCredentials`;
+  only the projected `baseUrl` was moved to `/api/v1`. Chats were unaffected, but the form and the
+  connection test read the credential store, so they used the old address. The rewrite now happens
+  in `normalizeProviderCredentials`, which also repairs a store migrated by an earlier build.
+- **Real, fixed — a dashed OpenRouter Claude id stored one way and shown another** (part A).
+  Narrower than the finding said: the stored id and the projected one always agreed. The form was
+  the odd one out — it rewrote `…-4-5` to `…-4.5` on load without reading as changed, so a chat ran
+  on an id Settings did not show. It also reached new data: the store's default for OpenRouter is
+  `anthropic/claude-sonnet-4-6`, a blank set starts on it, and since Phase 2a a blank set is usable
+  without passing through Save. pi-ai 0.87.1 lists that model as `anthropic/claude-sonnet-4.6` only
+  (`dist/providers/data/openrouter.json`). **Not verified:** whether OpenRouter rejects the dashed
+  spelling. The rule moved to `src/shared/legacy-model-id.ts`, used by `normalizeConfigSet` and by
+  the form, so there is one of it. `normalizeModelIds` became unreachable and was removed.
+- **Narrowed on the way — the rewrite takes one or two digits.** The old pattern turned a dated id
+  (`…-4-20250514`) into `…-4.20250514`. Harmless-looking while it only touched the form; it now
+  runs on stored data, so a date is left as typed.
+- **Real, fixed — a save rolled back while a pre-split key is in the file** (part A). The app never
+  leaves one behind, so the reviewer's route ("if the delete fails") does not exist: a failed delete
+  fails the constructor. But an older build pointed at the same file writes `profiles` back — and
+  the development build shares its data folder with the installed app. With the key present every
+  read re-runs the migration, which trusts it over a lone default set; a test showed a model change
+  reverting at once. `saveConfig` now deletes those keys as well.
+- **Real, fixed — "unsaved" with nothing to save** (part B). A key typed for a not-yet-created
+  endpoint with no address counted as an unsaved change while the save plan skipped it. Left behind
+  on another provider, it kept the form marked as changed after a save that had succeeded.
+  `dirtyCredentialTargets` now leaves it out — as it already did for an endpoint that no longer
+  exists — and `planCredentialSave` works from that list, so the two cannot disagree. **Accepted
+  cost:** such a key is no longer behind the unsaved-changes prompt; Save still refuses a custom
+  provider without an address and says so.
+- **Removed — `SET_ENDPOINT_ID`** (part B). Nothing dispatched it, and it changed a set's endpoint
+  without the per-endpoint model memory. A set moves between endpoints through `CHANGE_PROVIDER`;
+  a test now walks endpoint 1 → 2 → 1. This is the action Phase 4's chooser uses.
+- **Not a defect, now stated by a test.** A first start interrupted between the migration's two
+  writes is finished by the next one (part A; replacing the stored object in one assignment was
+  considered and rejected — it would bypass conf's per-key value checks). A key typed on a new
+  OpenAI- or Gemini-protocol endpoint creates it at the pre-filled address (part B, raised as
+  blocking): that address is the value of the field, on screen, and 1.0.8 saved it the same way;
+  skipping it would save a set that points at nothing. A cleared address on an existing endpoint is
+  still sent (part B): main refuses it, stores nothing, and the form shows why.
+- **Not real.** `isFreshInstall` "unused" — raised a second time, and still passed on to
+  `normalizeMemoryRuntimeConfig`, outside the lines shown. Endpoint fields "unchecked on arrival" —
+  `normalizeCustomEndpoints` guarantees them before they cross IPC. A target key colliding with an
+  endpoint whose id is `new` — ids are minted as `custom-endpoint-<n>`. `AppConfig` test fixtures
+  missing the three new fields — those fixtures never held the full type, and `tests/` is outside
+  `tsconfig`'s `include`. Store tests importing renderer modules — an effect of the split.
+- **Confirmed on request.** Part B's reviewer asked whether main clears a set's `endpointId` when it
+  moves to a catalog provider, since the form sends none. It does; a test now covers it, including
+  that the pointer does not return.
+
+Passing the reviewer facts about code outside the changed lines, in the script's context argument,
+is what closed the disputed blocking finding: run 3 approved with the code unchanged on that point.
+
+**Not reviewed:** the removal of the unused `setEndpointId` wrapper from `useModelSets.ts`, which is
+part C.
+
+**Gates after the follow-up:** typecheck clean; `npm test` **3684 passed / 238 files**; lint 0
+errors, the same 16 pre-existing warnings.
 
 **Left for later phases:** the error strings main throws for endpoints (duplicate address, cap
 reached, in use) are shown untranslated — the form can now reach the first two. They belong with

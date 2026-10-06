@@ -397,8 +397,10 @@ describe('unsaved changes to a config set', () => {
     );
 
     const repointed = modelSetsReducer(state, {
-      type: 'SET_ENDPOINT_ID',
+      type: 'CHANGE_PROVIDER',
+      provider: 'custom',
       endpointId: 'custom-endpoint-2',
+      defaults: defaultModelFields('custom', 'anthropic', presets),
     });
     expect(hasUnsavedModelSetChanges(repointed)).toBe(true);
 
@@ -537,6 +539,45 @@ describe('changing the provider of a config set', () => {
       modelMemoryKey('custom', 'custom-endpoint-2')
     );
     expect(modelMemoryKey('anthropic', '')).toBe('anthropic');
+  });
+
+  it('keeps what was typed for each endpoint when a set moves between two of them', () => {
+    // Moving a set to another endpoint goes through the same action as moving
+    // it to another provider, so the model stays with the endpoint it was typed
+    // for instead of following the set to a gateway that may not serve it.
+    const toEndpoint = (current: ModelSetsState, endpointId: string, endpointModel: string) =>
+      modelSetsReducer(current, {
+        type: 'CHANGE_PROVIDER',
+        provider: 'custom',
+        endpointId,
+        defaults: defaultModelFields('custom', 'anthropic', presets, endpointModel),
+      });
+    const typeModel = (current: ModelSetsState, model: string) =>
+      modelSetsReducer(current, {
+        type: 'UPDATE_MODEL_FIELDS',
+        updater: (fields) => ({ ...fields, customModel: model, useCustomModel: true }),
+      });
+
+    const loaded = loadedState(
+      config({
+        provider: 'custom',
+        customEndpoints: [
+          endpoint({}),
+          endpoint({ id: 'custom-endpoint-2', baseUrl: 'http://b:1' }),
+        ],
+        configSets: [set({ provider: 'custom', endpointId: 'custom-endpoint-1', model: 'first' })],
+      })
+    );
+
+    const onSecond = toEndpoint(typeModel(loaded, 'first-edited'), 'custom-endpoint-2', 'second');
+    expect(onSecond.draft.endpointId).toBe('custom-endpoint-2');
+    expect(finalModelOf(onSecond.draft)).toBe('second');
+
+    const backOnFirst = toEndpoint(typeModel(onSecond, 'second-edited'), 'custom-endpoint-1', '');
+    expect(finalModelOf(backOnFirst.draft)).toBe('first-edited');
+
+    const onSecondAgain = toEndpoint(backOnFirst, 'custom-endpoint-2', 'second');
+    expect(finalModelOf(onSecondAgain.draft)).toBe('second-edited');
   });
 
   it('starts a custom endpoint on its own default model when it names one', () => {

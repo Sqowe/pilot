@@ -220,10 +220,14 @@ function credentialSignature(
 }
 
 /**
- * The targets with an edit that differs from what is persisted.
+ * The targets with an edit that differs from what is persisted **and that a
+ * save would send**. `planCredentialSave` works from this list, so what reads
+ * as unsaved and what a save writes cannot disagree.
  *
- * A draft for an endpoint that no longer exists is not counted: there is
- * nothing left to save it to.
+ * Two kinds of draft have nowhere to be saved and are not counted: one for an
+ * endpoint that no longer exists, and one for an endpoint not created yet that
+ * has no address — an endpoint is created at an address. Counting the second
+ * left the form reading as changed after a save that had succeeded.
  */
 export function dirtyCredentialTargets(
   state: ProviderCredentialsState,
@@ -237,6 +241,9 @@ export function dirtyCredentialTargets(
       target.kind === 'endpoint' &&
       !state.customEndpoints.some((candidate) => candidate.id === target.id)
     ) {
+      continue;
+    }
+    if (target.kind === 'new-endpoint' && !savedBaseUrl(target, draft, presets)) {
       continue;
     }
     const baseline = hydrateCredentialDraft(state, target, presets);
@@ -314,8 +321,8 @@ export type CredentialSaveStep =
  * Turn every unsaved credential edit into the call that saves it.
  *
  * Catalog providers go through `setProviderCredential`; endpoints through the
- * endpoint CRUD calls. A new endpoint with no address is skipped — there is
- * nothing to create it at — so the caller is expected to have asked for one.
+ * endpoint CRUD calls. One step per unsaved edit: `dirtyCredentialTargets`
+ * has already left out the edits that have nowhere to be saved.
  */
 export function planCredentialSave(
   state: ProviderCredentialsState,
@@ -372,7 +379,6 @@ export function planCredentialSave(
       continue;
     }
 
-    if (!baseUrl) continue;
     const defaultModel = options.newEndpointDefaultModel?.trim();
     steps.push({
       kind: 'create-endpoint',

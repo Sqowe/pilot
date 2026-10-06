@@ -76,6 +76,9 @@ export type ModelSetsAction =
   // Persisted state arrived but the draft is still the user's (rename, or a
   // credential save that did not touch the sets).
   | { type: 'REBASE_PERSISTED'; configSets: ApiConfigSet[]; activeConfigSetId: string }
+  // Also how a custom set moves from one endpoint to another: the model is
+  // remembered per endpoint, so there is no separate "set the endpoint" action
+  // that could carry one gateway's model over to the next.
   | {
       type: 'CHANGE_PROVIDER';
       provider: ProviderType;
@@ -83,7 +86,6 @@ export type ModelSetsAction =
       /** What the provider starts on when this session has no memory of it. */
       defaults: ModelFields;
     }
-  | { type: 'SET_ENDPOINT_ID'; endpointId: string }
   | { type: 'UPDATE_MODEL_FIELDS'; updater: (previous: ModelFields) => ModelFields }
   | { type: 'SET_THINKING_LEVEL'; payload: ModelThinkingLevel }
   // Thinking capabilities resolved for a concrete model.
@@ -382,9 +384,6 @@ export function modelSetsReducer(state: ModelSetsState, action: ModelSetsAction)
         },
       };
     }
-
-    case 'SET_ENDPOINT_ID':
-      return { ...state, draft: { ...state.draft, endpointId: action.endpointId } };
 
     case 'UPDATE_MODEL_FIELDS':
       return {

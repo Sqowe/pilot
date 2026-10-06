@@ -1220,6 +1220,25 @@ describe('custom endpoint CRUD (§3.2)', () => {
     ).toThrow(/base URL is required/i);
   });
 
+  it('refuses to clear the address of an existing endpoint, and changes nothing', () => {
+    const store = new ConfigStore();
+    const created = store.createCustomEndpoint({
+      name: 'gw',
+      protocol: 'anthropic',
+      baseUrl: 'http://gw:9000',
+      apiKey: 'k',
+    });
+    const id = created.customEndpoints[0].id;
+
+    expect(() => store.updateCustomEndpoint({ id, baseUrl: '   ', apiKey: 'other' })).toThrow(
+      /base URL is required/i
+    );
+    expect(store.getAll().customEndpoints[0]).toMatchObject({
+      baseUrl: 'http://gw:9000',
+      apiKey: 'k',
+    });
+  });
+
   it('enforces its own cap, distinguishable from the config-set cap', () => {
     const store = new ConfigStore();
     for (let i = 0; i < 20; i += 1) {
