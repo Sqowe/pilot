@@ -1498,7 +1498,12 @@ export class ConfigStore {
       usedKeys.add(key);
       const entry: CustomEndpoint = {
         id,
-        name: toNonEmptyString(candidate.name) || defaultCustomEndpointName(baseUrl),
+        name:
+          toNonEmptyString(candidate.name) ||
+          defaultCustomEndpointName(baseUrl, {
+            protocol,
+            takenNames: normalized.map((accepted) => accepted.name),
+          }),
         protocol,
         baseUrl,
         apiKey: typeof candidate.apiKey === 'string' ? candidate.apiKey : '',
@@ -1594,6 +1599,14 @@ export class ConfigStore {
       }
     }
 
+    // Names an endpoint minted below must not repeat: those already persisted
+    // (kept by pass 2 even when no profile describes them) and those given out
+    // in this pass. Two protocols on one host are the common case.
+    const namesInUse = new Set<string>();
+    for (const persisted of persistedByKey.values()) {
+      if (persisted.name) namesInUse.add(persisted.name);
+    }
+
     const byKey = new Map<string, CustomEndpoint>();
     for (const set of this.orderSetsForDerivation(configSets, activeConfigSetId)) {
       for (const [rawKey, profile] of Object.entries(set.profiles || {})) {
@@ -1654,7 +1667,12 @@ export class ConfigStore {
           : apiKey;
         const entry: CustomEndpoint = {
           id: carried?.id ?? mintId(),
-          name: carried?.name ?? defaultCustomEndpointName(canonicalUrl),
+          name:
+            carried?.name ??
+            defaultCustomEndpointName(canonicalUrl, {
+              protocol: customProtocol,
+              takenNames: namesInUse,
+            }),
           protocol: customProtocol,
           baseUrl: canonicalUrl,
           apiKey: effectiveApiKey,
@@ -1666,6 +1684,7 @@ export class ConfigStore {
               : nowISO(),
         };
         if (model) entry.defaultModel = model;
+        namesInUse.add(entry.name);
         byKey.set(key, entry);
       }
     }
@@ -1841,7 +1860,10 @@ export class ConfigStore {
       const canonical = canonicalBaseUrl(effectiveUrl) || effectiveUrl;
       const minted: CustomEndpoint = {
         id: this.generateCustomEndpointId(endpoints),
-        name: defaultCustomEndpointName(canonical),
+        name: defaultCustomEndpointName(canonical, {
+          protocol: input.customProtocol,
+          takenNames: endpoints.map((candidate) => candidate.name),
+        }),
         protocol: input.customProtocol,
         baseUrl: canonical,
         apiKey: input.apiKey ?? '',
@@ -3125,7 +3147,12 @@ export class ConfigStore {
 
     const endpoint: CustomEndpoint = {
       id: this.generateCustomEndpointId(current.customEndpoints),
-      name: toNonEmptyString(payload.name) || defaultCustomEndpointName(canonical),
+      name:
+        toNonEmptyString(payload.name) ||
+        defaultCustomEndpointName(canonical, {
+          protocol,
+          takenNames: current.customEndpoints.map((candidate) => candidate.name),
+        }),
       protocol,
       baseUrl: canonical,
       apiKey: typeof payload.apiKey === 'string' ? payload.apiKey : '',

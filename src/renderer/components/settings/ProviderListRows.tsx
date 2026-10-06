@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { CheckCircle, Pencil, Settings2, Trash2 } from 'lucide-react';
 import { isCustomProtocol, protocolLabel } from '../../hooks/api-config-shared';
 import type { CredentialStatus, EndpointRow, ProviderRow } from '../../hooks/api-settings-view';
+import { DroppedKeyNotice } from './CredentialDialogParts';
 
 const STATUS_DOT_CLASS: Record<CredentialStatus, string> = {
   configured: 'bg-green-500',
@@ -85,7 +86,7 @@ export function EndpointListRow({
   onCancelDelete,
 }: EndpointListRowProps) {
   const { t } = useTranslation();
-  const { endpoint, status, usedBy } = row;
+  const { endpoint, status, usedBy, droppedKeySets } = row;
   const inUse = usedBy.length > 0;
 
   return (
@@ -106,6 +107,7 @@ export function EndpointListRow({
               ? t('api.providers.usedBy', { sets: usedBy.join(', ') })
               : t('api.providers.notUsed')}
           </p>
+          <DroppedKeyNotice sets={droppedKeySets} where="row" />
         </div>
         <CredentialStatusBadge status={status} justSaved={justSaved} />
         <button type="button" onClick={onEdit} disabled={disabled} className={ROW_BUTTON_CLASS}>
@@ -162,7 +164,7 @@ interface ProviderListRowProps {
 /** One catalog provider: its name, whether it has a key, and which config sets use it. */
 export function ProviderListRow({ row, justSaved, disabled, onConfigure }: ProviderListRowProps) {
   const { t } = useTranslation();
-  const { entry, status, usedBy } = row;
+  const { entry, status, usedBy, droppedKeySets } = row;
 
   return (
     <li className="flex items-center gap-3 px-4 py-2.5">
@@ -180,6 +182,7 @@ export function ProviderListRow({ row, justSaved, disabled, onConfigure }: Provi
             {t('api.providers.usedBy', { sets: usedBy.join(', ') })}
           </p>
         )}
+        <DroppedKeyNotice sets={droppedKeySets} where="row" />
       </div>
       <CredentialStatusBadge status={status} justSaved={justSaved} />
       <button

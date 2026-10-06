@@ -2,8 +2,8 @@
 
 **Created:** 2026-10-02
 **Status:** Design approved. **Phases 0, 1, 2a, 2b, 3 complete** (Phase 3: 2026-10-05). **Phase 4
-in progress:** step 1 of 2 built, reviewed and checked in the running app 2026-10-06. Each phase
-stops for review.
+in progress:** both steps built, reviewed and checked in the running app 2026-10-06; what the
+second check turned up is listed under "Noticed in the pass". Each phase stops for review.
 **Author:** AI-assisted design session
 **Baseline:** pi-ai / pi-coding-agent **0.87.1**, app **1.0.8** (HEAD `90136401`). Verified against
 source 2026-10-03; §13 records what the original 0.85.1/1.0.7 draft got wrong.
@@ -486,7 +486,7 @@ that setup's `exampleModel` ([`api-provider-guidance.ts`](../../src/shared/api-p
 | 2a — store inversion    | ✅ **done** 2026-10-03 | resolveCredentials + endpointId + CRUD/IPC, 28 new tests              |
 | 2b — write-path cutover | ✅ **done** 2026-10-03 | handleSave drops `profiles`; §9.4 holds structurally                  |
 | 3 — renderer state      | ✅ **done** 2026-10-05 | old fields removed; two slices; 141 new tests; external review ✔️     |
-| 4 — UI                  | 🚧 step 1 of 2         | two tabs, named endpoint list, chooser on a set; 114 new tests        |
+| 4 — UI                  | 🚧 step 2 of 2 built   | step 1: tabs, endpoint list, chooser; step 2: dialogs, notice, labels |
 | 5 — first-run wizard    | —                      | —                                                                     |
 | 6 — docs                | —                      | —                                                                     |
 
@@ -1391,6 +1391,342 @@ Hungarian texts; a restart of the converted build.
 **Noticed in the pass:** two endpoints on one host with different protocols get the same default
 name (`127.0.0.1:9000`), told apart only by the protocol badge and the address until renamed. A
 candidate for step 2: add the protocol to the default name when the host is already taken.
+
+#### Step 2 as built (2026-10-06) — what came back, the dropped-key notice, the leftovers
+
+##### Decisions taken with the user before starting
+
+| #   | Question                                                 | Decision                                                                                                                                                                                                                                                                                                                                                                             |
+| --- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Which check goes into the dialogs, and with which model? | **The five-step diagnostics run**, fed from the dialog's fields — not the single-request test of the first-run dialog. The model it tries is named on screen: for an endpoint its Default model field, else the model of a config set on it; for a provider the model of a config set on it, else the one a new set would start on. With none it stops short of a model and says so. |
+| 2   | How does the dropped-key notice go away?                 | **By saving that credential again** — no separate call to main. The notice says so, on the row and in the dialog.                                                                                                                                                                                                                                                                    |
+| 3   | What does the setups card list in the endpoint dialog?   | **The six setups that are custom endpoints**, as a compact list, for a new endpoint only. OpenRouter and Ollama are left to the hint, which has a button to that provider's own dialog; Save stays allowed and the typed key is not carried across. The generic setup sets the protocol only.                                                                                        |
+
+##### What the pre-implementation read found
+
+1. **The old Settings screen never had a "Test connection" button.** It had the diagnostics panel,
+   fed from the values on screen; the single-request test (`config.test`) is only in the first-run
+   dialog. That test needs a model, and the provider dialog has none: sent with no `model` it falls
+   back to the active config set's (`buildProbeConfig`, `claude-sdk-one-shot.ts`), so an OpenAI key
+   would be tried against a Claude model; sent with an empty one it answers `missing_model`. The
+   diagnostics run skips its last step without a model — but its key check is then "list the
+   models", where a 404 counts as passed, so a wrong key can pass on some services. Hence decision
+   1: the diagnostics run, with a model wherever one is known, and words on screen where none is.
+2. **Two of the eight ready-made setups are not custom endpoints.** OpenRouter and Ollama are
+   catalog providers (`applyProvider`, `api-provider-guidance.ts`); on the old screen "Apply"
+   switched the form to that provider, which a dialog that adds an endpoint cannot do. And the
+   generic setup's address, `https://your-provider.example/v1`, is an example: filling it in would
+   contradict step 1's rule that an address nobody gave is never a value.
+3. **The existing hint named a "tab" that no longer exists** (`api.guidance.preferProviderTab`:
+   "the dedicated {{provider}} tab"). The dialog has texts of its own; the old ones stay with the
+   first-run dialog until Phase 5.
+4. **The dropped-key record was discarded on arrival.** `credentialsOf` kept the credential map and
+   the endpoint list and nothing else. And both dialogs always send the key, so any save of a
+   credential removes its entry — including a save that changes nothing, and a rename of an
+   endpoint. That is decision 2's mechanism, now said on screen instead of being a side effect.
+5. **No test had ever drawn the inside of a dialog.** The frame draws into `document.body`, which
+   the suite does not have, and the tab tests only render the tabs with no dialog open.
+6. **The set switcher was open during a save as well** — the same loss as the model fields, in a
+   component the first-run dialog shares.
+7. **The two same-named endpoints came from the conversion, not from the dialog.** A default name
+   is given in four places in the store; one rule for all four.
+
+##### As built
+
+| File                                                                                             | Role                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hooks/credential-dialog-view.ts`                                                                | **new**, pure. Which setups an endpoint can be filled from and what filling does; the model a check tries; how an Ollama search is reported.                                                   |
+| `hooks/useCredentialCheck.ts`                                                                    | **new**. The form's own check and Ollama search (`useApiConnectivity`), pointed at a dialog's fields, with what a dialog lacks switched off.                                                   |
+| `components/CustomEndpointDialog.tsx`, `ProviderConfigDialog.tsx`                                | Each is now a state function (`useCustomEndpointDialog`, `useProviderConfigDialog`) plus the frame.                                                                                            |
+| `components/CustomEndpointFields.tsx`, `ProviderCredentialFields.tsx`                            | **new**. Everything inside each dialog, drawn from that state — so a test can draw it without a page.                                                                                          |
+| `components/settings/CredentialDialogParts.tsx`                                                  | **new**. What both dialogs share: the check section, the dropped-key notice, the footer with the one submit button.                                                                            |
+| `components/settings/SettingsDialogFrame.tsx`                                                    | With `onSubmit` the body and footer are a real `<form>`; focus returns only to an opener that is still drawn (`canReturnFocusTo`).                                                             |
+| `components/ProviderGuidance.tsx`                                                                | The setups card has a `list` layout for a narrow dialog; the table stays for the first-run dialog.                                                                                             |
+| `components/settings/SettingsProviders.tsx`, `ProviderListRows.tsx`                              | The notice on rows; the values the dialogs need; the hand-over from the endpoint dialog to a provider's.                                                                                       |
+| `hooks/api-settings-view.ts`, `useApiSettingsState.ts`                                           | `credentialConflicts` is carried with the credential store; `droppedKeySetNames`; rows say which sets lost a key.                                                                              |
+| `hooks/useApiConnectivity.ts`                                                                    | One option, `listsModels`, default on. Off, Ollama's model list is not fetched as its address is typed.                                                                                        |
+| `components/settings/SettingsModelSets.tsx`, `ModelFieldsSection.tsx`, `ApiConfigSetManager.tsx` | `isLocked` (a save or a switch is on its way) turns the chooser and every model field off; the set switcher and its New / Rename / Delete are off during a save as well.                       |
+| `utils/config-set-label.ts`, `ChatView.tsx`, `WelcomeView.tsx`                                   | **new** helper; both pickers show `name · model`, and their closed width went from 120 / 140 px to 220 / 260 px so the model is not cut off at once.                                           |
+| `shared/custom-endpoint-key.ts`, `main/config/config-store.ts`                                   | `defaultCustomEndpointName` takes the names already in use; all four places that name an endpoint pass them.                                                                                   |
+| `i18n/locales/{en,zh,ru,hu}.json`                                                                | Ten texts under `api.providers` (`droppedKey`, `droppedKeyInDialog`, `catalogProviderHint`, `openCatalogProvider`, `ollamaSearchHint`, `check.*`), 12 lines per file and nothing else changed. |
+
+**Enter saves, by the browser's own rule.** The dialog's body and footer are a `<form>` and Save is
+its one `type="submit"` button, so Enter in any field does what a click on Save does. A key handler
+was the alternative and was not taken: the browser already leaves out the two cases a handler
+would have to get right — a disabled Save, and the Enter that finishes a character being composed
+(the app has a Chinese locale). Every other button in a dialog is `type="button"`, which a test
+counts. The submit is stopped inside the dialog: React's `createPortal` reference says events from
+a portal travel up the React tree, not the page's.
+
+**Focus goes back only to something that is drawn.** Closed by a change of tab, a dialog's opener
+sits in a tab with `display: none`. `canReturnFocusTo` asks whether the element has a box on the
+page; an element that has left the page has none either, so the one question covers both.
+
+**From the endpoint dialog to a provider's.** The hint's button closes the endpoint dialog first
+and opens the provider's in a later pass (`providerToOpen`, an effect in `SettingsProviders`). A
+dialog remembers what had focus when it opened; opened in the same pass, the second would remember
+a button inside the first — about to be removed — and the first one's closing would then pull
+focus out from under it. React runs the cleanup of everything removed before any new effect, so by
+the time the effect runs, focus is back on the "Add endpoint" button.
+
+**What the check reuses.** `useApiConnectivity` already ran against the values on screen and
+dropped an answer that arrived after they changed. `useCredentialCheck` hands it the dialog's
+values and turns off what a dialog has no use for: there is no model to pick, so the model fields
+are a no-op and Ollama's model list is not kept fresh (`listsModels: false`) — fetched on every
+pause in typing it would put "cannot connect" next to an address still being typed. The Ollama
+search runs silent and the dialog words the outcome itself (`ollamaSearchNote`), next to the
+address field, which is held still while the search is out.
+
+##### Behaviour that changed
+
+- **A key can be tried before it is saved**, in both dialogs, and the dialog says what was tried.
+- **The endpoint dialog guides again**: the setups list, the hint under the protocol (suits the
+  service or does not), the hint under the address (what the service usually looks like).
+- **An address that belongs to OpenRouter or Ollama says so**, with a button to that provider's
+  own dialog. It is a hint: Save still works.
+- **The Ollama dialog can find a local server.** It fills the address field and reports what it
+  found; nothing is saved until Save.
+- **A key the conversion dropped is visible**, on the row and in the dialog, with the names of the
+  config sets that had another one, until that credential is saved again.
+- **Pickers show `set · model`** in the chat header and on the welcome screen.
+- **Enter saves a dialog.**
+- **Nothing can be edited on Model Sets while a save or a switch is on its way**, and no other set
+  can be chosen or created during a save.
+- **A second endpoint on a host is named with its protocol** — `127.0.0.1:9000 (OpenAI)`; a
+  further clash gets a number. An endpoint that has a name keeps it.
+
+##### Tests
+
+| File                                         | Tests | Covers                                                                                                                                            |
+| -------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/api-settings-dialogs-render.test.ts`  | 41    | **new** — first render of both dialogs for a range of credentials; what Save and the check send, with the bridge to main stood in for             |
+| `tests/credential-dialog-view.test.ts`       | 22    | **new** — setups and what applying one does, the model a check tries, the wording of an Ollama search                                             |
+| `tests/custom-endpoint-default-name.test.ts` | 17    | **new** — the naming rule, and each of the four places in the real store: the dialog, a save, a stored blank name, the conversion of a 1.0.8 file |
+| `tests/config-set-label.test.ts`             | 5     | **new** — the label, and that both pickers use it                                                                                                 |
+| `tests/settings-dialog-save.test.ts`         | 13    | +7 — the focus rule; that the dialog is a form with one submit button and every other button is plain                                             |
+| `tests/api-settings-view.test.ts`            | 41    | +7 — which sets lost a key, by current name; rows                                                                                                 |
+| `tests/api-settings-tabs-render.test.ts`     | 24    | +7 — the notice on rows; every field off while a save or a switch is on its way                                                                   |
+| `tests/api-settings-state-render.test.ts`    | 18    | +2 — the record reaches the shared state                                                                                                          |
+| `tests/provider-guidance-ui.test.ts`         | 5     | the `it.todo` is now three real tests                                                                                                             |
+| `tests/api-settings-i18n.test.ts`            | 12    | six more source files scanned, so the guidance texts the dialogs now show are checked in all four languages                                       |
+
+**Gates:** typecheck clean; `npm test` **3909 passed / 249 files**, no to-do left (3798 and one
+to-do before); lint 0 errors, the same 16 pre-existing warnings.
+
+**Verification beyond "tests pass":** 56 mutations of the new rules, one at a time, each against
+the whole suite. 55 were caught at once. One survived and was informative: `canReturnFocusTo` also
+asked whether the element was still on the page, and nothing could tell that half apart from the
+other — an element that has left the page is not drawn either. The redundant half was removed.
+Four tests were tightened before the run because they could have passed for the wrong reason; the
+clearest was "the check does not run without an address", which an empty key was stopping first.
+
+**Not reachable by a test:** anything that needs a key press, a click or an effect — Enter itself,
+where focus lands, the hand-over between the two dialogs, a search for Ollama (it returns at once
+outside Electron), and the plainer reading of a failed model step (`checkFailureHint`), which needs
+a check that has come back. These are the manual pass.
+
+**External review: approved on the first run, and again on the second with nothing left.**
+Reviewed as one piece (179,572 characters, then 183,615) from a scratch clone, so the real index
+was never staged. Two runs of the cap of five.
+
+| Run | Result                                               |
+| --- | ---------------------------------------------------- |
+| 1   | **approved** — 1 medium, 2 low                       |
+| 2   | **approved** — no remarks; "no further run required" |
+
+Each remark of run 1 was checked against the code before anything was changed:
+
+- **Real, fixed — a search for Ollama could be started while a check was out.** What the search
+  finds is written into the address field, and a result is dropped as soon as the address it ran
+  against changes; so the search would have cancelled the check the user was waiting for, without
+  a word. The search button is now off while a check is on its way, as the check already was
+  during a search. A test covers both directions and fails with the fix taken out. The address
+  field itself stays open during a check: typing over an address drops the result run against it,
+  which is the form's existing rule and what a user typing a new address means.
+- **Not real — an old result beside "this endpoint needs an address".** The form's own reset
+  (`useApiConnectivity`) clears the result whenever the address, key, protocol or model changes.
+  An address can only become empty by changing, and that change removes the result before a check
+  can be asked for; a new endpoint has none yet, because the check refuses to start. Outside the
+  lines the reviewer was shown. A test now pins the reset's dependency list.
+- **Not real — a search that fails without a word.** The search's whole body is one
+  `try`/`catch`/`finally` that returns nothing on any failure, and "nothing" is reported as "not
+  found". It cannot reject. No guard was added for a case that cannot be reached.
+
+The facts about code outside the changed lines went into the script's context argument on both
+runs, and on the second also what had been done with each remark and why. Run 2 confirmed all
+three as settled.
+
+**Gates after the review fix:** typecheck clean; `npm test` **3909 passed / 249 files**; lint 0
+errors, the same 16 pre-existing warnings.
+
+**Noticed and left alone:**
+
+- The handler behind the Ollama search (`config.discover-local`, `main/index.ts`) returns an empty
+  list when the search itself throws, where its type promises an object. The screens read the
+  missing `available` field as "not found", which is the right answer for the wrong reason;
+  `ollamaSearchNote` has a test for exactly that input.
+- `api.diagnostic.skipped` is in none of the four language files, so "another run is already in
+  progress" is shown in the panel's inline English. Main allows one diagnostics run at a time, and
+  with a check in the dialogs as well as on Model Sets that message is a little easier to reach.
+- The first-run dialog still shows the old hints that speak of a provider "tab", and still has the
+  six-column setups table. Both go with that dialog in Phase 5.
+- `SettingsProviders.tsx` is 356 lines, over the 300-line soft limit it was already at (301).
+- The single-request test (`config.test`) still falls back to the active config set's model when
+  it is sent none. Nothing in Settings calls it now; the first-run dialog does, and always sends
+  one.
+
+**Manual pass (2026-10-06).** The development build was started against the user's real settings —
+backed up first, restored afterwards and verified by checksum — and done in two halves.
+
+_The mechanical half, through the build's debugging port._ Clicks and key presses were sent as the
+browser's own input (`Input.dispatchMouseEvent`, `Input.dispatchKeyEvent`, `Input.insertText`), not
+as events made in page script: only real input focuses what a click hits and lets Enter submit a
+form. A tab change "from outside" was a request to the navigation server (`nav-server.ts`). Every
+write went to one throwaway endpoint, deleted at the end. Seen working, with no error in the log:
+
+- **Focus after Escape** — the item step 1's pass could not confirm. Opening "Add endpoint" put the
+  cursor in the name field; Escape returned focus to that button. The same for a row's Edit and a
+  provider's Configure.
+- **Enter saves.** In the address field it created the endpoint (`createCustomEndpoint` in the
+  log — also left open by step 1's pass); in the name, key and default-model fields it saved an
+  edit each time (`updateCustomEndpoint`); in a provider's key field it saved that credential
+  (`setProviderCredential`). After each, the dialog closed, the row said "Saved", and focus was back
+  on the button that had opened the dialog.
+- **A check inside a dialog.** Against an address nothing listens on: five steps drawn, a
+  translated failure at the connection step, the dialog still open, nothing saved.
+- **The hand-over.** An OpenRouter address typed into the endpoint dialog showed the hint and its
+  button; the button closed that dialog and opened OpenRouter's with the cursor in its key field;
+  Escape returned focus to "Add endpoint".
+- **A tab change from outside with a dialog open.** The dialog closed and focus was on nothing —
+  not on a button in the hidden tab.
+- **The search for Ollama**, with none running: "not found", the address left empty, nothing saved.
+- **The "no key" warning** on Model Sets, by choosing a provider without a key and choosing the
+  original again. Nothing was left unsaved.
+- **Delete**, through the confirmation on the row.
+
+_The half that needs eyes_, by the user, with five screenshots: the setups list as drawn; "Apply"
+filling protocol, address and default model; a check with a real key in a provider's dialog — all
+five steps passed, and the log shows it ran against the provider's stored address with the model
+of the active config set; and the Providers tab in Hungarian.
+
+**Seen on real data:**
+
+- **The conversion of the real 1.0.8 file**, a third time: 12,305 → 5,841 bytes.
+- **The second endpoint on a host is named with its protocol** — on the tab and in the chooser.
+- **The dropped-key notice appeared on a provider's row**, naming two config sets, and again in that
+  provider's dialog in its dialog wording. Saving the dialog removed it from the row — decision 2's
+  mechanism, on a record the conversion itself had written.
+- **Pickers show `set · model`** (read from the welcome screen).
+
+**Not exercised:** the search for Ollama when one is running; Enter while a character is being
+composed (it needs a Chinese input method); the picker in the chat header; a moment when a save
+is on its way, which is too short to catch. **Not read by anyone who knows the language:** the ten
+new Chinese texts. The Hungarian texts were seen on the tab; the ten new ones live in the dialogs.
+
+**Noticed in the pass.** The first, third and last of these were then changed — see "After the
+manual pass" below. The other two were left as they are, by decision.
+
+- **The setups list stays open after "Apply"**, so what it filled in is below six rows of list.
+- **Two hints repeat each other after "Apply"** — the one under the address recommends the address
+  that is in the field. The old screen did the same.
+- **After a check, keyboard focus is on nothing.** The check button is switched off while it runs
+  and so drops focus; the next Tab goes to the dialog's first button. The panel is shared with the
+  Model Sets tab, where the same happens.
+- **A set named after its model reads twice** in a picker — `name · model` with the two alike.
+- **Most of the ready-made setups are services the catalog now lists itself.** The list is older
+  than the native catalog. Compared with pi-ai 0.87.1 (`dist/providers/data/*.json`) and the
+  builtin presets:
+
+  | Setup          | Its address, protocol                       | Catalog provider | That provider's address, protocol                             |
+  | -------------- | ------------------------------------------- | ---------------- | ------------------------------------------------------------- |
+  | Gemini         | `generativelanguage.googleapis.com`, Gemini | `gemini`         | the same address and protocol                                 |
+  | Kimi Coding    | `api.kimi.com/coding`, Anthropic            | `kimi-coding`    | the same address and protocol                                 |
+  | DeepSeek       | `api.deepseek.com/v1`, OpenAI               | `deepseek`       | `api.deepseek.com`, OpenAI                                    |
+  | GLM / BigModel | `open.bigmodel.cn/api/anthropic`, Anthropic | `zai-coding-cn`  | `open.bigmodel.cn/api/coding/paas/v4`, OpenAI — another route |
+  | MiniMax        | `api.minimax.chat/v1`, OpenAI               | `minimax`, `-cn` | `api.minimax.io/anthropic`, `api.minimaxi.com/anthropic`      |
+  | Generic OpenAI | an example                                  | —                | —                                                             |
+
+  Only OpenRouter and Ollama carry the mark (`preferProviderTab`) that sends an address to its
+  catalog entry. For the first two rows an endpoint filled from the list is the catalog provider
+  under another name. Whether those setups should send the user to the catalog instead is a
+  decision for the guidance data, which the first-run dialog shares.
+
+##### After the manual pass (2026-10-06) — three changes, and a rule for every pi uplift
+
+Decided with the user on the strength of what the pass showed:
+
+| #   | Question                                                    | Decision                                                                                                                                                                                                  |
+| --- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 4   | The setups list stays open after "Apply"                    | **It folds itself away**, and focus goes to its heading.                                                                                                                                                  |
+| 5   | Keyboard focus is lost after a check                        | **A button that runs something does not switch itself off for the run.** It says it is busy and ignores a second press.                                                                                   |
+| 6   | Setups whose service the catalog lists itself               | **Gemini and Kimi Coding are sent to their catalog provider**, as OpenRouter and Ollama are. DeepSeek, GLM and MiniMax stay custom endpoints.                                                             |
+| 7   | How is this kept true as the catalog grows?                 | **It is re-checked on every pi uplift and changed where the catalog has caught up** — written into `AI_MAIN_PROCESS.md` §1 and `CLAUDE.md`, and made into a test so the re-check does not rest on memory. |
+| —   | Two hints repeating after "Apply"; a label that reads twice | Left as they are.                                                                                                                                                                                         |
+
+**The list folds away** (`CommonProviderSetupsList`, `ProviderGuidance.tsx`). In the dialog the
+`<details>` is controlled: "Apply" fills the form, closes the list, and moves focus to the list's
+heading — the button that was pressed is folded away with the rest, and focus left on it would be
+focus on nothing. The table layout of the first-run dialog is untouched.
+
+**A pressed button keeps focus** (`ApiDiagnosticsPanel.tsx`, the Ollama search button). A disabled
+button cannot hold focus, so one that disabled itself for the time its own action takes dropped
+focus onto the page — behind the dialog. The two run buttons and the search button are now
+`aria-disabled` while they work, look it, and ignore a second press; they are really `disabled`
+only when the screen says the action cannot be taken at all (no key, a save on its way). This
+changes the Model Sets tab as well, which has the same panel.
+
+**Which setups belong to the catalog** (`catalogProvider`, `api-provider-guidance.ts`). A new
+optional field beside `preferProviderTab`, read through `catalogProviderOfSetup`. A second field
+because the first-run dialog words `preferProviderTab` as "the dedicated … tab" and can only name
+a provider it has a button for; that dialog never reads the new field and behaves as before. The
+endpoint dialog asks the catalog it is given (`catalogEntryOfSetup`): native providers arrive over
+IPC after the first render, and until the catalog has the provider there is no entry to send
+anyone to — the setup is an ordinary one again, and is listed. The hint names the provider as the
+tab does ("Kimi (Moonshot)"), from the catalog entry.
+
+Why these two and not the other three: for Gemini and Kimi Coding the setup's address is the
+catalog provider's own, in the provider's own protocol — an endpoint made from the setup _is_ the
+provider. GLM's setup is the Anthropic route of a host whose catalog provider speaks OpenAI on
+another path, and MiniMax's address is one no catalog provider serves from. DeepSeek is the close
+call: the same service and protocol, an address that differs by `/v1`. It stays a setup for now
+and is the first to look at again.
+
+**The rule for a pi uplift.** The setups list is older than the catalog, and the catalog is built
+from the installed pi, so the comparison above goes out of date with every pi version.
+`tests/provider-setups-vs-catalog.test.ts` is the comparison as a test. It reads the **installed**
+pi's provider data — the one test that does so on purpose; the rest of the suite stands in for
+it — builds the native entries by the app's own rule, and fails when the catalog providers found
+on a setup's host are not the ones written down in it. Beside that table is a second one with the
+decision taken for each setup and its reason. A failure after an uplift means "decide again", not
+"broken". Its blind spot is stated where the rule is: it sees a provider that serves from a
+setup's host, not a service pi starts to list under another address.
+
+**Checked again in the running app**, the same way as the mechanical half above (settings backed
+up, restored, checksum equal; nothing saved this time): the list shows four setups, folds away
+after "Apply" with the filled address in view and focus on its heading; Google's address and
+Kimi's coding address each bring the hint with a button to that provider's own dialog, by the
+names the tab uses; DeepSeek's address brings the ordinary hints and no button; after a check, and
+after a search for Ollama, focus is still on the button that was pressed, and the next Tab goes to
+the next control.
+
+One thing the manual pass itself left behind and the settings backup does not cover: the app's
+language is kept in the window's own storage, not in `config.json`. It had been switched to
+Hungarian for the pass and was put back to Russian.
+
+| File                                        | Tests | Covers                                                                                                     |
+| ------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------- |
+| `tests/provider-setups-vs-catalog.test.ts`  | 5     | **new** — the setups against the installed pi's catalog; a decision for every setup                        |
+| `tests/api-settings-dialogs-render.test.ts` | 53    | +12 — Gemini and Kimi addresses, the catalog not loaded yet, the list after "Apply", buttons that are busy |
+| `tests/credential-dialog-view.test.ts`      | 26    | +4 — which catalog entry a setup belongs to, with and without the catalog                                  |
+
+**Gates:** typecheck clean; `npm test` **3930 passed / 250 files**; lint 0 errors, the same 16
+pre-existing warnings. **25 more mutations** of these rules, each against the whole suite — two of
+them standing in for a pi that drops a provider — were all caught.
+
+**External review, third run: approved, no remarks** (212,510 characters, from the same scratch
+clone; three runs of the cap of five in all). The context argument listed what had changed since
+the approved diff and why, and the facts outside it — that the panel is shared with the Model Sets
+tab, that a second diagnostics call is harmless, and when native catalog entries arrive.
 
 ### Phase 5 — first-run wizard
 

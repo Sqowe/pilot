@@ -20,11 +20,13 @@ import {
   buildUpdateEndpointPayload,
   checkEndpointForm,
   createdEndpointId,
+  droppedKeySetNames,
   endpointCredentialStatus,
   endpointFormValues,
   parseProviderChoice,
   persistedCredentialFor,
   providerChoiceId,
+  providerConflictTarget,
   providerCredentialStatus,
   providerNeedsKey,
   runtimeOf,
@@ -346,6 +348,90 @@ describe('the rows of the Providers tab', () => {
       [set({ provider: 'anthropic', endpointId: local.id } as Partial<ApiConfigSet>)]
     );
     expect(rows[0].usedBy).toEqual([]);
+  });
+});
+
+describe('a key the conversion did not keep', () => {
+  // Before the split each config set held its own key. Two sets with different
+  // keys for one provider ended up with one; main records which sets lost
+  // theirs, by id, and the Providers tab says so on the row.
+  const configSets = [
+    set({ id: 'default', name: 'Default' }),
+    set({ id: 'work', name: 'Work' }),
+    set({ id: 'lab', name: 'Lab', provider: 'custom', endpointId: hosted.id }),
+  ];
+  const conflicts = [
+    { target: 'anthropic', setIds: ['work'] },
+    { target: hosted.id, setIds: ['lab', 'default'] },
+  ];
+
+  it('is reported by the names of the config sets that lost it', () => {
+    expect(droppedKeySetNames('anthropic', conflicts, configSets)).toEqual(['Work']);
+    // In the order the sets are listed, not the order they were recorded in.
+    expect(droppedKeySetNames(hosted.id, conflicts, configSets)).toEqual(['Default', 'Lab']);
+  });
+
+  it('is nothing for a credential the record does not name', () => {
+    expect(droppedKeySetNames('openai', conflicts, configSets)).toEqual([]);
+    expect(droppedKeySetNames(local.id, conflicts, configSets)).toEqual([]);
+    expect(droppedKeySetNames('anthropic', [], configSets)).toEqual([]);
+  });
+
+  it('uses the name a set has now, and leaves out one that is gone', () => {
+    const renamed = [set({ id: 'work', name: 'Client work' })];
+    expect(droppedKeySetNames('anthropic', conflicts, renamed)).toEqual(['Client work']);
+    expect(droppedKeySetNames(hosted.id, conflicts, renamed)).toEqual([]);
+  });
+
+  it('adds up a credential named more than once', () => {
+    const twice = [
+      { target: 'anthropic', setIds: ['work'] },
+      { target: 'anthropic', setIds: ['default', 'work'] },
+    ];
+    expect(droppedKeySetNames('anthropic', twice, configSets)).toEqual(['Default', 'Work']);
+  });
+
+  it('finds a provider under the name its credential is stored by', () => {
+    expect(providerConflictTarget('anthropic')).toBe('anthropic');
+    expect(providerConflictTarget('gemini')).toBe('gemini');
+    // A native provider's credential has its own prefix, and so does its record.
+    expect(providerConflictTarget('zai')).toBe('native:zai');
+    expect(
+      droppedKeySetNames(
+        providerConflictTarget('zai'),
+        [{ target: 'native:zai', setIds: ['work'] }],
+        configSets
+      )
+    ).toEqual(['Work']);
+  });
+
+  it('reaches the row of the endpoint or the provider it is about, and no other', () => {
+    const endpointRows = buildEndpointRows([local, hosted], configSets, conflicts);
+    expect(endpointRows.map((row) => [row.endpoint.name, row.droppedKeySets])).toEqual([
+      ['kiro-gateway', []],
+      ['hosted-gateway', ['Default', 'Lab']],
+    ]);
+
+    const providerRows = buildProviderRowGroups(catalog, {}, configSets, conflicts).flatMap(
+      (group) => group.rows
+    );
+    expect(providerRows.find((row) => row.entry.id === 'anthropic')?.droppedKeySets).toEqual([
+      'Work',
+    ]);
+    for (const row of providerRows.filter((candidate) => candidate.entry.id !== 'anthropic')) {
+      expect(row.droppedKeySets, row.entry.id).toEqual([]);
+    }
+  });
+
+  it('leaves every row without one when there is no record', () => {
+    for (const row of buildEndpointRows([local, hosted], configSets)) {
+      expect(row.droppedKeySets).toEqual([]);
+    }
+    for (const group of buildProviderRowGroups(catalog, {}, configSets)) {
+      for (const row of group.rows) {
+        expect(row.droppedKeySets).toEqual([]);
+      }
+    }
   });
 });
 

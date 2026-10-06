@@ -598,6 +598,18 @@
       "deleteEndpointInUse": "Használatban van. Előbb állítson be másik szolgáltatót az ezt használó konfigurációs készletekben.",
       "keyOptionalHint": "Ennél a szolgáltatónál nem kötelező. Helyben mentve, szolgáltatónként egyszer.",
       "baseUrlOptionalHint": "Hagyja üresen a szolgáltató szokásos címének használatához.",
+      "droppedKey": "Mielőtt a kulcsok erre a lapra kerültek, ezek a készletek itt más kulcsot használtak: {{sets}}. Most csak egy kulcs van mentve, és az nem az övék. Nyissa meg a bejegyzést, és mentse a jelenlegi kulcs megerősítéséhez, vagy adja meg a másikat.",
+      "droppedKeyInDialog": "Mielőtt a kulcsok erre a lapra kerültek, ezek a készletek itt más kulcsot használtak: {{sets}}. Most csak egy kulcs van mentve, és az nem az övék. Mentse az alábbi kulcs megerősítéséhez, vagy előbb cserélje le.",
+      "catalogProviderHint": "Ez a(z) {{provider}} címe, amelynek saját bejegyzése van ezen a lapon. Ott állítsa be, ne egyéni végpontként adja hozzá.",
+      "openCatalogProvider": "{{provider}} megnyitása",
+      "ollamaSearchHint": "A Helyi Ollama keresése gomb ezen a gépen keres kiszolgálót, és kitölti a címét. Semmi sem kerül mentésre, amíg a Mentés gombra nem kattint.",
+      "check": {
+        "title": "Kapcsolat ellenőrzése",
+        "withModel": "Azt ellenőrzi, ami fent be van írva, akár mentve van, akár nem; a végén egy rövid kérést küld a(z) {{model}} modellnek.",
+        "noModel": "Azt ellenőrzi, ami fent be van írva, akár mentve van, akár nem. Itt még nem ismert modell, ezért csak eléri a szolgáltatást, és lekéri a modellek listáját — egyes szolgáltatások erre a kulcs ellenőrzése nélkül is válaszolnak.",
+        "passedNotSaved": "Az ellenőrzés sikeres. Semmi sem kerül mentésre, amíg a Mentés gombra nem kattint.",
+        "reachedNotSaved": "A szolgáltatás válaszolt. Ez önmagában nem igazolja a kulcsot. Semmi sem kerül mentésre, amíg a Mentés gombra nem kattint."
+      },
       "status": {
         "configured": "Beállítva",
         "keyMissing": "Hiányzik a kulcs",

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
@@ -7,7 +15,12 @@ interface SettingsDialogFrameProps {
   title: string;
   /** Called for the close button and for Escape. */
   onClose: () => void;
-  /** Blocks closing while a save is on its way. */
+  /**
+   * Called when the dialog is submitted: its `type="submit"` button, or Enter
+   * in one of its fields. Given this, the body and footer are one form.
+   */
+  onSubmit?: () => void;
+  /** Blocks closing and submitting while a save is on its way. */
   busy?: boolean;
   children: ReactNode;
   footer: ReactNode;
@@ -16,6 +29,18 @@ interface SettingsDialogFrameProps {
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select, textarea';
 
 type DialogSaveResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Whether focus can be handed back to an element: it is still drawn.
+ *
+ * A dialog can be closed by the panel moving to another tab. The button that
+ * opened it is then inside a hidden tab, and focus must not be sent there. An
+ * element in a hidden tab has no box on the page — and neither has one that has
+ * left the page altogether, so the one question covers both.
+ */
+export function canReturnFocusTo(element: Pick<HTMLElement, 'getClientRects'> | null): boolean {
+  return Boolean(element && element.getClientRects().length > 0);
+}
 
 /**
  * Runs one action at a time: a request made while one is on its way is ignored.
@@ -79,10 +104,15 @@ export function useDialogSave(onClose: () => void, fallbackError: string) {
  * clipping cannot cut it off. Escape closes it, Tab stays inside it, and focus
  * returns to where it was when it closes. It does not close on a click outside:
  * a dialog here usually holds a key somebody has just typed.
+ *
+ * With `onSubmit` the body and footer are a real `<form>`, so Enter in a field
+ * saves by the browser's own rule: not while the submit button is disabled,
+ * and not for the Enter that finishes a character being composed.
  */
 export function SettingsDialogFrame({
   title,
   onClose,
+  onSubmit,
   busy = false,
   children,
   footer,
@@ -97,6 +127,17 @@ export function SettingsDialogFrame({
   onCloseRef.current = onClose;
   const busyRef = useRef(busy);
   busyRef.current = busy;
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    // Never let the browser send the form anywhere. And although the dialog is
+    // drawn into the page body, its events still travel up the React tree — a
+    // submit here must not reach a form that happens to sit above the tab.
+    event.preventDefault();
+    event.stopPropagation();
+    if (!busyRef.current) {
+      onSubmit?.();
+    }
+  };
 
   // What had focus when the dialog was opened — the button that opened it.
   // Read during the first render: by the time an effect runs, the field with
@@ -144,9 +185,22 @@ export function SettingsDialogFrame({
     document.addEventListener('keydown', onKeyDown, true);
     return () => {
       document.removeEventListener('keydown', onKeyDown, true);
-      opener?.focus();
+      // Only to a button that can still be seen. Closed by a change of tab, the
+      // opener sits in a hidden tab; focus is then left where the page puts it.
+      if (opener && canReturnFocusTo(opener)) {
+        opener.focus();
+      }
     };
   }, []);
+
+  const content = (
+    <>
+      <div className="flex-1 overflow-y-auto px-6 py-2 space-y-4">{children}</div>
+      <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-border-muted">
+        {footer}
+      </div>
+    </>
+  );
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -172,10 +226,13 @@ export function SettingsDialogFrame({
             <X className="w-4 h-4" />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-6 py-2 space-y-4">{children}</div>
-        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-border-muted">
-          {footer}
-        </div>
+        {onSubmit ? (
+          <form noValidate onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+            {content}
+          </form>
+        ) : (
+          content
+        )}
       </div>
     </div>,
     document.body

@@ -12,8 +12,12 @@ import path from 'node:path';
 const LOCALES = ['en', 'zh', 'ru', 'hu'] as const;
 const SOURCES = [
   'src/renderer/components/CustomEndpointDialog.tsx',
+  'src/renderer/components/CustomEndpointFields.tsx',
   'src/renderer/components/ProviderConfigDialog.tsx',
+  'src/renderer/components/ProviderCredentialFields.tsx',
+  'src/renderer/components/ProviderGuidance.tsx',
   'src/renderer/components/ProviderChoicePicker.tsx',
+  'src/renderer/components/settings/CredentialDialogParts.tsx',
   'src/renderer/components/settings/SettingsProviders.tsx',
   'src/renderer/components/settings/SettingsModelSets.tsx',
   'src/renderer/components/settings/ModelFieldsSection.tsx',
@@ -21,6 +25,8 @@ const SOURCES = [
   'src/renderer/components/settings/SettingsDialogFrame.tsx',
   'src/renderer/hooks/useModelSetForm.ts',
   'src/renderer/hooks/useApiSettingsState.ts',
+  'src/renderer/hooks/useCustomEndpointGuidance.ts',
+  'src/renderer/hooks/credential-dialog-view.ts',
   'src/renderer/hooks/api-config-shared.ts',
 ];
 
@@ -70,6 +76,16 @@ describe('texts of the Providers and Model Sets tabs', () => {
     expect(used.length).toBeGreaterThan(40);
     expect(used).toContain('api.providers.customEndpoints');
     expect(used).toContain('api.modelSets.manageProviders');
+    // What the dialogs gained: the check, the hint towards a catalog provider,
+    // the dropped-key notice, and the texts of the guidance they now show.
+    expect(used).toContain('api.providers.check.withModel');
+    expect(used).toContain('api.providers.check.noModel');
+    expect(used).toContain('api.providers.catalogProviderHint');
+    expect(used).toContain('api.providers.droppedKey');
+    expect(used).toContain('api.providers.droppedKeyInDialog');
+    expect(used).toContain('api.providers.ollamaSearchHint');
+    expect(used).toContain('api.guidance.protocolMismatch');
+    expect(used).toContain('api.localOllamaNotFound');
   });
 
   it.each(LOCALES)('names the two tabs in %s', (locale) => {

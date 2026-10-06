@@ -26,11 +26,22 @@ import { SettingsProviders } from '../src/renderer/components/settings/SettingsP
 import { useApiSettingsState } from '../src/renderer/hooks/useApiSettingsState';
 
 type Tab = typeof SettingsProviders | typeof SettingsModelSets;
+type SetsState = ReturnType<typeof useApiSettingsState>['sets'];
 
-/** Render a tab as it looks once its data has arrived. */
-function renderTab(tab: Tab, initialConfig: AppConfig | null, loading = false): string {
+/**
+ * Render a tab as it looks once its data has arrived. `sets` overrides part of
+ * the config-set half, for a moment a first render cannot reach by itself: a
+ * save or a switch that is on its way.
+ */
+function renderTab(
+  tab: Tab,
+  initialConfig: AppConfig | null,
+  loading = false,
+  sets: Partial<SetsState> = {}
+): string {
   function Harness() {
-    const state = useApiSettingsState({ initialConfig });
+    const loaded = useApiSettingsState({ initialConfig });
+    const state = { ...loaded, sets: { ...loaded.sets, ...sets } };
     return createElement(
       ApiSettingsContext.Provider,
       { value: { ...state, isLoadingConfig: loading, isCatalogLoading: false } },
@@ -189,7 +200,12 @@ describe('what a provider dialog opens on', () => {
 });
 
 describe('deleting a custom endpoint', () => {
-  const row = { endpoint: hosted, status: 'configured' as const, usedBy: [] };
+  const row = {
+    endpoint: hosted,
+    status: 'configured' as const,
+    usedBy: [] as string[],
+    droppedKeySets: [] as string[],
+  };
   const handlers = {
     onEdit: () => {},
     onDelete: () => {},
@@ -245,6 +261,86 @@ describe('deleting a custom endpoint', () => {
     // Edit stays available; only the delete button is off, and says why.
     expect(html).toContain('api.providers.deleteEndpointInUse');
     expect(html.match(/disabled=""/g)).toHaveLength(1);
+  });
+});
+
+describe('a key the conversion dropped, on the Providers tab', () => {
+  const withConflicts = config({
+    ...twoGateways,
+    credentialConflicts: [
+      { target: 'anthropic', setIds: ['work'] },
+      { target: hosted.id, setIds: ['default'] },
+    ],
+  });
+
+  it('is said on the row of each credential it happened to', () => {
+    const html = renderTab(SettingsProviders, withConflicts);
+
+    // One provider row, one endpoint row. Texts appear as their keys.
+    expect(html.match(/api\.providers\.droppedKey(?!InDialog)/g)).toHaveLength(2);
+    // No dialog is open at first render.
+    expect(html).not.toContain('api.providers.droppedKeyInDialog');
+  });
+
+  it('is not said when nothing was dropped', () => {
+    expect(renderTab(SettingsProviders, twoGateways)).not.toContain('api.providers.droppedKey');
+  });
+
+  it('is not said about config sets that no longer exist', () => {
+    const html = renderTab(
+      SettingsProviders,
+      config({ ...twoGateways, credentialConflicts: [{ target: 'anthropic', setIds: ['gone'] }] })
+    );
+    expect(html).not.toContain('api.providers.droppedKey');
+  });
+});
+
+/** The opening tag that carries the given attribute text. */
+function tagWith(html: string, marker: string): string {
+  const at = html.indexOf(marker);
+  expect(at, marker).toBeGreaterThan(-1);
+  return html.slice(html.lastIndexOf('<', at), html.indexOf('>', at) + 1);
+}
+
+describe('the Model Sets tab while a call that changes a set is on its way', () => {
+  // What main returns replaces what is on screen. A field left open in that
+  // moment would show an edit and then silently lose it.
+  const FIELDS = [
+    'aria-label="api.provider"',
+    'id="api-model-input"',
+    'id="api-context-window-input"',
+    'id="api-max-tokens-input"',
+  ];
+
+  it('leaves the chooser and the model fields open when nothing is on its way', () => {
+    const html = renderTab(SettingsModelSets, twoGateways);
+    for (const field of FIELDS) {
+      expect(tagWith(html, field), field).not.toContain('disabled=""');
+    }
+  });
+
+  it.each(['isSaving', 'isMutatingConfigSet'] as const)(
+    'holds the chooser and the model fields still while %s',
+    (flag) => {
+      const html = renderTab(SettingsModelSets, twoGateways, false, { [flag]: true });
+      for (const field of FIELDS) {
+        expect(tagWith(html, field), field).toContain('disabled=""');
+      }
+    }
+  );
+
+  it('does not offer another set, or a new one, while a save is on its way', () => {
+    const open = renderTab(SettingsModelSets, twoGateways);
+    const saving = renderTab(SettingsModelSets, twoGateways, false, { isSaving: true });
+
+    // The set switcher is the first select on the tab.
+    expect(tagWith(open, '<select'), 'open').not.toContain('disabled=""');
+    expect(tagWith(saving, '<select'), 'saving').toContain('disabled=""');
+    // Switcher, its Save / New / Rename / Delete, the chooser, the model field,
+    // the two limits and the Save at the foot of the tab: more is off than on
+    // an idle tab, where only what cannot apply is.
+    const off = (html: string) => (html.match(/disabled=""/g) ?? []).length;
+    expect(off(saving) - off(open)).toBeGreaterThanOrEqual(9);
   });
 });
 

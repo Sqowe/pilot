@@ -271,8 +271,25 @@ describe('before anything is edited', () => {
   it('renders without a config at all', () => {
     const { settings, form } = render(null);
 
-    expect(settings.credentials).toEqual({ providerCredentials: {}, customEndpoints: [] });
+    expect(settings.credentials).toEqual({
+      providerCredentials: {},
+      customEndpoints: [],
+      credentialConflicts: [],
+    });
     expect(form.configSets).toHaveLength(1);
+  });
+
+  it('carries the record of keys the conversion dropped, for the Providers tab to show', () => {
+    const conflicts = [{ target: 'anthropic', setIds: ['work'] }];
+    const { settings } = render(config({ credentialConflicts: conflicts }));
+
+    expect(settings.credentials.credentialConflicts).toEqual(conflicts);
+  });
+
+  it('holds the fields still only while a call that changes a set is on its way', () => {
+    // Nothing is on its way at first render; the lock itself is checked on the
+    // tab, where it has to reach every field.
+    expect(render(config({})).form.isLocked).toBe(false);
   });
 
   it('keeps the interface the Model Sets tab is written against', () => {

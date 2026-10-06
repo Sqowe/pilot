@@ -598,6 +598,18 @@
       "deleteEndpointInUse": "In use. Point the config sets that use it at another provider first.",
       "keyOptionalHint": "Optional for this provider. Saved locally, once per provider.",
       "baseUrlOptionalHint": "Leave empty to use the provider's usual address.",
+      "droppedKey": "Before keys moved to this tab, a different key was used here by: {{sets}}. Only one key is kept now, and it is not that one. Open this entry and save to confirm the current key, or enter the other one.",
+      "droppedKeyInDialog": "Before keys moved to this tab, a different key was used here by: {{sets}}. Only one key is kept now, and it is not that one. Save to confirm the key below, or replace it first.",
+      "catalogProviderHint": "This is the address of {{provider}}, which has its own entry on this tab. Set it up there instead of adding a custom endpoint.",
+      "openCatalogProvider": "Open {{provider}}",
+      "ollamaSearchHint": "Find Local Ollama looks for a server on this computer and fills in its address. Nothing is saved until you press Save.",
+      "check": {
+        "title": "Connection check",
+        "withModel": "Runs against what is typed above, saved or not, and ends with one short request to {{model}}.",
+        "noModel": "Runs against what is typed above, saved or not. No model is known here yet, so it only reaches the service and asks for its model list — some services answer that without checking the key.",
+        "passedNotSaved": "The check passed. Nothing is saved until you press Save.",
+        "reachedNotSaved": "The service answered. That alone does not prove the key. Nothing is saved until you press Save."
+      },
       "status": {
         "configured": "Configured",
         "keyMissing": "Key missing",

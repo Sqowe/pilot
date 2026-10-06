@@ -41,16 +41,51 @@ export function customEndpointKey(protocol: CustomEndpointProtocol, baseUrl: str
 }
 
 /**
- * Default display name for an endpoint: the base URL's host (with port when
- * present), falling back to the raw string. The host is the only name the data
- * itself offers; the user can rename afterwards.
+ * How a protocol is written inside a default name. Proper names, the same in
+ * every language — main, which names endpoints, has no translations.
  */
-export function defaultCustomEndpointName(baseUrl: string): string {
+const PROTOCOL_NAMES: Record<CustomEndpointProtocol, string> = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  gemini: 'Gemini',
+};
+
+function hostOf(baseUrl: string): string {
   const trimmed = baseUrl.trim();
   if (!trimmed) return 'Custom endpoint';
   try {
     return new URL(trimmed).host || trimmed;
   } catch {
     return trimmed;
+  }
+}
+
+/**
+ * Default display name for an endpoint: the base URL's host (with port when
+ * present), falling back to the raw string. The host is the only name the data
+ * itself offers; the user can rename afterwards.
+ *
+ * One host can serve more than one protocol — a local gateway often does — and
+ * each is an endpoint of its own. So when `among` is given and the host is
+ * already another endpoint's name, the protocol is added, and after that a
+ * number. A name is chosen once, when an endpoint has none: an endpoint that
+ * already has a name is never renamed to make room.
+ */
+export function defaultCustomEndpointName(
+  baseUrl: string,
+  among?: { protocol: CustomEndpointProtocol; takenNames: Iterable<string> }
+): string {
+  const host = hostOf(baseUrl);
+  if (!among) return host;
+
+  const taken = new Set(among.takenNames);
+  if (!taken.has(host)) return host;
+  const withProtocol = `${host} (${PROTOCOL_NAMES[among.protocol]})`;
+  if (!taken.has(withProtocol)) return withProtocol;
+  // Same host and protocol, another path. Bounded: every pass that does not
+  // return found one more distinct name in `taken`.
+  for (let number = 2; ; number += 1) {
+    const numbered = `${withProtocol} ${number}`;
+    if (!taken.has(numbered)) return numbered;
   }
 }

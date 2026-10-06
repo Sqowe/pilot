@@ -8,7 +8,9 @@ interface ModelFieldsSectionProps {
 }
 
 const INPUT_CLASS =
-  'w-full px-4 py-3 rounded-lg bg-background border border-border text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all';
+  'w-full px-4 py-3 rounded-lg bg-background border border-border text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent disabled:opacity-60 disabled:cursor-not-allowed transition-all';
+const LIMIT_INPUT_CLASS =
+  'w-full px-3 py-2 rounded-lg bg-background border border-border text-text-primary text-sm placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent disabled:opacity-60 disabled:cursor-not-allowed transition-all';
 
 /**
  * The model of a config set: the model itself (picked or typed), the two token
@@ -16,6 +18,9 @@ const INPUT_CLASS =
  *
  * Which fields show is read from the provider's catalog entry (`formShape`),
  * with the provider-literal checks kept as the fallback for builtins.
+ *
+ * Every field is off while the set is being saved or switched (`isLocked`):
+ * what main returns replaces what is here.
  */
 export function ModelFieldsSection({ form }: ModelFieldsSectionProps) {
   const { t } = useTranslation();
@@ -34,6 +39,7 @@ export function ModelFieldsSection({ form }: ModelFieldsSectionProps) {
     isOllamaMode,
     shouldShowOllamaManualModelToggle,
     isRefreshingModels,
+    isLocked,
     thinkingCapabilities,
     effectiveThinkingLevel,
     setModel,
@@ -95,7 +101,7 @@ export function ModelFieldsSection({ form }: ModelFieldsSectionProps) {
                 onClick={() => {
                   void refreshModelOptions();
                 }}
-                disabled={isRefreshingModels}
+                disabled={isRefreshingModels || isLocked}
                 className="flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors active:scale-95 bg-surface-hover text-text-secondary hover:bg-surface-active disabled:opacity-50"
               >
                 <RefreshCw className={`w-3 h-3 ${isRefreshingModels ? 'animate-spin' : ''}`} />
@@ -106,7 +112,7 @@ export function ModelFieldsSection({ form }: ModelFieldsSectionProps) {
               <button
                 type="button"
                 onClick={toggleCustomModel}
-                disabled={forceManualModel}
+                disabled={forceManualModel || isLocked}
                 title={forceManualModel ? t('api.noPresetsManualOnly') : undefined}
                 className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 ${
                   effectiveManualModel
@@ -128,6 +134,7 @@ export function ModelFieldsSection({ form }: ModelFieldsSectionProps) {
             value={customModel}
             onChange={(e) => setCustomModel(e.target.value)}
             placeholder={modelInputPlaceholder}
+            disabled={isLocked}
             className={INPUT_CLASS}
           />
         ) : showModelDropdown ? (
@@ -144,6 +151,7 @@ export function ModelFieldsSection({ form }: ModelFieldsSectionProps) {
             }
             searchPlaceholder={t('api.providerPicker.modelSearchPlaceholder')}
             noResultsLabel={t('api.providerPicker.noResults')}
+            disabled={isLocked}
             aria-label={t('api.model')}
           />
         ) : (
@@ -151,6 +159,7 @@ export function ModelFieldsSection({ form }: ModelFieldsSectionProps) {
             id="api-model-input"
             value={modelOptions.length ? model : ''}
             onChange={(e) => setModel(e.target.value)}
+            disabled={isLocked}
             className={`${INPUT_CLASS} appearance-none cursor-pointer`}
           >
             {modelOptions.length ? (
@@ -186,7 +195,8 @@ export function ModelFieldsSection({ form }: ModelFieldsSectionProps) {
                 placeholder={t('api.contextWindowPlaceholder')}
                 min={1024}
                 step={1024}
-                className="w-full px-3 py-2 rounded-lg bg-background border border-border text-text-primary text-sm placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all"
+                disabled={isLocked}
+                className={LIMIT_INPUT_CLASS}
               />
             </div>
             <div>
@@ -204,7 +214,8 @@ export function ModelFieldsSection({ form }: ModelFieldsSectionProps) {
                 placeholder={t('api.maxOutputTokensPlaceholder')}
                 min={256}
                 step={256}
-                className="w-full px-3 py-2 rounded-lg bg-background border border-border text-text-primary text-sm placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-all"
+                disabled={isLocked}
+                className={LIMIT_INPUT_CLASS}
               />
             </div>
             <p className="col-span-2 text-xs text-text-muted">{t('api.contextWindowHint')}</p>
@@ -227,9 +238,10 @@ export function ModelFieldsSection({ form }: ModelFieldsSectionProps) {
                 key={level}
                 type="button"
                 onClick={() => setThinkingLevel(level)}
+                disabled={isLocked}
                 aria-pressed={effectiveThinkingLevel === level}
                 className={[
-                  'px-3 py-1 rounded text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                  'px-3 py-1 rounded text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 disabled:cursor-not-allowed',
                   effectiveThinkingLevel === level
                     ? 'bg-accent text-white'
                     : 'bg-bg-tertiary text-text-muted hover:bg-bg-secondary hover:text-text-primary',

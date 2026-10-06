@@ -7,6 +7,7 @@ import { getInitialSessionTitle } from '../../shared/session-title';
 import { MAX_PINNED_SKILLS_PER_SESSION } from '../../shared/skill-pinning-constants';
 import { ArrowRight, X, Paperclip, Layers, Plug, ChevronDown, ChevronUp, Star } from 'lucide-react';
 import { WorkspacePicker } from './WorkspacePicker';
+import { configSetLabel } from '../utils/config-set-label';
 import { deriveDisabledServerIds } from '../utils/mcp-profile-derive';
 
 type AttachedFile = {
@@ -853,12 +854,12 @@ export function WelcomeView() {
                       void handleConfigSetSwitch(e.target.value);
                     }}
                     disabled={isSwitchingSet}
-                    className="bg-transparent border-none outline-none text-sm text-text-secondary hover:text-text-primary cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed max-w-[140px] truncate"
+                    className="bg-transparent border-none outline-none text-sm text-text-secondary hover:text-text-primary cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed max-w-[260px] truncate"
                     title={t('welcome.configSet')}
                   >
                     {configSets.map((set) => (
                       <option key={set.id} value={set.id}>
-                        {set.name}
+                        {configSetLabel(set)}
                       </option>
                     ))}
                   </select>

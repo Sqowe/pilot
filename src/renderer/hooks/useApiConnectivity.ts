@@ -34,6 +34,13 @@ interface UseApiConnectivityOptions {
   messages: ApiConfigMessages;
   setBaseUrl: (value: string) => void;
   updateModelFields: (updater: (previous: ModelFields) => ModelFields) => void;
+  /**
+   * Whether Ollama's model list is kept up to date as its address changes.
+   * Off where there is no model to pick — a credential dialog — so the list is
+   * not fetched on every pause in typing, and a server that does not answer
+   * yet is not reported as an error next to an address still being typed.
+   */
+  listsModels?: boolean;
 }
 
 /**
@@ -59,6 +66,7 @@ export function useApiConnectivity(options: UseApiConnectivityOptions) {
     messages,
     setBaseUrl,
     updateModelFields,
+    listsModels = true,
   } = options;
   const { clearError, clearSuccessMessage, showErrorKey, showErrorText, showSuccessKey } = messages;
 
@@ -338,14 +346,14 @@ export function useApiConnectivity(options: UseApiConnectivityOptions) {
   // Auto-refresh model list when Ollama baseUrl changes (debounced).
   // Only fires for URLs that look plausible (start with http(s):// and have a host).
   useEffect(() => {
-    if (provider !== 'ollama') return;
+    if (!listsModels || provider !== 'ollama') return;
     const trimmed = baseUrl.trim();
     if (!trimmed || !/^https?:\/\/.{3,}/i.test(trimmed)) return;
     const timer = setTimeout(() => {
       void refreshModelOptions();
     }, 800);
     return () => clearTimeout(timer);
-  }, [provider, baseUrl, refreshModelOptions]);
+  }, [listsModels, provider, baseUrl, refreshModelOptions]);
 
   const discoverLocalOllama = useCallback(
     async (discoverOptions?: { silent?: boolean }) => {

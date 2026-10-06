@@ -22,6 +22,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one of your custom endpoints by name — and which model. Two custom endpoints can now be
   told apart and chosen between; before, both were just "Custom". An endpoint shows which
   config sets use it and cannot be deleted while one does.
+- **A key can be tried before it is saved.** Both dialogs on the Providers tab have a
+  connection check that runs against what is typed, saved or not, and says which model it
+  tries. The custom-endpoint dialog has the ready-made setups and the hints under protocol
+  and address again; an address that belongs to a provider the app lists itself —
+  OpenRouter, Ollama, Gemini, Kimi Coding — is pointed at that provider's own entry. The
+  Ollama dialog can find a server on this computer. Enter saves a dialog.
+- **A key that was not kept is shown.** Where the conversion kept one key out of several
+  (see above), the Providers tab says so on that provider or endpoint and names the config
+  sets that had a different one. Saving the entry again confirms the key it has.
+- **Config-set pickers show the model.** In the chat header and on the welcome screen a
+  config set is listed as "name · model".
+- Two custom endpoints on one host — a local gateway reached through two protocols — no
+  longer get the same default name: the second is named with its protocol, for example
+  `127.0.0.1:9000 (OpenAI)`. Names that already exist are not changed.
 
 ### Fixed
 

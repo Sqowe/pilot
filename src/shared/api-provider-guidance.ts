@@ -20,6 +20,16 @@ export interface CommonProviderSetup {
   exampleModel: string;
   protocolLabel?: string;
   preferProviderTab?: Exclude<SharedProviderType, 'custom'>;
+  /**
+   * The catalog provider this setup's service is, when the catalog lists that
+   * very service. The Providers tab then sends such an address to the
+   * provider's own entry instead of offering to make a custom endpoint of it.
+   *
+   * Apart from `preferProviderTab`, which the first-run dialog words as "the
+   * dedicated … tab" and so can only name a provider that dialog has a button
+   * for. Read through `catalogProviderOfSetup`, which takes either.
+   */
+  catalogProvider?: Exclude<SharedProviderType, 'custom'>;
   matcher?: {
     hosts?: string[];
     hostContains?: string[];
@@ -42,6 +52,22 @@ export type ProviderGuidanceErrorHintKind =
   | 'probeMismatchGeneric'
   | 'probeMismatchDetected';
 
+/**
+ * Ready-made setups for a custom endpoint.
+ *
+ * This list is older than the provider catalog, and the catalog — built from
+ * the installed pi — keeps growing. A service listed here may since have
+ * become a catalog provider of its own; a custom endpoint made from its setup
+ * is then that provider under another name, with a second copy of its key.
+ *
+ * So the list is re-checked against the catalog on every pi uplift, and the
+ * check is a test rather than a note: `tests/provider-setups-vs-catalog.test.ts`
+ * reads the installed pi's own provider data and fails when what it finds no
+ * longer matches what these setups were last checked against. Decide again
+ * there which setups send their address to a catalog provider
+ * (`catalogProvider`) and which stay custom endpoints. Rule and reasons:
+ * AI_MAIN_PROCESS.md §1, "Ready-made setups and the catalog".
+ */
 export const COMMON_PROVIDER_SETUPS: CommonProviderSetup[] = [
   {
     id: 'openrouter',
@@ -79,6 +105,8 @@ export const COMMON_PROVIDER_SETUPS: CommonProviderSetup[] = [
     recommendedProtocol: 'anthropic',
     recommendedBaseUrl: 'https://api.kimi.com/coding',
     exampleModel: 'kimi-k2-thinking',
+    // The catalog's `kimi-coding` is this address and this protocol.
+    catalogProvider: 'kimi-coding',
     matcher: {
       hosts: ['api.kimi.com'],
       pathPrefixes: ['/coding', '/coding/v1'],
@@ -121,6 +149,8 @@ export const COMMON_PROVIDER_SETUPS: CommonProviderSetup[] = [
     recommendedProtocol: 'gemini',
     recommendedBaseUrl: 'https://generativelanguage.googleapis.com',
     exampleModel: 'gemini-2.5-flash',
+    // Google's own address: the catalog's `gemini` is this address and protocol.
+    catalogProvider: 'gemini',
     matcher: {
       hosts: ['generativelanguage.googleapis.com'],
     },
@@ -238,6 +268,17 @@ export function detectCommonProviderSetup(baseUrl: string | undefined): CommonPr
   }
 
   return null;
+}
+
+/**
+ * The catalog provider a setup's service is, or null when it is a service of
+ * its own. Whether the catalog really has that provider is the caller's to
+ * check: the catalog is built from the installed pi and loaded at run time.
+ */
+export function catalogProviderOfSetup(
+  setup: Pick<CommonProviderSetup, 'catalogProvider' | 'preferProviderTab'>
+): string | null {
+  return setup.catalogProvider ?? setup.preferProviderTab ?? null;
 }
 
 export function orderCommonProviderSetups(

@@ -210,17 +210,26 @@ export default function ApiDiagnosticsPanel({
   const displaySteps = result?.steps ?? (isRunning ? placeholderSteps : []);
   const failedStep = displaySteps.find((s) => s.status === 'fail');
 
+  // While a run is on its way the buttons are not `disabled`: a disabled button
+  // cannot hold focus, so the one just pressed would drop it onto the page — in
+  // a dialog, out from under the keyboard. They say they are busy
+  // (`aria-disabled`), look it, and ignore a second press instead.
+  const busyClass = isRunning ? 'opacity-50 cursor-not-allowed' : '';
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onClick={() => onRunDiagnostics()}
-          disabled={disabled || isRunning}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl
+          onClick={() => {
+            if (!isRunning) onRunDiagnostics();
+          }}
+          disabled={disabled}
+          aria-disabled={isRunning || undefined}
+          className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl
             bg-accent text-white text-sm font-medium
             hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed
-            transition-colors"
+            transition-colors ${busyClass}`}
         >
           {isRunning ? (
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -234,12 +243,15 @@ export default function ApiDiagnosticsPanel({
         {onRunDeepDiagnostics && (
           <button
             type="button"
-            onClick={() => onRunDeepDiagnostics()}
-            disabled={disabled || isRunning}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-border
+            onClick={() => {
+              if (!isRunning) onRunDeepDiagnostics();
+            }}
+            disabled={disabled}
+            aria-disabled={isRunning || undefined}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-border
               bg-background text-text-primary text-sm font-medium
               hover:bg-surface-hover disabled:opacity-50 disabled:cursor-not-allowed
-              transition-colors"
+              transition-colors ${busyClass}`}
           >
             <Cpu className="w-4 h-4" />
             {t('api.diagnostic.runDeepDiagnostics', 'Deep Inference Check')}

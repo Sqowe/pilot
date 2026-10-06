@@ -21,6 +21,7 @@ function credentialsOf(config: AppConfig | null | undefined): PersistedCredentia
   return {
     providerCredentials: config?.providerCredentials ?? {},
     customEndpoints: config?.customEndpoints ?? [],
+    credentialConflicts: config?.credentialConflicts ?? [],
   };
 }
 

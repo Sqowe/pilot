@@ -1,11 +1,15 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertCircle, ExternalLink, Loader2 } from 'lucide-react';
+import type { CustomProtocolType } from '../types';
 import type { ProviderCatalogEntry } from '../../shared/provider-catalog';
+import { ollamaSearchNote, type DialogNote } from '../hooks/credential-dialog-view';
 import type { CredentialCallResult } from '../hooks/useApiSettingsState';
+import { useCredentialCheck } from '../hooks/useCredentialCheck';
+import { ProviderCredentialFields } from './ProviderCredentialFields';
+import { DialogFooterButtons } from './settings/CredentialDialogParts';
 import { SettingsDialogFrame, useDialogSave } from './settings/SettingsDialogFrame';
 
-interface ProviderConfigDialogProps {
+export interface ProviderConfigDialogProps {
   entry: ProviderCatalogEntry;
   /** The key and address exactly as they are stored; an address never given is empty. */
   apiKey: string;
@@ -20,14 +24,110 @@ interface ProviderConfigDialogProps {
   keyHintKey?: string;
   /** Names of the config sets that use this provider. */
   usedBy: string[];
+  /** Names of the config sets whose own key for this provider the conversion did not keep. */
+  droppedKeySets: string[];
+  /** The protocol requests to this provider are made in. */
+  protocol: CustomProtocolType;
+  /** The model a connection check tries; '' when none is known. */
+  checkModel: string;
   onSave: (input: { apiKey: string; baseUrl: string }) => Promise<CredentialCallResult>;
   onClose: () => void;
 }
 
-const FIELD_CLASS =
-  'w-full px-3 py-2.5 rounded-lg bg-background border border-border text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent disabled:opacity-60 transition-all';
-const LABEL_CLASS = 'block text-sm font-medium text-text-primary';
-const HINT_CLASS = 'text-xs leading-5 text-text-muted';
+/**
+ * The provider dialog as a form: the key, the address where the provider has
+ * one, the connection check, the search for a local Ollama, and Save.
+ *
+ * Apart from the dialog's frame, so that the fields can be drawn — and this
+ * state read — where there is no page to draw a dialog into.
+ */
+export function useProviderConfigDialog(props: ProviderConfigDialogProps) {
+  const { entry, baseUrlPlaceholder, needsKey, protocol, checkModel, onSave, onClose } = props;
+  const { t } = useTranslation();
+  const [apiKey, setApiKeyValue] = useState(props.apiKey);
+  const [baseUrl, setBaseUrlValue] = useState(props.baseUrl);
+  const [searchNote, setSearchNote] = useState<DialogNote | null>(null);
+  const {
+    isSaving,
+    error: saveError,
+    setError,
+    save,
+  } = useDialogSave(onClose, t('api.saveFailed'));
+
+  const setApiKey = useCallback(
+    (value: string) => {
+      setApiKeyValue(value);
+      setError('');
+    },
+    [setError]
+  );
+  const setBaseUrl = useCallback(
+    (value: string) => {
+      setBaseUrlValue(value);
+      setError('');
+      // Typed over: what the last search found no longer describes the field.
+      setSearchNote(null);
+    },
+    [setError]
+  );
+
+  const check = useCredentialCheck({
+    provider: entry.id,
+    customProtocol: protocol,
+    apiKey,
+    baseUrl,
+    model: checkModel,
+    presetBaseUrl: baseUrlPlaceholder,
+    requiresApiKey: needsKey,
+    // A found address goes straight into the field, past `setBaseUrl` above:
+    // the note about the search that found it has to stay.
+    setBaseUrl: setBaseUrlValue,
+  });
+  const { searchOllama: searchForOllama } = check;
+
+  const submit = () => {
+    void save(() => onSave({ apiKey, baseUrl }));
+  };
+
+  const runCheck = () => {
+    setError('');
+    void check.runCheck();
+  };
+
+  const searchOllama = useCallback(async () => {
+    setError('');
+    setSearchNote(null);
+    setSearchNote(ollamaSearchNote(await searchForOllama()));
+  }, [searchForOllama, setError]);
+
+  return {
+    entry,
+    apiKey,
+    baseUrl,
+    setApiKey,
+    setBaseUrl,
+    showsBaseUrl: props.showsBaseUrl,
+    baseUrlPlaceholder,
+    needsKey,
+    keyPlaceholder: props.keyPlaceholder,
+    keyHintKey: props.keyHintKey,
+    usedBy: props.usedBy,
+    droppedKeySets: props.droppedKeySets,
+    isSaving,
+    error: saveError || check.error,
+    check,
+    checkModel,
+    runCheck,
+    // The search only ever looks for Ollama, so only Ollama's dialog offers it.
+    canSearchOllama: entry.id === 'ollama',
+    isSearchingOllama: check.isSearchingOllama,
+    searchOllama,
+    searchNote,
+    submit,
+  };
+}
+
+export type ProviderConfigDialogForm = ReturnType<typeof useProviderConfigDialog>;
 
 /**
  * Enter one catalog provider's key, and its address where it has one.
@@ -36,130 +136,19 @@ const HINT_CLASS = 'text-xs leading-5 text-text-muted';
  * it. Save writes that credential and nothing else: it names no config set, so
  * it cannot change which model a chat runs on.
  */
-export function ProviderConfigDialog({
-  entry,
-  apiKey: savedApiKey,
-  baseUrl: savedBaseUrl,
-  showsBaseUrl,
-  baseUrlPlaceholder,
-  needsKey,
-  keyPlaceholder,
-  keyHintKey,
-  usedBy,
-  onSave,
-  onClose,
-}: ProviderConfigDialogProps) {
+export function ProviderConfigDialog(props: ProviderConfigDialogProps) {
   const { t } = useTranslation();
-  const [apiKey, setApiKey] = useState(savedApiKey);
-  const [baseUrl, setBaseUrl] = useState(savedBaseUrl);
-  const { isSaving, error, setError, save } = useDialogSave(onClose, t('api.saveFailed'));
-
-  const handleSave = () => save(() => onSave({ apiKey, baseUrl }));
+  const form = useProviderConfigDialog(props);
 
   return (
     <SettingsDialogFrame
-      title={t('api.providers.configureTitle', { name: entry.name })}
-      onClose={onClose}
-      busy={isSaving}
-      footer={
-        <>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isSaving}
-            className="px-4 py-2 rounded-lg border border-border bg-surface text-sm text-text-secondary hover:bg-surface-hover disabled:opacity-50 transition-colors"
-          >
-            {t('common.cancel')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void handleSave();
-            }}
-            disabled={isSaving}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50 transition-colors"
-          >
-            {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
-            {isSaving ? t('common.saving') : t('common.save')}
-          </button>
-        </>
-      }
+      title={t('api.providers.configureTitle', { name: props.entry.name })}
+      onClose={props.onClose}
+      onSubmit={form.submit}
+      busy={form.isSaving}
+      footer={<DialogFooterButtons isSaving={form.isSaving} onCancel={props.onClose} />}
     >
-      {usedBy.length > 0 && (
-        <p className={HINT_CLASS}>{t('api.providers.usedBy', { sets: usedBy.join(', ') })}</p>
-      )}
-
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <label htmlFor="provider-api-key-input" className={LABEL_CLASS}>
-            {t('api.apiKey')}
-          </label>
-          {entry.docsUrl && (
-            <a
-              href={entry.docsUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors"
-            >
-              <ExternalLink className="w-3 h-3" />
-              {t('api.providerPicker.docs')}
-            </a>
-          )}
-        </div>
-        <input
-          id="provider-api-key-input"
-          type="password"
-          value={apiKey}
-          onChange={(e) => {
-            setApiKey(e.target.value);
-            setError('');
-          }}
-          placeholder={keyPlaceholder || t('api.enterApiKey')}
-          autoFocus
-          disabled={isSaving}
-          className={FIELD_CLASS}
-        />
-        <p className={HINT_CLASS}>
-          {t(needsKey ? 'api.apiKeyDescription' : 'api.providers.keyOptionalHint')}
-        </p>
-        {entry.kind === 'native' && entry.keyEnvVar && (
-          <p className={HINT_CLASS}>
-            {t('api.providerPicker.keyEnvHint', { envVar: entry.keyEnvVar })}
-          </p>
-        )}
-        {keyHintKey && <p className={HINT_CLASS}>{t(keyHintKey)}</p>}
-      </div>
-
-      {showsBaseUrl && (
-        <div className="space-y-1.5">
-          <label htmlFor="provider-base-url-input" className={LABEL_CLASS}>
-            {t('api.baseUrl')}
-          </label>
-          <input
-            id="provider-base-url-input"
-            type="text"
-            value={baseUrl}
-            onChange={(e) => {
-              setBaseUrl(e.target.value);
-              setError('');
-            }}
-            placeholder={baseUrlPlaceholder}
-            disabled={isSaving}
-            className={FIELD_CLASS}
-          />
-          <p className={HINT_CLASS}>{t('api.providers.baseUrlOptionalHint')}</p>
-        </div>
-      )}
-
-      {error && (
-        <div
-          role="alert"
-          className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-error/10 text-sm text-error"
-        >
-          <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          {error}
-        </div>
-      )}
+      <ProviderCredentialFields form={form} />
     </SettingsDialogFrame>
   );
 }

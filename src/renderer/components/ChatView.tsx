@@ -19,6 +19,7 @@ import { ExportOptionsDialog } from './ExportOptionsDialog';
 import type { ExportOptions } from './ExportOptionsDialog';
 import type { Message, ContentBlock } from '../types';
 import { Send, Square, Plus, Loader2, X, Clock, Layers, Download } from 'lucide-react';
+import { configSetLabel } from '../utils/config-set-label';
 import { formatSessionDateRange } from '../utils/i18n-format';
 
 type AttachedFile = {
@@ -1304,11 +1305,11 @@ export function ChatView() {
                         void handleConfigSetSwitch(e.target.value);
                       }}
                       disabled={isSwitchingSet}
-                      className="bg-transparent border-none outline-none text-xs text-text-muted hover:text-text-primary cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed max-w-[120px] truncate"
+                      className="bg-transparent border-none outline-none text-xs text-text-muted hover:text-text-primary cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed max-w-[220px] truncate"
                     >
                       {configSets.map((set) => (
                         <option key={set.id} value={set.id}>
-                          {set.name}
+                          {configSetLabel(set)}
                         </option>
                       ))}
                     </select>

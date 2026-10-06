@@ -12,6 +12,7 @@
  */
 import type {
   ApiConfigSet,
+  CredentialConflict,
   CustomEndpoint,
   CustomProtocolType,
   ProviderCredentialMap,
@@ -38,6 +39,8 @@ import { hydrateCredentialDraft, type CredentialDraft } from './provider-credent
 export interface PersistedCredentials {
   providerCredentials: ProviderCredentialMap;
   customEndpoints: CustomEndpoint[];
+  /** Keys the conversion to one key per provider did not keep. Ids only, never a key. */
+  credentialConflicts: CredentialConflict[];
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +96,37 @@ export function endpointCredentialStatus(
   endpoint: Pick<CustomEndpoint, 'apiKey' | 'baseUrl'>
 ): CredentialStatus {
   return endpoint.apiKey.trim() || !endpointNeedsKey(endpoint) ? 'configured' : 'key-missing';
+}
+
+// ---------------------------------------------------------------------------
+// A key the conversion did not keep
+// ---------------------------------------------------------------------------
+
+/** What the conversion record calls a catalog provider's credential: its slot. */
+export function providerConflictTarget(provider: ProviderType): string {
+  return profileKeyFromProvider(provider);
+}
+
+/**
+ * Names of the config sets whose own key for a credential was not kept when
+ * keys moved from config sets to providers (design §9.3). `target` is a
+ * provider's slot or a custom endpoint's id. Empty when nothing was dropped.
+ *
+ * A set that has been renamed since is listed under the name it has now, and
+ * one that has been deleted is left out — as main does when it tidies the
+ * record.
+ */
+export function droppedKeySetNames(
+  target: string,
+  conflicts: CredentialConflict[],
+  configSets: ApiConfigSet[]
+): string[] {
+  const losing = new Set(
+    conflicts
+      .filter((conflict) => conflict.target === target)
+      .flatMap((conflict) => conflict.setIds)
+  );
+  return configSets.filter((set) => losing.has(set.id)).map((set) => set.name);
 }
 
 // ---------------------------------------------------------------------------
@@ -256,16 +290,20 @@ export interface EndpointRow {
   status: CredentialStatus;
   /** Names of the config sets that point at it. Non-empty means it cannot be deleted. */
   usedBy: string[];
+  /** Names of the config sets whose own key for it the conversion did not keep. */
+  droppedKeySets: string[];
 }
 
 export function buildEndpointRows(
   customEndpoints: CustomEndpoint[],
-  configSets: ApiConfigSet[]
+  configSets: ApiConfigSet[],
+  conflicts: CredentialConflict[] = []
 ): EndpointRow[] {
   return customEndpoints.map((endpoint) => ({
     endpoint,
     status: endpointCredentialStatus(endpoint),
     usedBy: setsUsingEndpoint(endpoint.id, configSets).map((set) => set.name),
+    droppedKeySets: droppedKeySetNames(endpoint.id, conflicts, configSets),
   }));
 }
 
@@ -282,13 +320,16 @@ export interface ProviderRow {
   entry: ProviderCatalogEntry;
   status: CredentialStatus;
   usedBy: string[];
+  /** Names of the config sets whose own key for it the conversion did not keep. */
+  droppedKeySets: string[];
 }
 
 /** The catalog providers, grouped and ordered as the provider picker has always shown them. */
 export function buildProviderRowGroups(
   catalog: ProviderCatalogEntry[],
   providerCredentials: ProviderCredentialMap,
-  configSets: ApiConfigSet[]
+  configSets: ApiConfigSet[],
+  conflicts: CredentialConflict[] = []
 ): Array<{ category: ProviderCategory; rows: ProviderRow[] }> {
   const providers = catalog.filter((entry) => entry.id !== 'custom');
   return groupEntriesByCategory(providers).map(({ category, entries }) => ({
@@ -297,6 +338,7 @@ export function buildProviderRowGroups(
       entry,
       status: providerCredentialStatus(entry.id, catalog, providerCredentials, configSets),
       usedBy: setsUsingProvider(entry.id, configSets).map((set) => set.name),
+      droppedKeySets: droppedKeySetNames(providerConflictTarget(entry.id), conflicts, configSets),
     })),
   }));
 }

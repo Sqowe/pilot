@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  canReturnFocusTo,
   useDialogSave,
   useSingleFlight,
 } from '../src/renderer/components/settings/SettingsDialogFrame';
@@ -105,7 +106,92 @@ describe('where focus goes when a settings dialog closes', () => {
     expect(capture).toBeGreaterThan(-1);
     expect(capture).toBeLessThan(effectStart);
     expect(frame.slice(capture, effectStart)).toContain('document.activeElement');
-    expect(frame).toContain('opener?.focus();');
+    expect(frame).toContain('opener.focus();');
+  });
+
+  /** An element as the rule sees it: by how many boxes it is drawn as. */
+  function element(boxes: number) {
+    return { getClientRects: () => ({ length: boxes }) as DOMRectList };
+  }
+
+  it('goes back to the button that opened the dialog while that button can be seen', () => {
+    expect(canReturnFocusTo(element(1))).toBe(true);
+    // Text that wraps is drawn as more than one box.
+    expect(canReturnFocusTo(element(2))).toBe(true);
+  });
+
+  it('does not go to a button in a hidden tab', () => {
+    // The panel moved to another tab and closed the dialog. The tab that held
+    // the opener is still on the page, but nothing in it is drawn. A button
+    // that has left the page altogether is not drawn either.
+    expect(canReturnFocusTo(element(0))).toBe(false);
+  });
+
+  it('does not go to nothing', () => {
+    expect(canReturnFocusTo(null)).toBe(false);
+  });
+
+  it('asks that question before it hands focus back', () => {
+    const frame = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/renderer/components/settings/SettingsDialogFrame.tsx'),
+      'utf8'
+    );
+    expect(frame).toMatch(/if \(opener && canReturnFocusTo\(opener\)\) \{\s+opener\.focus\(\);/);
+    // And nowhere without asking.
+    expect(frame.match(/opener\??\.focus\(\)/g)).toHaveLength(1);
+  });
+});
+
+describe('Enter in a settings dialog', () => {
+  // Nothing here can press a key, so what makes Enter save is read from the
+  // source: a real form, whose submit button is the dialog's Save.
+  const read = (file: string) =>
+    fs.readFileSync(path.resolve(process.cwd(), 'src/renderer/components', file), 'utf8');
+
+  it('is a form submit, which the browser sends for Enter in any of its fields', () => {
+    const frame = read('settings/SettingsDialogFrame.tsx');
+    expect(frame).toContain('<form noValidate onSubmit={handleSubmit}');
+    // The form goes nowhere, and its submit stays inside the dialog.
+    const handler = frame.slice(
+      frame.indexOf('const handleSubmit'),
+      frame.indexOf('const openerRef')
+    );
+    expect(handler).toContain('event.preventDefault();');
+    expect(handler).toContain('event.stopPropagation();');
+    expect(handler).toContain('if (!busyRef.current)');
+  });
+
+  it('saves through the one submit button, in both dialogs', () => {
+    const parts = read('settings/CredentialDialogParts.tsx');
+    expect(parts.match(/type="submit"/g)).toHaveLength(1);
+
+    for (const dialog of ['CustomEndpointDialog.tsx', 'ProviderConfigDialog.tsx']) {
+      const source = read(dialog);
+      expect(source, dialog).toContain('onSubmit={form.submit}');
+      expect(source, dialog).toContain('<DialogFooterButtons');
+    }
+  });
+
+  it('leaves every other button in a dialog as a plain button', () => {
+    // A button with no type inside a form submits it. One of these would save
+    // the dialog on a click meant to pick a protocol or run a check.
+    for (const file of [
+      'CustomEndpointFields.tsx',
+      'ProviderCredentialFields.tsx',
+      'ProviderGuidance.tsx',
+      'ApiDiagnosticsPanel.tsx',
+      'settings/CredentialDialogParts.tsx',
+      'settings/SettingsDialogFrame.tsx',
+    ]) {
+      // Comments talk about buttons too; only the markup counts.
+      const source = read(file)
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      const buttons = source.match(/<button\b/g) ?? [];
+      const typed = source.match(/\btype="(?:button|submit)"/g) ?? [];
+      expect(buttons.length, file).toBeGreaterThan(0);
+      expect(typed, file).toHaveLength(buttons.length);
+    }
   });
 });
 

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertCircle, Loader2, Plus } from 'lucide-react';
-import type { CustomEndpoint } from '../../types';
-import type { ProviderCatalogEntry } from '../../../shared/provider-catalog';
+import type { CustomEndpoint, ProviderType } from '../../types';
+import { getCatalogEntry, type ProviderCatalogEntry } from '../../../shared/provider-catalog';
 import {
   CUSTOM_ENDPOINT_LIMIT,
   formShapeFor,
   modelPresetFor,
+  protocolOf,
   providerShowsBaseUrl,
 } from '../../hooks/api-config-shared';
 import {
@@ -16,12 +17,15 @@ import {
   buildProviderRowGroups,
   buildUpdateEndpointPayload,
   createdEndpointId,
+  droppedKeySetNames,
+  providerConflictTarget,
   providerNeedsKey,
   setsUsingEndpoint,
   setsUsingProvider,
   storedProviderCredential,
   type EndpointFormValues,
 } from '../../hooks/api-settings-view';
+import { providerCheckModel } from '../../hooks/credential-dialog-view';
 import { CustomEndpointDialog } from '../CustomEndpointDialog';
 import { ProviderConfigDialog } from '../ProviderConfigDialog';
 import { CATEGORY_LABEL_KEY } from '../ProviderPicker';
@@ -53,9 +57,12 @@ export function SettingsProviders({ isActive }: SettingsProvidersProps) {
   const { t } = useTranslation();
   const settings = useApiSettings();
   const { isLoadingConfig, presets, providerCatalog, credentials, sets } = settings;
-  const { configSets } = sets;
+  const { configSets, activeConfigSetId } = sets;
 
   const [dialog, setDialog] = useState<OpenDialog>(null);
+  // A provider's dialog asked for from inside the endpoint dialog, which closes
+  // first. See the effect below.
+  const [providerToOpen, setProviderToOpen] = useState<ProviderType | null>(null);
   const [pendingDelete, setPendingDelete] = useState<CustomEndpoint | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -80,8 +87,26 @@ export function SettingsProviders({ isActive }: SettingsProvidersProps) {
     if (!isActive) {
       setDialog(null);
       setPendingDelete(null);
+      setProviderToOpen(null);
     }
   }, [isActive]);
+
+  // Opened only once the endpoint dialog is gone. A dialog remembers what had
+  // focus when it opened, to give it back when it closes; opened in the same
+  // pass, this one would remember a button inside the dialog being removed,
+  // and that dialog's own closing would then pull focus out from under it.
+  // React runs the cleanup of everything removed before any new effect, so by
+  // the time this runs focus is back on the page.
+  useEffect(() => {
+    if (dialog !== null || providerToOpen === null) {
+      return;
+    }
+    const entry = getCatalogEntry(providerCatalog, providerToOpen);
+    setProviderToOpen(null);
+    if (entry && isActive) {
+      setDialog({ kind: 'provider', entry });
+    }
+  }, [dialog, isActive, providerCatalog, providerToOpen]);
 
   if (isLoadingConfig) {
     return (
@@ -92,11 +117,16 @@ export function SettingsProviders({ isActive }: SettingsProvidersProps) {
     );
   }
 
-  const endpointRows = buildEndpointRows(credentials.customEndpoints, configSets);
+  const endpointRows = buildEndpointRows(
+    credentials.customEndpoints,
+    configSets,
+    credentials.credentialConflicts
+  );
   const providerGroups = buildProviderRowGroups(
     providerCatalog,
     credentials.providerCredentials,
-    configSets
+    configSets,
+    credentials.credentialConflicts
   );
   const endpointLimitReached = credentials.customEndpoints.length >= CUSTOM_ENDPOINT_LIMIT;
 
@@ -181,6 +211,19 @@ export function SettingsProviders({ isActive }: SettingsProvidersProps) {
         keyPlaceholder={entry.keyPlaceholder || preset.keyPlaceholder}
         keyHintKey={entry.kind === 'native' ? undefined : preset.keyHint || undefined}
         usedBy={setsUsingProvider(entry.id, configSets).map((set) => set.name)}
+        droppedKeySets={droppedKeySetNames(
+          providerConflictTarget(entry.id),
+          credentials.credentialConflicts,
+          configSets
+        )}
+        protocol={protocolOf(entry.id, 'anthropic')}
+        checkModel={providerCheckModel({
+          provider: entry.id,
+          configSets,
+          activeConfigSetId,
+          presets,
+          catalog: providerCatalog,
+        })}
         onSave={(input) => saveProvider(entry, showsBaseUrl, input)}
         onClose={() => setDialog(null)}
       />
@@ -291,7 +334,20 @@ export function SettingsProviders({ isActive }: SettingsProvidersProps) {
               ? setsUsingEndpoint(dialog.endpoint.id, configSets).map((set) => set.name)
               : []
           }
+          droppedKeySets={
+            dialog.endpoint
+              ? droppedKeySetNames(dialog.endpoint.id, credentials.credentialConflicts, configSets)
+              : []
+          }
+          configSets={configSets}
+          activeConfigSetId={activeConfigSetId}
+          presets={presets}
+          providerCatalog={providerCatalog}
           onSave={(values) => saveEndpoint(dialog.endpoint, values)}
+          onOpenProvider={(provider) => {
+            setDialog(null);
+            setProviderToOpen(provider);
+          }}
           onClose={() => setDialog(null)}
         />
       )}

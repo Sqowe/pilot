@@ -116,6 +116,7 @@ export function SettingsModelSets() {
             onChange={form.changeProviderChoice}
             statusDot={endpointMissing ? 'amber' : statusDot}
             statusDotLabel={endpointMissing ? t('api.modelSets.noEndpoint') : statusDotLabel}
+            disabled={form.isLocked}
           />
         )}
 

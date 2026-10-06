@@ -1,75 +1,140 @@
-import { useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertCircle, Loader2 } from 'lucide-react';
-import type { CustomEndpoint, CustomProtocolType } from '../types';
-import { protocolLabel } from '../hooks/api-config-shared';
+import type { ApiConfigSet, CustomEndpoint, ProviderPresets, ProviderType } from '../types';
+import type { ProviderCatalogEntry } from '../../shared/provider-catalog';
 import {
   checkEndpointForm,
   endpointFormValues,
+  endpointNeedsKey,
   type EndpointFormValues,
 } from '../hooks/api-settings-view';
+import {
+  applySetupToEndpointForm,
+  catalogEntryOfSetup,
+  endpointCheckModel,
+  endpointSetupIds,
+} from '../hooks/credential-dialog-view';
 import type { CredentialCallResult } from '../hooks/useApiSettingsState';
+import { useCredentialCheck } from '../hooks/useCredentialCheck';
+import { useCustomEndpointGuidance } from '../hooks/useCustomEndpointGuidance';
+import { CustomEndpointFields } from './CustomEndpointFields';
+import { DialogFooterButtons } from './settings/CredentialDialogParts';
 import { SettingsDialogFrame, useDialogSave } from './settings/SettingsDialogFrame';
 
-interface CustomEndpointDialogProps {
+export interface CustomEndpointDialogProps {
   /** The endpoint being edited; null to add a new one. */
   endpoint: CustomEndpoint | null;
   /** Every endpoint, so an address that is already taken is refused before main is asked. */
   customEndpoints: CustomEndpoint[];
   /** Names of the config sets that point at the endpoint being edited. */
   usedBy: string[];
+  /** Names of the config sets whose own key for this endpoint the conversion did not keep. */
+  droppedKeySets: string[];
+  /** For the model a connection check tries: one a config set already runs here. */
+  configSets: ApiConfigSet[];
+  activeConfigSetId: string;
+  presets: ProviderPresets;
+  /** To tell an address that belongs to a catalog provider, and which of the setups to list. */
+  providerCatalog: ProviderCatalogEntry[];
   onSave: (values: EndpointFormValues) => Promise<CredentialCallResult>;
+  /** Leave this dialog for the given catalog provider's own. */
+  onOpenProvider: (provider: ProviderType) => void;
   onClose: () => void;
 }
 
-const PROTOCOLS: CustomProtocolType[] = ['anthropic', 'openai', 'gemini'];
-
-/** The address a service of each protocol usually has — shown as a hint, never filled in. */
-const ADDRESS_EXAMPLE: Record<CustomProtocolType, string> = {
-  anthropic: 'https://api.anthropic.com',
-  openai: 'https://api.openai.com/v1',
-  gemini: 'https://generativelanguage.googleapis.com',
-};
-
-const ADDRESS_HINT_KEY: Record<CustomProtocolType, string> = {
-  anthropic: 'api.enterAnthropicUrl',
-  openai: 'api.enterOpenAIUrl',
-  gemini: 'api.enterGeminiUrl',
-};
-
-const FIELD_CLASS =
-  'w-full px-3 py-2.5 rounded-lg bg-background border border-border text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent disabled:opacity-60 transition-all';
-const LABEL_CLASS = 'block text-sm font-medium text-text-primary';
-const HINT_CLASS = 'text-xs leading-5 text-text-muted';
-
 /**
- * Add or edit one custom endpoint: its name, protocol, address, key and
- * optional default model.
+ * The endpoint dialog as a form: its fields, the hints that follow what is
+ * typed, the connection check, and Save.
  *
- * An endpoint is the one credential a user names, because there can be several
- * and "Custom" alone does not say which. Nothing is written until Save, and
- * Save writes this endpoint only — no config set is named or changed, though
- * every set that points at the endpoint runs on what is saved here.
+ * Apart from the dialog's frame, so that the fields can be drawn — and this
+ * state read — where there is no page to draw a dialog into.
  */
-export function CustomEndpointDialog({
-  endpoint,
-  customEndpoints,
-  usedBy,
-  onSave,
-  onClose,
-}: CustomEndpointDialogProps) {
+export function useCustomEndpointDialog(props: CustomEndpointDialogProps) {
+  const {
+    endpoint,
+    customEndpoints,
+    usedBy,
+    droppedKeySets,
+    configSets,
+    activeConfigSetId,
+    presets,
+    providerCatalog,
+    onSave,
+    onOpenProvider,
+    onClose,
+  } = props;
   const { t } = useTranslation();
   const [values, setValues] = useState<EndpointFormValues>(() =>
     endpointFormValues(endpoint, 'anthropic')
   );
-  const { isSaving, error, setError, save } = useDialogSave(onClose, t('api.saveFailed'));
+  const {
+    isSaving,
+    error: saveError,
+    setError,
+    save,
+  } = useDialogSave(onClose, t('api.saveFailed'));
 
-  const patch = (change: Partial<EndpointFormValues>) => {
-    setValues((current) => ({ ...current, ...change }));
-    setError('');
-  };
+  const patch = useCallback(
+    (change: Partial<EndpointFormValues>) => {
+      setValues((current) => ({ ...current, ...change }));
+      setError('');
+    },
+    [setError]
+  );
+  const setBaseUrl = useCallback((baseUrl: string) => patch({ baseUrl }), [patch]);
 
-  const handleSave = async () => {
+  const checkModel = endpointCheckModel({
+    defaultModel: values.defaultModel,
+    endpointId: endpoint?.id ?? null,
+    configSets,
+    activeConfigSetId,
+  });
+  const check = useCredentialCheck({
+    provider: 'custom',
+    customProtocol: values.protocol,
+    apiKey: values.apiKey,
+    baseUrl: values.baseUrl,
+    model: checkModel,
+    // An endpoint has no usual address to fall back on: it is its address.
+    presetBaseUrl: '',
+    requiresApiKey: endpointNeedsKey({ baseUrl: values.baseUrl }),
+    setBaseUrl,
+  });
+
+  // The check's last step reports what a model answered. Two of those answers
+  // usually mean the wrong protocol, and the guidance says so in plain words.
+  const failedModelStep = check.result?.steps.find(
+    (step) => step.name === 'model' && step.status === 'fail'
+  );
+  const guidance = useCustomEndpointGuidance({
+    provider: 'custom',
+    customProtocol: values.protocol,
+    baseUrl: values.baseUrl,
+    presets,
+    testDetails: failedModelStep?.error,
+  });
+
+  // The address is that of a service the catalog lists by name. It has an entry
+  // of its own on the tab, and that is where it belongs.
+  const catalogEntry = catalogEntryOfSetup(guidance.detectedProviderSetup, providerCatalog);
+  const catalogProvider = catalogEntry?.id ?? null;
+  const catalogProviderName = catalogEntry?.name ?? '';
+
+  const { commonProviderSetups } = guidance;
+  const setups = useMemo(() => {
+    const ids = endpointSetupIds(providerCatalog);
+    return commonProviderSetups.filter((setup) => ids.has(setup.id));
+  }, [commonProviderSetups, providerCatalog]);
+
+  const applySetup = useCallback(
+    (setupId: string) => {
+      setValues((current) => applySetupToEndpointForm(current, setupId));
+      setError('');
+    },
+    [setError]
+  );
+
+  const submit = () => {
     const problem = checkEndpointForm(values, customEndpoints, endpoint?.id ?? null);
     if (problem) {
       setError(
@@ -81,147 +146,74 @@ export function CustomEndpointDialog({
       );
       return;
     }
-    await save(() => onSave(values));
+    void save(() => onSave(values));
   };
+
+  const runCheck = () => {
+    // An endpoint is its address: without one there is nothing to reach.
+    if (!values.baseUrl.trim()) {
+      setError(t('api.providers.errors.baseUrlRequired'));
+      return;
+    }
+    setError('');
+    void check.runCheck();
+  };
+
+  return {
+    isNew: endpoint === null,
+    values,
+    patch,
+    isSaving,
+    error: saveError || check.error,
+    usedBy,
+    droppedKeySets,
+    // With a catalog provider recognised, the hints about which protocol and
+    // address suit the service give way to the one that matters.
+    protocolHint: catalogProvider ? '' : guidance.protocolGuidanceText,
+    protocolHintTone: guidance.protocolGuidanceTone,
+    addressHint: catalogProvider ? '' : guidance.baseUrlGuidanceText,
+    catalogProviderName,
+    openCatalogProvider: () => {
+      if (catalogProvider) {
+        onOpenProvider(catalogProvider);
+      }
+    },
+    setups,
+    applySetup,
+    check,
+    checkModel,
+    runCheck,
+    checkFailureHint: catalogProvider ? '' : guidance.friendlyTestDetails,
+    submit,
+  };
+}
+
+export type CustomEndpointDialogForm = ReturnType<typeof useCustomEndpointDialog>;
+
+/**
+ * Add or edit one custom endpoint: its name, protocol, address, key and
+ * optional default model.
+ *
+ * An endpoint is the one credential a user names, because there can be several
+ * and "Custom" alone does not say which. Nothing is written until Save, and
+ * Save writes this endpoint only — no config set is named or changed, though
+ * every set that points at the endpoint runs on what is saved here.
+ */
+export function CustomEndpointDialog(props: CustomEndpointDialogProps) {
+  const { t } = useTranslation();
+  const form = useCustomEndpointDialog(props);
 
   return (
     <SettingsDialogFrame
-      title={t(endpoint ? 'api.providers.editEndpointTitle' : 'api.providers.addEndpointTitle')}
-      onClose={onClose}
-      busy={isSaving}
-      footer={
-        <>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isSaving}
-            className="px-4 py-2 rounded-lg border border-border bg-surface text-sm text-text-secondary hover:bg-surface-hover disabled:opacity-50 transition-colors"
-          >
-            {t('common.cancel')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void handleSave();
-            }}
-            disabled={isSaving}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50 transition-colors"
-          >
-            {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
-            {isSaving ? t('common.saving') : t('common.save')}
-          </button>
-        </>
-      }
+      title={t(
+        props.endpoint ? 'api.providers.editEndpointTitle' : 'api.providers.addEndpointTitle'
+      )}
+      onClose={props.onClose}
+      onSubmit={form.submit}
+      busy={form.isSaving}
+      footer={<DialogFooterButtons isSaving={form.isSaving} onCancel={props.onClose} />}
     >
-      {usedBy.length > 0 && (
-        <p className="px-3 py-2 rounded-lg bg-warning/10 text-xs leading-5 text-text-primary">
-          {t('api.providers.sharedEndpointNotice', { sets: usedBy.join(', ') })}
-        </p>
-      )}
-
-      <div className="space-y-1.5">
-        <label htmlFor="endpoint-name-input" className={LABEL_CLASS}>
-          {t('api.providers.endpointName')}
-        </label>
-        <input
-          id="endpoint-name-input"
-          type="text"
-          value={values.name}
-          onChange={(e) => patch({ name: e.target.value })}
-          placeholder={t('api.providers.endpointNamePlaceholder')}
-          autoFocus
-          disabled={isSaving}
-          className={FIELD_CLASS}
-        />
-        <p className={HINT_CLASS}>{t('api.providers.endpointNameHint')}</p>
-      </div>
-
-      <div className="space-y-1.5">
-        <span id="endpoint-protocol-label" className={LABEL_CLASS}>
-          {t('api.protocol')}
-        </span>
-        <div
-          role="group"
-          aria-labelledby="endpoint-protocol-label"
-          className="grid grid-cols-3 gap-2"
-        >
-          {PROTOCOLS.map((protocol) => (
-            <button
-              key={protocol}
-              type="button"
-              onClick={() => patch({ protocol })}
-              disabled={isSaving}
-              aria-pressed={values.protocol === protocol}
-              className={`px-3 py-2 rounded-lg border text-sm transition-colors ${
-                values.protocol === protocol
-                  ? 'border-accent bg-accent/10 text-accent font-medium'
-                  : 'border-border-muted text-text-secondary hover:border-border hover:text-text-primary'
-              }`}
-            >
-              {protocolLabel(protocol, t)}
-            </button>
-          ))}
-        </div>
-        <p className={HINT_CLASS}>{t('api.selectProtocol')}</p>
-      </div>
-
-      <div className="space-y-1.5">
-        <label htmlFor="endpoint-base-url-input" className={LABEL_CLASS}>
-          {t('api.baseUrl')}
-        </label>
-        <input
-          id="endpoint-base-url-input"
-          type="text"
-          value={values.baseUrl}
-          onChange={(e) => patch({ baseUrl: e.target.value })}
-          placeholder={ADDRESS_EXAMPLE[values.protocol]}
-          disabled={isSaving}
-          className={FIELD_CLASS}
-        />
-        <p className={HINT_CLASS}>{t(ADDRESS_HINT_KEY[values.protocol])}</p>
-      </div>
-
-      <div className="space-y-1.5">
-        <label htmlFor="endpoint-api-key-input" className={LABEL_CLASS}>
-          {t('api.apiKey')}
-        </label>
-        <input
-          id="endpoint-api-key-input"
-          type="password"
-          value={values.apiKey}
-          onChange={(e) => patch({ apiKey: e.target.value })}
-          placeholder={t('api.enterApiKey')}
-          disabled={isSaving}
-          className={FIELD_CLASS}
-        />
-        <p className={HINT_CLASS}>{t('api.providers.endpointKeyHint')}</p>
-      </div>
-
-      <div className="space-y-1.5">
-        <label htmlFor="endpoint-default-model-input" className={LABEL_CLASS}>
-          {t('api.providers.defaultModel')}
-        </label>
-        <input
-          id="endpoint-default-model-input"
-          type="text"
-          value={values.defaultModel}
-          onChange={(e) => patch({ defaultModel: e.target.value })}
-          placeholder={t('api.enterModelId')}
-          disabled={isSaving}
-          className={FIELD_CLASS}
-        />
-        <p className={HINT_CLASS}>{t('api.providers.defaultModelHint')}</p>
-      </div>
-
-      {error && (
-        <div
-          role="alert"
-          className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-error/10 text-sm text-error"
-        >
-          <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          {error}
-        </div>
-      )}
+      <CustomEndpointFields form={form} />
     </SettingsDialogFrame>
   );
 }

@@ -156,6 +156,34 @@ createAgentSession({ noTools: 'builtin', customTools: [...built-ins, ...mcp, ...
   records the version it was last checked against.
 - Never hardcode a level list in a component, the config store, or the runner.
 
+### Ready-made setups and the catalog
+
+- `COMMON_PROVIDER_SETUPS` (`src/shared/api-provider-guidance.ts`) is a hand-kept
+  list of ready-made setups for a custom endpoint. It is **older than the provider
+  catalog**, and the catalog is built from the installed pi (`getProviders()` /
+  `getModels()`), so it grows with every pi version. A service that has a setup
+  can become a catalog provider; a custom endpoint made from that setup is then
+  the same provider under another name, holding a second copy of its key.
+- A setup whose address is a catalog provider's own — same service, same
+  protocol — names that provider in `catalogProvider` (or in `preferProviderTab`,
+  for the ones the first-run dialog has a button for; read either through
+  `catalogProviderOfSetup`). The Providers tab sends such an address to the
+  provider's own entry and leaves the setup out of the list it offers. A setup
+  that is only the same company on another route — another path, another
+  protocol — stays a custom endpoint.
+- **Re-check the list against the catalog on every pi uplift, and change it where
+  the catalog has caught up.** The check is a test, not something to remember:
+  `tests/provider-setups-vs-catalog.test.ts` reads the **installed** pi's
+  provider data — the one test that depends on it on purpose — and fails when the
+  catalog providers found on a setup's host are no longer the ones recorded
+  there. A failure after an uplift means "decide again", not "broken": look at
+  what changed, set or clear `catalogProvider`, and bring the test's two tables
+  up to date. The reasons for the current decisions are written beside them
+  (last checked against pi 0.87.1).
+- The test only sees a provider that serves from a setup's **host**. A service
+  that pi starts to list under a different address is not caught by it; when a
+  new provider turns up in the catalog, look through the list for its name too.
+
 ### Compaction budget
 
 - `src/main/claude/compaction-budget.ts` computes `reserveTokens` covering output
@@ -483,7 +511,11 @@ Before upgrading any Tier 1 dependency (see `docs/dependency-tiers.md`):
 7. Update `docs/dependency-tiers.json` with the new installed version.
 8. Re-assert the `inMemory()` session/settings boundary (§1).
 9. Re-verify `clampToSupportedLevel` against the new pi-ai source (§1).
-10. Document adaptations in the commit message body.
+10. Re-check the ready-made provider setups against the catalog the new pi brings
+    (§1, "Ready-made setups and the catalog"). A failing
+    `tests/provider-setups-vs-catalog.test.ts` is the prompt to do it, not a
+    regression to patch around.
+11. Document adaptations in the commit message body.
 
 **`allowScripts` is a hard gate in this repo.** `package.json` allowlists
 install scripts by **exact version** (`"electron@41.10.7": true`, …). Bump
@@ -511,6 +543,7 @@ doesn't re-run a script for an already-unpacked package, so follow up with
 | -------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | Sessions leak into the `pi` CLI's session list           | An uplift reverted to the SDK's persisting `SessionManager`    | Re-assert `PiSessionManager.inMemory()` + `PiSettingsManager.inMemory()` (§1) |
 | Settings shows level X, agent runs at Y                  | `clampToSupportedLevel` drifted from pi's `clampThinkingLevel` | Keep the mirror exact; re-verify on uplift (§1)                               |
+| A custom endpoint duplicates a catalog provider          | A ready-made setup's service became a catalog provider in pi   | Re-check `COMMON_PROVIDER_SETUPS` on every pi uplift; the test fails (§1)     |
 | Images not visible to the LLM                            | `prompt(text)` only — image blocks never passed                | Pass `options.images`                                                         |
 | DeepSeek 400 on cold start                               | History rebuild filtered out `thinking` blocks                 | Serialize every content-block type (§10)                                      |
 | Permission dialog breaks renderer state                  | Async wait inside the SDK's `beforeToolCall` / subscribe queue | Async interaction in the execute wrapper only (§1, §9)                        |

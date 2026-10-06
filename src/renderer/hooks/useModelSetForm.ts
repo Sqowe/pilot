@@ -341,6 +341,10 @@ export function useModelSetForm(settings: ApiSettingsState) {
     hasUnsavedChanges,
     isSaving: sets.isSaving,
     isMutatingConfigSet: sets.isMutatingConfigSet,
+    // While a call that changes a config set is on its way, what comes back
+    // replaces what is on screen. An edit made in that moment would be shown
+    // and then silently lost, so the fields hold still until it has returned.
+    isLocked: sets.isSaving || sets.isMutatingConfigSet,
     canDeleteCurrentConfigSet: sets.canDeleteCurrentConfigSet,
     error: messages.error,
     successMessage: messages.successMessage,
