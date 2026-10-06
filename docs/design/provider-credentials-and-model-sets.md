@@ -1,8 +1,9 @@
 # Provider Credentials & Model Sets — Design & Implementation Plan
 
 **Created:** 2026-10-02
-**Status:** Design approved. **Phases 0, 1, 2a, 2b, 3 complete** (Phase 3: 2026-10-05). Phase 4
-next. Each phase stops for review.
+**Status:** Design approved. **Phases 0, 1, 2a, 2b, 3 complete** (Phase 3: 2026-10-05). **Phase 4
+in progress:** step 1 of 2 built, reviewed and checked in the running app 2026-10-06. Each phase
+stops for review.
 **Author:** AI-assisted design session
 **Baseline:** pi-ai / pi-coding-agent **0.87.1**, app **1.0.8** (HEAD `90136401`). Verified against
 source 2026-10-03; §13 records what the original 0.85.1/1.0.7 draft got wrong.
@@ -485,7 +486,7 @@ that setup's `exampleModel` ([`api-provider-guidance.ts`](../../src/shared/api-p
 | 2a — store inversion    | ✅ **done** 2026-10-03 | resolveCredentials + endpointId + CRUD/IPC, 28 new tests              |
 | 2b — write-path cutover | ✅ **done** 2026-10-03 | handleSave drops `profiles`; §9.4 holds structurally                  |
 | 3 — renderer state      | ✅ **done** 2026-10-05 | old fields removed; two slices; 141 new tests; external review ✔️     |
-| 4 — UI                  | —                      | —                                                                     |
+| 4 — UI                  | 🚧 step 1 of 2         | two tabs, named endpoint list, chooser on a set; 114 new tests        |
 | 5 — first-run wizard    | —                      | —                                                                     |
 | 6 — docs                | —                      | —                                                                     |
 
@@ -1177,6 +1178,219 @@ Phase 4's endpoint UI and its four locale files.
 
 Sidebar split (§6.1), `SettingsProviders.tsx`, `ProviderConfigDialog.tsx`,
 `SettingsModelSets.tsx`; `SettingsAPI.tsx` retired.
+
+Built in two steps. The user's priority inside the phase: two custom providers — a local gateway and
+a hosted one — could be neither told apart nor chosen between, so the named endpoint list and the
+chooser on a config set come first.
+
+#### Step 1 as built (2026-10-06) — both tabs, endpoint list and chooser
+
+##### Decisions taken with the user before starting
+
+| #   | Question                                               | Decision                                                                                                                                   |
+| --- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | §6.3's read-only provider chip, or a real chooser?     | **A chooser.** The chip's "Change" opened the Providers tab, which says which credentials exist, not which one a set uses.                 |
+| 2   | What goes in the first commit?                         | Both tabs at once, with the endpoint list and the chooser complete and catalog providers in the plainest working form.                     |
+| 3   | Where do custom endpoints sit on the Providers tab?    | **At the top.** §6.1's sketch has them last, below about thirty catalog providers.                                                         |
+| 4   | Which tab does Settings open on? What about `api`?     | Model Sets. The welcome screen's "not configured" link opens Providers. The old `api` id keeps working and opens Providers.                |
+| 5   | Can a set be saved while its provider has no key?      | **Yes**, with a warning and a link to Providers. The old form blocked Save, which no longer makes sense once the key lives on another tab. |
+| 6   | An address that already has an endpoint, in the dialog | **An error.** The old single form silently pointed the set at the existing endpoint; a dialog that adds an endpoint has no set to point.   |
+
+##### What the pre-implementation read found
+
+1. **Translated error messages could not work, for any message.** A handler that throws reaches the
+   renderer as a new error whose message Electron has put its own text in front of —
+   `Error invoking remote method '<channel>': Error: <message>` (the string is in the installed
+   Electron 41.10.7; Electron's `ipc-main` documentation says only that the error "is not the same"
+   and points at issue #24427). `translateApiConfigErrorMessage` compared the whole text with fixed
+   strings, so nothing could match, including the config-set messages that have existed since
+   config sets did. The tests passed because they fed it the bare message. It now strips the prefix
+   first, and its tests use the text the renderer really receives. Confirmed in the running app
+   during the manual pass (below).
+2. **Settings tabs stay mounted** once visited (`SettingsPanel.tsx`), and the old form created its
+   state inside the screen. Two tabs each doing that would drift apart at the first save: an
+   endpoint added on one would be missing from the chooser on the other. Hence one state above both.
+3. **The suite cannot click a screen** (`environment: 'node'`, no DOM library). So the decisions go
+   into plain functions with tests, the screens get first-render tests, and the clicking is a manual
+   pass.
+
+##### As built
+
+| File                                                                                 | Role                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hooks/api-settings-view.ts`                                                         | **new**, pure. Chooser entries and their ids, credential status, which sets use what, the credential a set would run with, what each dialog opens on and sends.               |
+| `hooks/useApiSettingsState.ts`                                                       | **new**. The state both tabs share: the credential store as main last returned it, the config-set half (`useModelSets`), and the four credential calls.                       |
+| `hooks/useModelSetForm.ts`                                                           | **new**. The Model Sets tab as a form. Reads the credential behind the chosen provider and never writes one.                                                                  |
+| `components/settings/ApiSettingsContext.tsx`                                         | **new**. Creates that state once, above both tabs.                                                                                                                            |
+| `components/settings/SettingsProviders.tsx`, `ProviderListRows.tsx`                  | **new**. Custom endpoints as a named list, then the catalog providers.                                                                                                        |
+| `components/CustomEndpointDialog.tsx`, `ProviderConfigDialog.tsx`                    | **new**. One credential each, with its own Save.                                                                                                                              |
+| `components/settings/SettingsDialogFrame.tsx`                                        | **new**. The dialog frame (Escape, Tab kept inside, focus returned to the opener) and `useDialogSave` / `useSingleFlight`.                                                    |
+| `components/settings/SettingsModelSets.tsx`, `ModelFieldsSection.tsx`                | **new**. Set manager, chooser, model, limits, thinking level, diagnostics, Save.                                                                                              |
+| `components/ProviderChoicePicker.tsx`                                                | **new**. The chooser, on the existing `SearchableCombobox` (whose list entries can now carry a status dot).                                                                   |
+| `components/settings/settings-tabs.ts`                                               | **new**. The tab ids and `resolveSettingsTab`, apart from the panel so they can be tested.                                                                                    |
+| `components/SettingsPanel.tsx`, `WelcomeView.tsx`, `store/index.ts`, `nav-server.ts` | `api` → `providers` + `modelSets`.                                                                                                                                            |
+| `hooks/api-config-shared.ts`                                                         | `stripIpcErrorPrefix`; endpoint messages in the translator; `protocolOf` moved here from `useApiConfigState`.                                                                 |
+| `components/settings/SettingsAPI.tsx`                                                | **deleted**.                                                                                                                                                                  |
+| `i18n/locales/{en,zh,ru,hu}.json`                                                    | `api.providers.*`, `api.modelSets.*`, the two tab names; `api.apiKeyDescription` corrected (it said a key belongs to the active config set); `settings.apiSettings*` removed. |
+
+**One state, two halves.** `useApiSettingsState` holds the credential store as main last returned
+it, with no unsaved credential edits at all: a credential is edited in a dialog with its own Save,
+so there is nothing to track between opening and saving. Each credential call writes one credential
+and names no config set; what comes back refreshes the set list but **keeps the unsaved edits to
+the open set** (`rebase`). The config-set half is Phase 3's `useModelSets`, unchanged, whose save
+names no credential. §6.4's two unsaved-change domains therefore came out as one: the set's. The
+Phase 3 draft machinery for credentials (`provider-credentials-state.ts`) is still what the
+first-run dialog uses, through `useApiConfigState`, until Phase 5.
+
+**The chooser.** Every custom endpoint is its own entry, by name, with its protocol as a badge and
+a status dot; the catalog follows in its usual grouping. The catalog's bare "Custom" is not listed —
+a set cannot run on it without saying which endpoint. A custom set that points at none (never
+pinned, or its endpoint deleted since) gets a "No endpoint chosen" entry, a warning, and is refused
+on Save. Changing the choice goes through `CHANGE_PROVIDER`, so the model typed for each endpoint is
+kept while the form moves between them.
+
+**What a set is shown to run on is never made up.** `persistedCredentialFor` returns the endpoint's
+own protocol, address and key, or the provider's slot — and for a custom set with no endpoint,
+nothing. The Phase 3 hydration pre-fills a not-yet-created endpoint with its protocol's usual
+address; shown here, that would claim the set runs somewhere it does not.
+
+**A dialog opens on what is stored, and only that.** The provider dialog reads
+`storedProviderCredential`, not the hydrated credential: an address nobody gave is an empty field
+with the usual address as a hint. (Found in review — fed from the hydrated value, opening the
+Ollama dialog and pressing Save stored `http://localhost:11434/v1` as if the user had typed it.) A
+new endpoint likewise starts with an empty address. This is the "pre-filled address" question the
+Phase 3 review raised, settled for the new screens by not pre-filling.
+
+##### Behaviour that changed
+
+- **Two custom endpoints are two things.** Each has a name, shown in the list and in the chooser;
+  moving a set from one to the other is a choice, not retyping an address.
+- **An endpoint says which config sets use it**, and cannot be deleted while one does — the button is
+  off and says why. Editing an endpoint used by several sets says so in the dialog.
+- **A credential has a status**: _Configured_; _Key missing_ (a set runs on it and it has no key);
+  _Not set_ (nothing stored, nothing relies on it). A keyless provider is never "missing" a key, and
+  a gateway on this computer may run without one.
+- **A set can be saved without a key** (decision 5), and a custom set cannot be saved without an
+  endpoint.
+- **An address that is taken is refused in the dialog** (decision 6), with a translated message.
+- **Ollama-only controls follow the Ollama provider.** `isOllamaMode` was "keyless with an address
+  field"; it is now `provider === 'ollama'`, in this form and the old one. No visible change with
+  today's catalog, where only Ollama has that shape.
+- **Settings opens on Model Sets**; `api` still resolves, to Providers.
+
+##### Not in step 1 — these were on the old screen and return in step 2
+
+The ready-made setups card and the hints under protocol and address (in the endpoint dialog);
+testing a key before saving it (in the dialogs — the Model Sets tab still runs diagnostics against
+the saved credential); finding a local Ollama address. `tests/provider-guidance-ui.test.ts` carries
+an `it.todo` for the first. Step 2 also adds what is new: the notice for a key dropped during
+conversion (`credentialConflicts`) and `set · model` labels in the chat and welcome pickers.
+
+##### Tests
+
+| File                                      | Tests | Covers                                                                                                                |
+| ----------------------------------------- | ----- | --------------------------------------------------------------------------------------------------------------------- |
+| `tests/api-settings-view.test.ts`         | 34    | chooser ids and entries, credential status, usage, the credential a set runs with, both dialogs' values and payloads  |
+| `tests/api-settings-tabs-render.test.ts`  | 17    | first render of both tabs for five config shapes; rows; that no key is ever on the page                               |
+| `tests/api-settings-state-render.test.ts` | 16    | first render of the shared state and the form: fields connected to the right values                                   |
+| `tests/api-config-error-messages.test.ts` | 15    | the translator, fed the text the renderer really receives                                                             |
+| `tests/settings-tabs.test.ts`             | 14    | tab ids, the old id, and that the four places outside the panel agree                                                 |
+| `tests/api-settings-i18n.test.ts`         | 12    | every text key the new screens ask for exists in all four files, with the same placeholders                           |
+| `tests/settings-dialog-save.test.ts`      | 6     | one save or delete at a time; the dialog stays open when a save is refused                                            |
+| 4 existing files                          | —     | the tab id in `welcome-view-claude-layout`; wording in two; `provider-guidance-ui` adjusted, with the `it.todo` above |
+
+**Gates:** typecheck clean; `npm test` **3798 passed / 245 files**, 1 todo (3684 before); lint 0
+errors, the same 16 pre-existing warnings.
+
+**Verification beyond "tests pass":** 14 mutations of the new logic. 13 were caught at once. One
+survived and was informative — nothing covered an unsaved choice whose endpoint is deleted on the
+other tab afterwards; a test now renders exactly that state.
+
+**External review: approved on the fourth run of five.** Reviewed as one piece (195,685 characters
+at first, 224,330 at the end) from a scratch clone, so the real index was never staged.
+
+| Run | Result                                               |
+| --- | ---------------------------------------------------- |
+| 1   | needs changes — 1 blocking, 2 medium, 1 low          |
+| 2   | needs changes — 1 blocking, 2 medium, 2 low          |
+| 3   | needs changes — 2 blocking, 1 medium, 3 low          |
+| 4   | **approved** — 2 medium, 1 low, deferred (see below) |
+
+Every run found a further layer of smaller points in the dialogs; none touched the storage split,
+the shared state or the chooser. By outcome:
+
+- **Real, fixed:** `isOllamaMode` (above); the provider dialog opening on the hydrated address
+  (above); focus not returning to the button that opened a dialog — the frame asked "what has
+  focus?" in an effect, after its own `autoFocus` field had taken it, and now asks during its first
+  render; the "saved" notice sitting where a provider far down the list could not see it — now on
+  the row that was saved; a dialog surviving a tab change, which a click cannot cause but an outside
+  navigation request can; the delete confirmation apart from its row; Tab leaving a dialog while
+  everything in it is disabled; untranslated protocol names; a timer never cleared.
+- **Hardened, not a defect:** a second save or delete while one is on its way. React flushes a
+  click's state update before the next click is delivered, so the button is already disabled; both
+  now go through `useSingleFlight` anyway.
+- **Not real:** diagnostics surviving a provider change — `useApiConnectivity`'s reset already
+  depends on the provider; a React warning for a state update after a dialog has closed — React
+  18.3.1 no longer has one.
+
+**Remarks on the approval, deferred to step 2**, which reworks both dialogs anyway, so that what is
+committed for step 1 is exactly what was approved: Enter does not save in the dialogs (they are not
+`<form>`s); when a dialog is closed by a tab change, focus returns to a button in a hidden tab; and
+the chooser and model fields stay editable during the few milliseconds a set save is on its way,
+when an edit made then is overwritten by what comes back — as it was on the old form.
+
+Two comment lines that still named `SettingsAPI` were corrected after the approval and are the only
+text not reviewed.
+
+**Noticed and left alone:** `zh.json` lacks 60 keys the English file has, in other sections;
+`settings.prompt` / `settings.promptDesc` are in none of the four files (the System Prompt tab falls
+back to its inline English); `ProviderPicker` is used by no screen now and is kept for Phase 5's
+wizard; `docs/wiki/features/models-and-api.md` still describes the single screen (Phase 6). In the
+Russian texts a custom endpoint is «подключение»; the file's older hints use the untranslated
+"endpoint", which does not decline.
+
+**Manual pass (2026-10-06).** The development build was started against the user's real settings —
+backed up first, restored afterwards and verified by checksum — and the main-process log was
+followed while the user worked through a list; nine screenshots came back.
+
+Seen working, each without an error in the log:
+
+- **The conversion of the real 1.0.8 file**, again: 12,305 → 5,841 bytes, configured on its
+  provider.
+- **The endpoint list.** Five endpoints, one per protocol + address the old profiles described,
+  each with its status and the sets that use it. Two were renamed (`updateCustomEndpoint` twice).
+- **The chooser.** It lists every endpoint by name. A set was moved from one gateway to the other
+  and saved: the payload was `activeConfigSetId`, `provider`, `endpointId`, `model`, the two limits
+  and the thinking fields — no credential — and the endpoint's key was still set afterwards. (The
+  log line prints `apiKey: ''` for every save; that is the handler masking the field, not the
+  payload.)
+- **One state for both tabs.** After that save the Providers tab showed the set under its new
+  endpoint and the old one as unused, without Settings being reopened.
+- **Delete.** The button is off for an endpoint in use; an unused one was deleted after the
+  confirmation on its own row, during which no other row offered an action.
+- **A catalog provider's key** (`setProviderCredential`): "Saved" on its row, then _Configured_.
+- **The unsaved-changes mark and the prompt** on switching sets with an edited model.
+- **The Russian texts.**
+- **A duplicate address is refused in the dialog**, in words — by the dialog's own check, so main
+  was never asked and this did not exercise the translator.
+
+**Electron's prefix, observed.** Because the dialog catches the common cases first, the text of a
+main-process error was read directly: through the debugging port the development build opens
+(`remote-debugging-port`, `main/index.ts`), two calls that main refuses before writing anything
+were made in the renderer. They rejected with
+`Error invoking remote method 'config.deleteCustomEndpoint': Error: Custom endpoint not found` and
+`Error invoking remote method 'config.renameSet': Error: Config set not found` — the shape the
+translator now strips, and proof that before this step "Config set not found" could not have been
+translated.
+
+Not exercised: whether focus returns to the opening button when a dialog closes (asked for, not
+reported); creating an endpoint successfully from the dialog (`createCustomEndpoint` does not
+appear in the log); Ollama; the warning for a set whose provider has no key; the Chinese and
+Hungarian texts; a restart of the converted build.
+
+**Noticed in the pass:** two endpoints on one host with different protocols get the same default
+name (`127.0.0.1:9000`), told apart only by the protocol badge and the address until renamed. A
+candidate for step 2: add the protocol to the default name when the host is already taken.
 
 ### Phase 5 — first-run wizard
 

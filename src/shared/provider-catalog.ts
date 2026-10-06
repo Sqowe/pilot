@@ -19,7 +19,7 @@ export type ProviderCategory = 'featured' | 'coding-plan' | 'inference' | 'local
 
 /**
  * Describes which form fields are shown for a given provider entry.
- * SettingsAPI / ConfigModal read these flags instead of branching on provider
+ * The settings form and ConfigModal read these flags instead of branching on provider
  * literals — so adding a new provider never requires touching the form logic.
  */
 export interface ProviderFormShape {

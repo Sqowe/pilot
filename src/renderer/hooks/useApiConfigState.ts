@@ -23,8 +23,7 @@ import {
   isCustomOpenAiLoopbackGateway,
   isCustomProtocol,
   modelPresetFor,
-  profileKeyFromProvider,
-  profileKeyToProvider,
+  protocolOf,
   translateApiConfigErrorMessage,
   type ModelFields,
 } from './api-config-shared';
@@ -68,13 +67,6 @@ interface UseApiConfigStateOptions {
 }
 
 type CreateMode = 'blank' | 'clone';
-
-/** The protocol a provider routes through. `custom` takes it from its endpoint. */
-function protocolOf(provider: ProviderType, endpointProtocol: CustomProtocolType) {
-  return provider === 'custom'
-    ? endpointProtocol
-    : profileKeyToProvider(profileKeyFromProvider(provider)).customProtocol;
-}
 
 function buildSetupModelState(
   setup: CommonProviderSetup,
@@ -711,9 +703,9 @@ export function useApiConfigState(options: UseApiConfigStateOptions = {}) {
     isDiagnosing: connectivity.isDiagnosing,
     handleDiagnose: connectivity.handleDiagnose,
     handleDeepDiagnose: connectivity.handleDeepDiagnose,
-    isOllamaMode: activeFormShape
-      ? activeFormShape.baseUrl === true && activeFormShape.apiKey === false
-      : provider === 'ollama',
+    // The provider itself, not "keyless with an address": what these controls
+    // do — refresh and discovery — only ever runs for Ollama.
+    isOllamaMode: provider === 'ollama',
     shouldShowOllamaManualModelToggle,
     requiresApiKey,
     detectedProviderSetup: guidance.detectedProviderSetup,

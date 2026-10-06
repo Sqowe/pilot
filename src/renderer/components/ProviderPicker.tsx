@@ -37,7 +37,7 @@ interface ProviderPickerProps {
  * "Popular" (the pinned top group); every other category keeps its own name so
  * Custom and Local read as distinct concepts rather than provider families.
  */
-const CATEGORY_LABEL_KEY: Record<ProviderCategory, string> = {
+export const CATEGORY_LABEL_KEY: Record<ProviderCategory, string> = {
   featured: 'api.providerPicker.categories.popular',
   'coding-plan': 'api.providerPicker.categories.codingPlan',
   inference: 'api.providerPicker.categories.inference',

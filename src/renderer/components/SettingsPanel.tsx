@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import {
   X,
-  Settings,
+  KeyRound,
+  Layers,
   Plug,
   Shield,
   Package,
@@ -18,7 +19,14 @@ import { useTranslation } from 'react-i18next';
 import { useWindowSize } from '../hooks/useWindowSize';
 import { RemoteControlPanel } from './RemoteControlPanel';
 import { useAppStore } from '../store';
-import { SettingsAPI } from './settings/SettingsAPI';
+import { ApiSettingsProvider } from './settings/ApiSettingsContext';
+import {
+  DEFAULT_SETTINGS_TAB,
+  resolveSettingsTab,
+  type SettingsTabId,
+} from './settings/settings-tabs';
+import { SettingsProviders } from './settings/SettingsProviders';
+import { SettingsModelSets } from './settings/SettingsModelSets';
 import { SettingsSandbox } from './settings/SettingsSandbox';
 import { SettingsConnectors } from './settings/SettingsConnectors';
 import { SettingsSkills } from './settings/SettingsSkills';
@@ -30,50 +38,14 @@ import { SettingsMemory } from './settings/SettingsMemory';
 import { SettingsPrompt } from './settings/SettingsPrompt';
 import { useSkillConflicts } from '../hooks/useSkillConflicts';
 
+type TabId = SettingsTabId;
+
 interface SettingsPanelProps {
   onClose: () => void;
-  initialTab?:
-    | 'api'
-    | 'sandbox'
-    | 'connectors'
-    | 'skills'
-    | 'memory'
-    | 'schedule'
-    | 'remote'
-    | 'logs'
-    | 'general'
-    | 'bashCommands'
-    | 'prompt';
+  initialTab?: TabId;
 }
 
-type TabId =
-  | 'api'
-  | 'sandbox'
-  | 'connectors'
-  | 'skills'
-  | 'memory'
-  | 'schedule'
-  | 'remote'
-  | 'logs'
-  | 'general'
-  | 'bashCommands'
-  | 'prompt';
-
-const VALID_TABS = new Set<TabId>([
-  'api',
-  'sandbox',
-  'connectors',
-  'skills',
-  'memory',
-  'schedule',
-  'remote',
-  'logs',
-  'general',
-  'bashCommands',
-  'prompt',
-]);
-
-export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProps) {
+export function SettingsPanel({ onClose, initialTab = DEFAULT_SETTINGS_TAB }: SettingsPanelProps) {
   const { t } = useTranslation();
   const { width } = useWindowSize();
   const compactSidebar = width < 900;
@@ -81,8 +53,7 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
   // takes effect even before this component mounts.
   const storeTab = useAppStore((s) => s.settingsTab);
   const setSettingsTab = useAppStore((s) => s.setSettingsTab);
-  const resolvedInitial =
-    storeTab && VALID_TABS.has(storeTab as TabId) ? (storeTab as TabId) : initialTab;
+  const resolvedInitial = resolveSettingsTab(storeTab) ?? initialTab;
 
   const [activeTab, setActiveTab] = useState<TabId>(resolvedInitial);
   // Track which tabs have been viewed at least once (for lazy loading)
@@ -102,8 +73,9 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
 
   // Consume the store signal and apply tab in one effect
   useEffect(() => {
-    if (storeTab && VALID_TABS.has(storeTab as TabId)) {
-      setActiveTab(storeTab as TabId);
+    const requestedTab = resolveSettingsTab(storeTab);
+    if (requestedTab) {
+      setActiveTab(requestedTab);
       setSettingsTab(null);
     }
   }, [storeTab, setSettingsTab]);
@@ -117,10 +89,16 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
 
   const tabs = [
     {
-      id: 'api' as TabId,
-      label: t('settings.apiSettings'),
-      icon: Settings,
-      description: t('settings.apiSettingsDesc'),
+      id: 'providers' as TabId,
+      label: t('settings.providers'),
+      icon: KeyRound,
+      description: t('settings.providersDesc'),
+    },
+    {
+      id: 'modelSets' as TabId,
+      label: t('settings.modelSets'),
+      icon: Layers,
+      description: t('settings.modelSetsDesc'),
     },
     {
       id: 'sandbox' as TabId,
@@ -291,13 +269,19 @@ export function SettingsPanel({ onClose, initialTab = 'api' }: SettingsPanelProp
         <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-6 lg:px-8 lg:py-8">
           <div className="max-w-[860px] w-full min-w-0 mx-auto">
             <div className="">
-              <div className={activeTab === 'api' ? '' : 'hidden'}>
-                {viewedTabs.has('api') && (
-                  <>
-                    <SettingsAPI />
-                  </>
-                )}
-              </div>
+              {/* One state for both tabs: each shows what the other changes. */}
+              {(viewedTabs.has('providers') || viewedTabs.has('modelSets')) && (
+                <ApiSettingsProvider>
+                  <div className={activeTab === 'providers' ? '' : 'hidden'}>
+                    {viewedTabs.has('providers') && (
+                      <SettingsProviders isActive={activeTab === 'providers'} />
+                    )}
+                  </div>
+                  <div className={activeTab === 'modelSets' ? '' : 'hidden'}>
+                    {viewedTabs.has('modelSets') && <SettingsModelSets />}
+                  </div>
+                </ApiSettingsProvider>
+              )}
               <div className={activeTab === 'sandbox' ? '' : 'hidden'}>
                 {viewedTabs.has('sandbox') && <SettingsSandbox />}
               </div>

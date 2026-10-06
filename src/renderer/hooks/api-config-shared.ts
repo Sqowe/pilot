@@ -33,6 +33,8 @@ export type Translate = ReturnType<typeof useTranslation>['t'];
 
 export const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 export const CONFIG_SET_LIMIT = 20;
+/** Mirrors `MAX_CUSTOM_ENDPOINT_COUNT` in main, which enforces it. */
+export const CUSTOM_ENDPOINT_LIMIT = 20;
 export const DEFAULT_CONFIG_SET_ID = 'default';
 export const DEFAULT_CONFIG_SET_NAME = 'Default';
 export const FALLBACK_PROVIDER_PRESETS: ProviderPresets = API_PROVIDER_PRESETS;
@@ -170,6 +172,16 @@ export function profileKeyToProvider(profileKey: ProviderProfileKey): {
   return profileKeyToProviderInfo(profileKey);
 }
 
+/** The protocol a provider routes through. `custom` takes it from its endpoint. */
+export function protocolOf(
+  provider: ProviderType,
+  endpointProtocol: CustomProtocolType
+): CustomProtocolType {
+  return provider === 'custom'
+    ? endpointProtocol
+    : profileKeyToProvider(profileKeyFromProvider(provider)).customProtocol;
+}
+
 /**
  * Resolve the routing protocol for a provider, consulting the catalog entry
  * when available. Used by changeProvider and exposed for testing.
@@ -284,7 +296,28 @@ export function parseTokenLimitField(value: string): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-export function translateApiConfigErrorMessage(message: string, t: Translate): string {
+/**
+ * The text of an error as main threw it.
+ *
+ * A handler that throws reaches the renderer as a new error whose message
+ * Electron has put its own text in front of:
+ * `Error invoking remote method '<channel>': Error: <message>`. Everything that
+ * recognises a message has to look past that, or it never matches anything.
+ */
+export function stripIpcErrorPrefix(message: string): string {
+  return message.replace(/^Error invoking remote method '[^']*': (?:[A-Za-z]*Error: )?/, '');
+}
+
+/**
+ * Turn an error from a config call into a message for the user.
+ *
+ * Main reports failures as English text. The ones a user can run into are
+ * translated here; anything else is shown as main worded it, without Electron's
+ * prefix.
+ */
+export function translateApiConfigErrorMessage(rawMessage: string, t: Translate): string {
+  const message = stripIpcErrorPrefix(rawMessage);
+
   if (message === 'Config set name is required') {
     return t('api.configSetNameRequired');
   }
@@ -304,6 +337,25 @@ export function translateApiConfigErrorMessage(message: string, t: Translate): s
   const limitMatch = message.match(/^Config set limit reached: max\s+(\d+)$/);
   if (limitMatch) {
     return t('api.configSetLimitReached', { count: Number(limitMatch[1]) });
+  }
+
+  // Custom endpoints
+  if (message === 'Endpoint base URL is required') {
+    return t('api.providers.errors.baseUrlRequired');
+  }
+  if (message === 'An endpoint with this protocol and base URL already exists') {
+    return t('api.providers.errors.duplicate');
+  }
+  if (message === 'Custom endpoint not found') {
+    return t('api.providers.errors.notFound');
+  }
+  const endpointLimitMatch = message.match(/^Custom endpoint limit reached: max\s+(\d+)$/);
+  if (endpointLimitMatch) {
+    return t('api.providers.errors.limitReached', { count: Number(endpointLimitMatch[1]) });
+  }
+  const inUseMatch = message.match(/^Endpoint is in use by config set\(s\): (.+)$/);
+  if (inUseMatch) {
+    return t('api.providers.errors.inUse', { sets: inUseMatch[1] });
   }
 
   return message;

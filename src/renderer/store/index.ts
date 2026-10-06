@@ -674,7 +674,7 @@ if (typeof window !== 'undefined') {
       store.setShowSettings(false);
       store.setActiveSession(null);
     } else if (page === 'settings') {
-      store.setSettingsTab(tab || 'api');
+      store.setSettingsTab(tab || 'modelSets');
       store.setShowSettings(true);
     } else if (page === 'session') {
       if (!sessionId || typeof sessionId !== 'string') return false;

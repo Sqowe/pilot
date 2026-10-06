@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provider, one key is kept — the active set's first.
   The conversion is one-way: if an older version of the app (1.0.8 or earlier) is started
   afterwards, it will not find the keys, and they have to be entered again there.
+- **Settings → API Settings is now two tabs.** _Providers_ is where keys are entered: your
+  custom endpoints as a list, each with a name of its own, and the key of every catalog
+  provider. _Model Sets_ is where a config set chooses what it runs on — any provider, or
+  one of your custom endpoints by name — and which model. Two custom endpoints can now be
+  told apart and chosen between; before, both were just "Custom". An endpoint shows which
+  config sets use it and cannot be deleted while one does.
 
 ### Fixed
 

@@ -63,8 +63,10 @@
   },
   "settings": {
     "title": "设置",
-    "apiSettings": "API 设置",
-    "apiSettingsDesc": "配置 API 提供商和密钥",
+    "providers": "提供商",
+    "providersDesc": "API 密钥和自定义端点",
+    "modelSets": "模型方案",
+    "modelSetsDesc": "每个配置方案使用的提供商和模型",
     "sandbox": "沙盒",
     "sandboxDesc": "隔离执行环境",
     "connectors": "MCP 连接器",
@@ -354,7 +356,7 @@
     "providerDescription": "选择您的模型提供商。",
     "apiKey": "API 密钥",
     "enterApiKey": "输入你的 API Key",
-    "apiKeyDescription": "仅保存在本地，并绑定到当前配置方案。",
+    "apiKeyDescription": "仅保存在本地，每个提供商保存一份。使用该提供商的所有配置方案共用此密钥。",
     "protocol": "协议",
     "baseUrl": "基础 URL",
     "model": "模型",
@@ -568,6 +570,52 @@
         "local": "本地",
         "custom": "自定义"
       }
+    },
+    "providers": {
+      "intro": "密钥和地址按提供商保存一次，所有使用该提供商的配置方案共用。配置方案使用哪个提供商，请在“模型方案”中选择。",
+      "customEndpoints": "自定义端点",
+      "customEndpointsHint": "您自己的网关和兼容服务。每个端点都有名称，便于配置方案区分。",
+      "addEndpoint": "添加端点",
+      "noEndpoints": "还没有自定义端点。",
+      "usedBy": "使用它的方案：{{sets}}",
+      "notUsed": "没有配置方案在使用",
+      "configure": "配置",
+      "configureTitle": "配置 {{name}}",
+      "saved": "已保存",
+      "addEndpointTitle": "添加自定义端点",
+      "editEndpointTitle": "编辑自定义端点",
+      "endpointName": "名称",
+      "endpointNamePlaceholder": "例如：本地网关",
+      "endpointNameHint": "显示在此列表中，以及为配置方案选择提供商时。留空则以地址命名。",
+      "endpointKeyHint": "仅保存在本地，使用此端点的所有配置方案共用。本机上的网关可能不需要密钥。",
+      "defaultModel": "默认模型",
+      "defaultModelHint": "可选。配置方案首次指向此端点时自动填入。",
+      "sharedEndpointNotice": "使用它的方案：{{sets}}。此处的修改对它们全部生效。",
+      "deleteEndpoint": "删除端点 {{name}}",
+      "deleteEndpointConfirm": "确认删除端点“{{name}}”？其密钥将一并删除。",
+      "deleteEndpointInUse": "正在使用中。请先将使用它的配置方案改为其他提供商。",
+      "keyOptionalHint": "此提供商可不填。仅保存在本地，每个提供商保存一份。",
+      "baseUrlOptionalHint": "留空则使用该提供商的默认地址。",
+      "status": {
+        "configured": "已配置",
+        "keyMissing": "缺少密钥",
+        "notSet": "未设置"
+      },
+      "errors": {
+        "limitReached": "最多可保存 {{count}} 个自定义端点",
+        "baseUrlRequired": "端点需要填写地址（Base URL）",
+        "duplicate": "已存在相同协议和地址的端点",
+        "notFound": "该端点已不存在",
+        "inUse": "该端点正被以下配置方案使用：{{sets}}"
+      }
+    },
+    "modelSets": {
+      "providerDescription": "选择此配置方案使用的提供商或自定义端点。密钥和地址在“提供商”中填写。",
+      "manageProviders": "管理提供商",
+      "noEndpoint": "未选择端点",
+      "endpointMissing": "此配置方案没有自定义端点。请从列表中选择一个，或在“提供商”中添加。",
+      "endpointRequired": "请先选择一个自定义端点",
+      "keyMissing": "尚未为此提供商保存密钥。请在“提供商”中添加。"
     },
     "providerHints": {
       "openrouter": {

@@ -63,8 +63,10 @@
   },
   "settings": {
     "title": "Beállítások",
-    "apiSettings": "API beállítások",
-    "apiSettingsDesc": "API szolgáltató és kulcs beállítása",
+    "providers": "Szolgáltatók",
+    "providersDesc": "API kulcsok és egyéni végpontok",
+    "modelSets": "Modellkészletek",
+    "modelSetsDesc": "Az egyes konfigurációs készletek szolgáltatója és modellje",
     "sandbox": "Sandbox",
     "sandboxDesc": "Izolált végrehajtási környezet",
     "connectors": "MCP csatlakozók",
@@ -356,7 +358,7 @@
     "providerDescription": "Válassza ki a modellszolgáltatót.",
     "apiKey": "API kulcs",
     "enterApiKey": "Adja meg az API kulcsát",
-    "apiKeyDescription": "Helyben mentve, az aktív konfigurációs készlethez kötve.",
+    "apiKeyDescription": "Helyben mentve, szolgáltatónként egyszer. Az ezt a szolgáltatót használó összes konfigurációs készlet közösen használja.",
     "protocol": "Protokoll",
     "baseUrl": "Base URL",
     "model": "Modell",
@@ -570,6 +572,52 @@
         "local": "Helyi",
         "custom": "Egyéni"
       }
+    },
+    "providers": {
+      "intro": "A kulcsok és címek szolgáltatónként egyszer kerülnek mentésre, és az adott szolgáltatót használó összes konfigurációs készlet közösen használja őket. Azt, hogy egy készlet melyik szolgáltatót használja, a Modellkészletek lapon lehet kiválasztani.",
+      "customEndpoints": "Egyéni végpontok",
+      "customEndpointsHint": "Saját átjárók és kompatibilis szolgáltatások. Mindegyiknek neve van, így a konfigurációs készletek meg tudják különböztetni őket.",
+      "addEndpoint": "Végpont hozzáadása",
+      "noEndpoints": "Még nincs egyéni végpont.",
+      "usedBy": "Használja: {{sets}}",
+      "notUsed": "Egyik konfigurációs készlet sem használja",
+      "configure": "Beállítás",
+      "configureTitle": "{{name}} beállítása",
+      "saved": "Mentve",
+      "addEndpointTitle": "Egyéni végpont hozzáadása",
+      "editEndpointTitle": "Egyéni végpont szerkesztése",
+      "endpointName": "Név",
+      "endpointNamePlaceholder": "Például: helyi átjáró",
+      "endpointNameHint": "Ebben a listában és a konfigurációs készlet szolgáltatójának kiválasztásakor jelenik meg. Ha üresen marad, a végpont a címéről kapja a nevét.",
+      "endpointKeyHint": "Helyben mentve; az ezt a végpontot használó összes konfigurációs készlet közösen használja. Az ezen a gépen futó átjáróhoz nem feltétlenül kell kulcs.",
+      "defaultModel": "Alapértelmezett modell",
+      "defaultModelHint": "Nem kötelező. Akkor kerül kitöltésre, amikor egy konfigurációs készlet először erre a végpontra mutat.",
+      "sharedEndpointNotice": "Használja: {{sets}}. Az itteni módosítás mindegyikre érvényes.",
+      "deleteEndpoint": "{{name}} végpont törlése",
+      "deleteEndpointConfirm": "Törli a «{{name}}» végpontot? A kulcsa is törlődik.",
+      "deleteEndpointInUse": "Használatban van. Előbb állítson be másik szolgáltatót az ezt használó konfigurációs készletekben.",
+      "keyOptionalHint": "Ennél a szolgáltatónál nem kötelező. Helyben mentve, szolgáltatónként egyszer.",
+      "baseUrlOptionalHint": "Hagyja üresen a szolgáltató szokásos címének használatához.",
+      "status": {
+        "configured": "Beállítva",
+        "keyMissing": "Hiányzik a kulcs",
+        "notSet": "Nincs beállítva"
+      },
+      "errors": {
+        "limitReached": "Legfeljebb {{count}} egyéni végpontot menthet",
+        "baseUrlRequired": "A végponthoz cím (Base URL) szükséges",
+        "duplicate": "Ezzel a protokollal és címmel már létezik végpont",
+        "notFound": "Ez a végpont már nem létezik",
+        "inUse": "A végpontot ezek a konfigurációs készletek használják: {{sets}}"
+      }
+    },
+    "modelSets": {
+      "providerDescription": "Válassza ki, melyik szolgáltatót vagy egyéni végpontot használja ez a konfigurációs készlet. A kulcsok és címek a Szolgáltatók lapon adhatók meg.",
+      "manageProviders": "Szolgáltatók kezelése",
+      "noEndpoint": "Nincs kiválasztott végpont",
+      "endpointMissing": "Ennek a konfigurációs készletnek nincs egyéni végpontja. Válasszon egyet a listából, vagy adjon hozzá a Szolgáltatók lapon.",
+      "endpointRequired": "Előbb válasszon egyéni végpontot",
+      "keyMissing": "Ehhez a szolgáltatóhoz még nincs mentett kulcs. Adja meg a Szolgáltatók lapon."
     },
     "providerHints": {
       "openrouter": {

@@ -63,8 +63,10 @@
   },
   "settings": {
     "title": "Settings",
-    "apiSettings": "API Settings",
-    "apiSettingsDesc": "Configure API provider and key",
+    "providers": "Providers",
+    "providersDesc": "API keys and custom endpoints",
+    "modelSets": "Model Sets",
+    "modelSetsDesc": "Which provider and model each config set uses",
     "sandbox": "Sandbox",
     "sandboxDesc": "Isolated execution environment",
     "connectors": "MCP Connectors",
@@ -356,7 +358,7 @@
     "providerDescription": "Choose your model provider.",
     "apiKey": "API Key",
     "enterApiKey": "Enter your API Key",
-    "apiKeyDescription": "Saved locally and scoped to the active configuration set.",
+    "apiKeyDescription": "Saved locally, once per provider. Every config set that uses this provider shares it.",
     "protocol": "Protocol",
     "baseUrl": "Base URL",
     "model": "Model",
@@ -570,6 +572,52 @@
         "local": "Local",
         "custom": "Custom"
       }
+    },
+    "providers": {
+      "intro": "Keys and addresses are saved once per provider and shared by every config set that uses it. Which provider a config set runs on is chosen in Model Sets.",
+      "customEndpoints": "Custom endpoints",
+      "customEndpointsHint": "Your own gateways and compatible services. Each one has a name, so config sets can tell them apart.",
+      "addEndpoint": "Add endpoint",
+      "noEndpoints": "No custom endpoints yet.",
+      "usedBy": "Used by: {{sets}}",
+      "notUsed": "Not used by any config set",
+      "configure": "Configure",
+      "configureTitle": "Configure {{name}}",
+      "saved": "Saved",
+      "addEndpointTitle": "Add custom endpoint",
+      "editEndpointTitle": "Edit custom endpoint",
+      "endpointName": "Name",
+      "endpointNamePlaceholder": "For example: local gateway",
+      "endpointNameHint": "Shown in this list and when choosing a provider for a config set. Left empty, the endpoint is named after its address.",
+      "endpointKeyHint": "Saved locally and shared by every config set that uses this endpoint. A gateway on this computer may not need one.",
+      "defaultModel": "Default model",
+      "defaultModelHint": "Optional. Filled in when a config set is first pointed at this endpoint.",
+      "sharedEndpointNotice": "Used by: {{sets}}. A change here applies to all of them.",
+      "deleteEndpoint": "Delete endpoint {{name}}",
+      "deleteEndpointConfirm": "Delete endpoint \"{{name}}\"? Its key is deleted with it.",
+      "deleteEndpointInUse": "In use. Point the config sets that use it at another provider first.",
+      "keyOptionalHint": "Optional for this provider. Saved locally, once per provider.",
+      "baseUrlOptionalHint": "Leave empty to use the provider's usual address.",
+      "status": {
+        "configured": "Configured",
+        "keyMissing": "Key missing",
+        "notSet": "Not set"
+      },
+      "errors": {
+        "limitReached": "You can keep up to {{count}} custom endpoints",
+        "baseUrlRequired": "An endpoint needs an address (Base URL)",
+        "duplicate": "An endpoint with this protocol and address already exists",
+        "notFound": "This endpoint no longer exists",
+        "inUse": "This endpoint is in use by: {{sets}}"
+      }
+    },
+    "modelSets": {
+      "providerDescription": "Choose the provider or custom endpoint this config set runs on. Keys and addresses are entered in Providers.",
+      "manageProviders": "Manage providers",
+      "noEndpoint": "No endpoint chosen",
+      "endpointMissing": "This config set has no custom endpoint. Choose one from the list, or add one in Providers.",
+      "endpointRequired": "Choose a custom endpoint first",
+      "keyMissing": "No key is saved for this provider yet. Add it in Providers."
     },
     "providerHints": {
       "openrouter": {

@@ -275,11 +275,12 @@ describe('ProviderPicker catalog mapping', () => {
 });
 
 // ---------------------------------------------------------------------------
-// SettingsAPI formShape-derived display flags — logic contract tests
+// formShape-derived display flags of the settings form — logic contract tests
 // ---------------------------------------------------------------------------
 
-describe('SettingsAPI formShape display flag derivation', () => {
-  // Mirror the exact derivation logic used in SettingsAPI
+describe('settings form formShape display flag derivation', () => {
+  // Mirror the derivation the settings form uses (ModelFieldsSection for the
+  // model fields, `providerShowsBaseUrl` for a provider's address field)
   function deriveFlags(
     provider: string,
     activeFormShape: {

@@ -704,7 +704,7 @@ export function WelcomeView() {
             <button
               type="button"
               onClick={() => {
-                setSettingsTab('api');
+                setSettingsTab('providers');
                 setShowSettings(true);
               }}
               className="inline-flex items-center gap-1 text-accent hover:text-accent-hover transition-colors"

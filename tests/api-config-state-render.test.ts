@@ -207,8 +207,8 @@ describe('useApiConfigState — what the form shows on first render', () => {
     expect(form.hasUnsavedChanges).toBe(false);
   });
 
-  it('keeps the interface the two screens are written against', () => {
-    // SettingsAPI and ConfigModal destructure these by name. A slice renamed or
+  it('keeps the interface the first-run dialog is written against', () => {
+    // ConfigModal destructures these by name. A slice renamed or
     // dropped would otherwise only show as `undefined` at run time.
     const form = renderForm(config({}));
 

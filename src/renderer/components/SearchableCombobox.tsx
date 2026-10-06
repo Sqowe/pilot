@@ -2,7 +2,7 @@
  * @module SearchableCombobox
  *
  * Generic controlled typeahead combobox. Used as the primitive behind both
- * ProviderPicker and the model field in SettingsAPI.
+ * the provider pickers and the model field of a config set.
  *
  * Implements the ARIA combobox pattern:
  * https://www.w3.org/WAI/ARIA/apg/patterns/combobox/
@@ -18,6 +18,7 @@
  * noResultsLabel  — localized text when the search returns no items
  * disabled        — disables the trigger
  * statusDot       — optional coloured dot on the trigger: 'green' | 'amber' | 'none'
+ *                   (an item's own `dot` shows the same in the list)
  * className       — extra classes on the trigger button
  */
 
@@ -32,6 +33,8 @@ export interface ComboboxItem {
   group?: string;
   /** Short badge text rendered next to the label (e.g. "CN", "AMS") */
   badge?: string;
+  /** Coloured dot in front of the label in the list — e.g. whether a provider has a key */
+  dot?: StatusDotColor;
 }
 
 export type StatusDotColor = 'green' | 'amber' | 'none';
@@ -334,6 +337,12 @@ export function SearchableCombobox({
                       }`}
                     >
                       <span className="flex items-center gap-2 min-w-0">
+                        {item.dot && item.dot !== 'none' && (
+                          <span
+                            className={`flex-shrink-0 w-2 h-2 rounded-full ${DOT_CLASSES[item.dot]}`}
+                            aria-hidden="true"
+                          />
+                        )}
                         <span className="truncate">{item.label}</span>
                         {item.badge && (
                           <span className="flex-shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-surface-hover text-text-secondary">

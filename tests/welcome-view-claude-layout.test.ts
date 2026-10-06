@@ -22,7 +22,8 @@ describe('WelcomeView Claude-style layout', () => {
     const source = fs.readFileSync(welcomeViewPath, 'utf8');
     expect(source).toContain('!isConfigured && (');
     expect(source).toContain("t('welcome.apiNotConfigured')");
-    expect(source).toContain("setSettingsTab('api');");
+    // Where a key is entered — the tab "API settings" became when it was split.
+    expect(source).toContain("setSettingsTab('providers');");
     expect(source).toContain('setShowSettings(true);');
   });
 });

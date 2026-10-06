@@ -19,6 +19,9 @@ const PORT = 19888;
 const HOST = '127.0.0.1';
 const EXEC_TIMEOUT_MS = 3000;
 const VALID_TABS = new Set([
+  'providers',
+  'modelSets',
+  // What the two tabs above were before they were split; the panel opens Providers for it.
   'api',
   'sandbox',
   'connectors',
@@ -57,7 +60,7 @@ function execJS(win: BrowserWindow, code: string): Promise<unknown> {
  *
  * Routes:
  *   GET /navigate?page=welcome
- *   GET /navigate?page=settings&tab=api
+ *   GET /navigate?page=settings&tab=providers
  *   GET /navigate?page=session&id=xxx
  *   GET /status
  */
