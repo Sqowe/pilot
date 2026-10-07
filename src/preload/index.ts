@@ -11,8 +11,6 @@ import type {
   ProviderPresets,
   Skill,
   BuiltinSkillStatus,
-  ApiTestInput,
-  ApiTestResult,
   PluginCatalogItemV2,
   InstalledPlugin,
   PluginInstallResultV2,
@@ -244,8 +242,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }): Promise<ConfigMutationResult> =>
       ipcRenderer.invoke('config.setProviderCredential', payload),
     isConfigured: (): Promise<boolean> => ipcRenderer.invoke('config.isConfigured'),
-    test: (config: ApiTestInput): Promise<ApiTestResult> =>
-      ipcRenderer.invoke('config.test', config),
     listModels: (payload: {
       provider: AppConfig['provider'];
       apiKey: string;
@@ -808,7 +804,6 @@ declare global {
           baseUrl?: string;
         }) => Promise<ConfigMutationResult>;
         isConfigured: () => Promise<boolean>;
-        test: (config: ApiTestInput) => Promise<ApiTestResult>;
         listModels: (payload: {
           provider: AppConfig['provider'];
           apiKey: string;

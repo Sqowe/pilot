@@ -32,9 +32,8 @@ import {
   type ProviderConfigDialogProps,
 } from '../src/renderer/components/ProviderConfigDialog';
 import { ProviderCredentialFields } from '../src/renderer/components/ProviderCredentialFields';
-import { FALLBACK_PROVIDER_PRESETS } from '../src/renderer/hooks/api-config-shared';
+import { CommonProviderSetupsCard } from '../src/renderer/components/ProviderGuidance';
 
-const presets = FALLBACK_PROVIDER_PRESETS;
 const saved = async () => ({ ok: true as const, config: {} as AppConfig });
 
 function set(overrides: Partial<ApiConfigSet>): ApiConfigSet {
@@ -92,7 +91,6 @@ function renderEndpointDialog(overrides: Partial<CustomEndpointDialogProps> = {}
     droppedKeySets: [],
     configSets: [set({})],
     activeConfigSetId: 'default',
-    presets,
     providerCatalog,
     onSave: vi.fn(saved),
     onOpenProvider: vi.fn(),
@@ -306,15 +304,13 @@ describe('an address that belongs to a catalog provider', () => {
   });
 
   it('replaces the hints about protocol and address, which no longer matter', () => {
-    const { html, form } = renderEndpointDialog({
+    const { form } = renderEndpointDialog({
       endpoint: endpoint({ baseUrl: 'https://openrouter.ai/api/v1' }),
     });
 
     expect(form.protocolHint).toBe('');
     expect(form.addressHint).toBe('');
     expect(form.checkFailureHint).toBe('');
-    // The old screen's wording sent the user to a "tab" that no longer exists.
-    expect(html).not.toContain('api.guidance.preferProviderTab');
   });
 
   it('recognises a local Ollama on its usual port, and not a server on another', () => {
@@ -834,11 +830,30 @@ describe('the setups list after one of them is applied', () => {
     expect(list).toMatch(/setOpen\(false\);\s+summaryRef\.current\?\.focus\(\);/);
     expect(list).toContain('<summary ref={summaryRef}');
   });
+});
 
-  it('is left as it was in the wide layout of the first-run dialog', () => {
-    const table = card.slice(card.indexOf('export function CommonProviderSetupsCard('));
-    expect(table).not.toContain('setOpen');
-    expect(table).toContain('onClick={() => onApplySetup(setup.id)}');
+describe('the setups card by itself', () => {
+  const deepseek = {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    protocolLabel: 'OpenAI',
+    baseUrl: 'https://api.deepseek.com/v1',
+    exampleModel: 'deepseek-chat',
+    notes: 'note',
+  };
+  const renderCard = (props: { setups: (typeof deepseek)[]; disabled?: boolean }) =>
+    renderToString(createElement(CommonProviderSetupsCard, { onApplySetup: () => {}, ...props }));
+
+  it('draws nothing when there is no setup to offer', () => {
+    // Every setup whose service the catalog lists itself is left out of the
+    // list; a heading over an empty one would offer nothing to apply.
+    expect(renderCard({ setups: [] })).toBe('');
+    expect(renderCard({ setups: [deepseek] })).toContain('api.guidance.commonSetupsTitle');
+  });
+
+  it('switches Apply off while the fields around it are being saved', () => {
+    expect(renderCard({ setups: [deepseek] })).not.toContain('disabled=""');
+    expect(renderCard({ setups: [deepseek], disabled: true })).toContain('disabled=""');
   });
 });
 

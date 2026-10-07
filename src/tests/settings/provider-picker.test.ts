@@ -1,8 +1,9 @@
 /**
- * Unit tests for SearchableCombobox internal logic and ProviderPicker wiring.
+ * Unit tests for SearchableCombobox internal logic and the catalog grouping
+ * the provider choosers are built from.
  *
  * These tests target the pure helper functions extracted into the module
- * and the ProviderPicker catalog-to-items mapping logic. No DOM rendering
+ * and the catalog-to-items mapping logic of a provider chooser. No DOM rendering
  * is used (vitest runs in node environment).
  */
 import { describe, it, expect } from 'vitest';
@@ -140,10 +141,10 @@ describe('buildGroupedList', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ProviderPicker catalog → items logic
+// Provider chooser: catalog → items logic
 // ---------------------------------------------------------------------------
 
-describe('ProviderPicker catalog mapping', () => {
+describe('provider chooser catalog mapping', () => {
   // Minimal native entries simulating what IPC delivers
   const nativeEntries: ProviderCatalogEntry[] = [
     {
@@ -424,7 +425,7 @@ describe('activeIsNonFeatured derivation', () => {
 
 // ---------------------------------------------------------------------------
 // NATIVE_PROVIDER_META completeness — ensures all v1 allowlist entries have
-// the fields the ProviderPicker relies on.
+// the fields a provider chooser relies on.
 // ---------------------------------------------------------------------------
 
 describe('NATIVE_PROVIDER_META completeness', () => {

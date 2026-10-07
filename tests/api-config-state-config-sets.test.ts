@@ -5,9 +5,9 @@
  * what a save sends.
  *
  * A config set selects a provider and a model and holds no credential, so
- * nothing here involves an API key. The credential half is covered by
- * `api-config-provider-credentials-state.test.ts`, and the guarantee that the
- * two never leak into each other by `api-config-draft-independence.test.ts`.
+ * nothing here involves an API key. How a credential reads is covered by
+ * `api-settings-view.test.ts`, and the guarantee that the two halves never
+ * leak into each other by `api-config-draft-independence.test.ts`.
  */
 import { describe, expect, it } from 'vitest';
 import type { ApiConfigSet, AppConfig, CustomEndpoint } from '../src/renderer/types';

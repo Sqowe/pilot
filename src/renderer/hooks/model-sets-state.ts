@@ -6,8 +6,9 @@
  * nothing here knows an API key. Unsaved-change tracking covers the set's own
  * fields only — `provider`, `endpointId`, the model, the two token limits and
  * the thinking level — and the save payload carries exactly those. The other
- * half lives in `provider-credentials-state.ts`; neither imports the other
- * (design §6.4).
+ * half, the credentials, has no unsaved state to keep: a credential is edited
+ * in a dialog with its own Save (`useApiSettingsState.ts`), and nothing here
+ * imports it (design §6.4).
  *
  * Pure: the reducer and helpers below have no React or IPC in them.
  */

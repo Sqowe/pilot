@@ -213,8 +213,8 @@ describe('naming an endpoint minted by saving a custom address', () => {
   });
 
   it('adds the protocol when the host already names an endpoint', () => {
-    // The first-run dialog saves a custom provider through `update()`, which
-    // mints the endpoint itself.
+    // A save that names a custom provider and an address goes through
+    // `update()`, which mints the endpoint itself.
     const store = new ConfigStore();
     store.createCustomEndpoint({ name: '', protocol: 'anthropic', baseUrl: LOCAL });
 

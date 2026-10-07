@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ApiConfigSet, CustomEndpoint, ProviderType } from '../src/renderer/types';
+import type { ApiConfigSet, CustomEndpoint } from '../src/renderer/types';
 import fs from 'node:fs';
 import path from 'node:path';
 import { shouldAutoDiscoverLocalOllamaBaseUrl } from '../src/shared/ollama-base-url';
@@ -9,24 +9,21 @@ import {
   NATIVE_SHAPE,
   type ProviderCatalogEntry,
 } from '../src/shared/provider-catalog';
-import { defaultModelFields, finalModelOf } from '../src/renderer/hooks/api-config-shared';
-import { hydrateModelSetDraft } from '../src/renderer/hooks/model-sets-state';
+import { getModelInputGuidance } from '../src/shared/api-model-presets';
 import {
-  createProviderCredentialsState,
-  selectCredentialDraft,
-} from '../src/renderer/hooks/provider-credentials-state';
-import {
+  defaultModelFields,
   FALLBACK_PROVIDER_PRESETS,
-  getModelInputGuidance,
-  isCustomAnthropicLoopbackGateway,
-  isCustomGeminiLoopbackGateway,
-  isCustomOpenAiLoopbackGateway,
+  finalModelOf,
+  mergeProviderCatalog,
   profileKeyFromProvider,
   profileKeyToProvider,
-  resolveProviderProtocol,
   sanitizeCatalogEntry,
-  mergeProviderCatalog,
-} from '../src/renderer/hooks/useApiConfigState';
+} from '../src/renderer/hooks/api-config-shared';
+import {
+  persistedCredentialFor,
+  type PersistedCredentials,
+} from '../src/renderer/hooks/api-settings-view';
+import { hydrateModelSetDraft } from '../src/renderer/hooks/model-sets-state';
 
 const connectivityHookPath = path.resolve(
   process.cwd(),
@@ -58,6 +55,11 @@ function customEndpoint(overrides: Partial<CustomEndpoint>): CustomEndpoint {
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
   };
+}
+
+/** The credential store as main returns it, with only what a test names. */
+function stored(overrides: Partial<PersistedCredentials>): PersistedCredentials {
+  return { providerCredentials: {}, customEndpoints: [], credentialConflicts: [], ...overrides };
 }
 
 describe('api config state helpers', () => {
@@ -93,22 +95,22 @@ describe('api config state helpers', () => {
     expect(finalModelOf(draft)).toBe('qwen3.5:0.8b');
     // And Ollama's own credential reads its usual local address.
     expect(
-      selectCredentialDraft(
-        createProviderCredentialsState({ customEndpoints: [endpoint] }),
-        { kind: 'slot', slot: 'ollama' },
+      persistedCredentialFor(
+        'ollama',
+        '',
+        stored({ customEndpoints: [endpoint] }),
         FALLBACK_PROVIDER_PRESETS
       ).baseUrl
     ).toBe('http://localhost:11434/v1');
   });
 
   it('normalizes the ollama base url when the form loads it', () => {
-    const state = createProviderCredentialsState({
+    const credentials = stored({
       providerCredentials: { ollama: { apiKey: '', baseUrl: 'http://localhost:11434/api' } },
     });
 
     expect(
-      selectCredentialDraft(state, { kind: 'slot', slot: 'ollama' }, FALLBACK_PROVIDER_PRESETS)
-        .baseUrl
+      persistedCredentialFor('ollama', '', credentials, FALLBACK_PROVIDER_PRESETS).baseUrl
     ).toBe('http://localhost:11434/v1');
   });
 
@@ -132,7 +134,7 @@ describe('api config state helpers', () => {
   });
 
   it('loads each stored credential without overwriting it with defaults', () => {
-    const state = createProviderCredentialsState({
+    const credentials = stored({
       customEndpoints: [
         customEndpoint({ apiKey: 'sk-custom-openai' }),
         customEndpoint({
@@ -145,37 +147,28 @@ describe('api config state helpers', () => {
     });
 
     expect(
-      selectCredentialDraft(
-        state,
-        { kind: 'endpoint', id: 'custom-endpoint-1' },
-        FALLBACK_PROVIDER_PRESETS
-      )
+      persistedCredentialFor('custom', 'custom-endpoint-1', credentials, FALLBACK_PROVIDER_PRESETS)
     ).toEqual({
       apiKey: 'sk-custom-openai',
       baseUrl: 'https://custom-openai.example/v1',
       protocol: 'openai',
     });
     expect(
-      selectCredentialDraft(
-        state,
-        { kind: 'endpoint', id: 'custom-endpoint-2' },
-        FALLBACK_PROVIDER_PRESETS
-      ).apiKey
+      persistedCredentialFor('custom', 'custom-endpoint-2', credentials, FALLBACK_PROVIDER_PRESETS)
+        .apiKey
     ).toBe('sk-custom-anthropic');
   });
 
   it('applies defaults only where nothing is stored', () => {
-    const state = createProviderCredentialsState({
+    const credentials = stored({
       providerCredentials: { openai: { apiKey: 'sk-openai' } },
     });
 
     expect(
-      selectCredentialDraft(state, { kind: 'slot', slot: 'openai' }, FALLBACK_PROVIDER_PRESETS)
-        .apiKey
+      persistedCredentialFor('openai', '', credentials, FALLBACK_PROVIDER_PRESETS).apiKey
     ).toBe('sk-openai');
     expect(
-      selectCredentialDraft(state, { kind: 'slot', slot: 'openrouter' }, FALLBACK_PROVIDER_PRESETS)
-        .baseUrl
+      persistedCredentialFor('openrouter', '', credentials, FALLBACK_PROVIDER_PRESETS).baseUrl
     ).toBe(FALLBACK_PROVIDER_PRESETS.openrouter.baseUrl);
 
     // A custom provider nobody has set up yet starts in typed-model mode.
@@ -185,32 +178,8 @@ describe('api config state helpers', () => {
     expect(customDefaults.customModel).toBe('');
   });
 
-  it('detects local custom anthropic loopback gateway url', () => {
-    expect(isCustomAnthropicLoopbackGateway('http://127.0.0.1:8082')).toBe(true);
-    expect(isCustomAnthropicLoopbackGateway('http://localhost:8082')).toBe(true);
-    expect(isCustomAnthropicLoopbackGateway('http://[::1]:8082')).toBe(true);
-    expect(isCustomAnthropicLoopbackGateway('http://0.0.0.0:8082')).toBe(false);
-    expect(isCustomAnthropicLoopbackGateway('https://proxy.example.com')).toBe(false);
-  });
-
-  it('detects local custom gemini loopback gateway url', () => {
-    expect(isCustomGeminiLoopbackGateway('http://127.0.0.1:8082')).toBe(true);
-    expect(isCustomGeminiLoopbackGateway('http://localhost:8082')).toBe(true);
-    expect(isCustomGeminiLoopbackGateway('http://[::1]:8082')).toBe(true);
-    expect(isCustomGeminiLoopbackGateway('http://0.0.0.0:8082')).toBe(false);
-    expect(isCustomGeminiLoopbackGateway('https://proxy.example.com')).toBe(false);
-  });
-
-  it('detects local custom openai loopback gateway url', () => {
-    expect(isCustomOpenAiLoopbackGateway('http://127.0.0.1:8082/v1')).toBe(true);
-    expect(isCustomOpenAiLoopbackGateway('http://localhost:8082')).toBe(true);
-    expect(isCustomOpenAiLoopbackGateway('http://[::1]:8082')).toBe(true);
-    expect(isCustomOpenAiLoopbackGateway('http://0.0.0.0:8082')).toBe(false);
-    expect(isCustomOpenAiLoopbackGateway('https://relay.example.com/v1')).toBe(false);
-  });
-
   it('loads the gemini provider and a custom gemini endpoint without fallback drift', () => {
-    const state = createProviderCredentialsState({
+    const credentials = stored({
       providerCredentials: {
         gemini: { apiKey: 'AIza-official', baseUrl: 'https://generativelanguage.googleapis.com' },
       },
@@ -224,15 +193,10 @@ describe('api config state helpers', () => {
     });
 
     expect(
-      selectCredentialDraft(state, { kind: 'slot', slot: 'gemini' }, FALLBACK_PROVIDER_PRESETS)
-        .apiKey
+      persistedCredentialFor('gemini', '', credentials, FALLBACK_PROVIDER_PRESETS).apiKey
     ).toBe('AIza-official');
     expect(
-      selectCredentialDraft(
-        state,
-        { kind: 'endpoint', id: 'custom-endpoint-1' },
-        FALLBACK_PROVIDER_PRESETS
-      )
+      persistedCredentialFor('custom', 'custom-endpoint-1', credentials, FALLBACK_PROVIDER_PRESETS)
     ).toEqual({
       apiKey: 'AIza-relay',
       baseUrl: 'https://gemini-proxy.example/v1',
@@ -395,46 +359,6 @@ describe('P3 catalog-aware state helpers', () => {
       const entry = getCatalogEntry(MOCK_CATALOG, builtin.id)!;
       expect(entry.modelOptions).toHaveLength(0);
     }
-  });
-
-  // -------------------------------------------------------------------------
-  // resolveProviderProtocol — behavioral tests for changeProvider protocol logic
-  // -------------------------------------------------------------------------
-
-  it('resolveProviderProtocol uses catalog routeProtocol for native openai provider', () => {
-    // zai has routeProtocol: 'openai' in MOCK_CATALOG
-    expect(resolveProviderProtocol('zai', MOCK_CATALOG)).toBe('openai');
-  });
-
-  it('resolveProviderProtocol uses catalog routeProtocol for native anthropic provider', () => {
-    // kimi-coding has routeProtocol: 'anthropic'
-    expect(resolveProviderProtocol('kimi-coding', MOCK_CATALOG)).toBe('anthropic');
-  });
-
-  it('resolveProviderProtocol returns lastCustomProtocol for custom provider', () => {
-    expect(resolveProviderProtocol('custom', MOCK_CATALOG, 'gemini')).toBe('gemini');
-    expect(resolveProviderProtocol('custom', MOCK_CATALOG, 'openai')).toBe('openai');
-  });
-
-  it('resolveProviderProtocol returns anthropic for builtin non-custom providers', () => {
-    expect(resolveProviderProtocol('anthropic', MOCK_CATALOG)).toBe('anthropic');
-    expect(resolveProviderProtocol('openai', MOCK_CATALOG)).toBe('anthropic');
-  });
-
-  it('resolveProviderProtocol falls back to anthropic for unknown provider not in catalog', () => {
-    expect(resolveProviderProtocol('totally-unknown' as ProviderType, MOCK_CATALOG)).toBe(
-      'anthropic'
-    );
-  });
-
-  it('resolveProviderProtocol falls back to anthropic when catalog is empty', () => {
-    expect(resolveProviderProtocol('zai' as ProviderType, [])).toBe('anthropic');
-  });
-
-  it('changeProvider for native derives correct profile key via resolveProviderProtocol', () => {
-    // zai → openai protocol → native:zai profile key
-    const protocol = resolveProviderProtocol('zai', MOCK_CATALOG);
-    expect(profileKeyFromProvider('zai', protocol)).toBe('native:zai');
   });
 
   it('native modelOptions: Array.isArray guard returns [] for undefined modelOptions', () => {

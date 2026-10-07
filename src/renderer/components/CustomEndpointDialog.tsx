@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { ApiConfigSet, CustomEndpoint, ProviderPresets, ProviderType } from '../types';
+import type { ApiConfigSet, CustomEndpoint, ProviderType } from '../types';
 import type { ProviderCatalogEntry } from '../../shared/provider-catalog';
 import {
   checkEndpointForm,
@@ -33,7 +33,6 @@ export interface CustomEndpointDialogProps {
   /** For the model a connection check tries: one a config set already runs here. */
   configSets: ApiConfigSet[];
   activeConfigSetId: string;
-  presets: ProviderPresets;
   /** To tell an address that belongs to a catalog provider, and which of the setups to list. */
   providerCatalog: ProviderCatalogEntry[];
   onSave: (values: EndpointFormValues) => Promise<CredentialCallResult>;
@@ -63,7 +62,6 @@ export function useCustomEndpointDialog(props: CustomEndpointDialogProps) {
     droppedKeySets,
     configSets,
     activeConfigSetId,
-    presets,
     providerCatalog,
     onSave,
     onOpenProvider,
@@ -116,7 +114,6 @@ export function useCustomEndpointDialog(props: CustomEndpointDialogProps) {
     provider: 'custom',
     customProtocol: values.protocol,
     baseUrl: values.baseUrl,
-    presets,
     testDetails: failedModelStep?.error,
   });
 

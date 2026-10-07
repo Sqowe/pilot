@@ -145,6 +145,19 @@ describe('the Providers tab', () => {
     expect(html).toContain('api.providers.status.notSet');
   });
 
+  it('heads each group of providers with that group’s own name', () => {
+    const html = renderTab(SettingsProviders, twoGateways);
+
+    const popular = html.indexOf('api.providerPicker.categories.popular');
+    const local = html.indexOf('api.providerPicker.categories.local');
+    expect(popular).toBeGreaterThan(-1);
+    expect(local).toBeGreaterThan(popular);
+    // Ollama is the provider on this computer, and stands under that heading.
+    expect(html.lastIndexOf('Ollama')).toBeGreaterThan(local);
+    // The bare "Custom" has no group here: endpoints have their own list above.
+    expect(html).not.toContain('api.providerPicker.categories.custom');
+  });
+
   it('never puts a key on the page: keys are shown only inside a dialog', () => {
     const html = renderTab(SettingsProviders, twoGateways);
 

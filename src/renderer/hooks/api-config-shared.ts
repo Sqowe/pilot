@@ -1,10 +1,10 @@
 /**
- * Pure helpers shared by the API-settings state slices
- * (`useProviderCredentials`, `useModelSets`) and the layer that composes them
- * (`useApiConfigState`).
+ * Pure helpers shared by the API-settings state: the config-set half
+ * (`useModelSets`), the state the two tabs share (`useApiSettingsState`), and
+ * the view rules built on them.
  *
  * No React, no IPC: everything here is a plain function, so it can be tested
- * directly and used from either slice without one importing the other.
+ * directly and used from any of them without one importing the other.
  */
 import type { useTranslation } from 'react-i18next';
 import type {
@@ -24,7 +24,6 @@ import {
 } from '../../shared/provider-catalog';
 import {
   isValidProviderId,
-  isValidProfileKey,
   deriveProfileKey,
   profileKeyToProviderInfo,
 } from '../../shared/provider-ids';
@@ -144,12 +143,6 @@ export function mergeProviderCatalog(
   return [...deduped, ...missingBuiltins];
 }
 
-/** @internal Exported for unit testing only. */
-
-export function isProfileKey(value: unknown): value is ProviderProfileKey {
-  return isValidProfileKey(value);
-}
-
 export function isProviderType(value: unknown): value is ProviderType {
   return isValidProviderId(value);
 }
@@ -180,34 +173,6 @@ export function protocolOf(
   return provider === 'custom'
     ? endpointProtocol
     : profileKeyToProvider(profileKeyFromProvider(provider)).customProtocol;
-}
-
-/**
- * Resolve the routing protocol for a provider, consulting the catalog entry
- * when available. Used by changeProvider and exposed for testing.
- */
-export function resolveProviderProtocol(
-  provider: ProviderType,
-  catalog: ProviderCatalogEntry[],
-  lastCustomProtocol: CustomProtocolType = 'anthropic'
-): CustomProtocolType {
-  const entry = getCatalogEntry(catalog, provider);
-  const entryProtocol = entry?.kind === 'native' ? entry.routeProtocol : undefined;
-  if (isCustomProtocol(entryProtocol)) return entryProtocol;
-  if (provider === 'custom') return lastCustomProtocol;
-  return 'anthropic';
-}
-
-export function isCustomAnthropicLoopbackGateway(baseUrl: string): boolean {
-  return isLoopbackBaseUrl(baseUrl);
-}
-
-export function isCustomGeminiLoopbackGateway(baseUrl: string): boolean {
-  return isLoopbackBaseUrl(baseUrl);
-}
-
-export function isCustomOpenAiLoopbackGateway(baseUrl: string): boolean {
-  return isLoopbackBaseUrl(baseUrl);
 }
 
 export function isLegacyOllamaConfig(
@@ -369,22 +334,6 @@ export function protocolLabel(protocol: CustomProtocolType, t: Translate): strin
     return t('api.guidance.protocolLabels.gemini');
   }
   return t('api.guidance.protocolLabels.anthropic');
-}
-
-export function providerTabLabel(
-  provider: ProviderType,
-  presets: ProviderPresets,
-  t: Translate
-): string {
-  if (provider === 'custom') {
-    return t('api.custom');
-  }
-  return (
-    (Object.prototype.hasOwnProperty.call(presets, provider)
-      ? (presets as unknown as Record<string, { name?: string }>)[provider]
-      : undefined
-    )?.name || provider
-  );
 }
 
 // ---------------------------------------------------------------------------

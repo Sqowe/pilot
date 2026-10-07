@@ -331,10 +331,7 @@
     "currentLanguage": "Jelenlegi nyelv"
   },
   "api": {
-    "firstRunTitle": "API beállítása",
     "firstRunSubtitle": "Állítson be egy szolgáltatót a Sqowe Pilot használatához",
-    "settingsTitle": "API beállítások",
-    "settingsSubtitle": "Szolgáltató, kulcs és modell beállítások kezelése",
     "configSet": "Konfiguráció készlet",
     "defaultSetTag": "Alapértelmezett",
     "saveAs": "Mentés másként",
@@ -368,7 +365,6 @@
     "noModelsAvailable": "Nincsenek elérhető modellek",
     "noPresetsManualOnly": "Nincsenek előre beállított modellek — add meg a modell azonosítóját kézzel",
     "selectProtocol": "Válassza ki a kompatibilis protokollt a szolgáltatáshoz",
-    "enterOllamaUrl": "Adja meg az Ollama OpenAI-kompatibilis szolgáltatás URL-jét",
     "enterOpenAIUrl": "Adja meg az OpenAI-kompatibilis szolgáltatás URL-jét",
     "enterAnthropicUrl": "Adja meg az Anthropic-kompatibilis szolgáltatás URL-jét",
     "enterGeminiUrl": "Adjon meg egy Gemini-kompatibilis base URL-t",
@@ -384,8 +380,6 @@
     "saveSettings": "Beállítások mentése",
     "openSettingsAction": "API beállítások megnyitása",
     "configRequiredActiveSet": "A jelenlegi konfigurációs készletnek nincsenek használható hitelesítő adatai. Fejezze be a beállítást az API beállításokban.",
-    "testConnection": "Kapcsolat tesztelése",
-    "testingConnection": "Tesztelés...",
     "refreshModels": "Modellek frissítése",
     "refreshingModels": "Frissítés...",
     "refreshModelsFailed": "Nem sikerült frissíteni a modelleket. Ellenőrizze az URL-t vagy a szolgáltatás állapotát.",
@@ -393,7 +387,6 @@
     "useDetectedModels": "Észlelt modellek használata",
     "discoverLocalOllama": "Helyi Ollama keresése",
     "discoveringLocalOllama": "Keresés...",
-    "discoverLocalOllamaHint": "Először adja meg az Ollama végpontot. A modellek automatikusan letöltődnek, kézi bevitel csak akkor szükséges ha az észlelés sikertelen.",
     "localOllamaDiscovered": "Helyi Ollama találva {{count}} elérhető modellel.",
     "localOllamaNotFound": "Nem található helyi Ollama szolgáltatás. Indítsa el az `ollama serve` paranccsal és próbálja újra.",
     "localOllamaNoModels": "Helyi Ollama szolgáltatás találva, de nem szolgáltat modelleket.",
@@ -412,26 +405,15 @@
       "xhigh": "Extra magas",
       "max": "Maximum"
     },
-    "testSuccess": "Kapcsolat sikeres ({{ms}}ms)",
-    "testSuccessNeedSave": "Kapcsolat teszt sikeres. Mentse a beállításokat munkamenet indítása előtt.",
     "testError": {
       "missing_key": "API kulcs szükséges",
-      "missing_base_url": "Ehhez a szolgáltatóhoz Base URL szükséges",
-      "unauthorized": "Érvénytelen API kulcs vagy nincs jogosultság",
-      "not_found": "Végpont nem található. Ellenőrizze a Base URL-t",
-      "rate_limited": "Ráta korlát vagy kvóta túllépés",
-      "server_error": "Szolgáltatás hiba. Próbálja később",
-      "network_error": "Hálózati hiba. Ellenőrizze a kapcsolatot",
-      "ollama_not_running": "Nem lehet csatlakozni az Ollamához. Győződjön meg róla, hogy az Ollama fut (ollama serve).",
-      "ollama_loading": "Az Ollama tölti a modellt a memóriába. Nagy modellek 30–120 másodpercet is igénybe vehetnek. Várjon és próbálja újra.",
-      "unknown": "Kapcsolat sikertelen"
+      "ollama_loading": "Az Ollama tölti a modellt a memóriába. Nagy modellek 30–120 másodpercet is igénybe vehetnek. Várjon és próbálja újra."
     },
     "guidance": {
       "commonSetupsTitle": "Gyakori szolgáltató beállítások",
       "commonSetupsHint": "Tekintse meg vagy alkalmazza az ajánlott beállítást",
       "apply": "Alkalmazás",
       "detectedBadge": "Észlelt",
-      "preferProviderTab": "{{service}} észlelve. Ez a szolgáltatás általában könnyebben beállítható a dedikált {{provider}} fülről.",
       "protocolMismatch": "{{service}} észlelve. Ajánlott protokoll: {{recommendedProtocol}}.",
       "protocolLooksGood": "{{service}} észlelve. A jelenlegi protokollja már megfelel az ajánlott {{recommendedProtocol}} beállításnak.",
       "baseUrlHint": "{{service}} észlelve. Ajánlott {{recommendedProtocol}} beállítás: {{baseUrl}}. Példa modell: {{model}}.",
@@ -442,17 +424,11 @@
         "gemini": "Gemini"
       },
       "columns": {
-        "service": "Szolgáltatás",
-        "protocol": "Protokoll",
-        "baseUrl": "Base URL",
-        "model": "Példa modell",
-        "notes": "Megjegyzések",
-        "action": "Művelet"
+        "model": "Példa modell"
       },
       "errorHints": {
         "emptyProbeGeneric": "A végpont üres választ adott. Ez általában protokoll vagy modell inkompatibilitást jelent.",
         "emptyProbeDetected": "{{service}} üres választ adott. Próbálja az ajánlott {{recommendedProtocol}} beállítást és ellenőrizze a modell ID-t.",
-        "emptyProbePreferProvider": "{{service}} üres választ adott. Próbálja a dedikált {{provider}} fület az egyéni végpont konfiguráció helyett.",
         "probeMismatchGeneric": "A végpont váratlan formátumban válaszolt. Ez általában protokoll vagy modell kompatibilitási problémát jelez.",
         "probeMismatchDetected": "{{service}} váratlan formátumban válaszolt. Próbálja az ajánlott {{recommendedProtocol}} beállítást és ellenőrizze a modell ID-t."
       },

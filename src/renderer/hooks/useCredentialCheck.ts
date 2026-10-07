@@ -28,8 +28,8 @@ const ignoreModelFields: (updater: (previous: ModelFields) => ModelFields) => vo
  * The connection check of a credential dialog, and — for Ollama — the search
  * for a local server.
  *
- * Both are the ones the API settings form has (`useApiConnectivity`), pointed
- * at the values in the dialog instead of at a config set: they run against what
+ * Both are the ones the Model Sets tab has (`useApiConnectivity`), pointed at
+ * the values in the dialog instead of at a config set: they run against what
  * is typed, so a key can be tried before it is kept, and an answer that arrives
  * after the fields have changed is dropped. What a dialog does not have — a
  * model to pick, a list of models to keep fresh — is switched off.
@@ -45,7 +45,6 @@ export function useCredentialCheck(options: UseCredentialCheckOptions) {
     presetBaseUrl: options.presetBaseUrl,
     presetModels: NO_MODELS,
     requiresApiKey: options.requiresApiKey,
-    hasUnsavedChanges: false,
     // One dialog shows one credential from open to close.
     resetKey: '',
     messages,

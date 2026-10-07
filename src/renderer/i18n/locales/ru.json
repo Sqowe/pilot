@@ -331,10 +331,7 @@
     "currentLanguage": "Текущий язык"
   },
   "api": {
-    "firstRunTitle": "Настройка API",
     "firstRunSubtitle": "Настройте провайдера для начала работы с Sqowe Pilot",
-    "settingsTitle": "Настройки API",
-    "settingsSubtitle": "Управление провайдером, ключом и моделью",
     "configSet": "Набор конфигурации",
     "defaultSetTag": "По умолчанию",
     "saveAs": "Сохранить как",
@@ -368,7 +365,6 @@
     "noModelsAvailable": "Нет доступных моделей",
     "noPresetsManualOnly": "Нет предустановленных моделей — введите ID модели вручную",
     "selectProtocol": "Выберите совместимый протокол для сервиса",
-    "enterOllamaUrl": "Введите URL OpenAI-совместимого сервиса Ollama",
     "enterOpenAIUrl": "Введите URL OpenAI-совместимого сервиса",
     "enterAnthropicUrl": "Введите URL Anthropic-совместимого сервиса",
     "enterGeminiUrl": "Введите Gemini-совместимый базовый URL",
@@ -384,8 +380,6 @@
     "saveSettings": "Сохранить настройки",
     "openSettingsAction": "Открыть настройки API",
     "configRequiredActiveSet": "Текущий набор конфигурации не имеет рабочих учётных данных. Завершите настройку в API Settings.",
-    "testConnection": "Проверить соединение",
-    "testingConnection": "Проверка...",
     "refreshModels": "Обновить модели",
     "refreshingModels": "Обновление...",
     "refreshModelsFailed": "Не удалось обновить модели. Проверьте URL или статус сервиса.",
@@ -393,7 +387,6 @@
     "useDetectedModels": "Использовать обнаруженные модели",
     "discoverLocalOllama": "Найти локальную Ollama",
     "discoveringLocalOllama": "Поиск...",
-    "discoverLocalOllamaHint": "Сначала введите endpoint Ollama. Модели будут получены автоматически, ручной ввод нужен только если обнаружение не удалось.",
     "localOllamaDiscovered": "Найдена локальная Ollama с {{count}} доступной моделью(ями).",
     "localOllamaNotFound": "Локальный сервис Ollama не найден. Запустите его командой `ollama serve` и попробуйте снова.",
     "localOllamaNoModels": "Найден локальный сервис Ollama, но он не предоставляет моделей.",
@@ -412,26 +405,15 @@
       "xhigh": "Очень высокое",
       "max": "Максимальное"
     },
-    "testSuccess": "Соединение успешно ({{ms}}мс)",
-    "testSuccessNeedSave": "Тест соединения пройден. Сохраните настройки перед началом сессии.",
     "testError": {
       "missing_key": "Требуется ключ API",
-      "missing_base_url": "Для этого провайдера требуется базовый URL",
-      "unauthorized": "Неверный ключ API или нет авторизации",
-      "not_found": "Endpoint не найден. Проверьте базовый URL",
-      "rate_limited": "Превышен лимит запросов или квота",
-      "server_error": "Ошибка сервиса. Попробуйте позже",
-      "network_error": "Ошибка сети. Проверьте соединение",
-      "ollama_not_running": "Не удаётся подключиться к Ollama. Убедитесь, что Ollama запущена (ollama serve).",
-      "ollama_loading": "Ollama загружает модель в память. Большие модели могут занять 30–120 секунд. Подождите и попробуйте снова.",
-      "unknown": "Соединение не удалось"
+      "ollama_loading": "Ollama загружает модель в память. Большие модели могут занять 30–120 секунд. Подождите и попробуйте снова."
     },
     "guidance": {
       "commonSetupsTitle": "Типичные настройки провайдеров",
       "commonSetupsHint": "Просмотрите или примените рекомендуемую настройку",
       "apply": "Применить",
       "detectedBadge": "Обнаружено",
-      "preferProviderTab": "Обнаружен {{service}}. Этот сервис обычно проще настроить через вкладку {{provider}}.",
       "protocolMismatch": "Обнаружен {{service}}. Рекомендуемый протокол: {{recommendedProtocol}}.",
       "protocolLooksGood": "Обнаружен {{service}}. Ваш текущий протокол уже соответствует рекомендуемому {{recommendedProtocol}}.",
       "baseUrlHint": "Обнаружен {{service}}. Рекомендуемая настройка {{recommendedProtocol}}: {{baseUrl}}. Пример модели: {{model}}.",
@@ -442,17 +424,11 @@
         "gemini": "Gemini"
       },
       "columns": {
-        "service": "Сервис",
-        "protocol": "Протокол",
-        "baseUrl": "Базовый URL",
-        "model": "Пример модели",
-        "notes": "Примечания",
-        "action": "Действие"
+        "model": "Пример модели"
       },
       "errorHints": {
         "emptyProbeGeneric": "Endpoint вернул пустой ответ. Обычно это означает несовместимость протокола или модели.",
         "emptyProbeDetected": "{{service}} вернул пустой ответ. Попробуйте рекомендуемую настройку {{recommendedProtocol}} и проверьте ID модели.",
-        "emptyProbePreferProvider": "{{service}} вернул пустой ответ. Попробуйте вкладку {{provider}} вместо настройки как пользовательский endpoint.",
         "probeMismatchGeneric": "Endpoint ответил в неожиданном формате. Обычно это указывает на несовместимость протокола или модели.",
         "probeMismatchDetected": "{{service}} ответил в неожиданном формате. Попробуйте рекомендуемую настройку {{recommendedProtocol}} и проверьте ID модели."
       },

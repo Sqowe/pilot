@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { CustomProtocolType, ProviderPresets, ProviderType } from '../types';
+import type { CustomProtocolType, ProviderType } from '../types';
 import {
   detectCommonProviderSetup,
   getFallbackOpenAISetup,
@@ -9,14 +9,13 @@ import {
   resolveProviderGuidanceErrorHint,
   type CommonProviderSetup,
 } from '../../shared/api-provider-guidance';
-import { protocolLabel, providerTabLabel } from './api-config-shared';
+import { protocolLabel } from './api-config-shared';
 
 interface UseCustomEndpointGuidanceOptions {
   provider: ProviderType;
   customProtocol: CustomProtocolType;
   baseUrl: string;
-  presets: ProviderPresets;
-  /** Raw details of the last connection test, for a friendlier hint. */
+  /** Raw details of what the connection check's model step reported, for a friendlier hint. */
   testDetails: string | undefined;
 }
 
@@ -27,7 +26,7 @@ interface UseCustomEndpointGuidanceOptions {
  */
 export function useCustomEndpointGuidance(options: UseCustomEndpointGuidanceOptions) {
   const { t } = useTranslation();
-  const { provider, customProtocol, baseUrl, presets, testDetails } = options;
+  const { provider, customProtocol, baseUrl, testDetails } = options;
 
   const detectedProviderSetup = useMemo(
     () => (provider === 'custom' ? detectCommonProviderSetup(baseUrl) : null),
@@ -57,9 +56,6 @@ export function useCustomEndpointGuidance(options: UseCustomEndpointGuidanceOpti
     if (provider !== 'custom' || !detectedProviderSetup) {
       return undefined;
     }
-    if (detectedProviderSetup.preferProviderTab) {
-      return 'warning';
-    }
     return customProtocol === detectedProviderSetup.recommendedProtocol ? 'info' : 'warning';
   }, [customProtocol, detectedProviderSetup, provider]);
   const protocolGuidanceText = useMemo(() => {
@@ -68,13 +64,6 @@ export function useCustomEndpointGuidance(options: UseCustomEndpointGuidanceOpti
     }
 
     const serviceName = t(detectedProviderSetup.nameKey);
-    if (detectedProviderSetup.preferProviderTab) {
-      return t('api.guidance.preferProviderTab', {
-        service: serviceName,
-        provider: providerTabLabel(detectedProviderSetup.preferProviderTab, presets, t),
-      });
-    }
-
     if (customProtocol !== detectedProviderSetup.recommendedProtocol) {
       return t('api.guidance.protocolMismatch', {
         service: serviceName,
@@ -86,7 +75,7 @@ export function useCustomEndpointGuidance(options: UseCustomEndpointGuidanceOpti
       service: serviceName,
       recommendedProtocol: setupDisplayProtocol(detectedProviderSetup),
     });
-  }, [customProtocol, detectedProviderSetup, presets, provider, setupDisplayProtocol, t]);
+  }, [customProtocol, detectedProviderSetup, provider, setupDisplayProtocol, t]);
   const baseUrlGuidanceText = useMemo(() => {
     if (provider !== 'custom' || !effectiveProviderSetup) {
       return '';
@@ -135,12 +124,6 @@ export function useCustomEndpointGuidance(options: UseCustomEndpointGuidanceOpti
       return '';
     }
 
-    if (hintKind === 'emptyProbePreferProvider' && detectedProviderSetup?.preferProviderTab) {
-      return t('api.guidance.errorHints.emptyProbePreferProvider', {
-        service: t(detectedProviderSetup.nameKey),
-        provider: providerTabLabel(detectedProviderSetup.preferProviderTab, presets, t),
-      });
-    }
     if (hintKind === 'emptyProbeDetected' && effectiveProviderSetup) {
       return t('api.guidance.errorHints.emptyProbeDetected', {
         service: t(effectiveProviderSetup.nameKey),
@@ -161,14 +144,7 @@ export function useCustomEndpointGuidance(options: UseCustomEndpointGuidanceOpti
     }
 
     return '';
-  }, [
-    detectedProviderSetup,
-    effectiveProviderSetup,
-    presets,
-    setupDisplayProtocol,
-    t,
-    testDetails,
-  ]);
+  }, [detectedProviderSetup, effectiveProviderSetup, setupDisplayProtocol, t, testDetails]);
 
   return {
     detectedProviderSetup,

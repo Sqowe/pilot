@@ -331,10 +331,7 @@
     "currentLanguage": "Current language"
   },
   "api": {
-    "firstRunTitle": "Set Up API",
     "firstRunSubtitle": "Configure a provider to start using Sqowe Pilot",
-    "settingsTitle": "API Settings",
-    "settingsSubtitle": "Manage provider, key, and model settings",
     "configSet": "Config Set",
     "defaultSetTag": "Default",
     "saveAs": "Save As",
@@ -368,7 +365,6 @@
     "noModelsAvailable": "No models available",
     "noPresetsManualOnly": "No preset models available — enter a model ID manually",
     "selectProtocol": "Select the compatible protocol for the service",
-    "enterOllamaUrl": "Enter the Ollama OpenAI-compatible service URL",
     "enterOpenAIUrl": "Enter OpenAI-compatible service URL",
     "enterAnthropicUrl": "Enter Anthropic-compatible service URL",
     "enterGeminiUrl": "Enter a Gemini-compatible base URL",
@@ -384,8 +380,6 @@
     "saveSettings": "Save Settings",
     "openSettingsAction": "Open API Settings",
     "configRequiredActiveSet": "The current config set does not have usable credentials. Finish setup in API Settings first.",
-    "testConnection": "Test Connection",
-    "testingConnection": "Testing...",
     "refreshModels": "Refresh Models",
     "refreshingModels": "Refreshing...",
     "refreshModelsFailed": "Failed to refresh models. Check the URL or service status.",
@@ -393,7 +387,6 @@
     "useDetectedModels": "Use Detected Models",
     "discoverLocalOllama": "Find Local Ollama",
     "discoveringLocalOllama": "Finding...",
-    "discoverLocalOllamaHint": "Enter your Ollama endpoint first. Models will be fetched automatically, and manual entry is only needed if discovery fails.",
     "localOllamaDiscovered": "Found local Ollama with {{count}} available model(s).",
     "localOllamaNotFound": "No local Ollama service was found. Start it with `ollama serve` and try again.",
     "localOllamaNoModels": "Found a local Ollama service, but it does not currently expose any models.",
@@ -412,26 +405,15 @@
       "xhigh": "Extra High",
       "max": "Max"
     },
-    "testSuccess": "Connection successful ({{ms}}ms)",
-    "testSuccessNeedSave": "Connection test passed. Save settings before starting a session.",
     "testError": {
       "missing_key": "API Key is required",
-      "missing_base_url": "Base URL is required for this provider",
-      "unauthorized": "Invalid API Key or unauthorized",
-      "not_found": "Endpoint not found. Check the Base URL",
-      "rate_limited": "Rate limited or quota exceeded",
-      "server_error": "Service error. Please try again later",
-      "network_error": "Network error. Check your connection",
-      "ollama_not_running": "Cannot connect to Ollama. Please make sure Ollama is running (ollama serve).",
-      "ollama_loading": "Ollama is loading the model into memory. Large models may take 30–120 seconds. Please wait and try again.",
-      "unknown": "Connection failed"
+      "ollama_loading": "Ollama is loading the model into memory. Large models may take 30–120 seconds. Please wait and try again."
     },
     "guidance": {
       "commonSetupsTitle": "Common provider setups",
       "commonSetupsHint": "Review or apply a recommended setup",
       "apply": "Apply",
       "detectedBadge": "Detected",
-      "preferProviderTab": "Detected {{service}}. This service is usually easier to configure from the dedicated {{provider}} tab.",
       "protocolMismatch": "Detected {{service}}. Recommended protocol: {{recommendedProtocol}}.",
       "protocolLooksGood": "Detected {{service}}. Your current protocol already matches the recommended {{recommendedProtocol}} setup.",
       "baseUrlHint": "Detected {{service}}. Recommended {{recommendedProtocol}} setup: {{baseUrl}}. Example model: {{model}}.",
@@ -442,17 +424,11 @@
         "gemini": "Gemini"
       },
       "columns": {
-        "service": "Service",
-        "protocol": "Protocol",
-        "baseUrl": "Base URL",
-        "model": "Example model",
-        "notes": "Notes",
-        "action": "Action"
+        "model": "Example model"
       },
       "errorHints": {
         "emptyProbeGeneric": "The endpoint returned an empty probe response. This usually means the selected protocol or model is incompatible with the service.",
         "emptyProbeDetected": "{{service}} returned an empty probe response. Try the recommended {{recommendedProtocol}} setup and verify the model ID for that endpoint.",
-        "emptyProbePreferProvider": "{{service}} returned an empty probe response. Try the dedicated {{provider}} tab instead of configuring it as a generic custom endpoint.",
         "probeMismatchGeneric": "The endpoint responded, but not in the format expected by this probe. This usually points to a protocol or model compatibility mismatch.",
         "probeMismatchDetected": "{{service}} responded with an unexpected probe format. Try the recommended {{recommendedProtocol}} setup and verify the model ID for that endpoint."
       },

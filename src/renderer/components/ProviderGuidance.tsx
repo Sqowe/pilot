@@ -39,11 +39,6 @@ export function GuidanceInlineHint({ text, tone = 'info' }: GuidanceInlineHintPr
 interface CommonProviderSetupsCardProps {
   setups: CommonProviderSetupView[];
   onApplySetup: (setupId: string) => void;
-  /**
-   * `table` suits a wide form. `list` puts each setup on a few short lines, for
-   * a dialog too narrow for six columns.
-   */
-  layout?: 'table' | 'list';
   disabled?: boolean;
 }
 
@@ -62,7 +57,7 @@ function DetectedBadge() {
 const SUMMARY_CLASS =
   'flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium text-text-primary';
 
-/** What the heading of the setups card says, in either layout. */
+/** What the heading of the setups card says. */
 function SetupsSummaryText() {
   const { t } = useTranslation();
   return (
@@ -78,10 +73,9 @@ function SetupsSummaryText() {
   );
 }
 
-type CommonProviderSetupsListProps = Omit<CommonProviderSetupsCardProps, 'layout'>;
-
 /**
- * The setups as a list, for a dialog.
+ * The setups as a list, each on a few short lines: a dialog is too narrow for
+ * a column per field.
  *
  * It folds itself away once a setup is applied: what that filled in is in the
  * fields below, and with the list still open those would be several rows out
@@ -92,7 +86,7 @@ function CommonProviderSetupsList({
   setups,
   onApplySetup,
   disabled = false,
-}: CommonProviderSetupsListProps) {
+}: CommonProviderSetupsCardProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const summaryRef = useRef<HTMLElement>(null);
@@ -145,80 +139,10 @@ function CommonProviderSetupsList({
   );
 }
 
-export function CommonProviderSetupsCard({
-  setups,
-  onApplySetup,
-  layout = 'table',
-  disabled = false,
-}: CommonProviderSetupsCardProps) {
-  const { t } = useTranslation();
-
-  if (setups.length === 0) {
+/** The setups card of the custom-endpoint fields. With nothing to offer, nothing is drawn. */
+export function CommonProviderSetupsCard(props: CommonProviderSetupsCardProps) {
+  if (props.setups.length === 0) {
     return null;
   }
-
-  if (layout === 'list') {
-    return (
-      <CommonProviderSetupsList setups={setups} onApplySetup={onApplySetup} disabled={disabled} />
-    );
-  }
-
-  return (
-    <details className="rounded-[1.5rem] border border-border-subtle bg-background/40 px-4 py-4">
-      <summary className={SUMMARY_CLASS}>
-        <SetupsSummaryText />
-      </summary>
-      <div className="mt-4 overflow-x-auto">
-        <table className="min-w-full text-left text-xs text-text-secondary">
-          <thead>
-            <tr className="border-b border-border-subtle text-text-muted">
-              <th className="px-2 py-2 font-medium">{t('api.guidance.columns.service')}</th>
-              <th className="px-2 py-2 font-medium">{t('api.guidance.columns.protocol')}</th>
-              <th className="px-2 py-2 font-medium">{t('api.guidance.columns.baseUrl')}</th>
-              <th className="px-2 py-2 font-medium">{t('api.guidance.columns.model')}</th>
-              <th className="px-2 py-2 font-medium">{t('api.guidance.columns.notes')}</th>
-              <th className="px-2 py-2 font-medium text-right">
-                {t('api.guidance.columns.action')}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {setups.map((setup) => (
-              <tr
-                key={setup.id}
-                className={
-                  setup.isDetected ? 'bg-accent/5 text-text-primary' : 'text-text-secondary'
-                }
-              >
-                <td className="px-2 py-3 font-medium">
-                  <div className="flex items-center gap-2">
-                    <span>{setup.name}</span>
-                    {setup.isDetected && <DetectedBadge />}
-                  </div>
-                </td>
-                <td className="px-2 py-3">{setup.protocolLabel}</td>
-                <td className="px-2 py-3 font-mono text-[11px] text-text-secondary">
-                  {setup.baseUrl}
-                </td>
-                <td className="px-2 py-3 font-mono text-[11px] text-text-secondary">
-                  {setup.exampleModel}
-                </td>
-                <td className="px-2 py-3 leading-5">{setup.notes}</td>
-                <td className="px-2 py-3 text-right">
-                  <button
-                    type="button"
-                    onClick={() => onApplySetup(setup.id)}
-                    disabled={disabled}
-                    className={APPLY_BUTTON_CLASS}
-                  >
-                    {t('api.guidance.apply')}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </details>
-  );
+  return <CommonProviderSetupsList {...props} />;
 }

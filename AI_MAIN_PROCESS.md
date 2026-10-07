@@ -165,8 +165,7 @@ createAgentSession({ noTools: 'builtin', customTools: [...built-ins, ...mcp, ...
   can become a catalog provider; a custom endpoint made from that setup is then
   the same provider under another name, holding a second copy of its key.
 - A setup whose address is a catalog provider's own — same service, same
-  protocol — names that provider in `catalogProvider` (or in `preferProviderTab`,
-  for the ones the first-run dialog has a button for; read either through
+  protocol — names that provider in `catalogProvider` (read it through
   `catalogProviderOfSetup`). The Providers tab sends such an address to the
   provider's own entry and leaves the setup out of the list it offers. A setup
   that is only the same company on another route — another path, another

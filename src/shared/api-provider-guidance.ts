@@ -19,15 +19,11 @@ export interface CommonProviderSetup {
   recommendedBaseUrl: string;
   exampleModel: string;
   protocolLabel?: string;
-  preferProviderTab?: Exclude<SharedProviderType, 'custom'>;
   /**
    * The catalog provider this setup's service is, when the catalog lists that
    * very service. The Providers tab then sends such an address to the
    * provider's own entry instead of offering to make a custom endpoint of it.
-   *
-   * Apart from `preferProviderTab`, which the first-run dialog words as "the
-   * dedicated … tab" and so can only name a provider that dialog has a button
-   * for. Read through `catalogProviderOfSetup`, which takes either.
+   * Read through `catalogProviderOfSetup`.
    */
   catalogProvider?: Exclude<SharedProviderType, 'custom'>;
   matcher?: {
@@ -48,7 +44,6 @@ export type ProviderGuidanceHintCode =
 export type ProviderGuidanceErrorHintKind =
   | 'emptyProbeGeneric'
   | 'emptyProbeDetected'
-  | 'emptyProbePreferProvider'
   | 'probeMismatchGeneric'
   | 'probeMismatchDetected';
 
@@ -78,7 +73,8 @@ export const COMMON_PROVIDER_SETUPS: CommonProviderSetup[] = [
     recommendedBaseUrl: 'https://openrouter.ai/api/v1',
     exampleModel: 'anthropic/claude-sonnet-4-6',
     protocolLabel: 'OpenRouter',
-    preferProviderTab: 'openrouter',
+    // A provider of its own in the catalog, not an endpoint.
+    catalogProvider: 'openrouter',
     matcher: {
       hosts: ['openrouter.ai'],
       pathPrefixes: ['/', '/api', '/api/v1'],
@@ -134,7 +130,8 @@ export const COMMON_PROVIDER_SETUPS: CommonProviderSetup[] = [
     recommendedBaseUrl: 'http://localhost:11434/v1',
     exampleModel: 'qwen3.5:0.8b',
     protocolLabel: 'Ollama',
-    preferProviderTab: 'ollama',
+    // A provider of its own in the catalog, not an endpoint.
+    catalogProvider: 'ollama',
     matcher: {
       hosts: ['localhost', '127.0.0.1', '0.0.0.0', '[::1]'],
       ports: ['11434'],
@@ -276,9 +273,9 @@ export function detectCommonProviderSetup(baseUrl: string | undefined): CommonPr
  * check: the catalog is built from the installed pi and loaded at run time.
  */
 export function catalogProviderOfSetup(
-  setup: Pick<CommonProviderSetup, 'catalogProvider' | 'preferProviderTab'>
+  setup: Pick<CommonProviderSetup, 'catalogProvider'>
 ): string | null {
-  return setup.catalogProvider ?? setup.preferProviderTab ?? null;
+  return setup.catalogProvider ?? null;
 }
 
 export function orderCommonProviderSetups(
@@ -325,9 +322,6 @@ export function resolveProviderGuidanceErrorHint(
   }
 
   if (hintCode === 'empty_probe_response') {
-    if (setup?.preferProviderTab) {
-      return 'emptyProbePreferProvider';
-    }
     return setup ? 'emptyProbeDetected' : 'emptyProbeGeneric';
   }
 

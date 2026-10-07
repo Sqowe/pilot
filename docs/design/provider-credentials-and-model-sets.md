@@ -479,16 +479,16 @@ that setup's `exampleModel` ([`api-provider-guidance.ts`](../../src/shared/api-p
 
 ### 7.0 Progress
 
-| Phase                   | Status                 | Landed                                                                |
-| ----------------------- | ---------------------- | --------------------------------------------------------------------- |
-| 0 — baseline + doc fix  | ✅ **done** 2026-10-03 | ABI unblocked, doc corrected against HEAD, open questions → decisions |
-| 1 — main-process model  | ✅ **done** 2026-10-03 | types + one-directional derivation, 40 new tests, external review ✔️  |
-| 2a — store inversion    | ✅ **done** 2026-10-03 | resolveCredentials + endpointId + CRUD/IPC, 28 new tests              |
-| 2b — write-path cutover | ✅ **done** 2026-10-03 | handleSave drops `profiles`; §9.4 holds structurally                  |
-| 3 — renderer state      | ✅ **done** 2026-10-05 | old fields removed; two slices; 141 new tests; external review ✔️     |
-| 4 — UI                  | ✅ **done** 2026-10-06 | step 1: tabs, endpoint list, chooser; step 2: dialogs, notice, labels |
-| 5 — first-run wizard    | 🚧 step A of 2 built   | step A: the two-step wizard, reviewed ✔️, checked in the app; B open  |
-| 6 — docs                | —                      | —                                                                     |
+| Phase                   | Status                 | Landed                                                                        |
+| ----------------------- | ---------------------- | ----------------------------------------------------------------------------- |
+| 0 — baseline + doc fix  | ✅ **done** 2026-10-03 | ABI unblocked, doc corrected against HEAD, open questions → decisions         |
+| 1 — main-process model  | ✅ **done** 2026-10-03 | types + one-directional derivation, 40 new tests, external review ✔️          |
+| 2a — store inversion    | ✅ **done** 2026-10-03 | resolveCredentials + endpointId + CRUD/IPC, 28 new tests                      |
+| 2b — write-path cutover | ✅ **done** 2026-10-03 | handleSave drops `profiles`; §9.4 holds structurally                          |
+| 3 — renderer state      | ✅ **done** 2026-10-05 | old fields removed; two slices; 141 new tests; external review ✔️             |
+| 4 — UI                  | ✅ **done** 2026-10-06 | step 1: tabs, endpoint list, chooser; step 2: dialogs, notice, labels         |
+| 5 — first-run wizard    | ✅ **done** 2026-10-07 | A: the two-step wizard; B: the removal — both reviewed ✔️, checked in the app |
+| 6 — docs                | —                      | —                                                                             |
 
 Every phase ends with `npm run typecheck` and `npm test` clean. Two of the three gates
 (`AI_MAIN_PROCESS.md` preamble) must pass; `npm run test:coverage` is the CI gate and its
@@ -2065,6 +2065,203 @@ wizard, and the Hungarian ones of the dialogs, were captured as pictures for the
 - **After `location.reload()` through the debugging port, input sent through it no longer
   reaches the page.** It looked for a while like a wizard that would not open; the recorder
   showed that no press had arrived at all. A tooling fact, not the app's.
+
+#### Step B as built (2026-10-07) — the removal
+
+Nothing on screen changes in this step. It deletes what only the old first-run dialog used, and
+what the deletion left without a reader.
+
+##### Decisions taken with the user before starting
+
+The plan was the one listed in the brief for this step; the pre-implementation read found four
+points where it and the code disagreed enough to ask.
+
+| #   | Question                                                                                                                        | Decision                                                                                                                       |
+| --- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | `api.testError.missing_base_url` was on the list of texts to keep, and its only reader is the single-request test that goes.    | **It goes too.** The dialogs say the same thing with `api.providers.errors.baseUrlRequired`.                                   |
+| 2   | Five helpers of `api-config-shared.ts` lose their last reader in the app; the plan had their tests re-pointed, not removed.     | **Removed, with their ten tests.** `isProfileKey`, `resolveProviderProtocol` and the three `isCustom…LoopbackGateway`.         |
+| 3   | `AI_MAIN_PROCESS.md` §1 names the field `preferProviderTab`, which this step merges away; rule documents were left for Phase 6. | **Corrected in this step**: a rule file must not describe a field that does not exist.                                         |
+| 4   | The pictures of the wizard's Russian and Hungarian texts from step A's manual pass                                              | **Read by the user, no remarks.** The seven Chinese texts of `api.firstRun` are still unread by anyone who knows the language. |
+
+##### What the pre-implementation read found
+
+1. **The two hints that spoke of "the dedicated … tab" could not be reached.** The provider list
+   in the window starts as the built-in entries (`useApiConfigSource.ts`), which already hold
+   OpenRouter and Ollama, and for an address whose provider the list has, the endpoint dialog
+   blanks the protocol hint and the failure hint and shows "this is the provider X" instead. So
+   removing them changes nothing on screen.
+2. **`preferProviderTab` and `catalogProvider` were read through one function**,
+   `catalogProviderOfSetup`, which took either. Merging the fields changes nothing it returns;
+   the table of decisions in `tests/provider-setups-vs-catalog.test.ts` was not edited and passes.
+3. **The hint kind `emptyProbePreferProvider` had to go, not move.** Read from `catalogProvider`
+   it would fire for the Kimi and Gemini setups as well. On a pi that lacks those providers the
+   address is an ordinary endpoint and the dialog shows the failure hint — which, with the kind's
+   text removed, would have been nothing in place of "…returned an empty response, try protocol
+   X". A recognised service now always gets the hint that names its protocol.
+4. **`tests/api-config-state.test.ts` read the credential half directly** in five tests, through
+   the state that is deleted. They read the same thing through `persistedCredentialFor` now.
+5. **One more test of `api-config-draft-independence.test.ts` had nothing left to test**: "keeps a
+   typed key across a config-set save". A key is typed only in a dialog that has its own Save, and
+   no config set can be saved while one is open, so there is no unsaved key for a save to discard.
+6. **The diff is larger than estimated**: 210,046 characters against the 110–140 thousand of the
+   plan. The eight deleted files are 93 thousand; the rest is the tests re-expressed and the
+   lines of context around each removal.
+
+##### As built
+
+| File                                                                                                              | What changed                                                                                                                                                                                                                                            |
+| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hooks/useApiConfigState.ts`, `hooks/useProviderCredentials.ts`, `hooks/provider-credentials-state.ts`            | **deleted** — the old state layer, 1,421 lines. With it go `buildCombinedSavePayload` and every unsaved-credential rule: the tabs and the wizard have none.                                                                                             |
+| `components/ProviderPicker.tsx`                                                                                   | **deleted.** The table of group names two files took from it (`CATEGORY_LABEL_KEY`) is in `ProviderChoicePicker.tsx`.                                                                                                                                   |
+| `main/config/config-test-routing.ts`, `main/index.ts`, `preload/index.ts`                                         | **The `config.test` channel is gone**: the routing file, the handler, the preload method and its type.                                                                                                                                                  |
+| `main/claude/claude-sdk-one-shot.ts`                                                                              | `buildProbeConfig`: a model that is not given is refused as `missing_model`, like an empty one, instead of being replaced by the active config set's.                                                                                                   |
+| `hooks/api-settings-view.ts`                                                                                      | `providerCredentialFor`, **moved** from the deleted state: how a catalog provider's credential reads — the stored key, the stored address or the provider's usual one, Ollama's address in its `/v1` form. `persistedCredentialFor` uses it, as before. |
+| `hooks/useApiConnectivity.ts`, `useModelSetForm.ts`, `useCredentialCheck.ts`                                      | The single-request test is gone — `handleTest`, its two pieces of state, and the `hasUnsavedChanges` option only it read. 465 → 384 lines.                                                                                                              |
+| `components/ProviderGuidance.tsx`, `CustomEndpointFields.tsx`                                                     | The setups card has one layout, the list. The six-column table and the `layout` switch are gone. 224 → 148 lines.                                                                                                                                       |
+| `hooks/useCustomEndpointGuidance.ts`, `components/CustomEndpointDialog.tsx`, `FirstRunWizardSteps.tsx`            | The two "tab" hints are gone, and with them the `presets` input that only they used — of the guidance and of the endpoint dialog.                                                                                                                       |
+| `shared/api-provider-guidance.ts`, `hooks/credential-dialog-view.ts`                                              | `preferProviderTab` is merged into `catalogProvider`; OpenRouter and Ollama carry the latter. The hint kind `emptyProbePreferProvider` is removed (finding 3).                                                                                          |
+| `hooks/api-config-shared.ts`                                                                                      | Six helpers with no reader left: the five of decision 2 and `providerTabLabel`.                                                                                                                                                                         |
+| `i18n/locales/{en,zh,ru,hu}.json`                                                                                 | **24 texts removed from all four files alike**: the 23 of the plan and `api.testError.missing_base_url`. Each was confirmed to have no reader; none is built at run time.                                                                               |
+| `AI_MAIN_PROCESS.md` §1, and comments in `config-store.ts`, `provider-ids.ts`, `model-sets-state.ts`, three tests | Sentences that named a removed file or field.                                                                                                                                                                                                           |
+
+`SettingsProviders.tsx` is 330 lines (331 before): one input fewer.
+
+##### Behaviour that changed
+
+- **None on screen.**
+- **The probe no longer borrows a model.** Asked without one, `probeWithClaudeSdk` answers
+  `missing_model`. Its one caller, the last step of the connection check, skips itself when it has
+  no model and otherwise always names it, so nothing reaches the new branch today; the fallback
+  existed for `config.test`.
+- **`window.electronAPI.config.test` does not exist.** Nothing called it.
+- **An empty answer from a service the catalog lists is worded like any other recognised
+  service's** — reachable only where the installed pi lacks that provider.
+
+##### Tests
+
+| File                                                  | Tests   | What happened                                                                                                                                                                        |
+| ----------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `tests/api-config-provider-credentials-state.test.ts` | —       | **deleted** (43): 39 went with the unsaved-credential state, 4 moved                                                                                                                 |
+| `tests/api-config-state-render.test.ts`               | —       | **deleted** (9): first render of the old state layer                                                                                                                                 |
+| `tests/config-test-routing.test.ts`                   | —       | **deleted** (6)                                                                                                                                                                      |
+| `tests/api-settings-view.test.ts`                     | 41 → 46 | +4 moved — how a catalog provider's credential reads; +1 new — the protocol it reads                                                                                                 |
+| `tests/api-config-state.test.ts`                      | 48 → 38 | −10 with the helpers of decision 2; five re-pointed (finding 4); imports now from where the helpers are                                                                              |
+| `tests/api-config-draft-independence.test.ts`         | 11 → 8  | The guarantee stays, on the real store, with the payloads the tabs and the wizard build. −3 of the combined payload, −1 of finding 5, +1: an endpoint created and saved moves no set |
+| `tests/config-ipc-mutation-contract.test.ts`          | 30 → 25 | The eight about the old form's save go; three say the same of the tabs' — each credential call made once, in the shared state; no `config.save` there; a credential call rebases     |
+| `tests/api-settings-dialogs-render.test.ts`           | 53 → 54 | −1 the table layout; +2 the card by itself                                                                                                                                           |
+| `tests/provider-guidance.test.ts`                     | 7 → 8   | +1: finding 3                                                                                                                                                                        |
+| `tests/claude-sdk-one-shot.test.ts`                   | 19 → 20 | +1: no model given                                                                                                                                                                   |
+| `tests/api-settings-tabs-render.test.ts`              | 23 → 24 | +1: each group of providers under its own heading                                                                                                                                    |
+| 5 more                                                | —       | wording, or an import re-pointed                                                                                                                                                     |
+
+**Gates:** typecheck clean; **3961 passed / 248 files** (4028 / 251 before, 67 fewer); lint 0
+errors, the same 15 warnings.
+
+**Verification beyond "tests pass":** 22 deliberate breakages of the rules that moved or changed,
+one at a time, each against the whole suite. 17 were caught at once. Four survived and each
+showed a rule with no test; each has one now, and all four breakages fail:
+
+- **the protocol a catalog provider's credential reads.** Every reader works the protocol out from
+  the provider and ignores this field, so a wrong value changed nothing. Pinned, so the two can
+  never disagree;
+- **the card draws nothing when it has no setup to offer**, and
+- **the card passes `disabled` on to its buttons** — both rewritten in this step, neither read by
+  a test before;
+- **which heading each group of providers gets.** The table moved files, and nothing looked at a
+  heading on the Providers tab.
+
+One survives and cannot be caught: `normalizeOllamaBaseUrl(raw) || presetBaseUrl` against
+`|| ''`. Normalisation yields nothing only for an empty address, and the address is empty only
+when the provider's usual one is empty too — the two are the same code. Carried over verbatim.
+
+**External review: approved on the first run, with no remarks.** Reviewed as one piece (210,046
+characters) from a scratch clone, so the real index was never staged. One run of the cap of five.
+The facts about code outside the changed lines went into the script's context argument: that no
+screen imported the deleted files, who still calls the probe and with what, why the two "tab"
+hints could not be reached, why the hint kind is removed rather than moved, and what is
+deliberately left as it is.
+
+**Noticed and left alone:**
+
+- **`api.testError.ollama_loading` is in all four language files and read by nothing** — not by
+  the old dialog either. It is the only text left beside `missing_key` under `api.testError`.
+- **The store still accepts a key and an address through `config.save`** (`ConfigStore.update`).
+  No call from the window sends them any more: the five that are left save a proxy, the memory
+  settings (two), a skills path and a config set's own fields. The path and its tests stay.
+- **The probe still borrows a key.** `resolveProbeApiKey` takes the active config set's key when
+  none is given — the same shape as the model fallback this step removed. The window always sends
+  the key, so it cannot be reached; it was not in the plan.
+- **Four helpers are called from tests only**, as they were before this step:
+  `getFeaturedEntries`, `getNonFeaturedEntries`, `shouldAutoDiscoverLocalOllamaBaseUrl`,
+  `testOllamaConnection`.
+- **`src/tests/settings/provider-picker.test.ts` keeps its name** though the component is gone.
+  Two of its blocks ("formShape display flag derivation", "activeIsNonFeatured derivation")
+  re-state a rule of the old form inside the test and call no app code.
+- `ProviderGuidanceHintCode` has two values nothing returns (`prefer_provider_tab`,
+  `protocol_mismatch`).
+- The names `ApiTestInput`, `ApiTestResult` and the option `testDetails` still say "test" for
+  what is now only the last step of the connection check.
+- §§6, 9.2 and 12 of this document still describe `useApiConfigState.ts` and `ProviderPicker`;
+  `README.md` and `AI_FRONTEND.md` list the old files; `CHANGELOG.md` has no entry for the wizard.
+  All Phase 6.
+
+**Not read by anyone who knows the language:** the seven Chinese texts of `api.firstRun`
+(step A). This step adds no text in any language.
+
+**Check in the running app (2026-10-07).** Through the debugging port, on an empty data folder
+set up as in part 1 of step A's pass: the user's whole data folder renamed aside, an empty one
+with only the `.brand` marker in its place, and the real one put back afterwards — the same 2483
+files, the same bytes, the checksums of the settings file and of the connector settings equal.
+Every key typed was made up, and the one that was saved was taken out again before a message
+could be sent with it; the only requests went to a port nothing listens on. The page was not
+reloaded. The app ran in Russian.
+
+Seen working, with no error from the page, and none in the log but the known one from the skills
+watcher:
+
+- **Start**: the welcome screen saying "not configured". `window.electronAPI.config` has no
+  `test`.
+- **The Providers tab**: 35 providers under their four headings — Popular, Coding plans, Fast
+  inference, Local — and no heading for "Custom". **The Model Sets tab**: the default set on
+  OpenRouter, with its "no key" warning.
+- **The endpoint dialog** on the Providers tab: the setups as a list, no table, folded at first.
+  Four are listed — the ones whose service the catalog does not list itself. "Apply" fills
+  protocol, address and model, folds the list and puts focus on its heading. A connection check
+  against the dead port: five steps drawn, a translated failure at the connection step, the model
+  named beforehand, focus still on the button, nothing saved. Escape closes the dialog and focus
+  is back on "Add endpoint".
+- **The wizard**, from the notice's button: in the page 4 ms after the press arrives, focus in the
+  key field, Settings not drawn under it. 36 entries in its list, under the same headings; Escape
+  with the list open closes the list only. Continue without a key: "API key is required", focus
+  on Continue, nothing sent. With a made-up key and Enter in the field: one
+  `Saving provider credential`, then the second step with focus on the step as a whole. Back
+  returns to the first step with the key in its field.
+- **The wizard for a new endpoint**: "Add endpoint" brings the endpoint's fields, focus in the
+  first, and the same list of four setups, which applies and folds as in the dialog. The check
+  against the dead port fails at the connection step and saves nothing. Continue, by Enter in the
+  address field: `Creating custom endpoint`, the config set still on the provider it had, the app
+  still "not configured". The second step holds the endpoint's default model. Start: one
+  `Saving config` — the set's id, `custom`, the endpoint's id, the model, the two limits and the
+  thinking fields, no credential — the wizard closes and the app reports itself configured.
+- **Afterwards, in Settings**: the Model Sets tab shows the set on the endpoint with no warning,
+  and the tab's own connection check runs and fails at the connection step; the endpoint's row
+  says which set uses it; a provider's dialog opens with focus in the key field, and Escape puts
+  focus back on the row's button.
+
+One thing looked like a fault and was not. The wizard appeared five seconds after its press was
+sent. A recorder in the page showed the press itself arriving five seconds late and the dialog
+4 ms after it, and calls to main were answered in 5 to 8 ms throughout. The app's window was not
+on screen (`document.visibilityState` was `hidden`), and a mouse _move_ sent through the
+debugging port to such a window is held for five seconds — with no message sent and no key
+pressed before it as well. A press is not held. A tooling fact, not the app's.
+
+**Noticed in the check**, not this step's doing: when the wizard closes, focus is left on the
+page itself — the notice's button it was opened from is gone by then.
+
+**Not exercised**, as after step A: the search for Ollama with one running; Enter while a
+character is being composed; the menu shortcut for Settings itself with the wizard open; the two
+Hungarian texts the connection check shows after it has passed. Nothing was looked at in a
+language other than Russian.
 
 ### Phase 6 — docs
 

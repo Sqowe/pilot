@@ -200,6 +200,22 @@ describe('probeWithClaudeSdk', () => {
     expect(mocks.completeSimple).not.toHaveBeenCalled();
   });
 
+  it('does not fall back to saved model when none is given at all', async () => {
+    // The config in hand is the active config set's, and its model belongs to
+    // that set's provider — not to whatever is being probed.
+    const result = await probeWithClaudeSdk(
+      { provider: 'openai', apiKey: 'sk-current' },
+      createConfig({ model: 'gpt-5.4' })
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      errorType: 'unknown',
+      details: 'missing_model',
+    });
+    expect(mocks.completeSimple).not.toHaveBeenCalled();
+  });
+
   it('allows empty key for loopback custom anthropic probe requests', async () => {
     const result = await probeWithClaudeSdk(
       {

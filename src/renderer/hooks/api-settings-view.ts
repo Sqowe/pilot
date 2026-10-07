@@ -20,6 +20,7 @@ import type {
   ProviderType,
 } from '../types';
 import { isLoopbackBaseUrl } from '../../shared/network/loopback';
+import { normalizeOllamaBaseUrl } from '../../shared/ollama-base-url';
 import { canonicalBaseUrl, customEndpointKey } from '../../shared/custom-endpoint-key';
 import {
   groupEntriesByCategory,
@@ -30,10 +31,11 @@ import {
   formShapeFor,
   isCustomProtocol,
   isProviderType,
+  modelPresetForProfileSafe,
   profileKeyFromProvider,
+  profileKeyToProvider,
   protocolOf,
 } from './api-config-shared';
-import { hydrateCredentialDraft, type CredentialDraft } from './provider-credentials-state';
 
 /** The credential store as main persists it. */
 export interface PersistedCredentials {
@@ -133,6 +135,34 @@ export function droppedKeySetNames(
 // The credential a config set runs with
 // ---------------------------------------------------------------------------
 
+/** A credential as a config set runs with it. `protocol` only matters for an endpoint. */
+export interface PersistedCredential {
+  apiKey: string;
+  baseUrl: string;
+  protocol: CustomProtocolType;
+}
+
+/**
+ * How a catalog provider's credential reads: its stored key, and its stored
+ * address or — where none was given — the provider's usual one. Ollama's
+ * address is read in the `/v1` form it is run in, however it was stored.
+ */
+function providerCredentialFor(
+  provider: ProviderType,
+  providerCredentials: ProviderCredentialMap,
+  presets: ProviderPresets
+): PersistedCredential {
+  const slot = profileKeyFromProvider(provider);
+  const stored = providerCredentials[slot];
+  const presetBaseUrl = modelPresetForProfileSafe(slot, presets).baseUrl;
+  const rawBaseUrl = stored?.baseUrl?.trim() || presetBaseUrl;
+  return {
+    apiKey: stored?.apiKey ?? '',
+    baseUrl: slot === 'ollama' ? normalizeOllamaBaseUrl(rawBaseUrl) || presetBaseUrl : rawBaseUrl,
+    protocol: profileKeyToProvider(slot).customProtocol,
+  };
+}
+
 /**
  * The persisted credential behind a provider choice: the endpoint's own for a
  * custom set, the provider's slot otherwise.
@@ -146,7 +176,7 @@ export function persistedCredentialFor(
   endpointId: string,
   credentials: PersistedCredentials,
   presets: ProviderPresets
-): CredentialDraft {
+): PersistedCredential {
   if (provider === 'custom') {
     const endpoint = credentials.customEndpoints.find((candidate) => candidate.id === endpointId);
     return endpoint
@@ -157,11 +187,7 @@ export function persistedCredentialFor(
         }
       : { apiKey: '', baseUrl: '', protocol: 'anthropic' };
   }
-  return hydrateCredentialDraft(
-    { ...credentials, lastCustomProtocol: 'anthropic' },
-    { kind: 'slot', slot: profileKeyFromProvider(provider) },
-    presets
-  );
+  return providerCredentialFor(provider, credentials.providerCredentials, presets);
 }
 
 /** The protocol and address a config set would run with — what a model's capabilities depend on. */

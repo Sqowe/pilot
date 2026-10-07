@@ -40,10 +40,7 @@ import {
 // Ready-made setups, in the endpoint dialog
 // ---------------------------------------------------------------------------
 
-type SetupTarget = Pick<
-  CommonProviderSetup,
-  'applyProvider' | 'catalogProvider' | 'preferProviderTab'
->;
+type SetupTarget = Pick<CommonProviderSetup, 'applyProvider' | 'catalogProvider'>;
 
 /**
  * The catalog provider a ready-made setup's service is — its entry on the
@@ -55,7 +52,7 @@ type SetupTarget = Pick<
  * send anyone to, and the setup is an ordinary custom endpoint again.
  */
 export function catalogEntryOfSetup(
-  setup: Pick<SetupTarget, 'catalogProvider' | 'preferProviderTab'> | null | undefined,
+  setup: Pick<SetupTarget, 'catalogProvider'> | null | undefined,
   catalog: ProviderCatalogEntry[]
 ): ProviderCatalogEntry | null {
   const provider = setup ? catalogProviderOfSetup(setup) : null;

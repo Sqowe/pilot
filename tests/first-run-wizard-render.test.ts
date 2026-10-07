@@ -1011,8 +1011,6 @@ describe('the wizard as a dialog', () => {
     ]) {
       const source = read(file);
       expect(source, file).not.toContain('electronAPI');
-      expect(source, file).not.toContain('buildCombinedSavePayload');
-      expect(source, file).not.toContain('useApiConfigState');
     }
   });
 

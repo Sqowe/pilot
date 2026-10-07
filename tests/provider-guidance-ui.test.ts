@@ -48,10 +48,9 @@ describe('provider guidance UI wiring', () => {
     expect(dialog).toContain('customProtocol: values.protocol,');
     expect(dialog).toContain('baseUrl: values.baseUrl,');
 
-    // The card, in the layout that fits a dialog, and what its button does.
+    // The card, and what its button does.
     expect(fields).toContain('<CommonProviderSetupsCard');
     expect(fields).toContain('onApplySetup={form.applySetup}');
-    expect(fields).toContain('layout="list"');
     expect(dialog).toContain('applySetupToEndpointForm(current, setupId)');
 
     // One hint under the protocol, one under the address.
@@ -74,11 +73,15 @@ describe('provider guidance UI wiring', () => {
     expect(providers).toContain('setProviderToOpen(provider);');
   });
 
-  it('draws the setups as a list wherever they are drawn', () => {
-    // The six-column table was for the wide first-run dialog. No screen asks
-    // for it since that dialog became the wizard; the layout itself is still
-    // in the card and goes with the rest of the old form.
+  it('draws the setups as a list, the one layout the card has', () => {
+    // The six-column table was for the wide first-run dialog and went with it:
+    // a dialog is too narrow for a column per field.
     const components = path.resolve(process.cwd(), 'src/renderer/components');
+    const card = fs.readFileSync(path.join(components, 'ProviderGuidance.tsx'), 'utf8');
+    expect(card).toContain('<ul className="mt-3 divide-y divide-border-subtle">');
+    expect(card).not.toContain('<table');
+    expect(card).not.toMatch(/\blayout\b/);
+
     const users = fs
       .readdirSync(components, { recursive: true, encoding: 'utf8' })
       .filter((file) => file.endsWith('.tsx') && !file.endsWith('ProviderGuidance.tsx'))
@@ -86,6 +89,6 @@ describe('provider guidance UI wiring', () => {
       .filter(({ source }) => source.includes('<CommonProviderSetupsCard'));
 
     expect(users.map(({ file }) => file)).toEqual(['CustomEndpointFields.tsx']);
-    expect(users[0].source).toContain('layout="list"');
+    expect(users[0].source).not.toContain('layout=');
   });
 });

@@ -229,6 +229,55 @@ describe('the credential a config set runs with', () => {
   });
 });
 
+describe('how a catalog provider credential reads', () => {
+  const reading = (
+    provider: Parameters<typeof persistedCredentialFor>[0],
+    providerCredentials: Parameters<typeof persistedCredentialFor>[2]['providerCredentials']
+  ) =>
+    persistedCredentialFor(
+      provider,
+      '',
+      { providerCredentials, customEndpoints: [], credentialConflicts: [] },
+      presets
+    );
+
+  it('reads a stored key and falls back to the preset address', () => {
+    expect(reading('anthropic', { anthropic: { apiKey: 'sk-ant' } })).toMatchObject({
+      apiKey: 'sk-ant',
+      baseUrl: presets.anthropic.baseUrl,
+    });
+  });
+
+  it('reads an unconfigured provider as empty, never as another provider key', () => {
+    expect(reading('openai', { anthropic: { apiKey: 'sk-ant' } }).apiKey).toBe('');
+  });
+
+  it('reads a stored address override', () => {
+    expect(
+      reading('zai', { 'native:zai': { apiKey: 'zai', baseUrl: 'https://proxy.example' } })
+    ).toMatchObject({ apiKey: 'zai', baseUrl: 'https://proxy.example' });
+  });
+
+  it('reads the protocol the provider itself routes through', () => {
+    // What a set runs with is worked out from the provider (`runtimeOf`); the
+    // credential must never say otherwise.
+    expect(reading('anthropic', {}).protocol).toBe('anthropic');
+    expect(reading('gemini', {}).protocol).toBe('gemini');
+    expect(reading('ollama', {}).protocol).toBe('openai');
+  });
+
+  it('normalizes a stored Ollama address to /v1', () => {
+    expect(
+      reading('ollama', { ollama: { apiKey: '', baseUrl: 'http://localhost:11434/api' } }).baseUrl
+    ).toBe('http://localhost:11434/v1');
+    expect(
+      reading('ollama', {
+        ollama: { apiKey: '', baseUrl: 'https://ollama.example.internal/proxy' },
+      }).baseUrl
+    ).toBe('https://ollama.example.internal/proxy/v1');
+  });
+});
+
 describe('the entries of the provider chooser', () => {
   const credentials = {
     providerCredentials: { anthropic: { apiKey: 'sk-ant' } },

@@ -1,16 +1,21 @@
 /**
  * Draft independence (design §6.4, test plan §8.1).
  *
- * The API-settings form has two kinds of unsaved change — to a credential and
- * to a config set — and they must not leak into each other:
+ * API settings save two things separately — a credential and a config set —
+ * and they must not leak into each other:
  *
  * - a changed model is never carried into a credential write;
  * - a changed key is never carried into a config-set write;
- * - saving one half never discards an unsaved edit to the other.
+ * - saving a credential never discards an unsaved edit to a config set.
  *
- * The first two are checked end to end: the payloads the renderer builds are
- * fed to the real store, and the half that was not saved is compared before and
- * after.
+ * The first two are checked end to end: the payloads the Providers tab, the
+ * Model Sets tab and the first-run wizard build are fed to the real store, and
+ * the half that was not saved is compared before and after.
+ *
+ * There is no fourth line for "saving a config set never discards a typed
+ * key". A key is typed only in a dialog that has its own Save, and no config
+ * set can be saved while one is open: there is no unsaved key for a save to
+ * discard.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -63,6 +68,13 @@ import { ConfigStore } from '../src/main/config/config-store';
 import type { AppConfig as RendererAppConfig } from '../src/renderer/types';
 import { FALLBACK_PROVIDER_PRESETS } from '../src/renderer/hooks/api-config-shared';
 import {
+  buildCreateEndpointPayload,
+  buildProviderCredentialPayload,
+  buildUpdateEndpointPayload,
+  endpointFormValues,
+  type EndpointFormValues,
+} from '../src/renderer/hooks/api-settings-view';
+import {
   buildModelSetSavePayload,
   buildModelSetsBootstrap,
   hasUnsavedModelSetChanges,
@@ -70,20 +82,6 @@ import {
   createModelSetsState,
   type ModelSetsState,
 } from '../src/renderer/hooks/model-sets-state';
-import {
-  createProviderCredentialsState,
-  credentialTargetKey,
-  hasUnsavedCredentialChanges,
-  hydrateCredentialDraft,
-  planCredentialSave,
-  providerCredentialsReducer,
-  selectCredentialDraft,
-  type CredentialDraft,
-  type CredentialSaveStep,
-  type CredentialTarget,
-  type ProviderCredentialsState,
-} from '../src/renderer/hooks/provider-credentials-state';
-import { buildCombinedSavePayload } from '../src/renderer/hooks/useApiConfigState';
 
 const presets = FALLBACK_PROVIDER_PRESETS;
 const CREDENTIAL_FIELDS = ['apiKey', 'baseUrl', 'customProtocol'];
@@ -101,28 +99,19 @@ function loadSets(config: RendererAppConfig): ModelSetsState {
   });
 }
 
-function editCredential(
-  state: ProviderCredentialsState,
-  target: CredentialTarget,
-  patch: Partial<CredentialDraft>
-): ProviderCredentialsState {
-  return providerCredentialsReducer(state, {
-    type: 'PATCH_DRAFT',
-    targetKey: credentialTargetKey(target),
-    baseline: hydrateCredentialDraft(state, target, presets),
-    patch,
-  });
+/** What a provider's dialog, or the wizard's Continue, sends for a key alone. */
+function keyPayload(provider: string, apiKey: string) {
+  return buildProviderCredentialPayload({ provider, apiKey, baseUrl: '', showsBaseUrl: false });
 }
 
-/** Run one planned credential save against the store, as the hook does over IPC. */
-function runCredentialStep(store: ConfigStore, step: CredentialSaveStep): void {
-  if (step.kind === 'provider') store.setProviderCredential(step.payload);
-  else if (step.kind === 'update-endpoint') store.updateCustomEndpoint(step.payload);
-  else if (step.kind === 'create-endpoint') store.createCustomEndpoint(step.payload);
-  else if (step.payload) store.updateCustomEndpoint(step.payload);
-}
-
-const anthropic: CredentialTarget = { kind: 'slot', slot: 'anthropic' };
+/** The fields of the endpoint dialog, filled in for a gateway. */
+const gateway: EndpointFormValues = {
+  name: 'gw',
+  protocol: 'openai',
+  baseUrl: 'http://gw:1',
+  apiKey: 'k',
+  defaultModel: '',
+};
 
 describe('a config-set save never writes a credential', () => {
   beforeEach(() => {
@@ -157,9 +146,7 @@ describe('a config-set save never writes a credential', () => {
     store.setProviderCredential({ provider: 'openai', apiKey: 'sk-oai' });
     const before = store.getAll();
 
-    // The user edits the model while a key edit is also pending in the form.
-    let sets = loadSets(rendererConfig(store));
-    sets = modelSetsReducer(sets, {
+    const sets = modelSetsReducer(loadSets(rendererConfig(store)), {
       type: 'UPDATE_MODEL_FIELDS',
       updater: (previous) => ({
         ...previous,
@@ -168,23 +155,15 @@ describe('a config-set save never writes a credential', () => {
         contextWindow: '200000',
       }),
     });
-    const credentials = editCredential(
-      createProviderCredentialsState(rendererConfig(store)),
-      anthropic,
-      { apiKey: 'sk-ant-PENDING' }
-    );
-    expect(hasUnsavedCredentialChanges(credentials, presets)).toBe(true);
 
     store.update(buildModelSetSavePayload(sets.draft, sets.activeConfigSetId));
     const after = store.getAll();
 
     expect(after.model).toBe('claude-sonnet-5');
     expect(after.contextWindow).toBe(200000);
-    // The pending key was not dragged along with the model.
     expect(after.providerCredentials).toEqual(before.providerCredentials);
     expect(after.customEndpoints).toEqual(before.customEndpoints);
     expect(after.apiKey).toBe('sk-ant');
-    expect(JSON.stringify(after)).not.toContain('PENDING');
   });
 
   it('moves a set to another provider without touching either provider key', () => {
@@ -219,21 +198,22 @@ describe('a credential save never writes a config set', () => {
     mocks.seed = {};
   });
 
-  it('carries no config-set field', () => {
-    let credentials = createProviderCredentialsState(null);
-    credentials = editCredential(credentials, anthropic, { apiKey: 'sk-ant' });
-    credentials = editCredential(
-      credentials,
-      { kind: 'new-endpoint' },
-      { apiKey: 'k', baseUrl: 'http://gw:1', protocol: 'openai' }
-    );
+  it('carries no config-set field, in any of the calls that save one', () => {
+    const payloads = {
+      'a provider key': keyPayload('anthropic', 'sk-ant'),
+      'a provider key and address': buildProviderCredentialPayload({
+        provider: 'ollama',
+        apiKey: '',
+        baseUrl: 'http://localhost:11434/v1',
+        showsBaseUrl: true,
+      }),
+      'a new endpoint': buildCreateEndpointPayload(gateway),
+      'an endpoint that exists': buildUpdateEndpointPayload('custom-endpoint-1', gateway),
+    };
 
-    const steps = planCredentialSave(credentials, presets);
-    expect(steps).toHaveLength(2);
-    for (const step of steps) {
-      const payload = 'payload' in step && step.payload ? step.payload : {};
+    for (const [call, payload] of Object.entries(payloads)) {
       for (const field of SET_FIELDS) {
-        expect(payload, step.kind).not.toHaveProperty(field);
+        expect(payload, call).not.toHaveProperty(field);
       }
     }
   });
@@ -245,21 +225,14 @@ describe('a credential save never writes a config set', () => {
     store.switchSet({ id: 'default' });
     const before = store.getAll();
 
-    // The user rotates the key while a model edit is also pending in the form.
+    // The user rotates the key while a model edit is pending on the Model Sets tab.
     const sets = modelSetsReducer(loadSets(rendererConfig(store)), {
       type: 'UPDATE_MODEL_FIELDS',
       updater: (previous) => ({ ...previous, customModel: 'PENDING-MODEL', useCustomModel: true }),
     });
     expect(hasUnsavedModelSetChanges(sets)).toBe(true);
-    const credentials = editCredential(
-      createProviderCredentialsState(rendererConfig(store)),
-      anthropic,
-      { apiKey: 'sk-ant-rotated' }
-    );
 
-    for (const step of planCredentialSave(credentials, presets)) {
-      runCredentialStep(store, step);
-    }
+    store.setProviderCredential(keyPayload('anthropic', 'sk-ant-rotated'));
     const after = store.getAll();
 
     expect(after.apiKey).toBe('sk-ant-rotated');
@@ -277,51 +250,43 @@ describe('a credential save never writes a config set', () => {
     store.update({ provider: 'anthropic', apiKey: 'sk-ant', model: 'claude-opus-5' });
     const before = store.getAll();
 
-    const credentials = editCredential(
-      createProviderCredentialsState(rendererConfig(store)),
-      { kind: 'slot', slot: 'openai' },
-      { apiKey: 'sk-oai' }
-    );
-    for (const step of planCredentialSave(credentials, presets)) {
-      runCredentialStep(store, step);
-    }
+    store.setProviderCredential(keyPayload('openai', 'sk-oai'));
     const after = store.getAll();
 
     expect(after.providerCredentials.openai?.apiKey).toBe('sk-oai');
     expect(after.provider).toBe('anthropic');
     expect(after.configSets).toEqual(before.configSets);
   });
-});
 
-describe('saving one half never discards an unsaved edit to the other', () => {
-  beforeEach(() => {
-    mocks.seed = {};
-  });
-
-  it('keeps a typed key across a config-set save', () => {
+  it('creates an endpoint, and saves it again, without pointing any set at it', () => {
+    // The wizard's Continue for an endpoint. The config set moves to it only
+    // on Start, through the config-set save.
     const store = new ConfigStore();
     store.update({ provider: 'anthropic', apiKey: 'sk-ant', model: 'claude-opus-5' });
+    const before = store.getAll();
 
-    let credentials = editCredential(
-      createProviderCredentialsState(rendererConfig(store)),
-      anthropic,
-      { apiKey: 'sk-typed-not-saved' }
+    store.createCustomEndpoint(buildCreateEndpointPayload(gateway));
+    const created = rendererConfig(store).customEndpoints[0];
+    store.updateCustomEndpoint(
+      buildUpdateEndpointPayload(created.id, {
+        ...endpointFormValues(created, 'anthropic'),
+        apiKey: 'k-rotated',
+      })
     );
-    store.update({ model: 'claude-sonnet-5' });
+    const after = store.getAll();
 
-    // What the form does with the config a set save returns.
-    const returned = rendererConfig(store);
-    credentials = providerCredentialsReducer(credentials, {
-      type: 'APPLY_PERSISTED',
-      providerCredentials: returned.providerCredentials,
-      customEndpoints: returned.customEndpoints,
-      mode: 'rebase',
-    });
+    expect(after.customEndpoints).toHaveLength(1);
+    expect(after.customEndpoints[0]).toMatchObject({ baseUrl: 'http://gw:1', apiKey: 'k-rotated' });
+    expect(after.provider).toBe('anthropic');
+    expect(after.apiKey).toBe('sk-ant');
+    expect(after.configSets).toEqual(before.configSets);
+    expect(after.activeConfigSetId).toBe(before.activeConfigSetId);
+  });
+});
 
-    expect(selectCredentialDraft(credentials, anthropic, presets).apiKey).toBe(
-      'sk-typed-not-saved'
-    );
-    expect(hasUnsavedCredentialChanges(credentials, presets)).toBe(true);
+describe('saving a credential never discards an unsaved edit to a config set', () => {
+  beforeEach(() => {
+    mocks.seed = {};
   });
 
   it('keeps an edited model across a credential save', () => {
@@ -336,9 +301,10 @@ describe('saving one half never discards an unsaved edit to the other', () => {
         useCustomModel: true,
       }),
     });
-    store.setProviderCredential({ provider: 'anthropic', apiKey: 'sk-ant-rotated' });
+    store.setProviderCredential(keyPayload('anthropic', 'sk-ant-rotated'));
 
-    // What the form does with the config a credential save returns.
+    // What the state both tabs share does with the config a credential call
+    // returns (`runCredentialCall`, `useApiSettingsState.ts`).
     const bootstrap = buildModelSetsBootstrap(rendererConfig(store), presets);
     sets = modelSetsReducer(sets, {
       type: 'REBASE_PERSISTED',
@@ -348,103 +314,5 @@ describe('saving one half never discards an unsaved edit to the other', () => {
 
     expect(sets.draft.customModel).toBe('edited-not-saved');
     expect(hasUnsavedModelSetChanges(sets)).toBe(true);
-  });
-});
-
-describe('the one payload that carries both halves', () => {
-  // Used only by a caller that performs the save itself (the first-run dialog).
-  // That the Settings form does not use it is asserted against the hook source
-  // in `config-ipc-mutation-contract.test.ts`.
-  it('gives the combined payload both halves, for the first-run dialog', () => {
-    const payload = buildCombinedSavePayload({
-      setDraft: {
-        provider: 'custom',
-        endpointId: '',
-        model: '',
-        customModel: 'claude-opus-5',
-        useCustomModel: true,
-        contextWindow: '200000',
-        maxTokens: '',
-        thinkingLevel: 'high',
-      },
-      credentialDraft: {
-        apiKey: ' gw-key ',
-        baseUrl: ' http://127.0.0.1:9000 ',
-        protocol: 'anthropic',
-      },
-      customProtocol: 'anthropic',
-      presetBaseUrl: 'https://unused.example',
-      activeConfigSetId: 'default',
-    });
-
-    expect(payload).toEqual({
-      activeConfigSetId: 'default',
-      provider: 'custom',
-      endpointId: '',
-      model: 'claude-opus-5',
-      contextWindow: 200000,
-      maxTokens: 0,
-      enableThinking: true,
-      thinkingLevel: 'high',
-      apiKey: 'gw-key',
-      baseUrl: 'http://127.0.0.1:9000',
-      customProtocol: 'anthropic',
-    });
-  });
-
-  it('lets the store turn the combined payload into an endpoint the set points at', () => {
-    // The first-run path end to end: one call, one provider, one set.
-    mocks.seed = {};
-    const store = new ConfigStore();
-    store.update(
-      buildCombinedSavePayload({
-        setDraft: {
-          provider: 'custom',
-          endpointId: '',
-          model: '',
-          customModel: 'claude-opus-5',
-          useCustomModel: true,
-          contextWindow: '',
-          maxTokens: '',
-          thinkingLevel: 'off',
-        },
-        credentialDraft: {
-          apiKey: 'gw-key',
-          baseUrl: 'http://127.0.0.1:9000',
-          protocol: 'anthropic',
-        },
-        customProtocol: 'anthropic',
-        presetBaseUrl: '',
-        activeConfigSetId: 'default',
-      })
-    );
-    const config = store.getAll();
-
-    expect(config.customEndpoints).toHaveLength(1);
-    expect(config.endpointId).toBe(config.customEndpoints[0].id);
-    expect(config.apiKey).toBe('gw-key');
-    expect(config.model).toBe('claude-opus-5');
-  });
-
-  it('uses the preset address for a cloud provider in the combined payload', () => {
-    const payload = buildCombinedSavePayload({
-      setDraft: {
-        provider: 'anthropic',
-        endpointId: '',
-        model: 'claude-sonnet-4-6',
-        customModel: '',
-        useCustomModel: false,
-        contextWindow: '',
-        maxTokens: '',
-        thinkingLevel: 'off',
-      },
-      credentialDraft: { apiKey: 'sk-ant', baseUrl: 'ignored', protocol: 'anthropic' },
-      customProtocol: 'anthropic',
-      presetBaseUrl: 'https://api.anthropic.com',
-      activeConfigSetId: 'default',
-    });
-
-    expect(payload.baseUrl).toBe('https://api.anthropic.com');
-    expect(payload).not.toHaveProperty('endpointId');
   });
 });

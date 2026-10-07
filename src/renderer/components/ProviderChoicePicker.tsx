@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next';
 import type { CustomProtocolType } from '../types';
 import { isCustomProtocol, protocolLabel } from '../hooks/api-config-shared';
 import type { CredentialStatus, ProviderChoice } from '../hooks/api-settings-view';
-import { CATEGORY_LABEL_KEY } from './ProviderPicker';
+import type { ProviderCategory } from '../../shared/provider-catalog';
 import { SearchableCombobox, type ComboboxItem, type StatusDotColor } from './SearchableCombobox';
 
 interface ProviderChoicePickerProps {
@@ -25,6 +25,19 @@ interface ProviderChoicePickerProps {
   statusDotLabel?: string;
   disabled?: boolean;
 }
+
+/**
+ * Map ProviderCategory to its i18n key. The 'featured' category renders as
+ * "Popular" (the pinned top group); every other category keeps its own name so
+ * Custom and Local read as distinct concepts rather than provider families.
+ */
+export const CATEGORY_LABEL_KEY: Record<ProviderCategory, string> = {
+  featured: 'api.providerPicker.categories.popular',
+  'coding-plan': 'api.providerPicker.categories.codingPlan',
+  inference: 'api.providerPicker.categories.inference',
+  local: 'api.providerPicker.categories.local',
+  custom: 'api.providerPicker.categories.custom',
+};
 
 const STATUS_DOT: Record<CredentialStatus, StatusDotColor> = {
   configured: 'green',

@@ -59,7 +59,6 @@ import {
   type CustomProtocolType,
   type MemoryRuntimeConfig,
 } from './config/config-store';
-import { runConfigApiTest } from './config/config-test-routing';
 import { getFullProviderCatalog } from './config/provider-catalog-native';
 import { listOllamaModels } from './config/ollama-api';
 import { resolveThinkingCapabilities, resolvePiModelString } from './claude/pi-model-resolution';
@@ -92,8 +91,6 @@ import type { MCPServerConfig } from './mcp/mcp-manager';
 import type {
   ClientEvent,
   ServerEvent,
-  ApiTestInput,
-  ApiTestResult,
   DiagnosticInput,
   ProviderModelInfo,
 } from '../renderer/types';
@@ -2230,19 +2227,6 @@ ipcMain.handle('workspace-instructions.getStatus', async (_event, requestedCwd?:
       resolvedFile: '',
       loaded: false,
       error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-});
-
-ipcMain.handle('config.test', async (_event, payload: ApiTestInput): Promise<ApiTestResult> => {
-  try {
-    return await runConfigApiTest(payload, configStore.getAll());
-  } catch (error) {
-    logError('[Config] API test failed:', error);
-    return {
-      ok: false,
-      errorType: 'unknown',
-      details: error instanceof Error ? error.message : String(error),
     };
   }
 });

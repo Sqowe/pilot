@@ -58,7 +58,6 @@ export function CustomEndpointFields({ form }: CustomEndpointFieldsProps) {
         <CommonProviderSetupsCard
           setups={form.setups}
           onApplySetup={form.applySetup}
-          layout="list"
           disabled={isSaving}
         />
       )}

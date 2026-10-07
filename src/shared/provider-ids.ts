@@ -2,7 +2,7 @@
  * @module shared/provider-ids
  *
  * Shared utilities for provider id and profile key normalization/validation.
- * Imported by both main process (config-store) and renderer (useApiConfigState)
+ * Imported by both main process (config-store) and renderer (api-config-shared)
  * to ensure identical behavior at all persistence boundaries.
  */
 

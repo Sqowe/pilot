@@ -329,10 +329,7 @@
     "currentLanguage": "当前语言"
   },
   "api": {
-    "firstRunTitle": "配置 API",
     "firstRunSubtitle": "设置 API 提供商后即可开始使用",
-    "settingsTitle": "API 设置",
-    "settingsSubtitle": "管理 API 提供商、密钥和模型",
     "configSet": "配置方案",
     "defaultSetTag": "默认",
     "saveAs": "另存为",
@@ -366,7 +363,6 @@
     "noModelsAvailable": "暂无可用模型",
     "noPresetsManualOnly": "无预设模型 — 请手动输入模型 ID",
     "selectProtocol": "选择服务的兼容协议",
-    "enterOllamaUrl": "输入 Ollama 的 OpenAI 兼容服务 URL",
     "enterOpenAIUrl": "输入 OpenAI 兼容的服务 URL",
     "enterAnthropicUrl": "输入 Anthropic 兼容的服务 URL",
     "enterGeminiUrl": "输入 Gemini 兼容的服务 URL",
@@ -382,8 +378,6 @@
     "saveSettings": "保存设置",
     "openSettingsAction": "打开 API 设置",
     "configRequiredActiveSet": "当前方案未配置可用凭证，请先在 API 设置中完成配置",
-    "testConnection": "测试连接",
-    "testingConnection": "测试中...",
     "refreshModels": "刷新模型",
     "refreshingModels": "刷新中...",
     "refreshModelsFailed": "刷新模型失败，请检查 URL 或服务状态",
@@ -391,7 +385,6 @@
     "useDetectedModels": "使用探测列表",
     "discoverLocalOllama": "发现本地 Ollama",
     "discoveringLocalOllama": "发现中...",
-    "discoverLocalOllamaHint": "先填写 Ollama 端点，系统会自动拉取模型列表；只有拉取不到时才需要手动输入模型。",
     "localOllamaDiscovered": "已发现本地 Ollama，可用模型 {{count}} 个。",
     "localOllamaNotFound": "未发现本地 Ollama 服务，请先执行 `ollama serve` 后重试。",
     "localOllamaNoModels": "已发现本地 Ollama 服务，但当前没有可用模型。",
@@ -410,26 +403,15 @@
       "xhigh": "超高",
       "max": "最大"
     },
-    "testSuccess": "连接成功（{{ms}}ms）",
-    "testSuccessNeedSave": "连接测试成功，请点击“保存设置”后再开始会话。",
     "testError": {
       "missing_key": "请填写 API Key",
-      "missing_base_url": "请填写 Base URL",
-      "unauthorized": "API Key 无效或无权限",
-      "not_found": "接口未找到，请检查 Base URL",
-      "rate_limited": "请求过于频繁或额度不足",
-      "server_error": "服务端错误，请稍后再试",
-      "network_error": "网络连接失败，请检查网络或地址",
-      "ollama_not_running": "无法连接 Ollama，请确认 Ollama 已启动（ollama serve）",
-      "ollama_loading": "Ollama 正在将模型加载到内存中，大型模型可能需要 30–120 秒，请稍候后重试。",
-      "unknown": "连接失败"
+      "ollama_loading": "Ollama 正在将模型加载到内存中，大型模型可能需要 30–120 秒，请稍候后重试。"
     },
     "guidance": {
       "commonSetupsTitle": "常见服务配置",
       "commonSetupsHint": "查看或一键套用推荐配置",
       "apply": "应用",
       "detectedBadge": "已识别",
-      "preferProviderTab": "已识别为 {{service}}。这类服务通常更适合直接使用专用的 {{provider}} 配置入口。",
       "protocolMismatch": "已识别为 {{service}}。推荐协议为 {{recommendedProtocol}}。",
       "protocolLooksGood": "已识别为 {{service}}。当前协议已匹配推荐的 {{recommendedProtocol}} 配置。",
       "baseUrlHint": "已识别为 {{service}}。推荐使用 {{recommendedProtocol}} 配置：{{baseUrl}}。示例模型：{{model}}。",
@@ -440,17 +422,11 @@
         "gemini": "Gemini"
       },
       "columns": {
-        "service": "服务",
-        "protocol": "协议",
-        "baseUrl": "Base URL",
-        "model": "示例模型",
-        "notes": "说明",
-        "action": "操作"
+        "model": "示例模型"
       },
       "errorHints": {
         "emptyProbeGeneric": "该 endpoint 返回了空的探测响应，通常表示当前选择的协议或模型与服务不兼容。",
         "emptyProbeDetected": "{{service}} 返回了空的探测响应。请尝试推荐的 {{recommendedProtocol}} 配置，并确认模型 ID 与该 endpoint 对应。",
-        "emptyProbePreferProvider": "{{service}} 返回了空的探测响应。建议改用专用的 {{provider}} 配置入口，而不是作为通用自定义 endpoint 来配置。",
         "probeMismatchGeneric": "服务有返回，但格式不符合当前探针预期，通常意味着协议或模型兼容性不匹配。",
         "probeMismatchDetected": "{{service}} 返回了非预期的探针格式。请尝试推荐的 {{recommendedProtocol}} 配置，并确认模型 ID 与该 endpoint 对应。"
       },

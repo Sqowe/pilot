@@ -21,17 +21,17 @@ describe('provider guidance helpers', () => {
     expect(setup?.recommendedProtocol).toBe('openai');
   });
 
-  it('detects OpenRouter and prefers the dedicated provider tab', () => {
+  it('detects OpenRouter and names the catalog provider it is', () => {
     const setup = detectCommonProviderSetup('https://openrouter.ai/api/v1');
     expect(setup?.id).toBe('openrouter');
-    expect(setup?.preferProviderTab).toBe('openrouter');
+    expect(setup?.catalogProvider).toBe('openrouter');
     expect(detectCommonProviderSetup('https://openrouter.ai')?.id).toBe('openrouter');
   });
 
-  it('detects Ollama only on the local default port and prefers the dedicated provider tab', () => {
+  it('detects Ollama only on the local default port and names the catalog provider it is', () => {
     const setup = detectCommonProviderSetup('http://localhost:11434/v1');
     expect(setup?.id).toBe('ollama');
-    expect(setup?.preferProviderTab).toBe('ollama');
+    expect(setup?.catalogProvider).toBe('ollama');
     expect(detectCommonProviderSetup('http://localhost:3000/v1')).toBeNull();
   });
 
@@ -59,5 +59,19 @@ describe('provider guidance helpers', () => {
     expect(resolveProviderGuidanceErrorHint('empty_probe_response', null)).toBe(
       'emptyProbeGeneric'
     );
+  });
+
+  it('words an empty answer the same way for a service the catalog lists', () => {
+    // Where the catalog has the provider, the dialog sends the address there and
+    // shows no such hint at all. Where it does not — a pi that lacks the
+    // provider — the service is an endpoint like any other, and the hint that
+    // names its protocol is the one that helps.
+    for (const address of ['https://openrouter.ai/api/v1', 'https://api.kimi.com/coding']) {
+      const setup = detectCommonProviderSetup(address);
+      expect(setup?.catalogProvider, address).toBeTruthy();
+      expect(resolveProviderGuidanceErrorHint('empty_probe_response', setup), address).toBe(
+        'emptyProbeDetected'
+      );
+    }
   });
 });

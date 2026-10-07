@@ -18,7 +18,7 @@ import {
 import { providerDialogValues } from '../../hooks/credential-dialog-view';
 import { CustomEndpointDialog } from '../CustomEndpointDialog';
 import { ProviderConfigDialog } from '../ProviderConfigDialog';
-import { CATEGORY_LABEL_KEY } from '../ProviderPicker';
+import { CATEGORY_LABEL_KEY } from '../ProviderChoicePicker';
 import { useApiSettings } from './ApiSettingsContext';
 import { useSingleFlight } from './SettingsDialogFrame';
 import { EndpointListRow, ProviderListRow } from './ProviderListRows';
@@ -315,7 +315,6 @@ export function SettingsProviders({ isActive }: SettingsProvidersProps) {
           }
           configSets={configSets}
           activeConfigSetId={activeConfigSetId}
-          presets={presets}
           providerCatalog={providerCatalog}
           onSave={(values) => saveEndpoint(dialog.endpoint, values)}
           onOpenProvider={(provider) => {

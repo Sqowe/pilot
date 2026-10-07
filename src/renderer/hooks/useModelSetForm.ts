@@ -123,7 +123,6 @@ export function useModelSetForm(settings: ApiSettingsState) {
     presetBaseUrl: currentPreset.baseUrl,
     presetModels: currentPreset.models,
     requiresApiKey,
-    hasUnsavedChanges,
     resetKey: `${activeConfigSetId}::${endpointId}`,
     messages,
     setBaseUrl: ignoreAddress,

@@ -68,7 +68,7 @@ interface WizardEndpointStepProps {
 
 /** First step, for a custom endpoint: one that exists, or one being added. */
 export function WizardEndpointStep({ wizard, endpoint }: WizardEndpointStepProps) {
-  const { presets, providerCatalog, credentials, sets } = wizard.settings;
+  const { providerCatalog, credentials, sets } = wizard.settings;
   const { configSets, activeConfigSetId } = sets;
   const form = useCustomEndpointDialog({
     endpoint,
@@ -79,7 +79,6 @@ export function WizardEndpointStep({ wizard, endpoint }: WizardEndpointStepProps
       : [],
     configSets,
     activeConfigSetId,
-    presets,
     providerCatalog,
     // A catalog provider is an entry of the list above these fields, and the
     // hint's button chooses it there. There is no second dialog to open.

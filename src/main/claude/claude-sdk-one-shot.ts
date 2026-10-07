@@ -135,7 +135,9 @@ function buildProbeConfig(input: ApiTestInput, config: AppConfig): AppConfig {
     customProtocol: resolvedCustomProtocol,
     apiKey: effectiveApiKey,
     baseUrl: effectiveBaseUrl,
-    model: typeof input.model === 'string' ? input.model.trim() : config.model,
+    // A model that is not given is no model: the probe never stands the active
+    // config set's in for it. The caller names what it is trying.
+    model: typeof input.model === 'string' ? input.model.trim() : '',
   };
 }
 

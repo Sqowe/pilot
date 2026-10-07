@@ -515,7 +515,7 @@ const MAX_CONFIG_SET_COUNT = 20;
 /**
  * Separate from MAX_CONFIG_SET_COUNT on purpose (design decision #11): the
  * renderer recovers the config-set cap by parsing the thrown message
- * (`useApiConfigState.ts` — /^Config set limit reached: max\s+(\d+)$/), so one
+ * (`api-config-shared.ts` — /^Config set limit reached: max\s+(\d+)$/), so one
  * shared constant across two entity types would make that parse ambiguous.
  */
 const MAX_CUSTOM_ENDPOINT_COUNT = 20;

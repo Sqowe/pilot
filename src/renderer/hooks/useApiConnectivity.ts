@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
-  ApiTestResult,
   CustomProtocolType,
   DiagnosticResult,
   ProviderModelInfo,
@@ -28,7 +27,6 @@ interface UseApiConnectivityOptions {
   /** The provider's built-in model list — models that exist on any server. */
   presetModels: ProviderModelInfo[];
   requiresApiKey: boolean;
-  hasUnsavedChanges: boolean;
   /** Changes when the form is showing something else, so stale results are dropped. */
   resetKey: string;
   messages: ApiConfigMessages;
@@ -44,9 +42,9 @@ interface UseApiConnectivityOptions {
 }
 
 /**
- * Everything on the API-settings form that talks to a provider rather than to
- * the config store: the connection test, the diagnostics run, and — for Ollama
- * — finding the local server and listing its models.
+ * Everything in API settings that talks to a provider rather than to the
+ * config store: the connection check, and — for Ollama — finding the local
+ * server and listing its models.
  *
  * Works from the values the form is showing, saved or not, so a key can be
  * tried before it is kept.
@@ -61,7 +59,6 @@ export function useApiConnectivity(options: UseApiConnectivityOptions) {
     presetBaseUrl,
     presetModels,
     requiresApiKey,
-    hasUnsavedChanges,
     resetKey,
     messages,
     setBaseUrl,
@@ -70,8 +67,6 @@ export function useApiConnectivity(options: UseApiConnectivityOptions) {
   } = options;
   const { clearError, clearSuccessMessage, showErrorKey, showErrorText, showSuccessKey } = messages;
 
-  const [isTesting, setIsTesting] = useState(false);
-  const [testResult, setTestResult] = useState<ApiTestResult | null>(null);
   const [isDiagnosing, setIsDiagnosing] = useState(false);
   const [diagnosticResult, setDiagnosticResult] = useState<DiagnosticResult | null>(null);
   const [isRefreshingModels, setIsRefreshingModels] = useState(false);
@@ -96,9 +91,7 @@ export function useApiConnectivity(options: UseApiConnectivityOptions) {
   useEffect(() => {
     resultGenerationRef.current += 1;
     clearError();
-    setTestResult(null);
     setDiagnosticResult(null);
-    setIsTesting(false);
     setIsDiagnosing(false);
   }, [resetKey, provider, customProtocol, apiKey, baseUrl, finalModel, clearError]);
 
@@ -142,76 +135,6 @@ export function useApiConnectivity(options: UseApiConnectivityOptions) {
     [baseUrl, presetBaseUrl, provider]
   );
 
-  const handleTest = useCallback(async () => {
-    if (requiresApiKey && !apiKey.trim()) {
-      showErrorKey('api.testError.missing_key');
-      return;
-    }
-
-    if (!finalModel) {
-      showErrorKey('api.selectModelRequired');
-      return;
-    }
-
-    // Same rule as Save: Ollama and a custom endpoint are defined by their
-    // address, so there is nothing to test without one.
-    if ((provider === 'ollama' || provider === 'custom') && !baseUrl.trim()) {
-      showErrorKey('api.testError.missing_base_url');
-      return;
-    }
-
-    clearError();
-    setIsTesting(true);
-    setTestResult(null);
-    const generation = resultGenerationRef.current;
-    const isCurrent = () => generation === resultGenerationRef.current;
-    try {
-      const result = await window.electronAPI.config.test({
-        provider,
-        apiKey: apiKey.trim(),
-        baseUrl: resolveBaseUrl() || undefined,
-        customProtocol,
-        model: finalModel,
-      });
-      if (!isCurrent()) {
-        return;
-      }
-      setTestResult(result);
-      if (result.ok && hasUnsavedChanges) {
-        showSuccessKey('api.testSuccessNeedSave');
-        setTimeout(() => clearSuccessMessage(), 2500);
-      }
-    } catch (testError) {
-      if (!isCurrent()) {
-        return;
-      }
-      setTestResult({
-        ok: false,
-        errorType: 'unknown',
-        details: testError instanceof Error ? testError.message : String(testError),
-      });
-    } finally {
-      // The reset that ended this generation already cleared the flag; a newer
-      // request may have raised it again since.
-      if (isCurrent()) {
-        setIsTesting(false);
-      }
-    }
-  }, [
-    apiKey,
-    baseUrl,
-    customProtocol,
-    finalModel,
-    provider,
-    requiresApiKey,
-    hasUnsavedChanges,
-    resolveBaseUrl,
-    clearError,
-    clearSuccessMessage,
-    showErrorKey,
-    showSuccessKey,
-  ]);
-
   const handleDiagnose = useCallback(
     async (verificationLevel: 'fast' | 'deep' = 'fast') => {
       if (requiresApiKey && !apiKey.trim()) {
@@ -222,7 +145,6 @@ export function useApiConnectivity(options: UseApiConnectivityOptions) {
       clearError();
       setIsDiagnosing(true);
       setDiagnosticResult(null);
-      setTestResult(null);
       const generation = resultGenerationRef.current;
       const isCurrent = () => generation === resultGenerationRef.current;
       try {
@@ -449,9 +371,6 @@ export function useApiConnectivity(options: UseApiConnectivityOptions) {
   );
 
   return {
-    isTesting,
-    testResult,
-    handleTest,
     isDiagnosing,
     diagnosticResult,
     handleDiagnose,

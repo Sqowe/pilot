@@ -9,7 +9,7 @@
  *
  * Uses the real shared implementations from src/shared/provider-ids.ts and
  * the exported profileKeyFromProvider/profileKeyToProvider from
- * useApiConfigState (renderer-side) for round-trip tests.
+ * api-config-shared (renderer-side) for round-trip tests.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -25,7 +25,7 @@ import {
 import {
   profileKeyFromProvider,
   profileKeyToProvider,
-} from '../../renderer/hooks/useApiConfigState';
+} from '../../renderer/hooks/api-config-shared';
 
 // ---------------------------------------------------------------------------
 // normalizeProviderId
