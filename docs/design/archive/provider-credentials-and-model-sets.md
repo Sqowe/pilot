@@ -4,7 +4,7 @@
 **Status:** **Implemented — all phases done 2026-10-07.** Phases 0–4 shipped in app 1.0.9
 (`b2c4d56b`, `330989ec`, `60d5277c`, `c381f8c3`, `b853c811`, `553c5da7`). Phase 5 — the first-run
 wizard and the removal of what only the old dialog used (`994043f3`, `91e55d9b`) — and Phase 6, the
-documents, are not in a release yet. §14 is the as-built summary.
+documents (`5df69941`), are in app 1.0.10. §14 is the as-built summary.
 **Author:** AI-assisted design session
 **Baseline:** pi-ai / pi-coding-agent **0.87.1**, app **1.0.8** (HEAD `90136401`). Verified against
 source 2026-10-03; §13 records what the original 0.85.1/1.0.7 draft got wrong.
@@ -2561,17 +2561,17 @@ differs from §§1–12, and what was left open.
 
 ### 14.1 What shipped
 
-| Phase    | Commit     | In app       | What                                                                                                 |
-| -------- | ---------- | ------------ | ---------------------------------------------------------------------------------------------------- |
-| 1        | `b2c4d56b` | 1.0.9        | `providerCredentials` and `customEndpoints` in the store, derived one way from the config sets       |
-| 2a       | `330989ec` | 1.0.9        | The credential store becomes the source: `resolveCredentials`, `endpointId` on a set, endpoint calls |
-| 2b       | `60d5277c` | 1.0.9        | Nothing writes a credential into a config set any more                                               |
-| 3        | `c381f8c3` | 1.0.9        | Per-set credential fields removed; old settings files converted once; the form state split in two    |
-| 4 step 1 | `b853c811` | 1.0.9        | The Providers and Model Sets tabs, the endpoint list, the chooser on a config set                    |
-| 4 step 2 | `553c5da7` | 1.0.9        | The dialogs' connection check, ready-made setups and hints; the dropped-key notice; `set · model`    |
-| 5 step A | `994043f3` | not released | The first-run dialog as a two-step wizard                                                            |
-| 5 step B | `91e55d9b` | not released | Removal of the old state layer, `config.test`, `ProviderPicker` and the setups table                 |
-| 6        | —          | not released | Documents                                                                                            |
+| Phase    | Commit     | In app | What                                                                                                 |
+| -------- | ---------- | ------ | ---------------------------------------------------------------------------------------------------- |
+| 1        | `b2c4d56b` | 1.0.9  | `providerCredentials` and `customEndpoints` in the store, derived one way from the config sets       |
+| 2a       | `330989ec` | 1.0.9  | The credential store becomes the source: `resolveCredentials`, `endpointId` on a set, endpoint calls |
+| 2b       | `60d5277c` | 1.0.9  | Nothing writes a credential into a config set any more                                               |
+| 3        | `c381f8c3` | 1.0.9  | Per-set credential fields removed; old settings files converted once; the form state split in two    |
+| 4 step 1 | `b853c811` | 1.0.9  | The Providers and Model Sets tabs, the endpoint list, the chooser on a config set                    |
+| 4 step 2 | `553c5da7` | 1.0.9  | The dialogs' connection check, ready-made setups and hints; the dropped-key notice; `set · model`    |
+| 5 step A | `994043f3` | 1.0.10 | The first-run dialog as a two-step wizard                                                            |
+| 5 step B | `91e55d9b` | 1.0.10 | Removal of the old state layer, `config.test`, `ProviderPicker` and the setups table                 |
+| 6        | `5df69941` | 1.0.10 | Documents                                                                                            |
 
 ### 14.2 The shape as built
 
