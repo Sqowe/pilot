@@ -1,9 +1,9 @@
 # Provider Credentials & Model Sets — Design & Implementation Plan
 
 **Created:** 2026-10-02
-**Status:** Design approved. **Phases 0, 1, 2a, 2b, 3 complete** (Phase 3: 2026-10-05). **Phase 4
-in progress:** both steps built, reviewed and checked in the running app 2026-10-06; what the
-second check turned up is listed under "Noticed in the pass". Each phase stops for review.
+**Status:** Design approved. **Phases 0, 1, 2a, 2b, 3, 4 complete** (Phase 3: 2026-10-05; Phase 4:
+2026-10-06, both steps built, reviewed and checked in the running app, shipped in app 1.0.9).
+**Phase 5 in progress.** Each phase stops for review.
 **Author:** AI-assisted design session
 **Baseline:** pi-ai / pi-coding-agent **0.87.1**, app **1.0.8** (HEAD `90136401`). Verified against
 source 2026-10-03; §13 records what the original 0.85.1/1.0.7 draft got wrong.
@@ -486,8 +486,8 @@ that setup's `exampleModel` ([`api-provider-guidance.ts`](../../src/shared/api-p
 | 2a — store inversion    | ✅ **done** 2026-10-03 | resolveCredentials + endpointId + CRUD/IPC, 28 new tests              |
 | 2b — write-path cutover | ✅ **done** 2026-10-03 | handleSave drops `profiles`; §9.4 holds structurally                  |
 | 3 — renderer state      | ✅ **done** 2026-10-05 | old fields removed; two slices; 141 new tests; external review ✔️     |
-| 4 — UI                  | 🚧 step 2 of 2 built   | step 1: tabs, endpoint list, chooser; step 2: dialogs, notice, labels |
-| 5 — first-run wizard    | —                      | —                                                                     |
+| 4 — UI                  | ✅ **done** 2026-10-06 | step 1: tabs, endpoint list, chooser; step 2: dialogs, notice, labels |
+| 5 — first-run wizard    | 🚧 step A of 2 built   | step A: the two-step wizard, reviewed ✔️, checked in the app; B open  |
 | 6 — docs                | —                      | —                                                                     |
 
 Every phase ends with `npm run typecheck` and `npm test` clean. Two of the three gates
@@ -1731,6 +1731,340 @@ tab, that a second diagnostics call is harmless, and when native catalog entries
 ### Phase 5 — first-run wizard
 
 `ConfigModal.tsx` per §6.5.
+
+Built in two steps: **A** — the wizard itself; **B** — the removal of what only the old dialog
+used, as a change of its own so that neither review is about the other.
+
+#### Step A as built (2026-10-07) — the wizard
+
+##### Decisions taken with the user before starting
+
+| #   | Question                                                        | Decision                                                                                                                                                                                                         |
+| --- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | The notice's button when another config set can start a chat    | **It opens Settings → Model Sets.** The wizard is for "nothing is set up" only, so it has no config-set switcher.                                                                                                |
+| 2   | When is the config set written? §6.5 has step 1 update it.      | **Continue saves the credential only; Start saves the config set** — provider, endpoint and model in one call. A wizard closed between the two leaves a saved key and an untouched config set.                   |
+| 3   | What opens the wizard?                                          | **What opened the old dialog**: the notice's button, nothing else. It does not open by itself on a first start, and the welcome screen's link still opens Providers (Phase 4 step 1's decision 4).               |
+| 4   | What does the first step choose from?                           | **The list the chooser on a config set has** — every custom endpoint by name, then the catalog — **plus one entry that adds an endpoint.** `ProviderPicker` is therefore not used after all, and goes in step B. |
+| 5   | The single-request test (`config.test`)                         | **Not used.** The first step has the dialogs' five-step check, which names the model it tries. The whole `config.test` chain goes in step B.                                                                     |
+| 6   | The old state layer (`useApiConfigState` and what is behind it) | **Removed in this phase**, in step B.                                                                                                                                                                            |
+
+##### What the pre-implementation read found
+
+1. **The "first-run dialog" does not open on a first run.** Nothing opens it but the button of a
+   notice (`App.tsx`, `open_api_settings`) that main raises when a session is started while the
+   active config set has no usable credential (`handleClientEvent`, `main/index.ts`). `useIPC`
+   deliberately never opens it (`tests/use-ipc-config-modal-gate.test.ts`), and the welcome
+   screen's "not configured" link goes to Settings. Left as it is (decision 3).
+2. **The dialog had two modes, and "first run" was only one.** `isFirstRun` was `!isConfigured`,
+   and `isConfigured` is "some config set has a usable credential" (`ConfigStore.isConfigured`).
+   The notice is about the _active_ set. With another set usable the dialog opened as "API
+   Settings": a second copy of the old single screen, set switcher included — the job the Model
+   Sets tab has had since Phase 4. Hence decision 1.
+3. **It offered six providers**, as buttons. None of the providers that only the installed pi
+   knows could be set up from it.
+4. **It was not a dialog in the sense the Settings dialogs are**: no Escape, no focus kept inside,
+   no `role`, Enter saved nothing, its close button had no name.
+5. **`config.test` is reachable from nowhere else**, and `probeWithClaudeSdk`, which it calls, is
+   also what the diagnostics run uses for its last step — always with a model. So removing the
+   chain (step B) leaves `buildProbeConfig`'s fallback to the active set's model with no caller.
+
+Three more turned up only while building, because the wizard is the first place a **searchable
+list sits inside the dialog frame**, which is a form:
+
+6. **Escape with a list open closed the whole dialog.** The frame listens for the key before
+   anything inside it and stops it there; the list, which closes itself on Escape, never heard it.
+   The frame now leaves the key alone while something inside it is expanded (`hasOpenPopup`).
+7. **Enter in a list's search box with nothing matching submitted the form.** The list's key
+   handler returned before it reached Enter when there was nothing to pick, and the browser then
+   took the key for "submit". Enter there is now always the list's own.
+8. **A list would be cut off in the second step.** The frame's body scrolls, a list opens
+   downwards inside it, and under the model field there is next to nothing — so the list would
+   have nowhere to show. Worked out from the layout, not seen: both steps were given one minimum
+   height with room for an open list, and the second step has the field first, before the app
+   was started. The manual pass then measured it: enough, by 41 px.
+
+##### As built
+
+| File                                                                    | Role                                                                                                                                                                                    |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hooks/first-run-wizard-view.ts`                                        | **new**, pure. The entries of the first step's list, which one it opens on, what an entry stands for, the model the second step starts on, whether a key is missing.                    |
+| `hooks/useFirstRunWizard.ts`                                            | **new**. The step, the choice, and the two saves of the first step.                                                                                                                     |
+| `components/FirstRunWizard.tsx`                                         | **new**. The frame, the body (list + the step on screen) and the two buttons.                                                                                                           |
+| `components/FirstRunWizardSteps.tsx`                                    | **new**. The three things under the frame: a provider's credential, an endpoint's, the model.                                                                                           |
+| `components/ConfigModal.tsx`                                            | **rewritten**, 498 → 22 lines. Mounts the wizard only while it is open.                                                                                                                 |
+| `App.tsx`                                                               | The notice's button chooses between the wizard and Settings → Model Sets; Settings is not drawn under the wizard; `handleConfigSave` is gone — the app no longer saves a config itself. |
+| `hooks/credential-dialog-view.ts`, `settings/SettingsProviders.tsx`     | `providerDialogValues`: what a provider's dialog opens on, moved out of the tab so the tab and the wizard share one rule. The tab is 331 lines (was 357).                               |
+| `components/CustomEndpointDialog.tsx`, `CustomEndpointFields.tsx`       | One optional input, `catalogProviderAt`: the hint towards a catalog provider is worded for a tab or for the list above the fields.                                                      |
+| `settings/ModelFieldsSection.tsx`                                       | The model field is a component of its own (`ModelPickerField`); the section draws it. The Model Sets tab is unchanged on screen.                                                        |
+| `hooks/api-settings-view.ts`, `components/ProviderChoicePicker.tsx`     | A fourth kind of chooser entry, `new-endpoint`, which only the wizard lists.                                                                                                            |
+| `settings/SettingsDialogFrame.tsx`, `components/SearchableCombobox.tsx` | Findings 6 and 7.                                                                                                                                                                       |
+| `i18n/locales/{en,zh,ru,hu}.json`                                       | Seven texts under `api.firstRun`, nine lines per file and nothing else changed.                                                                                                         |
+
+**The first step is the inside of a Settings dialog, not a form of its own.** Each Phase 4 dialog
+was already a state function plus a component that draws from it, apart from the frame. The wizard
+calls the same two — `useProviderConfigDialog` with `ProviderCredentialFields`,
+`useCustomEndpointDialog` with `CustomEndpointFields` — so the key field, the address, the
+connection check with the model it names, the search for a local Ollama, the ready-made setups
+that fold away, the hints, the "used by" and the dropped-key notices are the ones Settings has.
+What the wizard adds is what a save leads to. A dialog's state function calls its `onClose` after
+a save that worked; the wizard passes "go to the second step" there.
+
+**The second step is the Model Sets tab's own field.** `useModelSetForm` over the same shared
+state, and `ModelPickerField`: the searchable list for a catalog provider, the models a local
+Ollama reports, a typed model for an endpoint. Start is that form's Save. Token limits and the
+thinking level are not asked for and stay as stored.
+
+**Two saves, each through the call the tabs make.** The wizard holds a copy of the state the two
+tabs share (`useApiSettingsState`) and builds no payload of its own:
+
+- _Continue_ → `setProviderCredential`, or `createCustomEndpoint` / `updateCustomEndpoint`. What
+  comes back refreshes the credential store and keeps the unsaved edits to the config set
+  (Phase 4's `rebase`). The active set is then moved to what was saved **in unsaved state only**
+  (`CHANGE_PROVIDER`) — unless it is already there, in which case its model is left alone.
+- _Start_ → `config.save` with the set's own fields, no credential.
+
+`buildCombinedSavePayload` — the one payload that carried both halves, and the reason
+`App.tsx` had a save handler — has no caller left.
+
+**Which model the second step starts on.** For a catalog provider, what a config set moved to it
+on the Model Sets tab starts on: the first of its preset list, or nothing for Ollama and for a
+provider that has only the catalog's list. For an endpoint, its Default model; failing that, the
+example model of the well-known service its address belongs to (§6.5); failing that, nothing, and
+the model is typed. The per-provider model memory of the config-set half means going back and
+forth between the steps loses nothing.
+
+**Continue asks for a key where one is needed.** The Settings dialogs save a credential without
+one — it may be on its way. The wizard exists to end on a setup that can start a chat, so it keeps
+the old dialog's rule: no key, no next step, unless the provider needs none or the endpoint is on
+this computer. The refusal is the save's own result, so it shows next to the fields like any
+other, and main is not asked.
+
+**Who tells the frame what a submit means.** The frame is one for both steps, so that it is not
+taken down and put up again when the step or the choice changes; the fields belong to whichever
+step is on screen. That step puts its submit into a ref of the wizard's while it renders — the
+way these files already keep a "latest value" (`applyLoadedRef`, the frame's `onCloseRef`). The
+wizard clears the ref on every pass, so with no step on screen a submit reaches nothing.
+
+**The two buttons.** The right-hand one is the frame's submit button in both steps, so Enter in a
+field is Continue or Start. While its own save is out it is busy, not `disabled` (Phase 4 step
+2's decision 5): refused, it is the button the user is still on. The second step's is a different
+element from the first's, and when the second step arrives focus is put on the step as a whole —
+from there Tab reaches the field, and a second Enter starts nothing. And because both steps have
+their buttons in the same two places, the second half of a double click is ignored: a double
+click on Continue would otherwise land on Start and save a model the user was never shown, and
+one on Back would land on Cancel.
+
+**One copy of the settings state at a time.** The wizard's copy is its own — it is opened from
+outside Settings. So Settings is not drawn while the wizard is open (`settingsOnScreen`,
+`App.tsx`), whatever asks for it meanwhile: the application menu has a shortcut that does, and a
+panel drawn then would hold a copy the wizard's later saves never reach. It is drawn when the
+wizard has closed, from what main then holds. Everything that follows "Settings is open" — the
+collapsed sidebar, the hidden context panel — follows that same value, so a request for Settings
+moves nothing under the wizard either. The wizard asks main for the config afresh each
+time it opens, as the tabs do, rather than taking the app store's: handed that, it would reload —
+and drop the unsaved move of the config set — the moment its own first save changed the store.
+
+##### Behaviour that changed
+
+- **The first-run dialog is two steps**, and both are saved separately: a key, then a model.
+- **Any provider can be set up from it**, not six; an existing custom endpoint is chosen by name.
+- **A key can be tried before Continue**, with the check the Settings dialogs have.
+- **Escape closes it, Tab stays inside it, Enter goes on**, and focus returns to where it was.
+- **With another config set usable, the notice's button opens Settings → Model Sets** instead of
+  a second copy of the settings screen.
+- **Closing after the first step keeps the key** and leaves the config set as it was.
+- **Enter in the search box of a list never submits a form**, and **Escape closes an open list
+  before the dialog around it** — in every dialog drawn in the frame.
+
+##### Tests
+
+| File                                       | Tests | Covers                                                                                                                                                                        |
+| ------------------------------------------ | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/first-run-wizard-view.test.ts`      | 26    | **new** — the list, what it opens on, what an entry stands for, where a set points, the start model, the key rule                                                             |
+| `tests/first-run-wizard-render.test.ts`    | 62    | **new** — first render of both steps for a range of configs; what Continue and Start send; the two buttons; what opens the wizard                                             |
+| `tests/credential-dialog-view.test.ts`     | 33    | +7 — what a provider's dialog opens on                                                                                                                                        |
+| `tests/settings-dialog-save.test.ts`       | 17    | +4 — Escape with a list open                                                                                                                                                  |
+| `tests/api-settings-i18n.test.ts`          | 13    | +1 — three more source files scanned; the wizard's texts in all four languages, same placeholders, none unused                                                                |
+| `tests/config-modal-claude-layout.test.ts` | —     | **deleted** (2): it read the old dialog's markup                                                                                                                              |
+| 3 existing files                           | —     | four tests that read the old dialog's or the tab's source text now read where the rule is: `api-settings-tabs-render`, `config-ipc-mutation-contract`, `provider-guidance-ui` |
+
+**Gates:** typecheck clean; `npm test` **4028 passed / 251 files** (3930 / 250 before); lint 0
+errors, 15 warnings — the 16 from before less the one on the removed `handleConfigSave`.
+
+**Verification beyond "tests pass":** 97 mutations of the new rules, one at a time, each against
+the whole suite. 96 were caught at once. One survived and was informative: with the Back button
+wired to close the wizard, nothing failed — no test can press a button, and none read which of
+the two left-hand buttons does what. A test now does, for Cancel as well; both mutations fail.
+
+**Not reachable by a test:** anything that needs a key press, a click or an effect — where focus
+lands when a step or the choice changes, Enter and Escape themselves, the second half of a double
+click, whether an open list has room, and the config the wizard asks main for when it opens.
+These are the manual pass. So is one line the suite cannot tell from its absence: the wizard
+clears the step's submit on every pass, which only shows over two passes, and a first render is
+one.
+
+**External review: approved on the first run, and again on the second with nothing left.**
+Reviewed as one piece (159,780 characters, then 162,502) from a scratch clone, so the real index
+was never staged. Two runs of the cap of five.
+
+| Run | Result                                                |
+| --- | ----------------------------------------------------- |
+| 1   | **approved** — 1 medium, 1 low                        |
+| 2   | **approved** — no remarks; "no code changes required" |
+
+Each remark of run 1 was checked against the code before anything was changed:
+
+- **Not real — "Back stays enabled while Start is saving".** The remark took the busy mark for
+  something that arrives a render late. From the press of Start to the request to main nothing is
+  awaited, and the config-set half marks itself as saving before its first `await`
+  (`saveSet`, `useModelSets.ts` — outside the lines the reviewer was shown). React draws a state
+  change made in a click, a key press or a form submit before the next one is delivered, so Back
+  and the frame's close are off by the time anything else can be pressed. No guard was added for
+  a moment that does not exist — and one would not have stopped the save, which main has by then
+  been asked for. A test now reads the four stretches of source between the press and the mark
+  and fails if an `await` appears in any of them.
+- **Followed up, with a different fix — "the context panel now shows behind the wizard".** The
+  suggested fix was to go back to hiding it whenever Settings is asked for; with the wizard open
+  that would make the menu shortcut hide a panel that is on screen — the movement the remark was
+  about. What did move was something it did not name: the sidebar, which collapsed whenever
+  Settings was asked for, drawn or not. That was real. The request for Settings is now read in one
+  place, where "Settings is on screen" is worked out, and the panel, the context panel and the
+  sidebar all follow that.
+
+The facts about code outside the changed lines went into the script's context argument on both
+runs — what step B removes and why it is still in the tree, the six decisions, what the reused
+state functions guarantee — and on the second also what had been done with each remark and why.
+
+**Gates after the review:** typecheck clean; `npm test` **4028 passed / 251 files**; lint 0
+errors, the same 15 warnings. Four more mutations, of the review fixes, are among the 97 above.
+
+**Noticed and left alone:**
+
+- **Everything step B removes is still in the tree and used by no screen**: `useApiConfigState`,
+  `useProviderCredentials`, most of `provider-credentials-state.ts`, `buildCombinedSavePayload`,
+  the `config.test` chain, `ProviderPicker`, the table layout of the setups card, and the texts
+  only the old dialog showed. `tests/api-config-state-render.test.ts` still has a test named for
+  "the interface the first-run dialog is written against"; the dialog no longer uses it.
+- **A fresh install is still led to Settings first.** The welcome screen's link opens Providers
+  and the wizard is reached only through the notice (decision 3) — so the screen that teaches
+  "a key, then a model" is seen by someone who tried to send a message first.
+- **The notice still says "API Settings"** (`api.configRequiredActiveSet`,
+  `api.openSettingsAction`), the name of a screen that has been two tabs since Phase 4. It reads
+  correctly for both places its button now leads to, and was left.
+- **A provider that has only the catalog's model list starts the second step with nothing
+  picked**, as a config set moved to it on the Model Sets tab does. The connection check's rule
+  falls back to the first model the provider lists; the model field's does not.
+- `providerDialogValues` carries one condition over verbatim that today's data never exercises:
+  a native provider has no preset, so "no key hint for a native provider" holds with or without
+  it.
+- `SettingsDialogFrame` stays in `components/settings/`, though the wizard is drawn in it from
+  outside Settings.
+- `README.md` and `AI_FRONTEND.md` still list the old files, and `CHANGELOG.md` has no entry for
+  the wizard yet: Phase 6, with step B's removals.
+
+**Not read by anyone who knows the language:** the seven new Chinese texts.
+
+**Manual pass (2026-10-07).** In two parts, because the wizard shows only when nothing at all is
+set up — and the user's settings have config sets on gateways on this computer, which are usable
+without a key.
+
+_Part 1, the wizard, on an empty data folder._ The user's whole data folder was renamed aside and
+an empty one put in its place, holding only the `.brand` marker: without that the app would have
+adopted the older `open-cowork` folder next to it, old settings file and keys included
+(`migrate-legacy-data.ts`). An empty settings file inside the real folder was not an option — it
+would have started the memory system on its defaults over the user's real memory store. Every key
+typed was made up, and no request went anywhere but to a port nothing listens on. Afterwards the
+real folder was put back and compared with a fingerprint taken before: the same 2372 files, the
+same bytes, the settings file's checksum equal.
+
+Clicks and key presses were the browser's own input, sent through the debugging port; an event
+recorder put into the page showed what each press had hit. Seen working, with no error from the
+page or in the log:
+
+- **It opens from the notice's button** when nothing is set up: 43 ms on the first opening of a
+  freshly started app, 4 ms afterwards. Focus is in the key field.
+- **The list**: 36 entries on a fresh install — "Add endpoint", then the whole catalog — open
+  inside the dialog and not cut off. **Escape with the list open closes the list and leaves the
+  wizard**, with focus in the list's search box and with focus on its button alike. **Enter in
+  the search box with nothing matching does nothing** — no step, no save.
+- **Choosing another entry** by keyboard or by a click puts the new fields on screen with focus in
+  their first field. "Add endpoint" brings the endpoint's five fields and the setups list;
+  "Apply" fills protocol, address and model, folds the list away and puts focus on its heading.
+- **The hint towards a catalog provider** in its wording for a list, and its button moves the
+  list to that provider with focus in the key field. In the Providers tab's dialog the same
+  address still gets the tab's wording.
+- **Continue without a key**: "API key is required" next to the fields, focus still on Continue,
+  nothing sent. **With a key, by Enter in the field**: one `setProviderCredential` in the log —
+  the provider's id only — and the second step, with focus on the step as a whole.
+- **A double click on Continue** saved the credential once and stopped on the second step: the
+  second press reached Start — it took focus — and started nothing. **A double click on Back**
+  stopped on the first step.
+- **The second step**: the model field, the provider's name, the line about the config set. Its
+  list of 386 models opens whole, with 41 px to spare, and the body does not scroll — the room
+  finding 8 reserved is enough. Escape with it open closes the list only. Back returns to the
+  first step with the saved key in its field.
+- **Settings asked for from outside with the wizard open** (the request the menu shortcut makes,
+  sent through the navigation server): not drawn, the sidebar where it was. It appeared, with the
+  sidebar collapsed, when the wizard closed.
+- **A connection check** from the first step against an address nothing listens on: five steps
+  drawn, a translated failure at the connection step, the model named beforehand, focus still on
+  the button, nothing saved.
+- **The two saves, in the log.** For an endpoint, Continue is `Creating custom endpoint` and
+  leaves the config set on the provider it had (main re-applied that provider's environment).
+  Start, by Enter in the model field, is one `Saving config` with the active set's id, `custom`,
+  the endpoint's id, the model, the two limits and the thinking fields — no credential. The
+  wizard closed and the app reported itself configured.
+- **With another config set usable and the active one not**, the notice's button opened
+  Settings → Model Sets, which showed its "no key" warning; no wizard.
+- **An endpoint that exists** is in the list by name with its protocol, and choosing it shows its
+  stored fields without the setups list.
+
+One thing measured differently from what was written beforehand: the dialog is not the same
+height in both steps — 590 px for a provider's key, 565 px for the model. The minimum height
+keeps the second step from shrinking to a strip; it does not make the two equal. The comment that
+said otherwise was corrected after the review and is the only text of step A not reviewed.
+
+_Part 2, what earlier passes left open, on the user's real settings_ — backed up first, restored
+afterwards with the checksum equal, the app's language put back to Russian. No connection check
+was run and no credential saved.
+
+- **A second start on a settings file that is already converted.** The first start converted the
+  1.0.8 file again, 12,305 → 5,841 bytes. The file's checksum then changed on the next start with
+  the size the same: the store is encrypted and written at every start, so the bytes differ each
+  time. Compared by content instead — a fingerprint of the config as the app reads it, taken
+  after the second start and after a third: identical, timestamps of every config set and
+  endpoint included. A start on a converted file changes nothing.
+- **The picker in the chat header**: six config sets as `name · model`, 220 px wide.
+- **Deleting a config set**: a set created for the purpose, the confirmation naming it, then six
+  sets again with the earlier one active and "deleted" said.
+- **Eight of the ten Hungarian texts inside the two dialogs** were put on screen and captured:
+  the dropped-key notice on a row and in its dialog, the check's heading and what it says
+  beforehand with a model and without one, the search hint in Ollama's dialog, the hint and its
+  button in the endpoint dialog. The other two are what the check says after it has passed, and
+  no check that could pass was run.
+
+**Not exercised:** the search for Ollama with one running (none was); Enter while a character is
+being composed; the menu shortcut itself (its request was sent another way). **Not read by anyone
+who knows the language:** the seven new Chinese texts. The Russian and Hungarian texts of the
+wizard, and the Hungarian ones of the dialogs, were captured as pictures for the user to read.
+
+**Noticed in the pass**, none of it the wizard's doing:
+
+- **The notice that leads to the wizard is on screen for six seconds** (`GlobalNoticeToast`).
+  Its button is the only way in.
+- **A hint under a typed model is in English in every language** — "Use the exact model ID for
+  the selected protocol or endpoint" comes from `getModelInputGuidance` untranslated. It has
+  been on the Model Sets tab; the wizard's second step now shows it too.
+- **On a first run the key field's dialog says "Used by: Default"**, which is true and reads
+  oddly before anything has been set up.
+- **The delete button of a config set has no name** — an icon alone — and pressing it, or
+  confirming, leaves focus on nothing: the case step 2 of Phase 4 fixed in the dialogs, in a
+  component neither phase touched.
+- **A fresh profile logs an error from the skills watcher** — a loop of symbolic links under
+  `claude/skills/knowledge-search`.
+- **After `location.reload()` through the debugging port, input sent through it no longer
+  reaches the page.** It looked for a while like a wizard that would not open; the recorder
+  showed that no press had arrived at all. A tooling fact, not the app's.
 
 ### Phase 6 — docs
 

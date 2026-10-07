@@ -629,6 +629,15 @@
       "endpointRequired": "请先选择一个自定义端点",
       "keyMissing": "尚未为此提供商保存密钥。请在“提供商”中添加。"
     },
+    "firstRun": {
+      "stepProvider": "第 1 步（共 2 步）· 提供商",
+      "stepModel": "第 2 步（共 2 步）· 模型",
+      "modelIntro": "模型保存在配置方案“{{set}}”中。之后可在“设置 → 模型方案”中更改，或添加其他配置方案。",
+      "continue": "继续",
+      "back": "返回",
+      "catalogProviderHint": "这是 {{provider}} 的地址，它在上方列表中有自己的条目。请在那里选择，而不是添加为自定义端点。",
+      "chooseCatalogProvider": "选择 {{provider}}"
+    },
     "providerHints": {
       "openrouter": {
         "keyHint": "从 openrouter.ai/keys 获取"

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const configModalPath = path.resolve(process.cwd(), 'src/renderer/components/ConfigModal.tsx');
 // The settings tabs live in components/settings/; the dialogs they open sit beside the panel.
 const settingsPanelPath = path.resolve(process.cwd(), 'src/renderer/components/SettingsPanel.tsx');
 const settingsDir = path.resolve(process.cwd(), 'src/renderer/components/settings');
@@ -12,12 +11,21 @@ const settingsPanelContent = [
 ].join('\n');
 
 describe('provider guidance UI wiring', () => {
-  it('wires shared guidance UI into ConfigModal', () => {
-    const source = fs.readFileSync(configModalPath, 'utf8');
-    expect(source).toContain('CommonProviderSetupsCard');
-    expect(source).toContain('GuidanceInlineHint');
-    expect(source).toContain('onApplySetup={applyCommonProviderSetup}');
-    expect(source).toContain('friendlyTestDetails');
+  it('gives the first-run wizard the guidance of the endpoint dialog, not a copy of it', () => {
+    // The old first-run dialog drew the setups card and the hints itself. The
+    // wizard's first step is the inside of the custom-endpoint dialog — its
+    // state and its fields — so what is checked for the dialog below holds for
+    // the wizard too.
+    const read = (file: string) =>
+      fs.readFileSync(path.resolve(process.cwd(), 'src/renderer/components', file), 'utf8');
+    const steps = read('FirstRunWizardSteps.tsx');
+
+    expect(steps).toContain('useCustomEndpointDialog({');
+    expect(steps).toContain('<CustomEndpointFields form={form} />');
+    for (const file of ['ConfigModal.tsx', 'FirstRunWizard.tsx', 'FirstRunWizardSteps.tsx']) {
+      expect(read(file), file).not.toContain('CommonProviderSetupsCard');
+      expect(read(file), file).not.toContain('GuidanceInlineHint');
+    }
   });
 
   it('keeps the diagnostics panel in Settings, on the tab where a config set is edited', () => {
@@ -66,12 +74,18 @@ describe('provider guidance UI wiring', () => {
     expect(providers).toContain('setProviderToOpen(provider);');
   });
 
-  it('keeps the table layout of the setups card for the wide first-run dialog', () => {
-    const card = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/renderer/components/ProviderGuidance.tsx'),
-      'utf8'
-    );
-    expect(card).toContain("layout = 'table',");
-    expect(fs.readFileSync(configModalPath, 'utf8')).not.toContain('layout="list"');
+  it('draws the setups as a list wherever they are drawn', () => {
+    // The six-column table was for the wide first-run dialog. No screen asks
+    // for it since that dialog became the wizard; the layout itself is still
+    // in the card and goes with the rest of the old form.
+    const components = path.resolve(process.cwd(), 'src/renderer/components');
+    const users = fs
+      .readdirSync(components, { recursive: true, encoding: 'utf8' })
+      .filter((file) => file.endsWith('.tsx') && !file.endsWith('ProviderGuidance.tsx'))
+      .map((file) => ({ file, source: fs.readFileSync(path.join(components, file), 'utf8') }))
+      .filter(({ source }) => source.includes('<CommonProviderSetupsCard'));
+
+    expect(users.map(({ file }) => file)).toEqual(['CustomEndpointFields.tsx']);
+    expect(users[0].source).toContain('layout="list"');
   });
 });

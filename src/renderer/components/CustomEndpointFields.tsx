@@ -40,6 +40,9 @@ const ADDRESS_HINT_KEY: Record<CustomProtocolType, string> = {
 export function CustomEndpointFields({ form }: CustomEndpointFieldsProps) {
   const { t } = useTranslation();
   const { values, patch, isSaving } = form;
+  // In the first-run wizard the provider is an entry of the list above these
+  // fields, not an entry on a tab, and the hint has to say so.
+  const catalogProviderInList = form.catalogProviderAt === 'list';
 
   return (
     <>
@@ -127,7 +130,9 @@ export function CustomEndpointFields({ form }: CustomEndpointFieldsProps) {
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
             <div className="space-y-1.5">
               <p className="leading-5">
-                {t('api.providers.catalogProviderHint', { provider: form.catalogProviderName })}
+                {catalogProviderInList
+                  ? t('api.firstRun.catalogProviderHint', { provider: form.catalogProviderName })
+                  : t('api.providers.catalogProviderHint', { provider: form.catalogProviderName })}
               </p>
               <button
                 type="button"
@@ -135,7 +140,9 @@ export function CustomEndpointFields({ form }: CustomEndpointFieldsProps) {
                 disabled={isSaving}
                 className="rounded-lg border border-warning/40 px-2.5 py-1 font-medium text-text-primary hover:bg-warning/10 disabled:opacity-50 transition-colors"
               >
-                {t('api.providers.openCatalogProvider', { provider: form.catalogProviderName })}
+                {catalogProviderInList
+                  ? t('api.firstRun.chooseCatalogProvider', { provider: form.catalogProviderName })
+                  : t('api.providers.openCatalogProvider', { provider: form.catalogProviderName })}
               </button>
             </div>
           </div>

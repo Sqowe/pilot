@@ -189,13 +189,19 @@ describe('what a provider dialog opens on', () => {
     // The dialog is closed at first render, so its wiring is checked in the
     // source: fed from `persistedCredentialFor`, an untouched Save would store
     // the provider's usual address as if the user had typed it.
-    const source = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/renderer/components/settings/SettingsProviders.tsx'),
-      'utf8'
-    );
+    //
+    // The values are worked out in one place for the tab's dialog and for the
+    // first step of the first-run wizard (`providerDialogValues`, whose result
+    // is checked in `credential-dialog-view.test.ts`); the tab only passes them on.
+    const read = (file: string) => fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+    const tab = read('src/renderer/components/settings/SettingsProviders.tsx');
+    const rule = read('src/renderer/hooks/credential-dialog-view.ts');
 
-    expect(source).toContain('storedProviderCredential(entry.id, credentials.providerCredentials)');
-    expect(source).not.toContain('persistedCredentialFor');
+    expect(tab).toContain('providerDialogValues({');
+    expect(tab).toContain('{...values}');
+    expect(tab).not.toContain('persistedCredentialFor');
+    expect(rule).toContain('storedProviderCredential(entry.id, credentials.providerCredentials)');
+    expect(rule).not.toContain('persistedCredentialFor');
   });
 });
 

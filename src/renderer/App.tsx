@@ -24,7 +24,6 @@ import { SandboxSyncToast } from './components/SandboxSyncToast';
 import { GlobalNoticeToast } from './components/GlobalNoticeToast';
 import { WorkspaceOrphanCleanupModal } from './components/WorkspaceOrphanCleanupModal';
 import { PanelErrorBoundary } from './components/PanelErrorBoundary';
-import type { AppConfig } from './types';
 import type { GlobalNoticeAction } from './store';
 
 const ChatView = lazy(() =>
@@ -64,7 +63,14 @@ function App() {
   const systemDarkMode = useSystemDarkMode();
   const { showSettings } = useSettingsState();
   const { sidebarCollapsed } = useLayoutState();
-  const { showConfigModal, isConfigured, appConfig } = useConfigModalState();
+  const { showConfigModal, isConfigured } = useConfigModalState();
+  // The first-run wizard holds a copy of the settings state of its own, as the
+  // Settings panel does. Settings is not drawn under it — whatever asks for it
+  // meanwhile, and the menu shortcut can — so there are never two live copies,
+  // one of them missing what the other has just saved. It is drawn, from what
+  // main then holds, once the wizard has closed. Everything that follows
+  // "Settings is open" follows this, so nothing moves under the wizard either.
+  const settingsOnScreen = showSettings && !showConfigModal;
   const globalNotice = useGlobalNotice();
   const workspaceOrphans = useAppStore((s) => s.workspaceOrphans);
   const showOrphanCleanup = useAppStore((s) => s.showOrphanCleanup);
@@ -75,8 +81,6 @@ function App() {
 
   // Actions are still pulled directly from the store
   const setShowConfigModal = useAppStore((s) => s.setShowConfigModal);
-  const setIsConfigured = useAppStore((s) => s.setIsConfigured);
-  const setAppConfig = useAppStore((s) => s.setAppConfig);
   const clearGlobalNotice = useAppStore((s) => s.clearGlobalNotice);
   const setSandboxSetupComplete = useAppStore((s) => s.setSandboxSetupComplete);
   const setShowSettings = useAppStore((s) => s.setShowSettings);
@@ -118,7 +122,7 @@ function App() {
 
   // Auto-collapse sidebar when Settings is open, restore on close
   useEffect(() => {
-    if (showSettings) {
+    if (settingsOnScreen) {
       sidebarBeforeSettings.current = !sidebarCollapsed;
       setSidebarCollapsed(true);
     } else if (sidebarBeforeSettings.current) {
@@ -126,34 +130,7 @@ function App() {
       sidebarBeforeSettings.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showSettings]);
-
-  // Handle config save
-  const handleConfigSave = useCallback(
-    async (newConfig: Partial<AppConfig>) => {
-      if (!isElectron) {
-        console.log('[App] Browser mode - config save simulated');
-        return;
-      }
-
-      // `config.save` signals failure two ways: a rejection (store-level errors)
-      // and a `success: false` result (main's httpProxy validation, which carries
-      // no `config`). Neither was handled here before, so a failed save silently
-      // did nothing.
-      try {
-        const result = await window.electronAPI.config.save(newConfig);
-        if (!result.success) {
-          console.error('[App] Config save rejected:', result.error);
-          return;
-        }
-        setIsConfigured(Boolean(result.config?.isConfigured));
-        setAppConfig(result.config);
-      } catch (saveError) {
-        console.error('[App] Config save failed:', saveError);
-      }
-    },
-    [setIsConfigured, setAppConfig]
-  );
+  }, [settingsOnScreen]);
 
   // Handle config modal close
   const handleConfigClose = useCallback(() => {
@@ -168,7 +145,15 @@ function App() {
   const handleGlobalNoticeAction = useCallback(
     (action: GlobalNoticeAction) => {
       if (action === 'open_api_settings') {
-        setShowConfigModal(true);
+        if (isConfigured) {
+          // Another config set can start a chat and the active one cannot.
+          // That is a config set to edit, on the tab where sets are edited.
+          useAppStore.getState().setSettingsTab('modelSets');
+          setShowSettings(true);
+        } else {
+          // Nothing is set up at all: the first-run wizard.
+          setShowConfigModal(true);
+        }
       } else if (action === 'navigate_settings_skills') {
         // Set the settings tab to skills so the panel opens to the right section
         useAppStore.getState().setSettingsTab('skills');
@@ -179,7 +164,7 @@ function App() {
       }
       clearGlobalNotice();
     },
-    [clearGlobalNotice, setShowConfigModal, setShowSettings]
+    [clearGlobalNotice, isConfigured, setShowConfigModal, setShowSettings]
   );
 
   // Determine if we should show the sandbox setup dialog
@@ -200,7 +185,7 @@ function App() {
 
         {/* Main Content Area */}
         <main className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden bg-background">
-          {showSettings ? (
+          {settingsOnScreen ? (
             <PanelErrorBoundary
               name="SettingsPanel"
               resetKey="settings"
@@ -226,7 +211,7 @@ function App() {
         </main>
 
         {/* Context Panel - only show when in session and not in settings */}
-        {activeSessionId && !showSettings && (
+        {activeSessionId && !settingsOnScreen && (
           <PanelErrorBoundary
             name="ContextPanel"
             resetKey={activeSessionId}
@@ -248,13 +233,7 @@ function App() {
       {/* Config Modal */}
       <PanelErrorBoundary name="ConfigModal" fallback={null}>
         <Suspense fallback={null}>
-          <ConfigModal
-            isOpen={showConfigModal}
-            onClose={handleConfigClose}
-            onSave={handleConfigSave}
-            initialConfig={appConfig}
-            isFirstRun={!isConfigured}
-          />
+          <ConfigModal isOpen={showConfigModal} onClose={handleConfigClose} />
         </Suspense>
       </PanelErrorBoundary>
 

@@ -39,6 +39,12 @@ export interface CustomEndpointDialogProps {
   onSave: (values: EndpointFormValues) => Promise<CredentialCallResult>;
   /** Leave this dialog for the given catalog provider's own. */
   onOpenProvider: (provider: ProviderType) => void;
+  /**
+   * Where a catalog provider is to be found from here, for the wording of the
+   * hint that sends an address there: its entry on the Providers tab (the
+   * default), or the list these fields sit under in the first-run wizard.
+   */
+  catalogProviderAt?: 'tab' | 'list';
   onClose: () => void;
 }
 
@@ -173,6 +179,7 @@ export function useCustomEndpointDialog(props: CustomEndpointDialogProps) {
     protocolHintTone: guidance.protocolGuidanceTone,
     addressHint: catalogProvider ? '' : guidance.baseUrlGuidanceText,
     catalogProviderName,
+    catalogProviderAt: props.catalogProviderAt ?? 'tab',
     openCatalogProvider: () => {
       if (catalogProvider) {
         onOpenProvider(catalogProvider);

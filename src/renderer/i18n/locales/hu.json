@@ -631,6 +631,15 @@
       "endpointRequired": "Előbb válasszon egyéni végpontot",
       "keyMissing": "Ehhez a szolgáltatóhoz még nincs mentett kulcs. Adja meg a Szolgáltatók lapon."
     },
+    "firstRun": {
+      "stepProvider": "1. lépés a 2-ből · Szolgáltató",
+      "stepModel": "2. lépés a 2-ből · Modell",
+      "modelIntro": "A modell a(z) „{{set}}” konfigurációs készletbe kerül. Később a Beállítások → Modellkészletek lapon módosíthatja, vagy vehet fel további készleteket.",
+      "continue": "Tovább",
+      "back": "Vissza",
+      "catalogProviderHint": "Ez a(z) {{provider}} címe, amely a fenti listában saját néven szerepel. Ott válassza ki, ne egyéni végpontként adja hozzá.",
+      "chooseCatalogProvider": "{{provider}} kiválasztása"
+    },
     "providerHints": {
       "openrouter": {
         "keyHint": "Szerezze be az openrouter.ai/keys oldalon"

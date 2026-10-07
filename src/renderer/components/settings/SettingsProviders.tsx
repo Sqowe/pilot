@@ -3,13 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { AlertCircle, Loader2, Plus } from 'lucide-react';
 import type { CustomEndpoint, ProviderType } from '../../types';
 import { getCatalogEntry, type ProviderCatalogEntry } from '../../../shared/provider-catalog';
-import {
-  CUSTOM_ENDPOINT_LIMIT,
-  formShapeFor,
-  modelPresetFor,
-  protocolOf,
-  providerShowsBaseUrl,
-} from '../../hooks/api-config-shared';
+import { CUSTOM_ENDPOINT_LIMIT } from '../../hooks/api-config-shared';
 import {
   buildCreateEndpointPayload,
   buildEndpointRows,
@@ -18,14 +12,10 @@ import {
   buildUpdateEndpointPayload,
   createdEndpointId,
   droppedKeySetNames,
-  providerConflictTarget,
-  providerNeedsKey,
   setsUsingEndpoint,
-  setsUsingProvider,
-  storedProviderCredential,
   type EndpointFormValues,
 } from '../../hooks/api-settings-view';
-import { providerCheckModel } from '../../hooks/credential-dialog-view';
+import { providerDialogValues } from '../../hooks/credential-dialog-view';
 import { CustomEndpointDialog } from '../CustomEndpointDialog';
 import { ProviderConfigDialog } from '../ProviderConfigDialog';
 import { CATEGORY_LABEL_KEY } from '../ProviderPicker';
@@ -196,35 +186,19 @@ export function SettingsProviders({ isActive }: SettingsProvidersProps) {
     });
 
   const renderProviderDialog = (entry: ProviderCatalogEntry) => {
-    const credential = storedProviderCredential(entry.id, credentials.providerCredentials);
-    const showsBaseUrl = providerShowsBaseUrl(entry.id, formShapeFor(providerCatalog, entry.id));
-    const preset = modelPresetFor(entry.id, 'anthropic', presets);
+    const values = providerDialogValues({
+      entry,
+      presets,
+      catalog: providerCatalog,
+      credentials,
+      configSets,
+      activeConfigSetId,
+    });
     return (
       <ProviderConfigDialog
         key={entry.id}
-        entry={entry}
-        apiKey={credential.apiKey}
-        baseUrl={credential.baseUrl}
-        showsBaseUrl={showsBaseUrl}
-        baseUrlPlaceholder={preset.baseUrl || entry.baseUrl || ''}
-        needsKey={providerNeedsKey(entry.id, providerCatalog)}
-        keyPlaceholder={entry.keyPlaceholder || preset.keyPlaceholder}
-        keyHintKey={entry.kind === 'native' ? undefined : preset.keyHint || undefined}
-        usedBy={setsUsingProvider(entry.id, configSets).map((set) => set.name)}
-        droppedKeySets={droppedKeySetNames(
-          providerConflictTarget(entry.id),
-          credentials.credentialConflicts,
-          configSets
-        )}
-        protocol={protocolOf(entry.id, 'anthropic')}
-        checkModel={providerCheckModel({
-          provider: entry.id,
-          configSets,
-          activeConfigSetId,
-          presets,
-          catalog: providerCatalog,
-        })}
-        onSave={(input) => saveProvider(entry, showsBaseUrl, input)}
+        {...values}
+        onSave={(input) => saveProvider(entry, values.showsBaseUrl, input)}
         onClose={() => setDialog(null)}
       />
     );

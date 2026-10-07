@@ -1,5 +1,6 @@
 /**
- * The texts of the Providers and Model Sets tabs exist in every language.
+ * The texts of the Providers and Model Sets tabs, and of the first-run wizard
+ * built from their parts, exist in every language.
  *
  * A key that is missing shows up as the raw key on screen, and no test clicks
  * these screens — so the keys the new code asks for are read out of its source
@@ -13,6 +14,8 @@ const LOCALES = ['en', 'zh', 'ru', 'hu'] as const;
 const SOURCES = [
   'src/renderer/components/CustomEndpointDialog.tsx',
   'src/renderer/components/CustomEndpointFields.tsx',
+  'src/renderer/components/FirstRunWizard.tsx',
+  'src/renderer/components/FirstRunWizardSteps.tsx',
   'src/renderer/components/ProviderConfigDialog.tsx',
   'src/renderer/components/ProviderCredentialFields.tsx',
   'src/renderer/components/ProviderGuidance.tsx',
@@ -24,6 +27,7 @@ const SOURCES = [
   'src/renderer/components/settings/ProviderListRows.tsx',
   'src/renderer/components/settings/SettingsDialogFrame.tsx',
   'src/renderer/hooks/useModelSetForm.ts',
+  'src/renderer/hooks/useFirstRunWizard.ts',
   'src/renderer/hooks/useApiSettingsState.ts',
   'src/renderer/hooks/useCustomEndpointGuidance.ts',
   'src/renderer/hooks/credential-dialog-view.ts',
@@ -86,6 +90,26 @@ describe('texts of the Providers and Model Sets tabs', () => {
     expect(used).toContain('api.providers.ollamaSearchHint');
     expect(used).toContain('api.guidance.protocolMismatch');
     expect(used).toContain('api.localOllamaNotFound');
+    // The first-run wizard: its own seven texts, and the older ones it reuses.
+    for (const key of [
+      'api.firstRun.stepProvider',
+      'api.firstRun.stepModel',
+      'api.firstRun.modelIntro',
+      'api.firstRun.continue',
+      'api.firstRun.back',
+      'api.firstRun.catalogProviderHint',
+      'api.firstRun.chooseCatalogProvider',
+      'api.firstRunSubtitle',
+      'api.getStarted',
+      'api.testError.missing_key',
+    ]) {
+      expect(used, key).toContain(key);
+    }
+  });
+
+  it('adds nothing to the wizard section that no screen asks for', () => {
+    const wizardKeys = leafKeys(lookup(load('en'), 'api.firstRun') as Messages, 'api.firstRun.');
+    expect(wizardKeys.filter((key) => !used.includes(key))).toEqual([]);
   });
 
   it.each(LOCALES)('names the two tabs in %s', (locale) => {
@@ -119,7 +143,7 @@ describe('texts of the Providers and Model Sets tabs', () => {
 
   it('carries the same placeholders in every translation', () => {
     const english = load('en');
-    const sections = ['api.providers', 'api.modelSets'];
+    const sections = ['api.providers', 'api.modelSets', 'api.firstRun'];
     for (const section of sections) {
       for (const key of leafKeys(lookup(english, section) as Messages, `${section}.`)) {
         const expected = [...String(lookup(english, key)).matchAll(/\{\{(\w+)\}\}/g)]

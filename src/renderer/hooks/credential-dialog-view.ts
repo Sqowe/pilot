@@ -19,8 +19,22 @@ import {
   type CommonProviderSetup,
 } from '../../shared/api-provider-guidance';
 import { getCatalogEntry, type ProviderCatalogEntry } from '../../shared/provider-catalog';
-import { modelPresetFor } from './api-config-shared';
-import { setsUsingEndpoint, setsUsingProvider, type EndpointFormValues } from './api-settings-view';
+import {
+  formShapeFor,
+  modelPresetFor,
+  protocolOf,
+  providerShowsBaseUrl,
+} from './api-config-shared';
+import {
+  droppedKeySetNames,
+  providerConflictTarget,
+  providerNeedsKey,
+  setsUsingEndpoint,
+  setsUsingProvider,
+  storedProviderCredential,
+  type EndpointFormValues,
+  type PersistedCredentials,
+} from './api-settings-view';
 
 // ---------------------------------------------------------------------------
 // Ready-made setups, in the endpoint dialog
@@ -160,6 +174,61 @@ export function providerCheckModel(input: {
     getCatalogEntry(catalog, provider)?.modelOptions[0]?.id ||
     ''
   );
+}
+
+// ---------------------------------------------------------------------------
+// What a provider's dialog opens on
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything a catalog provider's dialog is given except what its Save does:
+ * the credential it opens on, which fields the provider has, who uses it, and
+ * the model its connection check tries.
+ *
+ * One rule for the two places that draw those fields — the Providers tab's
+ * dialog and the first step of the first-run wizard — so they cannot come to
+ * disagree about, say, which model a check tries.
+ *
+ * The credential is the one **stored** (`storedProviderCredential`), not the
+ * one a config set would run with: an address nobody gave is an empty field
+ * with the usual address as its hint, so that an untouched Save cannot store
+ * the provider's usual address as if the user had typed it.
+ */
+export function providerDialogValues(input: {
+  entry: ProviderCatalogEntry;
+  presets: ProviderPresets;
+  catalog: ProviderCatalogEntry[];
+  credentials: PersistedCredentials;
+  configSets: ApiConfigSet[];
+  activeConfigSetId: string;
+}) {
+  const { entry, presets, catalog, credentials, configSets, activeConfigSetId } = input;
+  const credential = storedProviderCredential(entry.id, credentials.providerCredentials);
+  const preset = modelPresetFor(entry.id, 'anthropic', presets);
+  return {
+    entry,
+    apiKey: credential.apiKey,
+    baseUrl: credential.baseUrl,
+    showsBaseUrl: providerShowsBaseUrl(entry.id, formShapeFor(catalog, entry.id)),
+    baseUrlPlaceholder: preset.baseUrl || entry.baseUrl || '',
+    needsKey: providerNeedsKey(entry.id, catalog),
+    keyPlaceholder: entry.keyPlaceholder || preset.keyPlaceholder,
+    keyHintKey: entry.kind === 'native' ? undefined : preset.keyHint || undefined,
+    usedBy: setsUsingProvider(entry.id, configSets).map((set) => set.name),
+    droppedKeySets: droppedKeySetNames(
+      providerConflictTarget(entry.id),
+      credentials.credentialConflicts,
+      configSets
+    ),
+    protocol: protocolOf(entry.id, 'anthropic'),
+    checkModel: providerCheckModel({
+      provider: entry.id,
+      configSets,
+      activeConfigSetId,
+      presets,
+      catalog,
+    }),
+  };
 }
 
 // ---------------------------------------------------------------------------

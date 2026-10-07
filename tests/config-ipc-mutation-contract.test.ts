@@ -357,18 +357,25 @@ describe('the store has no credential write path into a config set (§9.4)', () 
 });
 
 describe('call sites handle both failure modes', () => {
-  it('App.tsx catches rejections and checks the discriminant', () => {
+  it('App.tsx no longer saves a config: the first-run wizard saves as the Settings tabs do', () => {
+    // The old first-run dialog handed its save to a handler here, which once
+    // dropped a rejected save without a word. The wizard has no save of its
+    // own to get wrong: a credential goes through the calls of the shared
+    // settings state, which report a failure as a message, and the config set
+    // through the Model Sets form — whose `config.save` is checked below.
     const app = read('src/renderer/App.tsx');
-    const handler = app.slice(
-      app.indexOf('const handleConfigSave'),
-      app.indexOf('const handleConfigClose')
-    );
-    expect(handler).toContain('try {');
-    expect(handler).toContain('if (!result.success)');
-    expect(handler).toContain('catch (saveError)');
-    // The former bug: a bare `if (result.success)` wrapping the happy path, with
-    // no catch, so a rejected save silently did nothing.
-    expect(handler).not.toMatch(/if \(result\.success\) \{/);
+    expect(app).not.toContain('config.save(');
+    expect(app).not.toContain('handleConfigSave');
+
+    const wizard = read('src/renderer/hooks/useFirstRunWizard.ts');
+    expect(wizard).toContain('await saveProviderCredential(');
+    expect(wizard).toContain('await updateEndpoint(');
+    expect(wizard).toContain('await createEndpoint(');
+    expect(wizard).not.toContain('electronAPI');
+
+    const steps = read('src/renderer/components/FirstRunWizardSteps.tsx');
+    expect(steps).toContain('await handleSave({ silentSuccess: true })');
+    expect(steps).not.toContain('electronAPI');
   });
 
   it('SettingsGeneral surfaces a rejected httpProxy instead of reporting saved', () => {

@@ -179,6 +179,15 @@ export function SearchableCombobox({
   // Keyboard navigation within the list
   const handleSearchKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') {
+        // Always the list's own, with something to pick or not: this is a
+        // search box, and inside a form the browser would otherwise take Enter
+        // here for "submit the form".
+        e.preventDefault();
+        const focused = selectableItems[focusedIndex];
+        if (focused) handleSelect(focused.item.id);
+        return;
+      }
       if (selectableItems.length === 0) return;
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -186,10 +195,6 @@ export function SearchableCombobox({
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         setFocusedIndex((i) => Math.max(i - 1, 0));
-      } else if (e.key === 'Enter') {
-        e.preventDefault();
-        const focused = selectableItems[focusedIndex];
-        if (focused) handleSelect(focused.item.id);
       }
     },
     [selectableItems, focusedIndex, handleSelect]

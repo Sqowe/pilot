@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   canReturnFocusTo,
+  hasOpenPopup,
   useDialogSave,
   useSingleFlight,
 } from '../src/renderer/components/settings/SettingsDialogFrame';
@@ -139,6 +140,50 @@ describe('where focus goes when a settings dialog closes', () => {
     expect(frame).toMatch(/if \(opener && canReturnFocusTo\(opener\)\) \{\s+opener\.focus\(\);/);
     // And nowhere without asking.
     expect(frame.match(/opener\??\.focus\(\)/g)).toHaveLength(1);
+  });
+});
+
+describe('Escape in a dialog that has a list open', () => {
+  // The first-run wizard is drawn in this frame with a searchable list in it —
+  // the Settings dialogs have none. The list closes itself on Escape, but the
+  // frame hears the key first.
+  const panelWith = (found: unknown) => ({ querySelector: vi.fn(() => found as Element | null) });
+
+  it('belongs to the list', () => {
+    const panel = panelWith({});
+
+    expect(hasOpenPopup(panel)).toBe(true);
+    expect(panel.querySelector).toHaveBeenCalledWith('[aria-expanded="true"]');
+  });
+
+  it('belongs to the dialog when no list is open, or there is no dialog yet', () => {
+    expect(hasOpenPopup(panelWith(null))).toBe(false);
+    expect(hasOpenPopup(null)).toBe(false);
+  });
+
+  it('is left to the list before the frame stops the key or closes anything', () => {
+    const frame = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/renderer/components/settings/SettingsDialogFrame.tsx'),
+      'utf8'
+    );
+    const escape = frame.slice(
+      frame.indexOf("if (event.key === 'Escape') {"),
+      frame.indexOf("if (event.key !== 'Tab' || !panelRef.current) {")
+    );
+    const askedAt = escape.indexOf('if (hasOpenPopup(panelRef.current)) {');
+
+    expect(askedAt).toBeGreaterThan(-1);
+    expect(escape.slice(askedAt, escape.indexOf('event.stopPropagation();'))).toContain('return;');
+    expect(escape.indexOf('event.stopPropagation();')).toBeGreaterThan(askedAt);
+    expect(escape.indexOf('onCloseRef.current();')).toBeGreaterThan(askedAt);
+  });
+
+  it('is what the searchable list marks itself with while it is open', () => {
+    const combobox = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/renderer/components/SearchableCombobox.tsx'),
+      'utf8'
+    );
+    expect(combobox).toContain('aria-expanded={open}');
   });
 });
 

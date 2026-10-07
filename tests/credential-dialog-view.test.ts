@@ -20,6 +20,7 @@ import {
   isEndpointSetup,
   ollamaSearchNote,
   providerCheckModel,
+  providerDialogValues,
 } from '../src/renderer/hooks/credential-dialog-view';
 
 const presets = FALLBACK_PROVIDER_PRESETS;
@@ -430,5 +431,112 @@ describe('reporting a search for a local Ollama', () => {
     expect(ollamaSearchNote(undefined)).toEqual(notFound);
     // What main's handler returns when the search itself throws.
     expect(ollamaSearchNote([] as unknown as null)).toEqual(notFound);
+  });
+});
+
+describe("what a catalog provider's dialog opens on", () => {
+  // One rule for the Providers tab's dialog and the first step of the first-run
+  // wizard, which draw the same fields.
+  const anthropic = BUILTIN_ENTRIES.find((entry) => entry.id === 'anthropic')!;
+  const ollama = BUILTIN_ENTRIES.find((entry) => entry.id === 'ollama')!;
+  const nothingStored = { providerCredentials: {}, customEndpoints: [], credentialConflicts: [] };
+  const values = (input: Partial<Parameters<typeof providerDialogValues>[0]>) =>
+    providerDialogValues({
+      entry: anthropic,
+      presets,
+      catalog: fullCatalog,
+      credentials: nothingStored,
+      configSets: [set({})],
+      activeConfigSetId: 'default',
+      ...input,
+    });
+
+  it('is the key as it is stored', () => {
+    const opened = values({
+      credentials: { ...nothingStored, providerCredentials: { anthropic: { apiKey: 'sk-ant' } } },
+    });
+
+    expect(opened.entry).toBe(anthropic);
+    expect(opened.apiKey).toBe('sk-ant');
+    expect(opened.needsKey).toBe(true);
+    expect(opened.protocol).toBe('anthropic');
+  });
+
+  it('is an empty address where nobody gave one, with the usual one as the hint', () => {
+    // Opened on the address a config set would run with, an untouched Save
+    // would store the provider's usual address as if the user had typed it.
+    const opened = values({ entry: ollama });
+
+    expect(opened.showsBaseUrl).toBe(true);
+    expect(opened.baseUrl).toBe('');
+    expect(opened.baseUrlPlaceholder).toBe(presets.ollama.baseUrl);
+    expect(opened.baseUrlPlaceholder).not.toBe('');
+    expect(opened.needsKey).toBe(false);
+  });
+
+  it('is the address the user gave, where they gave one', () => {
+    const opened = values({
+      entry: ollama,
+      credentials: {
+        ...nothingStored,
+        providerCredentials: { ollama: { apiKey: '', baseUrl: ' http://box.lan:11434/v1 ' } },
+      },
+    });
+
+    expect(opened.baseUrl).toBe('http://box.lan:11434/v1');
+  });
+
+  it("has no address field for a provider whose address is not the user's to set", () => {
+    expect(values({}).showsBaseUrl).toBe(false);
+    expect(values({ entry: kimiCoding }).showsBaseUrl).toBe(false);
+  });
+
+  it('takes the key hints from the preset of a builtin provider, and none for a native one', () => {
+    const builtin = values({});
+    expect(builtin.keyPlaceholder).toBe(presets.anthropic.keyPlaceholder);
+    expect(builtin.keyHintKey).toBe(presets.anthropic.keyHint || undefined);
+
+    const native = values({ entry: { ...kimiCoding, keyPlaceholder: 'sk-kimi-…' } });
+    expect(native.keyPlaceholder).toBe('sk-kimi-…');
+    expect(native.keyHintKey).toBeUndefined();
+  });
+
+  it('says which config sets use the provider, and which lost a key of their own to it', () => {
+    const configSets = [
+      set({ id: 'default', name: 'Default', provider: 'anthropic' }),
+      set({ id: 'work', name: 'Work', provider: 'anthropic' }),
+      set({ id: 'local', name: 'Local', provider: 'ollama', model: 'llama3' }),
+    ];
+    const opened = values({
+      configSets,
+      credentials: {
+        ...nothingStored,
+        credentialConflicts: [{ target: 'anthropic', setIds: ['work'] }],
+      },
+    });
+
+    expect(opened.usedBy).toEqual(['Default', 'Work']);
+    expect(opened.droppedKeySets).toEqual(['Work']);
+    expect(values({ configSets, entry: ollama }).usedBy).toEqual(['Local']);
+    expect(values({ configSets, entry: ollama }).droppedKeySets).toEqual([]);
+  });
+
+  it('tries the model the connection-check rule gives for that provider', () => {
+    const configSets = [
+      set({ id: 'work', name: 'Work', provider: 'anthropic', model: 'claude-x' }),
+    ];
+
+    expect(values({ configSets, activeConfigSetId: 'work' }).checkModel).toBe('claude-x');
+    expect(values({ configSets: [set({ provider: 'openai', model: 'gpt-5.4' })] }).checkModel).toBe(
+      providerCheckModel({
+        provider: 'anthropic',
+        configSets: [set({ provider: 'openai', model: 'gpt-5.4' })],
+        activeConfigSetId: 'default',
+        presets,
+        catalog: fullCatalog,
+      })
+    );
+    // Ollama's models are whatever its server has: none until a set runs on it.
+    expect(values({ entry: ollama, configSets: [set({})] }).checkModel).toBe('');
   });
 });

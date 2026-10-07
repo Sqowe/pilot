@@ -209,9 +209,13 @@ export function parseProviderChoice(
 
 export interface ProviderChoice {
   id: string;
-  /** `no-endpoint` stands for a custom set that points at none; it cannot be picked. */
-  kind: 'endpoint' | 'provider' | 'no-endpoint';
-  /** The endpoint's name or the provider's; empty for `no-endpoint`, which the screen words. */
+  /**
+   * `no-endpoint` stands for a custom set that points at none; it cannot be
+   * picked. `new-endpoint` adds one — only the first-run wizard lists it, where
+   * the credential is entered in the same place it is chosen.
+   */
+  kind: 'endpoint' | 'provider' | 'no-endpoint' | 'new-endpoint';
+  /** The endpoint's name or the provider's; empty for the two the screen words itself. */
   label: string;
   group: 'endpoints' | ProviderCategory;
   /** An endpoint's protocol, or a provider's region tag. */

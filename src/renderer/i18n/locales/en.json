@@ -631,6 +631,15 @@
       "endpointRequired": "Choose a custom endpoint first",
       "keyMissing": "No key is saved for this provider yet. Add it in Providers."
     },
+    "firstRun": {
+      "stepProvider": "Step 1 of 2 · Provider",
+      "stepModel": "Step 2 of 2 · Model",
+      "modelIntro": "The model is saved in the config set “{{set}}”. You can change it later, or add other config sets, in Settings → Model Sets.",
+      "continue": "Continue",
+      "back": "Back",
+      "catalogProviderHint": "This is the address of {{provider}}, which is in the list above under its own name. Choose it there instead of adding a custom endpoint.",
+      "chooseCatalogProvider": "Choose {{provider}}"
+    },
     "providerHints": {
       "openrouter": {
         "keyHint": "Get from openrouter.ai/keys"

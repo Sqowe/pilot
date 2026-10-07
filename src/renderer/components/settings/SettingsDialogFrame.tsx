@@ -27,6 +27,8 @@ interface SettingsDialogFrameProps {
 }
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select, textarea';
+/** A list that a control inside the dialog has opened over it. */
+const OPEN_POPUP = '[aria-expanded="true"]';
 
 type DialogSaveResult = { ok: true } | { ok: false; error: string };
 
@@ -40,6 +42,14 @@ type DialogSaveResult = { ok: true } | { ok: false; error: string };
  */
 export function canReturnFocusTo(element: Pick<HTMLElement, 'getClientRects'> | null): boolean {
   return Boolean(element && element.getClientRects().length > 0);
+}
+
+/**
+ * Whether a control inside the dialog has a list open — a searchable picker's.
+ * Escape then belongs to that list, not to the dialog.
+ */
+export function hasOpenPopup(panel: Pick<HTMLElement, 'querySelector'> | null): boolean {
+  return Boolean(panel?.querySelector(OPEN_POPUP));
 }
 
 /**
@@ -101,9 +111,12 @@ export function useDialogSave(onClose: () => void, fallbackError: string) {
  * scrolling body and a footer for its buttons.
  *
  * Rendered into `document.body` so the Settings panel's own scrolling and
- * clipping cannot cut it off. Escape closes it, Tab stays inside it, and focus
- * returns to where it was when it closes. It does not close on a click outside:
- * a dialog here usually holds a key somebody has just typed.
+ * clipping cannot cut it off. Escape closes it — unless a list is open inside
+ * it, which that press closes instead — Tab stays inside it, and focus returns
+ * to where it was when it closes. It does not close on a click outside: a
+ * dialog here usually holds a key somebody has just typed.
+ *
+ * The first-run wizard is drawn in this frame too, from outside Settings.
  *
  * With `onSubmit` the body and footer are a real `<form>`, so Enter in a field
  * saves by the browser's own rule: not while the submit button is disabled,
@@ -154,6 +167,11 @@ export function SettingsDialogFrame({
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
+        if (hasOpenPopup(panelRef.current)) {
+          // That press closes the list. Taken here first, it would close the
+          // whole dialog around a list the user only meant to leave.
+          return;
+        }
         event.stopPropagation();
         if (!busyRef.current) {
           onCloseRef.current();

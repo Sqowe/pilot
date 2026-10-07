@@ -44,7 +44,12 @@ export function ProviderChoicePicker({
 
   const items: ComboboxItem[] = choices.map((choice) => ({
     id: choice.id,
-    label: choice.kind === 'no-endpoint' ? t('api.modelSets.noEndpoint') : choice.label,
+    label:
+      choice.kind === 'no-endpoint'
+        ? t('api.modelSets.noEndpoint')
+        : choice.kind === 'new-endpoint'
+          ? t('api.providers.addEndpoint')
+          : choice.label,
     group:
       choice.group === 'endpoints'
         ? t('api.providers.customEndpoints')
