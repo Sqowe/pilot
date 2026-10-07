@@ -1,9 +1,10 @@
 # Provider Credentials & Model Sets — Design & Implementation Plan
 
 **Created:** 2026-10-02
-**Status:** Design approved. **Phases 0, 1, 2a, 2b, 3, 4 complete** (Phase 3: 2026-10-05; Phase 4:
-2026-10-06, both steps built, reviewed and checked in the running app, shipped in app 1.0.9).
-**Phase 5 in progress.** Each phase stops for review.
+**Status:** **Implemented — all phases done 2026-10-07.** Phases 0–4 shipped in app 1.0.9
+(`b2c4d56b`, `330989ec`, `60d5277c`, `c381f8c3`, `b853c811`, `553c5da7`). Phase 5 — the first-run
+wizard and the removal of what only the old dialog used (`994043f3`, `91e55d9b`) — and Phase 6, the
+documents, are not in a release yet. §14 is the as-built summary.
 **Author:** AI-assisted design session
 **Baseline:** pi-ai / pi-coding-agent **0.87.1**, app **1.0.8** (HEAD `90136401`). Verified against
 source 2026-10-03; §13 records what the original 0.85.1/1.0.7 draft got wrong.
@@ -12,6 +13,14 @@ provider form with two concerns: _which providers exist and how they authenticat
 configured once) and _which model a config set uses_ (per-chat, chosen often).
 **Security classification:** **Medium.** Changes _where_ credentials live in the config schema, not
 _how_ they are protected — the encrypted `electron-store` boundary is unchanged (§9.1).
+
+> **Reading note.** §§1–6 and §§8–13 are the design and its plan as they were written and
+> approved, left intact. Their line references describe the code before each phase, and 11 of
+> the document's links point at three files that have since been deleted (`useApiConfigState.ts`,
+> `SettingsAPI.tsx`, `ProviderPicker.tsx`). What was built is recorded phase by phase in §7 — the
+> decisions taken with the user, what the read before each phase found, the tests, the reviews and
+> the manual passes — and summed up in §14, which also says where the build departed from the
+> design and lists everything that was noticed and left alone.
 
 ---
 
@@ -55,24 +64,24 @@ export interface ApiConfigSet {
 
 `ProviderProfileKey` is the slot space: 8 builtin keys (`openrouter`, `anthropic`, `openai`,
 `gemini`, `ollama`, `custom:anthropic`, `custom:openai`, `custom:gemini`) plus
-`native:<piProvider>` ([`config-store.ts:106`](../../src/main/config/config-store.ts#L106),
-[`provider-ids.ts`](../../src/shared/provider-ids.ts)). One slot per provider — the store is
+`native:<piProvider>` ([`config-store.ts:106`](../../../src/main/config/config-store.ts#L106),
+[`provider-ids.ts`](../../../src/shared/provider-ids.ts)). One slot per provider — the store is
 **already keyed by provider**; what is wrong is that the map is nested inside each config set
 instead of being global.
 
 Three consequences, each verified in source:
 
 1. **A new set starts with an empty key.** `buildBlankConfigSet()`
-   ([`config-store.ts:2036`](../../src/main/config/config-store.ts#L2036)) calls
+   ([`config-store.ts:2036`](../../../src/main/config/config-store.ts#L2036)) calls
    `cloneProfiles(undefined)`, which falls back to `defaultProfiles` — every one of which has
-   `apiKey: ''` ([`config-store.ts:438-479`](../../src/main/config/config-store.ts#L438)). Creating
+   `apiKey: ''` ([`config-store.ts:438-479`](../../../src/main/config/config-store.ts#L438)). Creating
    a second config set means pasting the same secret again.
 2. **Cloning multiplies the secret.** `cloneConfigSet()`
-   ([`config-store.ts:1952`](../../src/main/config/config-store.ts#L1952)) deep-copies the entire
+   ([`config-store.ts:1952`](../../../src/main/config/config-store.ts#L1952)) deep-copies the entire
    profile map, so one key exists in N sets and must be rotated in N places.
 3. **The form does not match the question being asked.** "Which model do I want for this chat?" and
    "what key do I have for Anthropic?" are answered by the same flat form, tracked by one dirty
-   signature ([`buildApiConfigDraftSignature`](../../src/renderer/hooks/useApiConfigState.ts#L520))
+   signature ([`buildApiConfigDraftSignature`](../../../src/renderer/hooks/useApiConfigState.ts#L520))
    and one Save button — so a model tweak can drag a key edit along with it.
 
 ### 1.3 What this change must not disturb
@@ -83,18 +92,18 @@ Three consequences, each verified in source:
   sets, and none reads `.profiles` or `activeProfileKey`. If the projection keeps its current
   shape, this design is main-process + renderer only.
 - **Config-set ids are referenced from SQLite** — `sessions.config_set_id` and
-  `scheduled_tasks.config_set_id` ([`database.ts:75,122`](../../src/main/db/database.ts#L75)),
-  plus [`SettingsSchedule.tsx:592`](../../src/renderer/components/settings/SettingsSchedule.tsx#L592),
-  [`ChatView.tsx:158`](../../src/renderer/components/ChatView.tsx#L158) and the Welcome screen. Set
+  `scheduled_tasks.config_set_id` ([`database.ts:75,122`](../../../src/main/db/database.ts#L75)),
+  plus [`SettingsSchedule.tsx:592`](../../../src/renderer/components/settings/SettingsSchedule.tsx#L592),
+  [`ChatView.tsx:158`](../../../src/renderer/components/ChatView.tsx#L158) and the Welcome screen. Set
   ids must survive migration unchanged.
 - **`apiKey`, `baseUrl`, `provider`, `customProtocol`, `activeProfileKey` are `DIRECT_READ_KEYS`**
-  ([`config-store.ts:415`](../../src/main/config/config-store.ts#L415)) — read straight from the
+  ([`config-store.ts:415`](../../../src/main/config/config-store.ts#L415)) — read straight from the
   store, bypassing `getAll()` normalization. Any new field must either be added there or kept out
   of hot read paths. **Decision: `providerCredentials` and `customEndpoints` stay out** — neither
   is on a hot read path, and `apiKey`/`baseUrl` already are.
 - **Exactly three files outside `config-store.ts` touch `.profiles` / `activeProfileKey`:**
   `useApiConfigState.ts` (78 references), `renderer/types/index.ts` (2, the mirrored types), and
-  [`ChatView.tsx:405`](../../src/renderer/components/ChatView.tsx#L405) (1 — the model-matching
+  [`ChatView.tsx:405`](../../../src/renderer/components/ChatView.tsx#L405) (1 — the model-matching
   fallback for sessions predating `configSetId`). That is the whole renderer blast radius.
 
 ---
@@ -120,7 +129,7 @@ Three consequences, each verified in source:
 
 The first draft of this design proposed user-named _connections_. It was rejected in session, and
 the rejection is right: the catalog **already is** the list of providers — 6 builtin entries
-([`provider-catalog.ts` `BUILTIN_ENTRIES`](../../src/shared/provider-catalog.ts)),
+([`provider-catalog.ts` `BUILTIN_ENTRIES`](../../../src/shared/provider-catalog.ts)),
 24 native entries (`NATIVE_PROVIDER_META`), plus `custom`. For every one of those there is one
 endpoint and normally one key, so a connections list would only ask the user to name entries the
 catalog already names. pi takes the same position: `models.json` keys credentials **by provider
@@ -151,7 +160,7 @@ export type ProviderCredentialMap = Partial<Record<ProviderProfileKey, ProviderC
 
 `AppConfig` gains `providerCredentials: ProviderCredentialMap`. It replaces the top-level
 `profiles` field, which today is nothing but a copy of the active set's map
-([`composeProjectedConfig`](../../src/main/config/config-store.ts#L1611)).
+([`composeProjectedConfig`](../../../src/main/config/config-store.ts#L1611)).
 
 ### 3.2 Custom endpoints — the only user-created credentials
 
@@ -201,7 +210,7 @@ export interface ApiConfigSet {
 per-set credential map. **`apiKey`, `baseUrl` and `customProtocol` no longer live on a set.**
 `model`, `contextWindow` and `maxTokens` move up from `profiles[activeProfileKey]`: they describe
 the model, not the credential. This matches the precedent set by
-[`model-reasoning-override.md`](./model-reasoning-override.md) §4.1, which keeps `contextWindow` /
+[`model-reasoning-override.md`](../model-reasoning-override.md) §4.1, which keeps `contextWindow` /
 `maxTokens` scoped per endpoint and explicitly not global.
 
 ### 3.4 `AppConfig` after the change
@@ -238,8 +247,8 @@ function that produces it changes.
 
 ## 4. Resolution — the single seam
 
-`projectFromConfigSet()` ([`config-store.ts:1592`](../../src/main/config/config-store.ts#L1592))
-and `composeProjectedConfig()` ([`:1965`](../../src/main/config/config-store.ts#L1965)) are the only
+`projectFromConfigSet()` ([`config-store.ts:1592`](../../../src/main/config/config-store.ts#L1592))
+and `composeProjectedConfig()` ([`:1965`](../../../src/main/config/config-store.ts#L1965)) are the only
 two places that turn a config set into runtime configuration. Everything downstream — model
 resolution, auth injection, diagnostics, memory LLM, the scheduler — consumes the projection. That
 makes them the whole blast radius of the main-process change.
@@ -268,19 +277,19 @@ Precedence, in order:
 3. **Empty** (`apiKey: ''`, no `baseUrl`) — never a stale value from another set. A set pointing at
    a provider with no credential configured must fail loudly downstream (it already does: the
    diagnostics panel and `hasAnyUsableCredentials()`
-   at [`config-store.ts:2518`](../../src/main/config/config-store.ts#L2518)), not silently borrow a
+   at [`config-store.ts:2518`](../../../src/main/config/config-store.ts#L2518)), not silently borrow a
    key from a different provider.
 
 `ProviderProfileKey` derivation for catalog providers stays exactly as it is
-([`provider-ids.ts`](../../src/shared/provider-ids.ts)) — `gemini → 'gemini'` slot but `google`
+([`provider-ids.ts`](../../../src/shared/provider-ids.ts)) — `gemini → 'gemini'` slot but `google`
 pi provider, `native:<id>` for the rest — so the slot space is unchanged and only its _owner_
 moves from the config set to `AppConfig`.
 
 ### 4.1 What stops being written where
 
-`update()` ([`config-store.ts:2238`](../../src/main/config/config-store.ts#L2238)) currently routes
+`update()` ([`config-store.ts:2238`](../../../src/main/config/config-store.ts#L2238)) currently routes
 credential writes into the active set via the `mutatesActiveSet` branch
-([`:2277`](../../src/main/config/config-store.ts#L2277)) and `PROFILE_KEYS` iteration. After the
+([`:2277`](../../../src/main/config/config-store.ts#L2277)) and `PROFILE_KEYS` iteration. After the
 change:
 
 - `provider`, `endpointId`, `model`, `contextWindow`, `maxTokens`, `thinkingLevel` → **the active
@@ -294,7 +303,7 @@ change:
 ## 5. Migration — derive, never invent
 
 The store is **validate-and-coerce, not version-migrated** (the same conclusion as
-[`archive/native-provider-catalog.md`](./archive/native-provider-catalog.md) §7). No schema bump,
+[`archive/native-provider-catalog.md`](./native-provider-catalog.md) §7). No schema bump,
 no rewrite of the persisted file; normalization fills the new fields on read.
 
 | On disk today                                                                        | Becomes                                                                                                                               |
@@ -324,7 +333,7 @@ no rewrite of the persisted file; normalization fills the new fields on read.
 
 ### 5.2 Custom-endpoint seeding from existing guidance
 
-[`COMMON_PROVIDER_SETUPS`](../../src/shared/api-provider-guidance.ts#L45) already carries eight
+[`COMMON_PROVIDER_SETUPS`](../../../src/shared/api-provider-guidance.ts#L45) already carries eight
 hand-authored custom setups with a `matcher` and a `preferProviderTab` hint. Two consequences for
 the Providers tab:
 
@@ -343,15 +352,15 @@ the Providers tab:
 
 `API Settings` is replaced by two entries. Every hard-coded `'api'` tab id must move:
 
-| Location                                                                                                                                        | Change                                          |
-| ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| [`SettingsPanel.tsx:36,50`](../../src/renderer/components/SettingsPanel.tsx#L36)                                                                | `TabId` union + `SettingsPanelProps.initialTab` |
-| [`SettingsPanel.tsx:63`](../../src/renderer/components/SettingsPanel.tsx#L63)                                                                   | `VALID_TABS`                                    |
-| [`SettingsPanel.tsx:76`](../../src/renderer/components/SettingsPanel.tsx#L76)                                                                   | default `initialTab`                            |
-| [`SettingsPanel.tsx:120`](../../src/renderer/components/SettingsPanel.tsx#L120), [`:294`](../../src/renderer/components/SettingsPanel.tsx#L294) | `tabs` array, render switch                     |
-| [`WelcomeView.tsx:707`](../../src/renderer/components/WelcomeView.tsx#L707)                                                                     | `setSettingsTab('api')` → `'providers'`         |
-| [`store/index.ts:677`](../../src/renderer/store/index.ts#L677)                                                                                  | `setSettingsTab(tab \|\| 'api')`                |
-| [`nav-server.ts:22`](../../src/main/nav-server.ts#L22)                                                                                          | `GET /navigate?page=settings&tab=api`           |
+| Location                                                                                                                                              | Change                                          |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| [`SettingsPanel.tsx:36,50`](../../../src/renderer/components/SettingsPanel.tsx#L36)                                                                   | `TabId` union + `SettingsPanelProps.initialTab` |
+| [`SettingsPanel.tsx:63`](../../../src/renderer/components/SettingsPanel.tsx#L63)                                                                      | `VALID_TABS`                                    |
+| [`SettingsPanel.tsx:76`](../../../src/renderer/components/SettingsPanel.tsx#L76)                                                                      | default `initialTab`                            |
+| [`SettingsPanel.tsx:120`](../../../src/renderer/components/SettingsPanel.tsx#L120), [`:294`](../../../src/renderer/components/SettingsPanel.tsx#L294) | `tabs` array, render switch                     |
+| [`WelcomeView.tsx:707`](../../../src/renderer/components/WelcomeView.tsx#L707)                                                                        | `setSettingsTab('api')` → `'providers'`         |
+| [`store/index.ts:677`](../../../src/renderer/store/index.ts#L677)                                                                                     | `setSettingsTab(tab \|\| 'api')`                |
+| [`nav-server.ts:22`](../../../src/main/nav-server.ts#L22)                                                                                             | `GET /navigate?page=settings&tab=api`           |
 
 Side-by-side:
 
@@ -374,26 +383,26 @@ Side-by-side:
 ### 6.2 Providers tab
 
 - **Catalog list**, grouped by the existing `ProviderCategory` order already implemented for the
-  picker (`categoryOrder()` at [`provider-catalog.ts:449`](../../src/shared/provider-catalog.ts#L449)
-  and `groupEntriesByCategory` at [`:493`](../../src/shared/provider-catalog.ts#L493) — reuse, do not
+  picker (`categoryOrder()` at [`provider-catalog.ts:449`](../../../src/shared/provider-catalog.ts#L449)
+  and `groupEntriesByCategory` at [`:493`](../../../src/shared/provider-catalog.ts#L493) — reuse, do not
   re-derive. Note there is no `CATEGORY_ORDER` constant; the earlier draft named one that does not
   exist). Each row: name, status dot (configured / key missing / not set, matching the picker's
   existing `StatusDotColor` contract — the type is exported from
-  [`SearchableCombobox`](../../src/renderer/components/SearchableCombobox.tsx), and
-  [`SettingsAPI.tsx:145`](../../src/renderer/components/settings/SettingsAPI.tsx#L145) is a
+  [`SearchableCombobox`](../../../src/renderer/components/SearchableCombobox.tsx), and
+  [`SettingsAPI.tsx:145`](../../../src/renderer/components/settings/SettingsAPI.tsx#L145) is a
   consumer, not its definition), and the env-var hint (`ANTHROPIC_API_KEY`) from
-  `ProviderCatalogEntry.keyEnvVar` ([`provider-catalog.ts:62`](../../src/shared/provider-catalog.ts#L62)).
+  `ProviderCatalogEntry.keyEnvVar` ([`provider-catalog.ts:62`](../../../src/shared/provider-catalog.ts#L62)).
 - **`Configure provider…` dialog** — the existing form, extracted from
-  [`SettingsAPI.tsx`](../../src/renderer/components/settings/SettingsAPI.tsx) largely verbatim:
-  [`ProviderPicker`](../../src/renderer/components/ProviderPicker.tsx), API key, protocol selector
+  [`SettingsAPI.tsx`](../../../src/renderer/components/settings/SettingsAPI.tsx) largely verbatim:
+  [`ProviderPicker`](../../../src/renderer/components/ProviderPicker.tsx), API key, protocol selector
   (`custom` only), base URL (`formShape.baseUrl`), model is **removed** (it belongs to a set), and
-  the Ollama `Discover` button ([`:337`](../../src/renderer/components/settings/SettingsAPI.tsx#L337)).
+  the Ollama `Discover` button ([`:337`](../../../src/renderer/components/settings/SettingsAPI.tsx#L337)).
   Field visibility keeps coming from `ProviderCatalogEntry.formShape`, never from `provider === '…'`
   comparisons.
-- **Diagnostics here.** [`ApiDiagnosticsPanel`](../../src/renderer/components/ApiDiagnosticsPanel.tsx)
+- **Diagnostics here.** [`ApiDiagnosticsPanel`](../../../src/renderer/components/ApiDiagnosticsPanel.tsx)
   takes an explicit `{ provider, apiKey, baseUrl, customProtocol, model }` input — `DiagnosticInput`
-  at [`renderer/types/index.ts:1130`](../../src/renderer/types/index.ts#L1130), consumed at
-  [`api-diagnostics.ts:533`](../../src/main/config/api-diagnostics.ts#L533) — so it can test any
+  at [`renderer/types/index.ts:1130`](../../../src/renderer/types/index.ts#L1130), consumed at
+  [`api-diagnostics.ts:533`](../../../src/main/config/api-diagnostics.ts#L533) — so it can test any
   credential without touching the active set. The Model Sets tab keeps a second instance bound to
   the projected runtime, because end-to-end model reachability is a set-level question.
 - **Custom endpoints section** — add / rename / edit / delete. Delete is refused while a config set
@@ -401,7 +410,7 @@ Side-by-side:
 
 ### 6.3 Model Sets tab
 
-`ApiConfigSetManager` ([`ApiConfigSetManager.tsx`](../../src/renderer/components/ApiConfigSetManager.tsx))
+`ApiConfigSetManager` ([`ApiConfigSetManager.tsx`](../../../src/renderer/components/ApiConfigSetManager.tsx))
 moves here unchanged in behaviour — switch, save, new, rename, delete, and the unsaved-changes
 dialog. Below it:
 
@@ -412,9 +421,9 @@ dialog. Below it:
 - **Model** picker, options from the selected provider's catalog entry
   (`ProviderCatalogEntry.modelOptions`, delivered over IPC by `config.getProviderCatalog`). Note the
   asymmetry that motivates decision #10: `enrichBuiltinEntries`
-  ([`provider-catalog-native.ts:248`](../../src/main/config/provider-catalog-native.ts#L248)) fills
+  ([`provider-catalog-native.ts:248`](../../../src/main/config/provider-catalog-native.ts#L248)) fills
   `modelOptions` from the live pi-ai registry for every builtin **except** those in
-  `BUILTIN_NO_REGISTRY_MODELS` ([`:238`](../../src/main/config/provider-catalog-native.ts#L238)) —
+  `BUILTIN_NO_REGISTRY_MODELS` ([`:238`](../../../src/main/config/provider-catalog-native.ts#L238)) —
   `custom` and `ollama`. Ollama recovers via runtime discovery; `custom` has nothing, hence
   `CustomEndpoint.defaultModel`.
 - **Thinking level** — unchanged, including the per-model clamping already shipped.
@@ -423,7 +432,7 @@ dialog. Below it:
 
 ### 6.4 Two independent dirty domains
 
-Today one signature ([`buildApiConfigDraftSignature`](../../src/renderer/hooks/useApiConfigState.ts#L520))
+Today one signature ([`buildApiConfigDraftSignature`](../../../src/renderer/hooks/useApiConfigState.ts#L520))
 covers keys, base URLs, models and thinking level for the active set. Splitting storage means
 splitting that too:
 
@@ -439,9 +448,9 @@ This is the single most delicate behavioural change in the plan (§9.2).
 
 ### 6.5 First run
 
-[`ConfigModal.tsx`](../../src/renderer/components/ConfigModal.tsx) drives
-[`useApiConfigState`](../../src/renderer/hooks/useApiConfigState.ts) and is mounted as
-`isFirstRun={!isConfigured}` ([`App.tsx:246`](../../src/renderer/App.tsx#L246)). It becomes a
+[`ConfigModal.tsx`](../../../src/renderer/components/ConfigModal.tsx) drives
+[`useApiConfigState`](../../../src/renderer/hooks/useApiConfigState.ts) and is mounted as
+`isFirstRun={!isConfigured}` ([`App.tsx:246`](../../../src/renderer/App.tsx#L246)). It becomes a
 two-step wizard so the first screen teaches the new model:
 
 ```
@@ -460,17 +469,17 @@ two-step wizard so the first screen teaches the new model:
 
 Step 1 writes the credential and creates/updates the `default` set; step 2 writes the model,
 pre-filled from `endpoint.defaultModel` (decision #10) or, for a base URL matching a known setup,
-that setup's `exampleModel` ([`api-provider-guidance.ts`](../../src/shared/api-provider-guidance.ts)).
+that setup's `exampleModel` ([`api-provider-guidance.ts`](../../../src/shared/api-provider-guidance.ts)).
 
 ### 6.6 Other surfaces
 
-- **Chat / Welcome config-set pickers** ([`ChatView.tsx:158`](../../src/renderer/components/ChatView.tsx#L158),
-  [`WelcomeView`](../../src/renderer/components/WelcomeView.tsx)): labels become `set · model`.
+- **Chat / Welcome config-set pickers** ([`ChatView.tsx:158`](../../../src/renderer/components/ChatView.tsx#L158),
+  [`WelcomeView`](../../../src/renderer/components/WelcomeView.tsx)): labels become `set · model`.
   The provider is no longer part of the identity of a set.
-- **Session stamping** ([`session-manager.ts:704,1087,1098`](../../src/main/session/session-manager.ts#L704))
+- **Session stamping** ([`session-manager.ts:704,1087,1098`](../../../src/main/session/session-manager.ts#L704))
   reads `configStore.get('model')` and `get('activeConfigSetId')` — both survive on the projection,
   so no change.
-- **Schedule** ([`SettingsSchedule.tsx:592`](../../src/renderer/components/settings/SettingsSchedule.tsx#L592))
+- **Schedule** ([`SettingsSchedule.tsx:592`](../../../src/renderer/components/settings/SettingsSchedule.tsx#L592))
   lists set names; unchanged.
 
 ---
@@ -488,7 +497,7 @@ that setup's `exampleModel` ([`api-provider-guidance.ts`](../../src/shared/api-p
 | 3 — renderer state      | ✅ **done** 2026-10-05 | old fields removed; two slices; 141 new tests; external review ✔️             |
 | 4 — UI                  | ✅ **done** 2026-10-06 | step 1: tabs, endpoint list, chooser; step 2: dialogs, notice, labels         |
 | 5 — first-run wizard    | ✅ **done** 2026-10-07 | A: the two-step wizard; B: the removal — both reviewed ✔️, checked in the app |
-| 6 — docs                | —                      | —                                                                             |
+| 6 — docs                | ✅ **done** 2026-10-07 | wiki, README, rule documents, changelog; this document archived with §14      |
 
 Every phase ends with `npm run typecheck` and `npm test` clean. Two of the three gates
 (`AI_MAIN_PROCESS.md` preamble) must pass; `npm run test:coverage` is the CI gate and its
@@ -497,7 +506,7 @@ note `src/renderer/` is excluded from coverage, so Phase 3–5 work does not mov
 
 **ABI prerequisite.** `npm test` runs under plain Node, so `better-sqlite3` must be built for the
 **Node** ABI — `npm rebuild better-sqlite3`, which is exactly what CI does
-([`.github/workflows/ci.yml:32`](../../.github/workflows/ci.yml#L32)). `npm run rebuild`
+([`.github/workflows/ci.yml:32`](../../../.github/workflows/ci.yml#L32)). `npm run rebuild`
 (`electron-rebuild`) targets **Electron's** ABI and is for running the app. The two are mutually
 exclusive: whichever ran last wins, and the other context fails with
 `NODE_MODULE_VERSION 145 vs 137` across the 7 SQLite-backed test files (133 tests). If `npm test`
@@ -628,7 +637,7 @@ meaningful only in Phase 2, together with real writes.
 The original single-phase plan could not land. Phase 2 is specified as main-process-only ("no UI
 change") while also requiring `profiles` to be dropped from `ApiConfigSet` — but the renderer writes
 that field back on every save. `handleSave`
-([`useApiConfigState.ts:2119-2130`](../../src/renderer/hooks/useApiConfigState.ts#L2119)) sends
+([`useApiConfigState.ts:2119-2130`](../../../src/renderer/hooks/useApiConfigState.ts#L2119)) sends
 `profiles` and `activeProfileKey` in its `config.save` payload, and it is the **only** credential
 write path in the app (the other `config.save` callers — `App.tsx:139`,
 `SettingsGeneral.tsx:80`, `SettingsSkills.tsx:388`, `SettingsMemory.tsx:652,2068` — touch unrelated
@@ -652,7 +661,7 @@ split makes that invariant true at an identifiable commit instead of aspirationa
   **The type removal moved to Phase 3**, correcting this plan's "payload change plus a type removal"
   framing. `profiles` is not only written by the renderer, it is what the renderer _reads_ to build
   its form — `buildApiConfigSnapshot`
-  ([`useApiConfigState.ts:458-476`](../../src/renderer/hooks/useApiConfigState.ts#L458)) hydrates the
+  ([`useApiConfigState.ts:458-476`](../../../src/renderer/hooks/useApiConfigState.ts#L458)) hydrates the
   API-key, base-URL and model fields from `config.profiles`, and the hook has **zero** references to
   `providerCredentials` / `customEndpoints`. Deleting the field therefore requires teaching the
   renderer the new model, which is Phase 3's described work on the very same helpers. Only the write
@@ -1077,7 +1086,7 @@ under API Key, `api.apiKeyDescription` ("Saved locally and scoped to the active 
 
 Two practical notes for the next manual run. The development build uses the **same** data folder
 as the installed app (`app.setName('sqowe-pilot')`,
-[`migration/bootstrap.ts:22`](../../src/main/migration/bootstrap.ts#L22)), so its first start
+[`migration/bootstrap.ts:22`](../../../src/main/migration/bootstrap.ts#L22)), so its first start
 converts the installed app's settings file one-way: quit the installed app and back the file up
 first. And when it is started from a terminal that an editor spawned, `ELECTRON_RUN_AS_NODE=1` is
 inherited and Electron starts as plain Node (`electron.app` is undefined at the first line that uses
@@ -2266,10 +2275,38 @@ language other than Russian.
 ### Phase 6 — docs
 
 This document moves to `archive/` with an as-built section; a `§4.1 superseded` banner on
-[`model-reasoning-override.md`](./model-reasoning-override.md) (decision #12, §10.5);
+[`model-reasoning-override.md`](../model-reasoning-override.md) (decision #12, §10.5);
 `docs/wiki/features/models-and-api.md` and `docs/wiki/reference/settings.md` rewritten; four locale
 files (`src/renderer/i18n/locales/{en,zh,ru,hu}.json`) — **all four**, per the recorded i18n lesson;
 `CHANGELOG.md`.
+
+#### As built (2026-10-07)
+
+Documents only. In code, four comments that name this document's path.
+
+| Document                                             | What changed                                                                                                                                                                                                                         |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| this document                                        | Moved to `docs/design/archive/`. Its 77 relative links re-based; status and reading note at the top; §14 added. The path in `config-store.ts` and in three test files follows.                                                       |
+| `docs/design/model-reasoning-override.md`            | The "§4.1 superseded" note (decision #12, §10.5): where `reasoning` belongs now, and the two things to check again.                                                                                                                  |
+| `docs/wiki/features/models-and-api.md`               | Rewritten for the two tabs and the wizard, by the wiki's own rules: every step read out of the code, button names from `en.json`, a new flow diagram, the settings table on the present data model, a second screenshot stub.        |
+| `docs/wiki/reference/settings.md`                    | "API" became "Providers" and "Model Sets". `isConfigured` is described as worked out, not stored. `localDevPath` moved to Skills, where its field is; `claudeCodePath` to the internal list — it has no control in Settings.         |
+| `docs/wiki/getting-started.md`, `docs/wiki/index.md` | Not on the phase's list: the setup steps named the "API" tab, and the front page's diagram said "11 tabs" where there are 12.                                                                                                        |
+| `docs/wiki/.last-update.json`                        | The sources of the Models & API page. Its commit and date are left as they were (2026-07-22): the rest of the wiki has not been compared with the code since, and a newer commit there would make the next update skip that stretch. |
+| `README.md`, `AI_FRONTEND.md`, `ARCHITECTURE.md`     | File trees; README's "Configure" steps and its line that put the proxy under "Settings → API" (it is under General); the storage diagram, which said "API keys/profiles" and listed model presets, which are not stored.             |
+| `CHANGELOG.md`                                       | Two entries under Unreleased, for the wizard. Step B has none: nothing on screen changed.                                                                                                                                            |
+
+**One statement was dropped rather than carried over.** The old wiki page said that scheduling
+and remote control "let you pick a config set per task". Remote control names no config set
+anywhere, and a scheduled task records one that is not applied when it runs (§10.1). The
+scheduling page still says a task uses its own config set; that is §10.1's ticket.
+
+**Gates:** typecheck clean and the suite unchanged — the four code changes are comments. No
+deliberate breakages (no rule is new) and no external review (the script leaves `.md` files out;
+it would have been shown four comment lines), both agreed with the user beforehand.
+
+**For a human to add**, as the wiki's rules ask to be listed: two screenshots of the Models & API
+page (`models-and-api-providers.png`, `models-and-api-settings.png`) and the one of the setup
+steps (`getting-started-configure-api.png`). None of the three exists yet.
 
 ---
 
@@ -2296,7 +2333,7 @@ files (`src/renderer/i18n/locales/{en,zh,ru,hu}.json`) — **all four**, per the
 **The original draft of this section was wrong.** It claimed coverage was thin — "only
 `config-store-migration.test.ts` and `provider-picker.test.ts` touch it" — because it searched only
 `src/tests/`. There is a **second test root at `tests/`** (192 files), included by
-[`vitest.config.mts:18`](../../vitest.config.mts#L18). Eleven files there assert the exact shape
+[`vitest.config.mts:18`](../../../vitest.config.mts#L18). Eleven files there assert the exact shape
 this design removes, and they pass today:
 
 | File                                             | Tests   | Coupling                                                    |
@@ -2334,7 +2371,7 @@ new fields added: `src/tests/claude/claude-sdk-one-shot.test.ts`,
 ### 9.1 Security posture is unchanged — verify, don't assume
 
 Credentials stay in the encrypted `electron-store`
-([`createEncryptedStoreWithKeyRotation`](../../src/main/utils/store-encryption.ts#L148)); only their
+([`createEncryptedStoreWithKeyRotation`](../../../src/main/utils/store-encryption.ts#L148)); only their
 scope moves. Explicitly **not** in scope, and to be asserted in review:
 
 - No credential is written to `localStorage`, the Zustand store, or any renderer-persisted state.
@@ -2380,8 +2417,8 @@ bridge, at which point the invariant holds structurally rather than by conventio
 ### 9.5 Test-coverage thresholds
 
 `vitest.config.mts` enforces global v8 thresholds (lines 30 / functions 35 / branches 28 /
-statements 30, [`:35-40`](../../vitest.config.mts#L35)). **`src/renderer/` is excluded**
-([`:27`](../../vitest.config.mts#L27)), so only Phases 1–2 can move the numbers — and they move them
+statements 30, [`:35-40`](../../../vitest.config.mts#L35)). **`src/renderer/` is excluded**
+([`:27`](../../../vitest.config.mts#L27)), so only Phases 1–2 can move the numbers — and they move them
 upward, since `config-store.ts` is already covered by the §8.2 suite. The real risk is the reverse
 of what the first draft assumed: deleting coupled tests without replacing them would _drop_
 coverage. Hence decision #1 (migrate, don't retire).
@@ -2391,10 +2428,10 @@ coverage. Hence decision #1 (migrate, don't retire).
 ## 10. Out of scope (recorded, not silently dropped)
 
 1. **The scheduler's ignored config set.** `isConfigSetValid()` is called before every run
-   ([`scheduled-task-manager.ts:570`](../../src/main/schedule/scheduled-task-manager.ts#L570),
-   [`:895`](../../src/main/schedule/scheduled-task-manager.ts#L895)) and wired at
-   [`index.ts:1220`](../../src/main/index.ts#L1220), but `executeTask`
-   ([`index.ts:1176-1202`](../../src/main/index.ts#L1176)) never applies `task.configSetId` — a
+   ([`scheduled-task-manager.ts:570`](../../../src/main/schedule/scheduled-task-manager.ts#L570),
+   [`:895`](../../../src/main/schedule/scheduled-task-manager.ts#L895)) and wired at
+   [`index.ts:1220`](../../../src/main/index.ts#L1220), but `executeTask`
+   ([`index.ts:1176-1202`](../../../src/main/index.ts#L1176)) never applies `task.configSetId` — a
    scheduled task runs on whatever set is globally active. Verified 2026-10-03. It is a pre-existing
    bug. This design makes it _more_ visible (a task pinned to "Work" would run on whatever key the
    active set holds), but it is not required to ship the split and is not in any phase. Worth its
@@ -2403,14 +2440,14 @@ coverage. Hence decision #1 (migrate, don't retire).
    interpolation, a literal, or a leading `!command`, and `auth.json` accepts the `!` form too
    (pi `docs/models.md:63`, `docs/providers.md:72`). The app cannot use any of it today: credentials
    reach pi as a resolved string via `setRuntimeApiKey`
-   ([`agent-runner.ts:2605`](../../src/main/claude/agent-runner.ts#L2605)), not through
+   ([`agent-runner.ts:2605`](../../../src/main/claude/agent-runner.ts#L2605)), not through
    `models.json`. A per-provider `credentialMode` is a natural follow-up once the global map exists
    — not in this plan (decision #9).
 3. **OAuth / `/login`.** pi stores OAuth tokens in `auth.json` (pi `docs/providers.md:12`).
    The app deliberately does not adopt the CLI credential store — the SDK-only boundary in
    `ARCHITECTURE.md` §4.1 rules it out — so a GUI login flow is its own project.
 4. **Multiple keys per provider.** Explicitly rejected in session (decision #2).
-5. **The `reasoning` override.** [`model-reasoning-override.md`](./model-reasoning-override.md) is
+5. **The `reasoning` override.** [`model-reasoning-override.md`](../model-reasoning-override.md) is
    an independent not-started design whose §4.1 adds `reasoning?: boolean` to `ProviderProfile` —
    the interface this design deletes. Per decision #12 it gets a superseded banner in Phase 6 and no
    code. When it is picked up, `reasoning` belongs on `ApiConfigSet` beside `contextWindow` /
@@ -2422,15 +2459,15 @@ coverage. Hence decision #1 (migrate, don't retire).
 
    For context on what is **already** built, so the remaining gap is not overstated:
    `pi-model-resolution.ts` has three reasoning tiers — registry lookup (`resolvePiRegistryModel`,
-   [`:607`](../../src/main/claude/pi-model-resolution.ts#L607)), a wide registry sweep that borrows
+   [`:607`](../../../src/main/claude/pi-model-resolution.ts#L607)), a wide registry sweep that borrows
    `reasoning` from any provider knowing that model id (`findRegistryReasoningTraits`,
-   [`:515`](../../src/main/claude/pi-model-resolution.ts#L515), from `a5b628d2`), and a filename
-   regex ([`:67`](../../src/main/claude/pi-model-resolution.ts#L67)) — with levels delegated
+   [`:515`](../../../src/main/claude/pi-model-resolution.ts#L515), from `a5b628d2`), and a filename
+   regex ([`:67`](../../../src/main/claude/pi-model-resolution.ts#L67)) — with levels delegated
    entirely to pi's `getSupportedThinkingLevels`
-   ([`:683`](../../src/main/claude/pi-model-resolution.ts#L683)). The gap is only that
-   `ThinkingCapabilities` ([`:624`](../../src/main/claude/pi-model-resolution.ts#L624)) carries one
+   ([`:683`](../../../src/main/claude/pi-model-resolution.ts#L683)). The gap is only that
+   `ThinkingCapabilities` ([`:624`](../../../src/main/claude/pi-model-resolution.ts#L624)) carries one
    boolean, so "pi knows it doesn't reason" and "pi has never seen it" both render as the factual
-   claim at [`SettingsAPI.tsx:534`](../../src/renderer/components/settings/SettingsAPI.tsx#L534) /
+   claim at [`SettingsAPI.tsx:534`](../../../src/renderer/components/settings/SettingsAPI.tsx#L534) /
    `en.json:403`.
 
 ## 11. Open questions — resolved 2026-10-03
@@ -2441,15 +2478,15 @@ All three became decisions #9–#11 in §2; recorded here with the evidence that
    sees them (§10.2), so the control would have no backing resolver. The catalog's per-entry
    `keyEnvVar` hint already names the env var honestly without promising resolution.
 2. ~~Optional default model on endpoints?~~ **Yes** (#10). `custom` is in
-   `BUILTIN_NO_REGISTRY_MODELS` ([`provider-catalog-native.ts:238`](../../src/main/config/provider-catalog-native.ts#L238))
+   `BUILTIN_NO_REGISTRY_MODELS` ([`provider-catalog-native.ts:238`](../../../src/main/config/provider-catalog-native.ts#L238))
    so it ships `modelOptions: []`, and unlike `ollama` it has no Discover fallback — wizard step 2
    would be an empty picker for exactly the gateway users most likely to hit it.
 3. ~~Reuse `MAX_CONFIG_SET_COUNT`?~~ **No, separate `MAX_CUSTOM_ENDPOINT_COUNT = 20`** (#11). The
    renderer recovers the cap by parsing the thrown message
-   ([`useApiConfigState.ts:677`](../../src/renderer/hooks/useApiConfigState.ts#L677)
+   ([`useApiConfigState.ts:677`](../../../src/renderer/hooks/useApiConfigState.ts#L677)
    — `/^Config set limit reached: max\s+(\d+)$/`), so one shared constant across two entity types
    would make that parse ambiguous. `MAX_CONFIG_SET_COUNT` is at
-   [`config-store.ts:405`](../../src/main/config/config-store.ts#L405) (not `:318`).
+   [`config-store.ts:405`](../../../src/main/config/config-store.ts#L405) (not `:318`).
 
 ---
 
@@ -2514,3 +2551,139 @@ one-credential-per-provider position. Corrected here:
 
 Also established, and not in the original draft: `npm test` and the app need **different**
 `better-sqlite3` ABIs, which is the first thing to check when a phase gate appears to fail (§7).
+
+---
+
+## 14. As built — summary (2026-10-07)
+
+§7 holds the full record of every phase. This is the short form: what exists now, where it
+differs from §§1–12, and what was left open.
+
+### 14.1 What shipped
+
+| Phase    | Commit     | In app       | What                                                                                                 |
+| -------- | ---------- | ------------ | ---------------------------------------------------------------------------------------------------- |
+| 1        | `b2c4d56b` | 1.0.9        | `providerCredentials` and `customEndpoints` in the store, derived one way from the config sets       |
+| 2a       | `330989ec` | 1.0.9        | The credential store becomes the source: `resolveCredentials`, `endpointId` on a set, endpoint calls |
+| 2b       | `60d5277c` | 1.0.9        | Nothing writes a credential into a config set any more                                               |
+| 3        | `c381f8c3` | 1.0.9        | Per-set credential fields removed; old settings files converted once; the form state split in two    |
+| 4 step 1 | `b853c811` | 1.0.9        | The Providers and Model Sets tabs, the endpoint list, the chooser on a config set                    |
+| 4 step 2 | `553c5da7` | 1.0.9        | The dialogs' connection check, ready-made setups and hints; the dropped-key notice; `set · model`    |
+| 5 step A | `994043f3` | not released | The first-run dialog as a two-step wizard                                                            |
+| 5 step B | `91e55d9b` | not released | Removal of the old state layer, `config.test`, `ProviderPicker` and the setups table                 |
+| 6        | —          | not released | Documents                                                                                            |
+
+### 14.2 The shape as built
+
+**Stored** (`AppConfig`, `config-store.ts`):
+
+- `providerCredentials` — one slot per provider: its key and, where it has one, its address.
+- `customEndpoints` — up to 20, each with an id, a name, a protocol, an address, a key and an
+  optional default model.
+- `configSets` — up to 20, each with a provider, an `endpointId` when the provider is `custom`,
+  a model, the two limits and a thinking level. No credential.
+- `credentialConflicts` — ids only, never a key: which providers and endpoints had a different
+  key in some config set that the conversion did not keep.
+- The flat `provider` / `apiKey` / `baseUrl` / `model` fields are worked out from the active set
+  and its credential each time. They are never a second store.
+
+**Calls from the window:** `config.save` for a config set's own fields;
+`config.setProviderCredential`, `config.createCustomEndpoint`, `config.updateCustomEndpoint` and
+`config.deleteCustomEndpoint` for credentials; `config.diagnose` for the connection check.
+`config.test` no longer exists.
+
+**The window** — this replaces §12's file map for `src/renderer/`:
+
+| Files                                                                                          | Role                                                                                                                                           |
+| ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hooks/useApiSettingsState.ts`                                                                 | The state both tabs and the wizard share: the credential store as main last returned it, and the four credential calls. No unsaved credential. |
+| `hooks/useModelSets.ts`, `model-sets-state.ts`, `useModelSetForm.ts`                           | Config sets, and the unsaved edits to the open one                                                                                             |
+| `hooks/api-settings-view.ts`, `credential-dialog-view.ts`, `first-run-wizard-view.ts`          | The rules, as plain functions with tests                                                                                                       |
+| `hooks/useApiConnectivity.ts`, `useCredentialCheck.ts`, `useCustomEndpointGuidance.ts`         | The connection check, the search for Ollama, the hints for an address being typed                                                              |
+| `components/settings/SettingsProviders.tsx`, `SettingsModelSets.tsx`, `ModelFieldsSection.tsx` | The two tabs                                                                                                                                   |
+| `components/ProviderConfigDialog.tsx`, `CustomEndpointDialog.tsx` and their `…Fields.tsx`      | The two credential dialogs: a state function and the fields it draws, which the wizard reuses                                                  |
+| `components/ProviderChoicePicker.tsx`                                                          | The chooser on a config set, and the first step of the wizard                                                                                  |
+| `components/FirstRunWizard.tsx`, `FirstRunWizardSteps.tsx`, `ConfigModal.tsx`                  | The wizard                                                                                                                                     |
+
+### 14.3 Where the build departed from §§1–12
+
+| The design said                                                              | What was built                                                                                                                                            | Recorded in                         |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| §3.3–3.4: the data model                                                     | As designed, plus `AppConfig.endpointId?` and `credentialConflicts`                                                                                       | Phase 3                             |
+| §6.1: custom endpoints last on the Providers tab                             | First, above some thirty catalog providers                                                                                                                | Phase 4 step 1, decision 3          |
+| §6.2: "Configure provider…" is the old form, with its provider picker        | One dialog per credential with fields of its own and no picker in it. Its check is the five-step diagnostics run, with the model it tries named on screen | Phase 4 step 1; step 2, decision 1  |
+| §6.3: the provider of a set as a read-only chip with "Change"                | A chooser: custom endpoints by name, then the catalog. A set can be saved while its provider has no key, with a warning                                   | Phase 4 step 1, decisions 1 and 5   |
+| §6.4: the Providers tab tracks unsaved credentials and has its own Save      | No unsaved credential state exists. Each credential is saved from its own dialog                                                                          | Phase 4 step 1; Phase 5 step B      |
+| §6.5: step 1 of the wizard writes the credential and updates the default set | Continue saves the credential only; Start saves the config set. A wizard closed in between leaves a key and an untouched set                              | Phase 5 step A, decision 2          |
+| §6.5: the wizard is what an unconfigured app shows                           | Only the notice's button opens it, and only when nothing at all is set up. With another set usable the button opens Settings → Model Sets                 | Phase 5 step A, decisions 1 and 3   |
+| §6.5: a provider picker and "Test connection"                                | The chooser's list plus "Add endpoint"; the dialogs' connection check                                                                                     | Phase 5 step A, decisions 4 and 5   |
+| §9.2: `useApiConfigState.ts` is split into two slices                        | Split in Phase 3 and kept as a thin layer for the old screens; deleted in Phase 5 step B with the credential slice                                        | Phases 3 and 5                      |
+| §9.3: the lossy case must be visible                                         | A notice on the row and in the dialog of each credential that lost a key, naming the config sets; saving that credential again clears it                  | Phase 3, decision 6; Phase 4 step 2 |
+| §12: the file map                                                            | 14.2 above                                                                                                                                                | —                                   |
+
+Built without being in the design:
+
+- **Ready-made setups and the catalog.** A setup whose service the catalog lists itself sends its
+  address to that provider (`catalogProvider`), and `tests/provider-setups-vs-catalog.test.ts`
+  compares the setups with the installed pi's catalog, so the list is decided again at every pi
+  uplift (Phase 4 step 2, "After the manual pass"; `AI_MAIN_PROCESS.md` §1).
+- **A model remembered per provider** while a config set is being edited, until it is saved or
+  closed (Phase 3, decision 4).
+- **Dialog behaviour**: a button that runs something stays focusable while it runs; the setups
+  list folds away after "Apply"; Escape closes an open list before the dialog around it; Enter in a
+  list's search box never submits a form (Phases 4 and 5).
+- **Error texts from main are translated at all**: Electron's own prefix is stripped first
+  (Phase 4 step 1, finding 1).
+- **The probe refuses a missing model** instead of borrowing the active set's (Phase 5 step B).
+
+### 14.4 Left open
+
+One list, gathered from the "Noticed and left alone" and "Noticed in the pass" paragraphs of §7.
+None of it belongs to this design's work; each line is a candidate for a ticket of its own.
+
+**Behaviour**
+
+- **Scheduled tasks do not apply their own config set** (§10.1). The wiki's scheduling page says
+  they do.
+- A fresh install is led to Settings first, and the wizard is reached only through a notice that
+  stays on screen for six seconds. The notice still says "API Settings".
+- A provider that has only the catalog's model list starts the wizard's second step with nothing
+  picked.
+- On a first run the key dialog says "Used by: Default".
+- When the wizard closes, focus is left on the page itself. The delete button of a config set has
+  no name, and pressing it drops focus.
+- The settings file is written again at every start. A fresh profile logs an error from the
+  skills watcher.
+- Two hints repeat each other after "Apply", and a config set named after its model reads twice
+  in a picker — both left by decision.
+- The handler behind the Ollama search returns an empty list when the search itself throws.
+- The probe still borrows the active config set's key when it is given none, and the store still
+  accepts a key through `config.save`. The window sends neither.
+- The DeepSeek setup is the first to look at again at the next pi uplift.
+
+**Texts**
+
+- `zh.json` lacks 60 keys the English file has. The Chinese texts written in Phases 4 and 5 are
+  unread by anyone who knows the language.
+- `settings.prompt`, `settings.promptDesc` and `api.diagnostic.skipped` are in none of the four
+  language files; `api.testError.ollama_loading` is in all four and read by nothing.
+- The hint under a typed model is in English in every language.
+- The older Russian hints use the untranslated "endpoint" where the newer texts say «подключение».
+
+**Code**
+
+- `SettingsProviders.tsx` is 330 lines, over the 300-line soft limit.
+- Four helpers are called from tests only: `getFeaturedEntries`, `getNonFeaturedEntries`,
+  `shouldAutoDiscoverLocalOllamaBaseUrl`, `testOllamaConnection`.
+  `src/tests/settings/provider-picker.test.ts` keeps the name of a component that is gone, and two
+  of its blocks re-state a rule of the old form without calling app code.
+- `ProviderGuidanceHintCode` has two values nothing returns. `ApiTestInput`, `ApiTestResult` and
+  the option `testDetails` still say "test" for what is now the last step of the connection check.
+- `SettingsDialogFrame` lives in `components/settings/` though the wizard is drawn in it from
+  outside Settings.
+
+**Never checked in the running app**
+
+- The search for Ollama with one running; Enter while a character is being composed; the menu
+  shortcut for Settings with the wizard open; the two Hungarian texts the connection check shows
+  after it has passed.

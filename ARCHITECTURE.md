@@ -551,8 +551,8 @@ Main ◄──client-event── Renderer    (stop_generation, send_message)
 
 ```
 electron-store (JSON)          better-sqlite3
-├── API keys/profiles          ├── Sessions
-├── Model presets              ├── Messages
+├── Provider keys, endpoints   ├── Sessions
+├── Config sets (models)       ├── Messages
 ├── Bash trust/denylist        ├── Memory entries
 ├── UI preferences             ├── Schedule tasks
 └── Sandbox config             └── Skill metadata

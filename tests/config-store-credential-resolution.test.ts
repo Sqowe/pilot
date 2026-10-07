@@ -1,5 +1,5 @@
 /**
- * Phase 2a of docs/design/provider-credentials-and-model-sets.md — the §8.1
+ * Phase 2a of docs/design/archive/provider-credentials-and-model-sets.md — the §8.1
  * assertions.
  *
  * `providerCredentials` / `customEndpoints` are now **authoritative**:

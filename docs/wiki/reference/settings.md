@@ -6,21 +6,27 @@ Every user setting, grouped by the **Settings** tab it lives under. Settings are
 locally in an encrypted config store and never leave your machine. Defaults are shown where
 they're meaningful.
 
-## API
+## Providers
 
-| Setting             | Default              | What it does                                                       |
-| ------------------- | -------------------- | ------------------------------------------------------------------ |
-| `provider`          | —                    | Active API provider.                                               |
-| `apiKey`            | —                    | API key for the active provider.                                   |
-| `baseUrl`           | _(provider default)_ | Custom API endpoint.                                               |
-| `model`             | —                    | Active model.                                                      |
-| `thinkingLevel`     | model-dependent      | Reasoning effort (clamped to the model's supported levels).        |
-| `activeConfigSetId` | `default`            | Active saved config set.                                           |
-| `configSets`        | 1 ("default")        | Saved provider+model+key setups (max 20).                          |
-| `contextWindow`     | _(model default)_    | Override context window.                                           |
-| `maxTokens`         | _(model default)_    | Override max output tokens.                                        |
-| `claudeCodePath`    | _(auto)_             | Claude Code CLI path override.                                     |
-| `localDevPath`      | _(empty)_            | Extra `PATH` dirs for child processes (colon/semicolon-separated). |
+Keys and addresses, saved once per provider and shared by every config set that uses it. See
+[Models & API](../features/models-and-api.md).
+
+| Setting               | Default   | What it does                                                                                                       |
+| --------------------- | --------- | ------------------------------------------------------------------------------------------------------------------ |
+| `providerCredentials` | _(empty)_ | Per provider: its API key and, where the provider has an address field, its Base URL.                              |
+| `customEndpoints`     | _(none)_  | Your custom endpoints (max 20). Each has a name, a protocol, a Base URL, an API key and an optional default model. |
+
+## Model Sets
+
+| Setting             | Default           | What it does                                                                |
+| ------------------- | ----------------- | --------------------------------------------------------------------------- |
+| `configSets`        | 1 ("Default")     | Your config sets (max 20). Each holds the settings below, and no key.       |
+| `activeConfigSetId` | `default`         | The config set in use.                                                      |
+| `provider`          | —                 | Per config set: the provider it runs on, or a custom endpoint.              |
+| `model`             | —                 | Per config set: its model.                                                  |
+| `thinkingLevel`     | model-dependent   | Per config set: reasoning effort (clamped to the model's supported levels). |
+| `contextWindow`     | _(model default)_ | Per config set: override context window.                                    |
+| `maxTokens`         | _(model default)_ | Per config set: override max output tokens.                                 |
 
 ## Sandbox (experimental)
 
@@ -45,6 +51,7 @@ they're meaningful.
 | `skillConflictConfig.policy`         | `custom-wins`   | How name collisions resolve (`custom-wins` / `builtin-wins` / `ask`). |
 | `skillConflictConfig.overrides`      | _(empty)_       | Per-skill source choices.                                             |
 | `skillConflictConfig.disabledSkills` | _(empty)_       | Globally disabled skill IDs.                                          |
+| `localDevPath`                       | _(empty)_       | Extra `PATH` dirs for child processes (colon/semicolon-separated).    |
 
 ## Memory
 
@@ -107,11 +114,12 @@ Workspace overrides live in `{workspace}/.cowork/prompts/`.
 
 ## Internal / migration
 
-| Setting               | Notes                                                  |
-| --------------------- | ------------------------------------------------------ |
-| `isConfigured`        | First-run flag.                                        |
-| `configSchemaVersion` | Schema version for migration (internal).               |
-| `orphanDismissals`    | Per-workspace stale-config dismissal state (internal). |
+| Setting               | Notes                                                                                          |
+| --------------------- | ---------------------------------------------------------------------------------------------- |
+| `isConfigured`        | Not a setting: worked out each time from whether some config set has a provider it can run on. |
+| `claudeCodePath`      | Claude Code CLI path override. No control in Settings.                                         |
+| `configSchemaVersion` | Schema version for migration (internal).                                                       |
+| `orphanDismissals`    | Per-workspace stale-config dismissal state (internal).                                         |
 
 ---
 

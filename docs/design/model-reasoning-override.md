@@ -1,7 +1,7 @@
 # Manual Reasoning Override for Unrecognised Models
 
 **Created:** 2026-07-20
-**Status:** Design — not started.
+**Status:** Design — not started. **§4.1 is superseded** — see the note at its head.
 **Author:** AI-assisted design session
 **Baseline:** pi-ai / pi-coding-agent **0.80.10**
 **Follows:** [`thinking-level-per-model.md`](./archive/thinking-level-per-model.md) (shipped `9078c543`)
@@ -65,6 +65,29 @@ to pi, not just the panel.
 ## 4. Design
 
 ### 4.1 Config — one optional field on `ProviderProfile` (S)
+
+> **§4.1 superseded (2026-10-07).** `ProviderProfile` no longer holds a config set's
+> settings. Since app 1.0.9
+> ([`provider-credentials-and-model-sets.md`](./archive/provider-credentials-and-model-sets.md),
+> decision #12 and §10.5) a key and an address belong to the provider, and a config set holds
+> only its provider, its model and its limits. The interface is gone from the renderer's
+> types; in `config-store.ts` it survives only as the table of per-slot defaults and as the
+> input of the one-time migration.
+>
+> When this design is picked up, `reasoning?: boolean` belongs on **`ApiConfigSet`**, beside
+> `contextWindow` and `maxTokens`. The scoping argument below carries over as it stands:
+> those two are still the per-config-set precedent it argues from. Two things in this
+> document have to be checked again first:
+>
+> - **"Migration: none"** rests on `normalizeProfile` keeping optional fields. A config set's
+>   optional fields are validated in `normalizeConfigSet` now, so the boolean case goes
+>   there. The warning about the guard still holds: `typeof … === 'boolean'`, not the
+>   truthiness test the numeric fields use, or a stored `false` is lost.
+> - **The line references** into `agent-runner.ts`, `config-store.ts` and pi-ai's
+>   `openai-completions.js` were taken against pi 0.80.10 and the code of July 2026. The app
+>   is on pi 0.87.1, and they have all moved.
+>
+> The section is left below as it was written.
 
 ```ts
 // src/renderer/types/index.ts

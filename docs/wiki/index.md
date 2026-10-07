@@ -39,7 +39,7 @@ data, can be driven remotely from **Feishu** or **Slack**, and can operate deskt
 flowchart LR
   A["Welcome screen\nPick folder · model · skills"] --> B["Chat\nYour task"]
   B --> C["Sidebar\nSessions · Search · Settings"]
-  C --> D["Settings\n11 tabs"]
+  C --> D["Settings\n12 tabs"]
   D --> E["Connectors · Skills\nMemory · Schedules"]
   E --> B
 ```

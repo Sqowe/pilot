@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The first-run setup is two steps.** The dialog opened from the "Open API Settings" notice
+  when nothing is set up yet now asks for one thing at a time: a provider and its key — any
+  provider the app lists, or a custom endpoint, with the connection check the Providers tab
+  has — then the model. Each step is saved on its own, so closing after the first keeps the
+  key. Enter goes on, Escape closes it.
+- When the active config set has no key but another one is usable, that notice opens
+  Settings → Model Sets instead.
+
 ## [1.0.9] - 2026-10-06
 
 ### Changed

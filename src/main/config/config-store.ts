@@ -141,7 +141,7 @@ export interface ProviderProfile {
  * Replaces the per-config-set `ProviderProfile` for the credential half of the
  * old shape: `model` / `contextWindow` / `maxTokens` are model selection and
  * live on `ApiConfigSet` instead. See
- * `docs/design/provider-credentials-and-model-sets.md` §3.1.
+ * `docs/design/archive/provider-credentials-and-model-sets.md` §3.1.
  */
 export interface ProviderCredentials {
   apiKey: string;

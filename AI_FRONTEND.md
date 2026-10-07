@@ -83,7 +83,7 @@ src/renderer/
 │   └── ...
 ├── hooks/                  # Custom hooks
 │   ├── useIPC.ts          # Central IPC event handler (THE critical hook)
-│   ├── useApiConfigState.ts
+│   ├── useApiSettingsState.ts # State the Providers and Model Sets tabs share
 │   ├── useSkillConflicts.ts
 │   └── useWindowSize.ts
 ├── store/                  # Zustand state

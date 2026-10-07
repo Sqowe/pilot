@@ -1,5 +1,5 @@
 /**
- * Phase 3 of docs/design/provider-credentials-and-model-sets.md — the store half.
+ * Phase 3 of docs/design/archive/provider-credentials-and-model-sets.md — the store half.
  *
  * Phase 3 removes the pre-split fields (`profiles`, `activeProfileKey`, and a
  * set's `customProtocol`) from the config shape. That turns the migration from

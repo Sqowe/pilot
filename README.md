@@ -55,7 +55,7 @@ It provides a sandboxed workspace where AI can manage files, generate profession
 
 - **One-Click Install, Ready to Use**: Pre-built installers for Windows and macOS, no environment setup needed—just download and start using.
 - **Flexible Model Support**: Supports **Claude**, **OpenAI-compatible APIs**, and Chinese models like **GLM**, **MiniMax**, **Kimi**. Use your OpenRouter, Anthropic, or other API keys with flexible configuration. A searchable provider/model picker is backed by the live pi-ai registry, and a **per-model Thinking Level** selector exposes exactly the reasoning effort each model supports. More models coming soon!
-- **HTTP Proxy Support**: Route model API requests through a corporate or egress proxy (Settings → API).
+- **HTTP Proxy Support**: Route model API requests through a corporate or egress proxy (Settings → General).
 - **Remote Control**: Connect to collaboration platforms like **Feishu (Lark)** and other remote services to automate workflows and cross-platform operations.
 - **GUI Operation**: Control and interact with various desktop GUI applications on your computer. **Recommended model: Gemini-3-Pro** for optimal GUI understanding and control.
 - **Smart File Management**: Read, write, and organize files within your workspace.
@@ -180,9 +180,10 @@ You need an API key to power the agent. We support **OpenRouter**, **Anthropic**
 ### 2. Configure
 
 1. Open the app and click the ⚙️ **Settings** icon in the bottom left.
-2. Paste your **API Key**.
-3. **Crucial**: Set the **Base URL** according to the table above (especially for Zhipu/MiniMax, etc.).
-4. Enter the **Model** name you want to use.
+2. On the **Providers** tab, find your provider, click **Configure**, paste your **API Key** and save. For a service the list does not have, click **Add endpoint** and enter its **Base URL** from the table above.
+3. On the **Model Sets** tab, choose that provider and the **Model** you want to use, then click **Save Settings**.
+
+If you send a message before this is done, a notice offers **Open API Settings**: a two-step dialog that asks for the same two things — a provider and its key, then a model.
 
 ### 3. Start Coworking
 
@@ -581,10 +582,11 @@ sqowe-pilot/
 │       ├── main.tsx             # React entry point
 │       ├── components/          # UI Components
 │       │   ├── ChatView.tsx     # Main chat interface
-│       │   ├── ConfigModal.tsx  # Settings dialog
+│       │   ├── ConfigModal.tsx  # First-run setup wizard
 │       │   ├── ContextPanel.tsx # File context display
 │       │   ├── MessageCard.tsx  # Chat message component
 │       │   ├── PermissionDialog.tsx
+│       │   ├── SettingsPanel.tsx # Settings (tabs in settings/)
 │       │   ├── Sidebar.tsx      # Navigation sidebar
 │       │   ├── Titlebar.tsx     # Custom window titlebar
 │       │   ├── TracePanel.tsx   # AI reasoning trace

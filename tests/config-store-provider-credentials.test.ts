@@ -1,5 +1,5 @@
 /**
- * Phase 1 of docs/design/provider-credentials-and-model-sets.md.
+ * Phase 1 of docs/design/archive/provider-credentials-and-model-sets.md.
  *
  * These tests cover the *derivation* half of the feature: how
  * `providerCredentials` and `customEndpoints` are populated, deduplicated,

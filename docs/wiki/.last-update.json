@@ -7,9 +7,14 @@
       "page": "features/models-and-api.md",
       "sources": [
         "src/main/config/config-store.ts",
-        "src/renderer/components/settings/SettingsAPI.tsx",
+        "src/renderer/components/settings/SettingsProviders.tsx",
+        "src/renderer/components/settings/SettingsModelSets.tsx",
+        "src/renderer/components/settings/ModelFieldsSection.tsx",
+        "src/renderer/components/ProviderConfigDialog.tsx",
+        "src/renderer/components/CustomEndpointDialog.tsx",
         "src/renderer/components/ApiConfigSetManager.tsx",
-        "src/renderer/components/ProviderPicker.tsx",
+        "src/renderer/components/FirstRunWizard.tsx",
+        "docs/design/archive/provider-credentials-and-model-sets.md",
         "README.md",
         "CHANGELOG.md"
       ],

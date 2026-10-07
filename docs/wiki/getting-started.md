@@ -54,14 +54,19 @@ proxy (see [Settings](features/models-and-api.md)).
 
 ## 2. Configure the app
 
-1. Open **Sqowe Pilot**. If the API isn't configured yet, the Welcome screen points you to
-   Settings.
-2. Click the ⚙️ **Settings** icon (bottom-left), open the **API** tab.
-3. Pick your **Provider** from the searchable list, paste your **API Key**, and set the
-   **Base URL** from the table above (important for Zhipu/MiniMax/Kimi).
-4. Pick a **Model**. Each model shows only the reasoning ("thinking") levels it supports —
-   choose one, or leave the default. See [Models & API](features/models-and-api.md).
-5. Close Settings.
+1. Open **Sqowe Pilot**. If the API isn't configured yet, the Welcome screen says so and
+   offers **Go to Settings**, which opens the **Providers** tab. (The ⚙️ **Settings** icon,
+   bottom-left, leads to the same place.)
+2. On **Providers**, find your provider, press **Configure**, paste your **API Key** and
+   press **Save**. For a service the list does not have, press **Add endpoint** instead and
+   enter its **Base URL** — the table above has the addresses.
+3. Open the **Model Sets** tab. Choose that provider under **API Provider**, then pick a
+   **Model**. Each model shows only the reasoning ("thinking") levels it supports — choose
+   one, or leave the default.
+4. Press **Save Settings** and close Settings.
+
+See [Models & API](features/models-and-api.md) for the details, and for the two-step setup
+dialog that appears if you send a message before any of this is done.
 
 ![Configure API provider and model](assets/getting-started-configure-api.png)
 
