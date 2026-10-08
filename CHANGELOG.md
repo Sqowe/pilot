@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-10-08
+
+### Fixed
+
+- **Attached pictures reach the model again.** Since 1.0.8 every picture attached to a
+  message was dropped before the request was sent, and the model answered from the text
+  alone. Pictures the agent opens from disk were dropped the same way. The library that
+  prepares a picture for sending could not find one of its own files in the built app.
+- When a picture still cannot be sent, the chat now says so in a warning under your
+  message. Before, the only sign was the model replying that it saw no picture.
+- The app package no longer carries files left over from earlier builds — close to 2 GB
+  of them in 1.0.10.
+
 ## [1.0.10] - 2026-10-07
 
 ### Changed
@@ -561,7 +574,8 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.10...HEAD
+[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.11...HEAD
+[1.0.11]: https://github.com/sqowe/pilot/compare/v1.0.10...v1.0.11
 [1.0.10]: https://github.com/sqowe/pilot/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/sqowe/pilot/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/sqowe/pilot/compare/v1.0.7...v1.0.8
