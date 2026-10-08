@@ -154,6 +154,10 @@ import { getCachedProviderCatalogSync } from '../config/provider-catalog-native'
 import { getCatalogEntry } from '../../shared/provider-catalog';
 import { resolveMessageEndPayload, toUserFacingErrorText } from './agent-runner-message-end';
 import {
+  findDroppedPromptImages,
+  formatDroppedPromptImagesWarning,
+} from './agent-runner-prompt-images';
+import {
   applyPiModelRuntimeOverrides,
   buildSyntheticPiModel,
   resolvePiRegistryModel,
@@ -3658,6 +3662,8 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
       let compactionStepId: string | undefined;
       let hasEmittedError = false;
       let terminalErrorText: string | undefined;
+      // Images handed to prompt() that pi has not yet reported back in the user message.
+      let promptImagesToVerify = 0;
       // Track the last assistant message's thinking content so we can provide
       // context when a tool call fails with empty arguments (the thinking often
       // contains the intended file path/content that the model failed to emit).
@@ -3835,6 +3841,31 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
               } else if (ame.type === 'error') {
                 const errorDetail = JSON.stringify(ame.error?.content || 'no content');
                 logCtxError('[ClaudeAgentRunner] pi-ai stream error:', ame.reason, errorDetail);
+              }
+              break;
+            }
+
+            case 'message_start': {
+              // pi drops a prompt image it cannot normalize and says so only inside the
+              // prompt text (agent-runner-prompt-images.ts) — tell the user as well.
+              if (promptImagesToVerify === 0) break;
+              if ((event.message as { role?: string }).role !== 'user') break;
+              const droppedImages = findDroppedPromptImages(event.message, promptImagesToVerify);
+              promptImagesToVerify = 0;
+              if (droppedImages) {
+                logWarn(
+                  '[ClaudeAgentRunner] pi dropped prompt image(s) before sending:',
+                  safeStringify(droppedImages)
+                );
+                this.sendMessage(session.id, {
+                  id: uuidv4(),
+                  sessionId: session.id,
+                  role: 'assistant',
+                  content: [
+                    { type: 'text', text: formatDroppedPromptImagesWarning(droppedImages) },
+                  ],
+                  timestamp: Date.now(),
+                });
               }
               break;
             }
@@ -4180,6 +4211,7 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
           if (piImages.length > 0) {
             log('[ClaudeAgentRunner] Passing', piImages.length, 'image(s) to SDK prompt');
           }
+          promptImagesToVerify = piImages.length;
         }
 
         // ─── Pre-request overflow guard ───────────────────────────────────

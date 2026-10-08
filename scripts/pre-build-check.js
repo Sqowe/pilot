@@ -54,6 +54,14 @@ function buildCheckList(platform, arch) {
       severity: 'fatal',
     },
     {
+      // pi-coding-agent's image library reads this from the bundle's directory; without
+      // it attached images are silently dropped (see scripts/photon-wasm.js).
+      label: 'Image library wasm next to the main bundle',
+      relPath: 'dist-electron/main/photon_rs_bg.wasm',
+      type: 'file',
+      severity: 'fatal',
+    },
+    {
       label: 'Renderer output (dist/)',
       relPath: 'dist',
       type: 'dir',

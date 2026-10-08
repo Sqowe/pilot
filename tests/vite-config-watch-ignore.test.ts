@@ -14,3 +14,13 @@ describe('vite watch ignores build artifacts', () => {
     expect(viteConfigContent).toContain('ignored: ignoredWatchPaths');
   });
 });
+
+describe('vite main build output', () => {
+  it('empties dist-electron/main so chunks of earlier builds are not packaged', () => {
+    // vite-plugin-electron defaults emptyOutDir to false; every chunk name carries a
+    // hash, so without this each rebuild adds a full set and nothing removes the old one.
+    expect(viteConfigContent).toMatch(
+      /outDir: 'dist-electron\/main',\n(\s*\/\/.*\n)*\s*emptyOutDir: true,/
+    );
+  });
+});

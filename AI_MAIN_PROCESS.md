@@ -70,6 +70,32 @@ either call.
 - Never add a second reach-around without documenting the risk and the exact SDK
   version tested against.
 
+### pi is bundled — files it loads relative to itself
+
+Vite bundles pi into `dist-electron/main`: it is ESM-only, so it cannot stay
+external (see the `external` list in `vite.config.ts`). Anything pi locates relative
+to its own module file is therefore looked up next to the bundle, where it does not
+exist unless the build puts it there.
+
+- **One file is emitted for this reason:** `photon_rs_bg.wasm`, which pi's image
+  library (`@silvia-odwyer/photon-node`) reads from `__dirname`.
+  `scripts/photon-wasm.js` resolves it, the main build in `vite.config.ts` emits it,
+  `scripts/pre-build-check.js` refuses to package without it, and
+  `src/tests/photon-wasm.test.ts` fails when an uplift moves the file or changes how
+  it is loaded.
+- Without it pi cannot resize images and **drops them without an error**. As of
+  0.87.1 (0.84.4 did not) every image passed to `prompt()` is normalized first, and
+  one that fails is replaced by an `[Image omitted: …]` line in the prompt text —
+  `_normalizePromptImages` in `pi-coding-agent/dist/core/agent-session.js`. The
+  `read` tool drops images the same way; tool-result images are kept as they are
+  (`dist/utils/tool-result-images.js`).
+- `agent-runner-prompt-images.ts` compares the images passed with the images in the
+  user message pi reports through `message_start`, and the runner warns in the chat
+  when some are missing. Keep it — it is the only signal when this breaks again.
+- pi's resize worker (`image-resize-worker.js`) is not in the bundle either, so pi
+  falls back to resizing on the calling thread, which here is the main process.
+- Every uplift: re-check what else pi loads this way — workers, wasm, assets.
+
 ### Session lifecycle
 
 - One `createAgentSession()` per chat session, cached in `this.piSessions`, keyed
@@ -505,7 +531,7 @@ Before upgrading any Tier 1 dependency (see `docs/dependency-tiers.md`):
 3. Run `npm run typecheck` — catch type-level breaks.
 4. Run `npm test` — catch behavioural breaks.
 5. Manually test: new session, tool use, session reuse, compaction trigger,
-   permission prompt, stop/cancel.
+   permission prompt, stop/cancel, an attached image.
 6. For `better-sqlite3`: `npm run rebuild` after any Electron bump.
 7. Update `docs/dependency-tiers.json` with the new installed version.
 8. Re-assert the `inMemory()` session/settings boundary (§1).
@@ -514,7 +540,10 @@ Before upgrading any Tier 1 dependency (see `docs/dependency-tiers.md`):
     (§1, "Ready-made setups and the catalog"). A failing
     `tests/provider-setups-vs-catalog.test.ts` is the prompt to do it, not a
     regression to patch around.
-11. Document adaptations in the commit message body.
+11. Re-check the files pi loads relative to its own module (§1, "pi is bundled").
+    A failing `src/tests/photon-wasm.test.ts` is the prompt to do it; the manual
+    image check in step 5 has to run against a built app, not only `npm test`.
+12. Document adaptations in the commit message body.
 
 **`allowScripts` is a hard gate in this repo.** `package.json` allowlists
 install scripts by **exact version** (`"electron@41.10.7": true`, …). Bump
@@ -538,20 +567,21 @@ doesn't re-run a script for an already-unpacked package, so follow up with
 
 ## 14. Common Pitfalls (from real bugs)
 
-| Bug / trap                                               | Root cause                                                     | Rule                                                                          |
-| -------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Sessions leak into the `pi` CLI's session list           | An uplift reverted to the SDK's persisting `SessionManager`    | Re-assert `PiSessionManager.inMemory()` + `PiSettingsManager.inMemory()` (§1) |
-| Settings shows level X, agent runs at Y                  | `clampToSupportedLevel` drifted from pi's `clampThinkingLevel` | Keep the mirror exact; re-verify on uplift (§1)                               |
-| A custom endpoint duplicates a catalog provider          | A ready-made setup's service became a catalog provider in pi   | Re-check `COMMON_PROVIDER_SETUPS` on every pi uplift; the test fails (§1)     |
-| Images not visible to the LLM                            | `prompt(text)` only — image blocks never passed                | Pass `options.images`                                                         |
-| DeepSeek 400 on cold start                               | History rebuild filtered out `thinking` blocks                 | Serialize every content-block type (§10)                                      |
-| Permission dialog breaks renderer state                  | Async wait inside the SDK's `beforeToolCall` / subscribe queue | Async interaction in the execute wrapper only (§1, §9)                        |
-| Context overflow 400                                     | Compaction threshold ignored tool-schema tokens                | Use `compaction-budget.ts`, never pi's default reserve (§1)                   |
-| Session runs a stale system prompt                       | Cached pi session kept the old `appendSystemPrompt`            | Put the new state in the runtime signature (§1)                               |
-| Request past the context limit, MCP schemas huge         | Tool schemas not counted in compaction                         | See compaction budget above                                                   |
-| A tool wrapper silently no-ops                           | `originalExecute` not called on the happy path                 | Always delegate; fail closed on deny (§1)                                     |
-| `better-sqlite3` fails to load after `npm install`       | Native module built against host Node ABI                      | `npm run rebuild` (§4, §13)                                                   |
-| App won't start after an `electron` bump                 | `allowScripts` version drift — postinstall blocked             | Update `allowScripts` in the same edit, then `npm rebuild electron` (§13)     |
-| MCP tools fail inside the sandbox                        | Spawn routed through the Lima/WSL bridge                       | MCP always runs on host (§3)                                                  |
-| Retrieval silently returns nothing after a model change  | Vectors from two models compared as one                        | Per-row `embedding_model` filter (§5)                                         |
-| Remote-embedding user gets a "rebuild embeddings" prompt | Format-staleness check not gated on local provider             | Gate on provider id (§5)                                                      |
+| Bug / trap                                               | Root cause                                                              | Rule                                                                          |
+| -------------------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Sessions leak into the `pi` CLI's session list           | An uplift reverted to the SDK's persisting `SessionManager`             | Re-assert `PiSessionManager.inMemory()` + `PiSettingsManager.inMemory()` (§1) |
+| Settings shows level X, agent runs at Y                  | `clampToSupportedLevel` drifted from pi's `clampThinkingLevel`          | Keep the mirror exact; re-verify on uplift (§1)                               |
+| A custom endpoint duplicates a catalog provider          | A ready-made setup's service became a catalog provider in pi            | Re-check `COMMON_PROVIDER_SETUPS` on every pi uplift; the test fails (§1)     |
+| Images not visible to the LLM                            | `prompt(text)` only — image blocks never passed                         | Pass `options.images`                                                         |
+| Attached image dropped, model says it was cut out        | pi could not resize it — `photon_rs_bg.wasm` missing next to the bundle | The main build emits it; the runner warns in the chat when pi drops one (§1)  |
+| DeepSeek 400 on cold start                               | History rebuild filtered out `thinking` blocks                          | Serialize every content-block type (§10)                                      |
+| Permission dialog breaks renderer state                  | Async wait inside the SDK's `beforeToolCall` / subscribe queue          | Async interaction in the execute wrapper only (§1, §9)                        |
+| Context overflow 400                                     | Compaction threshold ignored tool-schema tokens                         | Use `compaction-budget.ts`, never pi's default reserve (§1)                   |
+| Session runs a stale system prompt                       | Cached pi session kept the old `appendSystemPrompt`                     | Put the new state in the runtime signature (§1)                               |
+| Request past the context limit, MCP schemas huge         | Tool schemas not counted in compaction                                  | See compaction budget above                                                   |
+| A tool wrapper silently no-ops                           | `originalExecute` not called on the happy path                          | Always delegate; fail closed on deny (§1)                                     |
+| `better-sqlite3` fails to load after `npm install`       | Native module built against host Node ABI                               | `npm run rebuild` (§4, §13)                                                   |
+| App won't start after an `electron` bump                 | `allowScripts` version drift — postinstall blocked                      | Update `allowScripts` in the same edit, then `npm rebuild electron` (§13)     |
+| MCP tools fail inside the sandbox                        | Spawn routed through the Lima/WSL bridge                                | MCP always runs on host (§3)                                                  |
+| Retrieval silently returns nothing after a model change  | Vectors from two models compared as one                                 | Per-row `embedding_model` filter (§5)                                         |
+| Remote-embedding user gets a "rebuild embeddings" prompt | Format-staleness check not gated on local provider                      | Gate on provider id (§5)                                                      |

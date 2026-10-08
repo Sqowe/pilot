@@ -33,6 +33,7 @@ function populateDarwinArtifacts(root: string, arch: string = 'arm64'): void {
   makeFile(path.join(root, '.bundle-resources/mcp/gui-operate-server.js'));
   makeFile(path.join(root, '.bundle-resources/mcp/software-dev-server-example.js'));
   makeDir(path.join(root, 'dist-electron'));
+  makeFile(path.join(root, 'dist-electron/main/photon_rs_bg.wasm'));
   makeDir(path.join(root, 'dist'));
   makeDir(path.join(root, 'resources/skills'));
 
@@ -48,6 +49,7 @@ function populateWin32Artifacts(root: string): void {
   makeFile(path.join(root, '.bundle-resources/mcp/gui-operate-server.js'));
   makeFile(path.join(root, '.bundle-resources/mcp/software-dev-server-example.js'));
   makeDir(path.join(root, 'dist-electron'));
+  makeFile(path.join(root, 'dist-electron/main/photon_rs_bg.wasm'));
   makeDir(path.join(root, 'dist'));
   makeDir(path.join(root, 'resources/skills'));
   makeFile(path.join(root, 'resources/node/win32-x64/node.exe'));
@@ -140,6 +142,16 @@ describe('pre-build-check: runChecks', () => {
     const result = runChecks(tmpDir, 'darwin', 'arm64');
 
     expect(result.failed).toBeGreaterThan(0);
+    expect(result.hasFatal).toBe(true);
+  });
+
+  it('reports hasFatal when the image library wasm is missing next to the main bundle', () => {
+    populateDarwinArtifacts(tmpDir, 'arm64');
+    fs.rmSync(path.join(tmpDir, 'dist-electron/main/photon_rs_bg.wasm'));
+
+    const result = runChecks(tmpDir, 'darwin', 'arm64');
+
+    expect(result.failed).toBe(1);
     expect(result.hasFatal).toBe(true);
   });
 

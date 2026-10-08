@@ -125,11 +125,19 @@ on a given platform, check that platform's block:
 
 ## Native Modules in the Package (`asarUnpack`)
 
-Native binaries and wasm can't be loaded from inside the asar, so each ships in
-both the `files` allowlist **and** `asarUnpack`: `better-sqlite3`, `@img`
+Native binaries can't be loaded from inside the asar, and the wasm files of the
+packages below are handled the same way, so each ships in both the `files`
+allowlist **and** `asarUnpack`: `better-sqlite3`, `@img`
 (sharp), `onnxruntime-node` (`.node`/`.dll`/`.dylib`/`.so`),
 `@huggingface/tokenizers` (`.node` + `.wasm`), `@huggingface/transformers`
 (`.wasm`), `sharp`, `bufferutil`, `utf-8-validate`, `onnxruntime-web` (`.wasm`).
+
+**One wasm deliberately stays inside the asar:**
+`dist-electron/main/photon_rs_bg.wasm`, which pi-coding-agent's image library reads
+with `fs.readFileSync` from the main bundle's directory. Electron's asar-aware `fs`
+serves that read from inside the archive (checked on Electron 41.10.7), so it needs
+neither `asarUnpack` nor a `files` entry beyond `dist-electron/**/*`. The main build
+emits it — see [AI_MAIN_PROCESS.md](AI_MAIN_PROCESS.md) §1, "pi is bundled".
 
 **Adding a new native or wasm dependency means updating four places:** the
 `files` allowlist, `asarUnpack`, `package.json` `allowScripts`, and
@@ -152,13 +160,15 @@ binaries for platforms it doesn't target.
 
 ## Common Pitfalls
 
-| Issue                                            | Cause                                                              | Rule                                                                            |
-| ------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| Bundled binary not found in packaged app         | Assumed a resource ships on all platforms                          | Check the platform-specific `extraResources` block before relying on a path     |
-| New dependency missing in packaged app           | Not added to `files` allowlist in `electron-builder.yml`           | Explicitly list `node_modules/<pkg>/**/*` for new runtime deps with native code |
-| App won't start, `electron/dist/` empty          | `allowScripts` keyed on the old exact version                      | Update `allowScripts` in the same edit as the bump, then `npm rebuild electron` |
-| Native module loads in dev, fails in the package | Shipped in the asar instead of unpacked                            | Add the glob to `asarUnpack` as well as `files`                                 |
-| Installer much larger than expected              | No pruning rule in `after-pack.js` for the new native dep          | Add the pruning logic; mirror the koffi/better-sqlite3/ngrok handling           |
-| Stale `mainWindow` reference after close         | Closure captured `mainWindow` before macOS `activate` recreated it | Re-check `!mainWindow.isDestroyed()` at call time, don't cache across awaits    |
-| Spawned MCP/sandbox process can't find resources | `process.resourcesPath` is undefined in spawned child processes    | Pass resource path explicitly via env var to the child process                  |
-| better-sqlite3 fails to load after `npm install` | Native module compiled against host Node ABI, not Electron's       | Run `npm run rebuild` after any plain npm operation touching native deps        |
+| Issue                                            | Cause                                                                                    | Rule                                                                                        |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Bundled binary not found in packaged app         | Assumed a resource ships on all platforms                                                | Check the platform-specific `extraResources` block before relying on a path                 |
+| New dependency missing in packaged app           | Not added to `files` allowlist in `electron-builder.yml`                                 | Explicitly list `node_modules/<pkg>/**/*` for new runtime deps with native code             |
+| App won't start, `electron/dist/` empty          | `allowScripts` keyed on the old exact version                                            | Update `allowScripts` in the same edit as the bump, then `npm rebuild electron`             |
+| Attached images never reach the model            | `photon_rs_bg.wasm` is not next to the main bundle, so pi's image library fails to load  | The main build emits it (`vite.config.ts`); `pre-build-check.js` stops packaging without it |
+| Native module loads in dev, fails in the package | Shipped in the asar instead of unpacked                                                  | Add the glob to `asarUnpack` as well as `files`                                             |
+| Installer much larger than expected              | No pruning rule in `after-pack.js` for the new native dep                                | Add the pruning logic; mirror the koffi/better-sqlite3/ngrok handling                       |
+| Installer carries files of earlier builds        | Main build output not emptied — `vite-plugin-electron` defaults `emptyOutDir` to `false` | Keep `emptyOutDir: true` on the main build in `vite.config.ts`                              |
+| Stale `mainWindow` reference after close         | Closure captured `mainWindow` before macOS `activate` recreated it                       | Re-check `!mainWindow.isDestroyed()` at call time, don't cache across awaits                |
+| Spawned MCP/sandbox process can't find resources | `process.resourcesPath` is undefined in spawned child processes                          | Pass resource path explicitly via env var to the child process                              |
+| better-sqlite3 fails to load after `npm install` | Native module compiled against host Node ABI, not Electron's                             | Run `npm run rebuild` after any plain npm operation touching native deps                    |
