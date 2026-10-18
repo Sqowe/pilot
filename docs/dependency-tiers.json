@@ -158,8 +158,8 @@
     {
       "name": "better-sqlite3",
       "tier": "tier_2_platform",
-      "installed_version": "12.8.0",
-      "declared_range": "^12.8.0",
+      "installed_version": "13.0.3",
+      "declared_range": "^13.0.3",
       "role": "Native SQLite binding \u2014 persistent storage for sessions, messages, memory, scheduled tasks. Whole persistence layer.",
       "primary_callsites": [
         "src/main/db/database.ts",

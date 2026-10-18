@@ -6,9 +6,8 @@
  * ON CONFLICT DO UPDATE upsert semantics, FK cascade on delete,
  * run history CRUD, deterministic ordering, and prune query correctness.
  *
- * Prerequisites: `npm rebuild better-sqlite3` must have been run against
- * the system Node.js (not Electron). If the native module ABI doesn't match,
- * these tests will fail with a MODULE_VERSION mismatch error.
+ * better-sqlite3 is an N-API module with a prebuilt binary per platform, so
+ * these tests load the same binary the app does — no rebuild beforehand.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';

@@ -122,14 +122,8 @@ For developers who want to contribute or modify the codebase:
 git clone https://github.com/sqowe/pilot.git sqowe-pilot
 cd sqowe-pilot
 npm install
-npm rebuild better-sqlite3   # rebuild native module for host Node.js (required for tests)
 npm run dev
 ```
-
-> **Why `npm rebuild better-sqlite3`?** The `postinstall` script rebuilds the native
-> SQLite module against Electron's ABI (needed for the packaged app). To run tests
-> locally with `npm test`, you must rebuild it for your host Node.js. Run this after
-> every `npm install` or `npm ci`.
 
 To build the installer locally: `npm run build`
 

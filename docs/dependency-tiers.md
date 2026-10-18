@@ -44,7 +44,7 @@ These power significant end-user features — remote channels, persistence, auto
 | ------------------------- | ------------ | --------------------------------------------------------------------------------------- |
 | `electron-updater`        | 6.8.3        | Auto-update mechanism. Without this, shipped users do not receive new versions.         |
 | `electron-store`          | 11.0.2       | All user settings and profiles — API keys, model presets, UI state.                     |
-| `better-sqlite3`          | 12.8.0       | Native SQLite binding. Entire persistence layer (sessions, messages, memory, schedule). |
+| `better-sqlite3`          | 13.0.3       | Native SQLite binding. Entire persistence layer (sessions, messages, memory, schedule). |
 | `@larksuiteoapi/node-sdk` | 1.66.0       | Feishu/Lark remote channel — WebSocket long-connection + REST.                          |
 | `@slack/bolt`             | 4.7.0        | Slack app framework — Socket Mode and webhook handling.                                 |
 | `@slack/web-api`          | 7.15.1       | Slack Web API client (paired with Bolt).                                                |
@@ -60,7 +60,7 @@ These power significant end-user features — remote channels, persistence, auto
 **Watch items in this tier:**
 
 - **`react` 18 → 19** is a real upgrade path. Actions, `use()`, asset loading. Plan for a dedicated uplift.
-- **`better-sqlite3`** requires `npm rebuild` against Electron ABI on every Electron bump. Coordinate with `electron` (devDep) major upgrades.
+- **`better-sqlite3`** is N-API since 13: one prebuilt binary per platform serves Node and every Electron version, so an Electron bump needs no rebuild. A new platform/arch needs a prebuild in the package.
 - **`ngrok` 5.0.0-beta.2** is a pre-release of a community wrapper. Official ngrok v2 JS SDK is a potential swap target if stability becomes an issue.
 - **`ws`** — treat any new release as potentially security-driven.
 

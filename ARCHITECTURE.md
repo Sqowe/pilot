@@ -565,7 +565,7 @@ electron-store (JSON)          better-sqlite3
 | Item              | Value                            | Notes                                                 |
 | ----------------- | -------------------------------- | ----------------------------------------------------- |
 | Node.js           | ≥22                              | `.nvmrc` pinned; bundled Node shipped in `resources/` |
-| Electron          | 41.x                             | `better-sqlite3` must rebuild against Electron ABI    |
+| Electron          | 41.x                             | `better-sqlite3` is N-API — no rebuild per Electron   |
 | Package manager   | npm                              | `package-lock.json` committed; no yarn/pnpm           |
 | Build tool        | Vite 7 + vite-plugin-electron    | `vite.config.ts`                                      |
 | Test runner       | Vitest 4                         | `vitest.config.mts`; run with `npm test`              |

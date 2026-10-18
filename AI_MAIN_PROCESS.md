@@ -275,8 +275,9 @@ Two databases, both `better-sqlite3`, both synchronous:
 
 **Rules:**
 
-- **Native module** — compiled against Electron's ABI. Run `npm run rebuild`
-  after any Electron bump or plain `npm install` touching native deps.
+- **Native module, no rebuild** — `better-sqlite3` 13+ is N-API and ships a
+  prebuilt binary per platform that both Node (tests) and Electron load
+  unchanged. See [AI_ELECTRON.md](AI_ELECTRON.md), "Native Modules".
 - All queries are synchronous by design. Don't wrap them in `async` unless the
   function genuinely combines them with other async work.
 - No migration framework: `initDatabase()` uses `CREATE TABLE IF NOT EXISTS` and
@@ -532,22 +533,21 @@ Before upgrading any Tier 1 dependency (see `docs/dependency-tiers.md`):
 4. Run `npm test` — catch behavioural breaks.
 5. Manually test: new session, tool use, session reuse, compaction trigger,
    permission prompt, stop/cancel, an attached image.
-6. For `better-sqlite3`: `npm run rebuild` after any Electron bump.
-7. Update `docs/dependency-tiers.json` with the new installed version.
-8. Re-assert the `inMemory()` session/settings boundary (§1).
-9. Re-verify `clampToSupportedLevel` against the new pi-ai source (§1).
-10. Re-check the ready-made provider setups against the catalog the new pi brings
-    (§1, "Ready-made setups and the catalog"). A failing
-    `tests/provider-setups-vs-catalog.test.ts` is the prompt to do it, not a
-    regression to patch around.
-11. Re-check the files pi loads relative to its own module (§1, "pi is bundled").
+6. Update `docs/dependency-tiers.json` with the new installed version.
+7. Re-assert the `inMemory()` session/settings boundary (§1).
+8. Re-verify `clampToSupportedLevel` against the new pi-ai source (§1).
+9. Re-check the ready-made provider setups against the catalog the new pi brings
+   (§1, "Ready-made setups and the catalog"). A failing
+   `tests/provider-setups-vs-catalog.test.ts` is the prompt to do it, not a
+   regression to patch around.
+10. Re-check the files pi loads relative to its own module (§1, "pi is bundled").
     A failing `src/tests/photon-wasm.test.ts` is the prompt to do it; the manual
     image check in step 5 has to run against a built app, not only `npm test`.
-12. Document adaptations in the commit message body.
+11. Document adaptations in the commit message body.
 
 **`allowScripts` is a hard gate in this repo.** `package.json` allowlists
 install scripts by **exact version** (`"electron@41.10.7": true`, …). Bump
-`electron`, `sharp`, `better-sqlite3`, `onnxruntime-node`, `esbuild`, `protobufjs`
+`electron`, `sharp`, `onnxruntime-node`, `esbuild`, `protobufjs`
 or `electron-winstaller` **in the same edit**. Miss it and npm reports one warning
 line among many, the postinstall never runs, and the native payload is simply
 absent — for `electron` that means an empty `node_modules/electron/dist/` and an
@@ -580,7 +580,6 @@ doesn't re-run a script for an already-unpacked package, so follow up with
 | Session runs a stale system prompt                       | Cached pi session kept the old `appendSystemPrompt`                     | Put the new state in the runtime signature (§1)                               |
 | Request past the context limit, MCP schemas huge         | Tool schemas not counted in compaction                                  | See compaction budget above                                                   |
 | A tool wrapper silently no-ops                           | `originalExecute` not called on the happy path                          | Always delegate; fail closed on deny (§1)                                     |
-| `better-sqlite3` fails to load after `npm install`       | Native module built against host Node ABI                               | `npm run rebuild` (§4, §13)                                                   |
 | App won't start after an `electron` bump                 | `allowScripts` version drift — postinstall blocked                      | Update `allowScripts` in the same edit, then `npm rebuild electron` (§13)     |
 | MCP tools fail inside the sandbox                        | Spawn routed through the Lima/WSL bridge                                | MCP always runs on host (§3)                                                  |
 | Retrieval silently returns nothing after a model change  | Vectors from two models compared as one                                 | Per-row `embedding_model` filter (§5)                                         |

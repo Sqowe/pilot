@@ -999,15 +999,21 @@ app
       log('[SmokeTest] Platform:', process.platform, 'Arch:', process.arch);
       log('[SmokeTest] Electron:', process.versions.electron, 'Node:', process.versions.node);
       try {
-        // Verify critical native modules load
-        require('better-sqlite3');
+        // Verify critical native modules load. better-sqlite3 loads its binary when
+        // the first database opens, not on require.
+        const { default: Database } = await import('better-sqlite3');
+        new Database(':memory:').close();
         log('[SmokeTest] better-sqlite3: OK');
       } catch (e) {
         log('[SmokeTest] FAIL: better-sqlite3 failed to load:', e);
         process.exit(1);
+        // Electron's process.exit() does not stop this callback: without the
+        // return it logged PASSED and went on to start the app.
+        return;
       }
       log('[SmokeTest] PASSED');
       process.exit(0);
+      return;
     }
 
     // Apply dev logs setting from config

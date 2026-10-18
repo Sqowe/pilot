@@ -7,7 +7,7 @@
  * Removes platform-specific binaries that don't match the build target,
  * strips build artifacts, and cleans up unnecessary locale files.
  *
- * Typical savings: ~160MB (koffi 79MB + better-sqlite3 19MB + ngrok 29MB + locales 32MB)
+ * Typical savings: ~165MB (koffi 79MB + better-sqlite3 25MB + ngrok 29MB + locales 32MB)
  */
 
 const fs = require('fs');
@@ -135,9 +135,19 @@ module.exports = async function afterPack(context) {
     }
   }
 
-  // --- 2. better-sqlite3: remove SQLite source and build intermediates ---
+  // --- 2. better-sqlite3: keep the target's prebuild, remove SQLite source and build intermediates ---
   const sqlitePkg = path.join(nmUnpacked, 'better-sqlite3');
   if (fs.existsSync(sqlitePkg)) {
+    // prebuilds/ holds one N-API binary per platform (<platform>-<arch>.node, ~2MB each).
+    // Prune only when the target's file is there, or the app would ship without SQLite.
+    const sqlitePrebuilds = path.join(sqlitePkg, 'prebuilds');
+    const sqliteKeep = `${platform}-${archName}.node`;
+    if (fs.existsSync(path.join(sqlitePrebuilds, sqliteKeep))) {
+      const removed = removeExcept(sqlitePrebuilds, [sqliteKeep]);
+      if (removed > 0) console.log(`  ✓ better-sqlite3: kept prebuilds/${sqliteKeep}, removed ${removed} others`);
+    } else if (fs.existsSync(sqlitePrebuilds)) {
+      console.warn(`  ⚠ better-sqlite3: no prebuilds/${sqliteKeep}, kept all prebuilds`);
+    }
     // deps/sqlite3/ contains the SQLite amalgamation source (~9.7MB)
     const depsDir = path.join(sqlitePkg, 'deps');
     if (fs.existsSync(depsDir)) {

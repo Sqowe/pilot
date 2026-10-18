@@ -52,7 +52,7 @@ on a given platform, check that platform's block:
   consuming main-process module.
 - `afterPack: ./scripts/after-pack.js` strips binaries and files that don't match
   the build target — koffi platform dirs, better-sqlite3 prebuilds, ngrok
-  binaries, and unused locale files, ~160MB per build. When adding a native
+  binaries, and unused locale files, ~165MB per build. When adding a native
   dependency with per-platform prebuilds, add its pruning logic here or it
   inflates every installer.
 - The `files` allowlist in `electron-builder.yml` explicitly lists which
@@ -99,7 +99,7 @@ on a given platform, check that platform's block:
 
 - **`allowScripts` in `package.json` gates install scripts by EXACT version**
   (`"electron@41.10.7": true`, `"sharp@0.35.4": true`, …). Bump `electron`,
-  `better-sqlite3`, `sharp`, `onnxruntime-node`, `esbuild`, `protobufjs`, or
+  `sharp`, `onnxruntime-node`, `esbuild`, `protobufjs`, or
   `electron-winstaller` **in the same edit**. Miss it and npm reports a single
   warning among many, the postinstall never runs, and the native payload is simply
   absent — bumping `electron` that way once left `node_modules/electron/dist/`
@@ -112,16 +112,19 @@ on a given platform, check that platform's block:
 - `sharp` additionally needs an `overrides` entry to move at all — upstream pins
   an older range. Re-check `allowScripts` against installed versions after any
   dependency work; drift there is silent.
-- `better-sqlite3` must be compiled against Electron's ABI, not the host Node's.
-  `npm run rebuild` (`electron-rebuild -f -w better-sqlite3`) runs as part of
-  `pretest`/`posttest` and must be re-run manually after any plain `npm install` /
-  `npm update` that touches native deps.
-- CI installs with `npm ci --ignore-scripts` and then runs
-  `npm rebuild better-sqlite3` explicitly — assume nothing runs a postinstall for
-  you in that path.
+- `better-sqlite3` (13+) is an N-API module, so it is not tied to one runtime's
+  ABI. Its package carries `prebuilds/<platform>-<arch>.node` for every target,
+  and `lib/binding.js` loads that file before any `build/` output: one binary
+  serves Node (tests) and Electron (app). There is no rebuild step and no
+  `allowScripts` entry — the package has no install script, and its `binding.gyp`
+  compiles nothing when a prebuild exists. BLOB results come back as copies
+  (`Napi::Buffer::Copy`), which Electron's V8 memory cage needs; checked on
+  Electron 41.10.7 (BLOB round trip, `serialize()`).
+- The workflow files install with `npm ci --ignore-scripts`; their
+  `npm rebuild better-sqlite3` step is a no-op since 13.
 - `npmRebuild: true` in `electron-builder.yml` means `electron-builder` itself
-  rebuilds native modules during `npm run build` — don't add a redundant manual
-  rebuild step to the build script.
+  rebuilds native modules during `npm run build`. No current dependency needs it;
+  it stays for the next one. Don't add a manual rebuild step to the build script.
 
 ## Native Modules in the Package (`asarUnpack`)
 
@@ -171,4 +174,4 @@ binaries for platforms it doesn't target.
 | Installer carries files of earlier builds        | Main build output not emptied — `vite-plugin-electron` defaults `emptyOutDir` to `false` | Keep `emptyOutDir: true` on the main build in `vite.config.ts`                              |
 | Stale `mainWindow` reference after close         | Closure captured `mainWindow` before macOS `activate` recreated it                       | Re-check `!mainWindow.isDestroyed()` at call time, don't cache across awaits                |
 | Spawned MCP/sandbox process can't find resources | `process.resourcesPath` is undefined in spawned child processes                          | Pass resource path explicitly via env var to the child process                              |
-| better-sqlite3 fails to load after `npm install` | Native module compiled against host Node ABI, not Electron's                             | Run `npm run rebuild` after any plain npm operation touching native deps                    |
+| SQLite fails to load in the packaged app         | Target's `prebuilds/<platform>-<arch>.node` pruned, or not in `asarUnpack`               | Keep `better-sqlite3/**/*.node` in `asarUnpack`; `after-pack.js` prunes only if it exists   |

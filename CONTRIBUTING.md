@@ -17,19 +17,12 @@ Thank you for your interest in contributing! Sqowe Pilot is an open-source deskt
 ```bash
 git clone https://github.com/sqowe/pilot.git sqowe-pilot
 cd sqowe-pilot
-npm install        # also runs postinstall: downloads Node binaries + rebuilds native modules
+npm install        # also runs postinstall: downloads Node binaries
 ```
 
-> **Native module note:** `npm install` rebuilds `better-sqlite3` against Electron's
-> Node ABI (for the packaged app). To run tests locally with Vitest, you need to
-> rebuild it for your host Node.js:
->
-> ```bash
-> npm rebuild better-sqlite3
-> ```
->
-> This is required after every `npm install` or `npm ci` if you plan to run `npm test`.
-> The production build (electron-builder) handles the Electron-targeted rebuild automatically.
+> **Native module note:** `better-sqlite3` ships a prebuilt N-API binary per
+> platform. The same binary loads in your host Node.js (tests) and in Electron
+> (the app), so nothing needs rebuilding after `npm install` or `npm ci`.
 
 **Common commands**
 
@@ -146,7 +139,7 @@ These packages are deeply integrated — any update (including patch) should be 
 
 - `electron` — major upgrades need a dedicated migration branch; skip Dependabot for major versions
 - `@earendil-works/pi-coding-agent` — core AI SDK; read release notes carefully
-- `better-sqlite3` — native module; rebuild required, test on both platforms
+- `better-sqlite3` — native module (N-API prebuilds, no rebuild); test on both platforms
 - `vite` / `@vitejs/plugin-react` — build toolchain; verify `npm run build` succeeds
 
 ### Weekly workflow
