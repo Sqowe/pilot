@@ -1012,6 +1012,15 @@ app
         // return it logged PASSED and went on to start the app.
         return;
       }
+      try {
+        // Importing it loads bin/napi-v6/<platform>/<arch>, which after-pack.js prunes to
+        await import('onnxruntime-node');
+        log('[SmokeTest] onnxruntime-node: OK');
+      } catch (e) {
+        log('[SmokeTest] FAIL: onnxruntime-node failed to load:', e);
+        process.exit(1);
+        return;
+      }
       log('[SmokeTest] PASSED');
       process.exit(0);
       return;

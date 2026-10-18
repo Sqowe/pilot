@@ -546,7 +546,7 @@ Before upgrading any Tier 1 dependency (see `docs/dependency-tiers.md`):
 11. Document adaptations in the commit message body.
 
 **`allowScripts` is a hard gate in this repo.** `package.json` allowlists
-install scripts by **exact version** (`"sharp@0.35.4": true`, …). Bump
+install scripts by **exact version** (`"sharp@0.35.5": true`, …). Bump
 `sharp`, `onnxruntime-node`, `esbuild`, `protobufjs`
 or `electron-winstaller` **in the same edit**. Miss it and npm reports one warning
 line among many, the postinstall never runs, and the native payload is simply

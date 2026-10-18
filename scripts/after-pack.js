@@ -232,6 +232,28 @@ module.exports = async function afterPack(context) {
     }
   }
 
+  // --- 2b. onnxruntime-node: keep only the target's bin/napi-v6/<platform>/<arch> ---
+  // The binding loads exactly that folder; the package carries five (~290MB in 1.30).
+  // Prune only when the target's folder is there, or local embeddings would not load.
+  const ortBin = path.join(nmUnpacked, 'onnxruntime-node', 'bin', 'napi-v6');
+  const ortTarget = path.join(ortBin, platform, archName);
+  if (fs.existsSync(ortTarget)) {
+    const removed = removeExcept(ortBin, [platform]) + removeExcept(path.join(ortBin, platform), [archName]);
+    if (removed > 0) console.log(`  ✓ onnxruntime-node: kept ${platform}/${archName}, removed ${removed} others`);
+    // npm packages cannot hold symlinks, so the macOS library comes twice (~45MB each).
+    // The binding links @rpath/libonnxruntime.1.dylib; the versioned copy is unused.
+    if (fs.existsSync(path.join(ortTarget, 'libonnxruntime.1.dylib'))) {
+      for (const entry of fs.readdirSync(ortTarget)) {
+        if (/^libonnxruntime\.\d+\.\d+\.\d+\.dylib$/.test(entry)) {
+          fs.rmSync(path.join(ortTarget, entry), { force: true });
+          console.log(`  ✓ onnxruntime-node: removed duplicate ${entry}`);
+        }
+      }
+    }
+  } else if (fs.existsSync(ortBin)) {
+    console.warn(`  ⚠ onnxruntime-node: no bin/napi-v6/${platform}/${archName}, kept all`);
+  }
+
   // --- 3. bufferutil / utf-8-validate: remove non-target platform prebuilds ---
   for (const pkg of ['bufferutil', 'utf-8-validate']) {
     const pkgPath = path.join(nmUnpacked, pkg);

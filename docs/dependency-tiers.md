@@ -1,7 +1,7 @@
 # NPM Dependency Tiers
 
 > Scope: runtime `dependencies` from `package.json` (v3.3.0). DevDependencies excluded — they affect the build pipeline, not end-user features.
-> Last updated: 2026-05-30 (npm audit fix — @google/genai 1.44→1.52, @larksuiteoapi/node-sdk 1.62→1.66, ws 8.19→8.21, uuid 11.1.0→11.1.1, typebox 1.1.36→1.1.38).
+> Last updated: 2026-10-18 (npm audit — @modelcontextprotocol/sdk 1.27→1.32, @huggingface/transformers 4.2→4.3.1 with onnxruntime-node 1.30; overrides for proxy-addr 2.0.8, sharp 0.35.5, source-map-js 1.2.2. What remains and why: "Known npm audit findings" below).
 >
 > Purpose: identify which upstream libraries most directly drive end-user features so uplifts can be prioritized and new capabilities adopted quickly. The machine-readable companion lives at [`docs/dependency-tiers.json`](./dependency-tiers.json).
 
@@ -25,7 +25,7 @@ These six libraries are **the AI pipeline**. A new Claude / GPT / Gemini model, 
 | --------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `@earendil-works/pi-coding-agent` | 0.78.1    | Agent execution engine. Drives `src/main/claude/agent-runner.ts` (~1500 lines) — session lifecycle, tool dispatch, streaming. Heart of the app.                |
 | `@earendil-works/pi-ai`           | 0.78.1    | Unified LLM abstraction — provider routing, model registry, auth. Resolves which concrete SDK/endpoint to call. Must be version-locked with `pi-coding-agent`. |
-| `@modelcontextprotocol/sdk`       | 1.27.1    | MCP client + server (stdio, SSE, Streamable HTTP). Powers the entire MCP connector ecosystem in `src/main/mcp/mcp-manager.ts`.                                 |
+| `@modelcontextprotocol/sdk`       | 1.32.1    | MCP client + server (stdio, SSE, Streamable HTTP). Powers the entire MCP connector ecosystem in `src/main/mcp/mcp-manager.ts`.                                 |
 | `@anthropic-ai/sdk`               | 0.92.0    | Official Anthropic SDK. Used for Claude diagnostics and probes. Tracks new Claude model families.                                                              |
 | `openai`                          | 6.32.0    | Official OpenAI SDK. Used across all OpenAI-compatible endpoints (OpenAI, OpenRouter, Ollama, DashScope, custom proxies).                                      |
 | `@google/genai`                   | 1.52.0    | Official Gemini SDK. Used in auth diagnostics; tracks new Gemini model previews.                                                                               |
@@ -61,7 +61,7 @@ These power significant end-user features — remote channels, persistence, auto
 
 - **`react` 18 → 19** is a real upgrade path. Actions, `use()`, asset loading. Plan for a dedicated uplift.
 - **`better-sqlite3`** is N-API since 13: one prebuilt binary per platform serves Node and every Electron version, so an Electron bump needs no rebuild. A new platform/arch needs a prebuild in the package.
-- **`ngrok` 5.0.0-beta.2** is a pre-release of a community wrapper. Official ngrok v2 JS SDK is a potential swap target if stability becomes an issue.
+- **`ngrok` 5.0.0-beta.2** is a pre-release of a community wrapper with no fixed release for its audit findings (see "Known npm audit findings"). The official `@ngrok/ngrok` SDK — no binary download, no `extract-zip`/`uuid` — is the fix; swapping it in is planned as its own task.
 - **`ws`** — treat any new release as potentially security-driven.
 
 ---
@@ -104,6 +104,28 @@ Packages with `monitor_releases: true` in `dependency-tiers.json` (18 total):
 **Tier 3 (1):** `rehype-sanitize` (security boundary)
 
 The remaining packages use `monitor_releases: false` — check them opportunistically during routine maintenance or when `npm audit` flags something.
+
+---
+
+## Known npm audit findings (2026-10-18)
+
+28 findings after the October pass (from 35); 7 of them in runtime dependencies, none
+critical. Each is left on purpose, and none is reachable the way the app uses the package.
+`npm audit fix --force` would make things worse: its remedies are downgrades (`ngrok`
+4.3.3, `electron-builder` 26.5.0, `remark-math` 3.0.1, `rehype-katex` 1.2.0).
+
+| Finding                                                                                                   | Where                         | Why it stays                                                                                                                                                                                                                                                |
+| --------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ngrok` 5.0.0-beta.2 — command injection (GHSA-qr28-p3wr-mxq3)                                            | runtime                       | No fixed release. The shell call is `getVersion()` (`exec` of a string built from `binPath`); `tunnel-manager.ts` never calls it — `authtoken()` and `connect()` spawn ngrok with an argument array. Fix: swap to `@ngrok/ngrok`.                           |
+| `extract-zip` 2.0.1 — symlink path traversal (×2), `uuid` 8.3.2 — buffer bounds (v3/v5/v6)                | runtime, via `ngrok`          | No fixed `extract-zip`. It unpacks the binary ngrok downloads over HTTPS on the first tunnel start; ngrok uses uuid v4 only. Both go with the `@ngrok/ngrok` swap.                                                                                          |
+| `katex` 0.16.45 — prototype pollution can bypass `trust` (low; `rehype-katex`, `remark-math` list it too) | runtime                       | Needs `Object.prototype` already polluted elsewhere. Fixed in 0.18.2, but 0.18.0 prefixes KaTeX's internal CSS classes and `rehype-katex` 7.0.1 still asks for `^0.16` — an override plus a check of rendered math (`tests/message-markdown-math.test.ts`). |
+| `braces`, `micromatch`, `fast-glob`, `chokidar`, `postcss-selector-parser` and their chains               | dev (tailwind 3, ts-eslint 7) | No fixed `braces` 3.x. Build tooling only, fed our own files. Fixed only by the tailwind 4 and typescript-eslint 8 migrations.                                                                                                                              |
+| `sprintf-js` 1.1.3 — DoS via precision specifiers, through `global-agent` 3 → `roarr`                     | build (`@electron/get`)       | No fixed release. `onnxruntime-node` 1.30 moved to `global-agent` 4.1, which no longer uses it.                                                                                                                                                             |
+
+Cleared in October: `proxy-addr` (override 2.0.8; only a misconfigured IPv6 trust subnet was
+affected, the app sets none), `@modelcontextprotocol/sdk` 1.32.1 (its OAuth client, which the
+app does not use), `sharp` 0.35.5 (librsvg CVE), `adm-zip` 0.6.1 via `onnxruntime-node` 1.30
+(eight findings; it ran only in onnxruntime-node's install script), `source-map-js` 1.2.2.
 
 ---
 

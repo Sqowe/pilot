@@ -51,8 +51,10 @@ on a given platform, check that platform's block:
   `extraResources` entry per platform that needs it, (3) a resolution helper in the
   consuming main-process module.
 - `afterPack: ./scripts/after-pack.js` strips binaries and files that don't match
-  the build target — koffi platform dirs, better-sqlite3 prebuilds, ngrok
-  binaries, and unused locale files, ~165MB per build. When adding a native
+  the build target — koffi platform dirs, better-sqlite3 prebuilds,
+  onnxruntime-node's other platforms (plus the duplicate macOS library: npm
+  packages hold no symlinks), ngrok binaries, and unused locale files. Each prunes
+  only when the target's own file is there. When adding a native
   dependency with per-platform prebuilds, add its pruning logic here or it
   inflates every installer.
 - The `files` allowlist in `electron-builder.yml` explicitly lists which
@@ -133,7 +135,7 @@ on a given platform, check that platform's block:
 ## Native Modules, `allowScripts` & Rebuilds
 
 - **`allowScripts` in `package.json` gates install scripts by EXACT version**
-  (`"sharp@0.35.4": true`, …). Bump `sharp`, `onnxruntime-node`, `esbuild`,
+  (`"sharp@0.35.5": true`, …). Bump `sharp`, `onnxruntime-node`, `esbuild`,
   `protobufjs`, or `electron-winstaller` **in the same edit**. Miss it and npm
   reports a single warning among many, the postinstall never runs, and the native
   payload is simply absent — that once left `node_modules/electron/dist/` empty
@@ -153,8 +155,10 @@ on a given platform, check that platform's block:
   ABI. Its package carries `prebuilds/<platform>-<arch>.node` for every target,
   and `lib/binding.js` loads that file before any `build/` output: one binary
   serves Node (tests) and Electron (app). There is no rebuild step and no
-  `allowScripts` entry — the package has no install script, and its `binding.gyp`
-  compiles nothing when a prebuild exists. BLOB results come back as copies
+  `allowScripts` entry — the package declares no install script, and its
+  `binding.gyp` compiles nothing when a prebuild exists. npm 12 may still list
+  "better-sqlite3 (install: node-gyp rebuild)" among blocked scripts (it infers
+  one from `binding.gyp`); that is intended — do not allow it. BLOB results come back as copies
   (`Napi::Buffer::Copy`), which Electron's V8 memory cage needs; checked on
   Electron 41.10.7 and 44.9.0 (BLOB round trip, `serialize()`).
 - The workflow files install with `npm ci --ignore-scripts`; their

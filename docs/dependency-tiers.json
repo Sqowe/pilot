@@ -63,8 +63,8 @@
     {
       "name": "@modelcontextprotocol/sdk",
       "tier": "tier_1_core",
-      "installed_version": "1.27.1",
-      "declared_range": "^1.26.0",
+      "installed_version": "1.32.1",
+      "declared_range": "^1.32.1",
       "role": "MCP client + server. Powers MCPManager \u2014 stdio / SSE / StreamableHTTP transports for connecting external MCP servers and exposing their tools to the agent.",
       "primary_callsites": [
         "src/main/mcp/mcp-manager.ts",
