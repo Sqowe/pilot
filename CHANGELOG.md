@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.12] - 2026-10-18
+
+### Fixed
+
+- **Prices no longer turn into garbled text.** When a reply mentioned two dollar amounts
+  in one paragraph — "$4.99 … Plus $4.99" — the dollar signs vanished, the words between
+  them ran together without spaces, and the passage showed up three times. The text was
+  taken for a formula. Prices now stay ordinary text, in chats from earlier versions too.
+- **Formulas show once.** Every formula in a reply was displayed three times, twice with
+  its spaces removed. It now appears once, in the formula font. The model's thinking gets
+  the same treatment, and formulas written as `\(…\)` are now recognised there as well.
+
 ## [1.0.11] - 2026-10-08
 
 ### Fixed
@@ -574,7 +586,8 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.11...HEAD
+[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.12...HEAD
+[1.0.12]: https://github.com/sqowe/pilot/compare/v1.0.11...v1.0.12
 [1.0.11]: https://github.com/sqowe/pilot/compare/v1.0.10...v1.0.11
 [1.0.10]: https://github.com/sqowe/pilot/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/sqowe/pilot/compare/v1.0.8...v1.0.9
