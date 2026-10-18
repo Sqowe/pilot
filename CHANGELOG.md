@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-18
+
+### Changed
+
+- **Built on Electron 44**, up from 41, whose security support ended in August: current
+  Chromium and Node.js security fixes again.
+- **macOS 13 (Ventura) or later is now required.** Electron no longer supports macOS 12.
+- **The macOS app is signed** with the project's own certificate. Notifications now appear
+  on macOS, and the screen-recording and accessibility permissions you grant are kept
+  across updates. This version asks for them once more. A downloaded copy is still not
+  notarized by Apple: open it the first time via System Settings → Privacy & Security →
+  Open Anyway.
+- **PDF exports have wider margins:** 2 cm at the sides and 1.5 cm at the top and bottom,
+  instead of 1 cm all round.
+- File dialogs reopen in the folder you last picked from, instead of always starting in
+  Downloads.
+- The app is smaller: about 35 MB less on disk.
+- For developers: no native rebuild step any more — the SQLite module ships one prebuilt
+  binary that both the tests and the app load.
+
+### Fixed
+
+- **Quitting from the menu or the Dock works on the first try** and shuts down cleanly.
+  Before, the first quit could leave the app running, and the shutdown of MCP servers,
+  remote channels and sandboxes never ran.
+- The Copy button reports success only once the text is on the clipboard.
+
+### Security
+
+- Dependency updates clear nine `npm audit` findings, one of them rated critical. None was
+  reachable the way the app uses those packages. What remains, and why, is listed in
+  `docs/dependency-tiers.md`.
+
 ## [1.0.12] - 2026-10-18
 
 ### Fixed
@@ -586,7 +619,8 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/sqowe/pilot/compare/v1.0.12...HEAD
+[Unreleased]: https://github.com/sqowe/pilot/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/sqowe/pilot/compare/v1.0.12...v1.1.0
 [1.0.12]: https://github.com/sqowe/pilot/compare/v1.0.11...v1.0.12
 [1.0.11]: https://github.com/sqowe/pilot/compare/v1.0.10...v1.0.11
 [1.0.10]: https://github.com/sqowe/pilot/compare/v1.0.9...v1.0.10
