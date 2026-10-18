@@ -109,10 +109,14 @@ https://github.com/user-attachments/assets/05a703de-c0f5-407b-9a43-18b6a172fd74
 
 Get the latest version from our [Releases Page](https://github.com/sqowe/pilot/releases).
 
-| Platform                  | File Type |
-| ------------------------- | --------- |
-| **Windows**               | `.exe`    |
-| **macOS** (Apple Silicon) | `.dmg`    |
+| Platform                              | File Type |
+| ------------------------------------- | --------- |
+| **Windows** (64-bit)                  | `.exe`    |
+| **macOS 13 or later** (Apple Silicon) | `.dmg`    |
+
+The macOS app is not notarized by Apple. The first time you open a downloaded copy,
+macOS blocks it: go to **System Settings → Privacy & Security** and click
+**Open Anyway**.
 
 ### Option 2: Build from Source
 

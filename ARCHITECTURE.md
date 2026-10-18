@@ -129,7 +129,7 @@ sqowe-pilot/
 ├── BASH_COMMAND_RESTRICTIONS.md # ⚡ AI rules: bash permission engine
 ├── ARCHITECTURE.md             # ← this file
 ├── ROADMAP.md                  # Feature roadmap
-└── package.json                # Node 22+, Electron 41, Vite 7
+└── package.json                # Node 22+, Electron 44, Vite 7
 ```
 
 **Design docs lifecycle:** `docs/design/` holds _active_ design work — in-progress feature
@@ -565,7 +565,7 @@ electron-store (JSON)          better-sqlite3
 | Item              | Value                            | Notes                                                 |
 | ----------------- | -------------------------------- | ----------------------------------------------------- |
 | Node.js           | ≥22                              | `.nvmrc` pinned; bundled Node shipped in `resources/` |
-| Electron          | 41.x                             | `better-sqlite3` is N-API — no rebuild per Electron   |
+| Electron          | 44.x (macOS 13+)                 | `better-sqlite3` is N-API — no rebuild per Electron   |
 | Package manager   | npm                              | `package-lock.json` committed; no yarn/pnpm           |
 | Build tool        | Vite 7 + vite-plugin-electron    | `vite.config.ts`                                      |
 | Test runner       | Vitest 4                         | `vitest.config.mts`; run with `npm test`              |

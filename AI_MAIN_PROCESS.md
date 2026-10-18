@@ -546,12 +546,12 @@ Before upgrading any Tier 1 dependency (see `docs/dependency-tiers.md`):
 11. Document adaptations in the commit message body.
 
 **`allowScripts` is a hard gate in this repo.** `package.json` allowlists
-install scripts by **exact version** (`"electron@41.10.7": true`, …). Bump
-`electron`, `sharp`, `onnxruntime-node`, `esbuild`, `protobufjs`
+install scripts by **exact version** (`"sharp@0.35.4": true`, …). Bump
+`sharp`, `onnxruntime-node`, `esbuild`, `protobufjs`
 or `electron-winstaller` **in the same edit**. Miss it and npm reports one warning
 line among many, the postinstall never runs, and the native payload is simply
-absent — for `electron` that means an empty `node_modules/electron/dist/` and an
-app that won't start. Fixing the entry alone isn't enough: a plain `npm install`
+absent. (`electron` 42+ has no install script; it downloads its binary on first
+use.) Fixing the entry alone isn't enough: a plain `npm install`
 doesn't re-run a script for an already-unpacked package, so follow up with
 `npm rebuild <pkg>`.
 
@@ -580,7 +580,7 @@ doesn't re-run a script for an already-unpacked package, so follow up with
 | Session runs a stale system prompt                       | Cached pi session kept the old `appendSystemPrompt`                     | Put the new state in the runtime signature (§1)                               |
 | Request past the context limit, MCP schemas huge         | Tool schemas not counted in compaction                                  | See compaction budget above                                                   |
 | A tool wrapper silently no-ops                           | `originalExecute` not called on the happy path                          | Always delegate; fail closed on deny (§1)                                     |
-| App won't start after an `electron` bump                 | `allowScripts` version drift — postinstall blocked                      | Update `allowScripts` in the same edit, then `npm rebuild electron` (§13)     |
+| Native dependency missing after a bump                   | `allowScripts` version drift — postinstall blocked                      | Update `allowScripts` in the same edit, then `npm rebuild <pkg>` (§13)        |
 | MCP tools fail inside the sandbox                        | Spawn routed through the Lima/WSL bridge                                | MCP always runs on host (§3)                                                  |
 | Retrieval silently returns nothing after a model change  | Vectors from two models compared as one                                 | Per-row `embedding_model` filter (§5)                                         |
 | Remote-embedding user gets a "rebuild embeddings" prompt | Format-staleness check not gated on local provider                      | Gate on provider id (§5)                                                      |

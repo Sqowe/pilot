@@ -12,6 +12,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync, spawnSync } = require('child_process');
+
+// Self-signed code-signing certificate in the login keychain; SQOWE_MAC_SIGN_IDENTITY overrides it.
+const DEFAULT_MAC_SIGN_IDENTITY = 'Sqowe Pilot Code Signing';
 
 /**
  * Map electron-builder arch names to koffi directory names.
@@ -67,6 +71,66 @@ function findDirs(basePath, dirName) {
 
   walk(basePath, 0);
   return results;
+}
+
+/**
+ * Sign the macOS app with the project's self-signed certificate.
+ *
+ * Electron 42+ shows notifications only for a signed app, and a certificate keeps
+ * the app's designated requirement (bundle identifier + certificate) the same in
+ * every release, so the screen-recording and accessibility permissions users
+ * granted survive updates. electron-builder cannot pick this certificate up (it
+ * looks only for trusted "Developer ID Application:" identities) and skips
+ * afterSign when it did not sign, so it is done here, after the pruning: signing
+ * seals the bundle, and any later change breaks the signature.
+ * Without the certificate the build goes on unsigned, as before, with a warning;
+ * with it, a failed signing fails the build.
+ */
+async function signMacApp(context, appPath) {
+  const identity = process.env.SQOWE_MAC_SIGN_IDENTITY || DEFAULT_MAC_SIGN_IDENTITY;
+  let identities = '';
+  try {
+    identities = execFileSync('security', ['find-identity', '-v', '-p', 'codesigning'], {
+      encoding: 'utf8',
+    });
+  } catch {
+    // No keychain access: treated as no certificate
+  }
+  const found = identities.split('\n').find((line) => line.includes(`"${identity}"`));
+  const hash = found && found.match(/\b[0-9A-F]{40}\b/);
+  if (!hash) {
+    console.warn(`  ⚠ macOS signing SKIPPED: no trusted code-signing certificate "${identity}".`);
+    console.warn('    The app keeps only the linker signature: notifications do not show (Electron 42+)');
+    console.warn('    and users grant screen recording and accessibility again after every Electron upgrade.');
+    return;
+  }
+
+  const { signAsync } = require('@electron/osx-sign');
+  const mac = context.packager.platformSpecificBuildOptions;
+  const projectDir = context.packager.info.projectDir;
+  const entitlements = path.resolve(projectDir, mac.entitlements);
+  const entitlementsInherit = path.resolve(projectDir, mac.entitlementsInherit || mac.entitlements);
+  await signAsync({
+    app: appPath,
+    // By hash, and without osx-sign's own lookup: it lists identities under the basic X.509
+    // policy, where a certificate trusted only for code signing does not show.
+    identity: hash[0],
+    identityValidation: false,
+    platform: 'darwin',
+    preAutoEntitlements: false,
+    preEmbedProvisioningProfile: false,
+    optionsForFile: (filePath) => ({
+      entitlements: filePath === appPath ? entitlements : entitlementsInherit,
+      hardenedRuntime: mac.hardenedRuntime !== false,
+      // Apple's timestamp server is for certificates Apple issued
+      timestamp: 'none',
+    }),
+  });
+
+  const shown = spawnSync('codesign', ['-d', '-r-', appPath], { encoding: 'utf8' });
+  const designated = `${shown.stdout}${shown.stderr}`.match(/designated => (.*)/);
+  console.log(`  ✓ macOS: signed with "${identity}"`);
+  if (designated) console.log(`    designated requirement: ${designated[1]}`);
 }
 
 /**
@@ -208,6 +272,11 @@ module.exports = async function afterPack(context) {
       }
       if (removedLocales > 0) console.log(`  ✓ Electron locales: removed ${removedLocales} .lproj dirs (kept en, hu, ru, zh_CN, zh_TW)`);
     }
+  }
+
+  // --- 6. macOS: sign with the project's certificate (last: signing seals the bundle) ---
+  if (platform === 'darwin') {
+    await signMacApp(context, path.join(appOutDir, `${context.packager.appInfo.productFilename}.app`));
   }
 
   console.log(`✅ after-pack cleanup complete for ${platform}-${archName}\n`);

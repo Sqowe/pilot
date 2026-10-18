@@ -33,6 +33,14 @@ import { serializeMessagesToHtml } from './export-html';
 /** Guard against a hung renderer never resolving load/print. */
 const RENDER_TIMEOUT_MS = 30_000;
 
+/**
+ * Page margins, in inches as printToPDF takes them: 2 cm at the sides, 1.5 cm at
+ * top and bottom (its default is 1 cm all round). The page's own padding is 0 in
+ * print (`@media print` in export-html.ts), so these are the visible margins.
+ */
+const CM = 1 / 2.54;
+const PDF_MARGINS = { top: 1.5 * CM, bottom: 1.5 * CM, left: 2 * CM, right: 2 * CM };
+
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout;
   const timeout = new Promise<never>((_, reject) => {
@@ -74,7 +82,7 @@ export async function serializeMessagesToPdf(
       win.webContents.printToPDF({
         printBackground: true,
         pageSize: 'A4',
-        margins: { marginType: 'default' },
+        margins: PDF_MARGINS,
       }),
       RENDER_TIMEOUT_MS,
       'printToPDF'

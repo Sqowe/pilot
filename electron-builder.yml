@@ -6,7 +6,10 @@ directories:
   output: release
   buildResources: resources
 
-npmRebuild: true
+# No dependency is built against Electron's ABI (better-sqlite3 13+, sharp, onnxruntime-node
+# all ship N-API prebuilds), and @electron/rebuild fails on any Electron its node-abi does not
+# know yet. Turn this on only for a new ABI-specific native dependency (see AI_ELECTRON.md).
+npmRebuild: false
 afterPack: ./scripts/after-pack.js
 afterAllArtifactBuild: ./scripts/compress-dmg.js
 

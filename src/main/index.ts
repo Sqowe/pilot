@@ -141,6 +141,7 @@ import {
 } from './utils/logger';
 import { listRecentWorkspaceFiles } from './utils/recent-workspace-files';
 import { buildDiagnosticsSummary } from './utils/diagnostics-summary';
+import { lastDialogDir, rememberDialogSelection } from './utils/dialog-last-dir';
 import {
   isValidSystemPromptFileChoice,
   isValidSystemPromptPriority,
@@ -1347,6 +1348,8 @@ app
 
 // Flag to prevent double cleanup
 let isCleaningUp = false;
+// Set once cleanup has run to its end (or failed): the next quit goes through
+let cleanupFinished = false;
 
 function withTimeout<T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1434,6 +1437,7 @@ async function cleanupSandboxResources(): Promise<void> {
   }
 
   closeLogFile();
+  cleanupFinished = true;
 
   // pi-ai doesn't need proxy shutdown
 }
@@ -1455,11 +1459,20 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
   process.on(sig, () => app.quit());
 }
 
-// Handle app quit - before-quit (for macOS Cmd+Q and other quit methods)
-app.on('before-quit', async (event) => {
-  if (!isCleaningUp) {
-    // In dev mode, exit quickly — no need for async sandbox cleanup
-    if (process.env.VITE_DEV_SERVER_URL) {
+// Handle app quit - before-quit (for macOS Cmd+Q and other quit methods).
+// The first quit is held back while cleanup runs, then quit is called again.
+// Two traps, both hit from 2026-03 until 2026-10 (Cmd+Q left the app running):
+// - this handler must not set isCleaningUp itself, or cleanupSandboxResources()
+//   sees it and skips all of its work;
+// - the second app.quit() must come from a later task. Made while Electron is
+//   still emitting this event, it is undone when the emit returns
+//   (Browser::Quit assigns is_quitting_ from it), and the app stays open.
+app.on('before-quit', (event) => {
+  // Cleanup has run (here, or in window-all-closed): let the quit go through
+  if (cleanupFinished) return;
+  // In dev mode, exit quickly — no need for async sandbox cleanup
+  if (process.env.VITE_DEV_SERVER_URL) {
+    if (!isCleaningUp) {
       stopNavServer();
       try {
         closeDatabase();
@@ -1469,18 +1482,20 @@ app.on('before-quit', async (event) => {
       closeLogFile();
       tray?.destroy();
       tray = null;
-      return;
     }
-    // Set the flag immediately before any await to prevent re-entrant cleanup
-    isCleaningUp = true;
-    event.preventDefault();
-    try {
-      await cleanupSandboxResources();
-    } catch (error) {
-      logError('[App] before-quit cleanup failed, forcing quit:', error);
-    }
-    app.quit();
+    return;
   }
+  event.preventDefault();
+  // A repeated Cmd+Q while cleanup runs keeps waiting for it
+  if (isCleaningUp) return;
+  void cleanupSandboxResources()
+    .catch((error) => {
+      logError('[App] before-quit cleanup failed, forcing quit:', error);
+    })
+    .finally(() => {
+      cleanupFinished = true;
+      setImmediate(() => app.quit());
+    });
 });
 
 // IPC Handlers
@@ -1906,12 +1921,14 @@ ipcMain.handle('dialog.selectFiles', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile', 'multiSelections'],
     title: 'Select Files',
+    defaultPath: lastDialogDir('selectFiles'),
   });
 
   if (result.canceled) {
     return [];
   }
 
+  rememberDialogSelection('selectFiles', result.filePaths);
   return result.filePaths;
 });
 
@@ -3692,10 +3709,12 @@ ipcMain.handle('plugins.installFromFile', async () => {
       properties: ['openFile'],
       filters: [{ name: 'Plugin Archives', extensions: ['plugin', 'zip'] }],
       title: 'Select Plugin Archive',
+      defaultPath: lastDialogDir('pluginArchive'),
     });
     if (result.canceled || result.filePaths.length === 0) {
       return null;
     }
+    rememberDialogSelection('pluginArchive', result.filePaths);
 
     const targetPath = result.filePaths[0];
     const installResult = await pluginRuntimeService.installFromArchive(targetPath);
@@ -3763,10 +3782,10 @@ ipcMain.on('window.close', () => {
   }
 });
 
-// Clipboard IPC handler (avoids deprecated renderer clipboard access in Electron 40+)
-ipcMain.handle('clipboard.writeText', (_event, text: string) => {
-  clipboard.writeText(text);
-});
+// Clipboard IPC handler (the renderer has no clipboard module since Electron 44).
+// writeText returns a Promise since Electron 44: return it so the renderer's
+// "copied" state waits for the write and sees a failure.
+ipcMain.handle('clipboard.writeText', (_event, text: string) => clipboard.writeText(text));
 
 // Sandbox IPC handlers
 ipcMain.handle('sandbox.getStatus', async () => {
@@ -5118,8 +5137,10 @@ async function handleClientEvent(event: ClientEvent): Promise<unknown> {
     case 'folder.select': {
       const folderResult = await dialog.showOpenDialog(mainWindow!, {
         properties: ['openDirectory'],
+        defaultPath: lastDialogDir('folderSelect'),
       });
       if (!folderResult.canceled && folderResult.filePaths.length > 0) {
+        rememberDialogSelection('folderSelect', folderResult.filePaths);
         sendToRenderer({
           type: 'folder.selected',
           payload: { path: folderResult.filePaths[0] },

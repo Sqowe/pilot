@@ -10,7 +10,7 @@ coding required.
 1. Download the latest release from the **[Releases page](https://github.com/sqowe/pilot/releases)**.
 2. Run the installer:
    - **Windows**: the `.exe` installer.
-   - **macOS (Apple Silicon)**: open the `.dmg` and drag **Sqowe Pilot** to Applications.
+   - **macOS 13 or later (Apple Silicon)**: open the `.dmg` and drag **Sqowe Pilot** to Applications.
 3. On macOS, if you see a security warning the first time you open it, go to
    **System Settings → Privacy & Security** and click **Open Anyway**.
 

@@ -79,31 +79,68 @@ on a given platform, check that platform's block:
 - Single-instance lock is `isDev || app.requestSingleInstanceLock()`
   (`src/main/index.ts:337`) so multiple dev windows can run concurrently; do not
   remove the `isDev` bypass.
+- **Quitting** (`before-quit` in `index.ts`): the first quit is held back while
+  `cleanupSandboxResources()` runs, then `app.quit()` is called again. That second
+  call must come from a later task (`setImmediate`): made while Electron is still
+  emitting `before-quit`, it is undone when the emit returns (`Browser::Quit`
+  assigns `is_quitting_` from it) and the app stays open — Cmd+Q, the Dock's Quit,
+  SIGTERM and the quit after a failed start all did, from 2026-03 to 2026-10. And
+  the handler must not set `isCleaningUp` itself, or the cleanup skips all its work.
 
 ---
 
-## macOS Entitlements & GUI Automation
+## macOS Entitlements, Signing & GUI Automation
 
-- `hardenedRuntime: true` + `entitlements: resources/entitlements.mac.plist` are
-  required for the app to keep screen-recording/accessibility permissions across
-  updates. `NSScreenCaptureUsageDescription` / `NSAccessibilityUsageDescription` in
+- `NSScreenCaptureUsageDescription` / `NSAccessibilityUsageDescription` in
   `extendInfo` are user-facing permission prompts for `gui-operate-server.ts`
   (vision-based GUI automation) — update the copy there if the automation feature's
   scope changes, never remove the keys while GUI automation ships.
-- `identity: auto` + `gatekeeperAssess: true` — do not hardcode a signing identity;
-  let electron-builder pick up the local keychain cert.
+- **Signing.** Releases are built locally with `npm run build`; there is no Apple
+  Developer ID. The last step of `scripts/after-pack.js` signs the app with a
+  self-signed certificate named `Sqowe Pilot Code Signing` from the login keychain
+  (`SQOWE_MAC_SIGN_IDENTITY` overrides the name), through `@electron/osx-sign`,
+  with `hardenedRuntime` and the entitlements from `electron-builder.yml` and no
+  timestamp. Two reasons:
+  - Electron 42+ shows macOS notifications only for a signed app (`UNNotification`).
+  - macOS ties screen-recording and accessibility grants to the app's designated
+    requirement. The linker signature Electron ships with has the `cdhash` of the
+    stock Electron binary: grants survive our releases but reset on every Electron
+    upgrade. An ad-hoc signature (`identity: "-"`) seals `Info.plist`, so its
+    `cdhash` changes with every release. A certificate's requirement is the bundle
+    identifier plus the certificate, the same in every release and Electron version:
+    `identifier "com.sqowe.pilot" and certificate root = H"7733de8e…"`. Checked by
+    re-signing with only the version changed: new `cdhash`, same requirement.
+- The certificate goes to `osx-sign` as its SHA-1 with `identityValidation: false`:
+  `osx-sign`'s own lookup lists identities under the basic X.509 policy, where a
+  certificate trusted only for code signing does not show ("No identity found").
+- electron-builder does not use this certificate: it lists only trusted
+  `Developer ID Application:` identities, so `identity: auto` finds none and skips
+  signing, and it skips `afterSign` when it did not sign. Signing comes last in
+  `after-pack.js` because it seals the bundle — any later change breaks it;
+  `compress-dmg.js` packs the signed app afterwards.
+- Without the certificate the build goes on unsigned, with a warning; with it, a
+  failed signing fails the build. The private key is the app's identity: whoever
+  holds it can sign code macOS treats as this app, with its granted permissions.
+  It lives in the maintainer's keychain plus an exported `.p12` backup; a new
+  certificate means a one-time re-grant for every user.
+- Not notarized, so a downloaded copy opens via System Settings → Privacy &
+  Security → Open Anyway (macOS 15+ removed the Control-click override).
+  Notarization needs a Developer ID; switching to one changes the requirement once.
+- Minimum macOS is 13 (Electron 44 dropped macOS 12).
 
 ---
 
 ## Native Modules, `allowScripts` & Rebuilds
 
 - **`allowScripts` in `package.json` gates install scripts by EXACT version**
-  (`"electron@41.10.7": true`, `"sharp@0.35.4": true`, …). Bump `electron`,
-  `sharp`, `onnxruntime-node`, `esbuild`, `protobufjs`, or
-  `electron-winstaller` **in the same edit**. Miss it and npm reports a single
-  warning among many, the postinstall never runs, and the native payload is simply
-  absent — bumping `electron` that way once left `node_modules/electron/dist/`
-  empty, and the app would not start.
+  (`"sharp@0.35.4": true`, …). Bump `sharp`, `onnxruntime-node`, `esbuild`,
+  `protobufjs`, or `electron-winstaller` **in the same edit**. Miss it and npm
+  reports a single warning among many, the postinstall never runs, and the native
+  payload is simply absent — that once left `node_modules/electron/dist/` empty
+  and the app would not start.
+- `electron` (42+) needs no entry: it has no install script and downloads its
+  binary the first time `require('electron')` runs (as `npm run dev` does), into
+  `node_modules/electron/dist/`. `npx install-electron --no` fetches it by hand.
 - Fixing the entry is not enough: a plain `npm install` does not re-run an install
   script for an already-unpacked package. Follow with `npm rebuild <pkg>`.
 - **`npm audit fix --force` is forbidden in this repo.** It ignores `allowScripts`,
@@ -119,12 +156,14 @@ on a given platform, check that platform's block:
   `allowScripts` entry — the package has no install script, and its `binding.gyp`
   compiles nothing when a prebuild exists. BLOB results come back as copies
   (`Napi::Buffer::Copy`), which Electron's V8 memory cage needs; checked on
-  Electron 41.10.7 (BLOB round trip, `serialize()`).
+  Electron 41.10.7 and 44.9.0 (BLOB round trip, `serialize()`).
 - The workflow files install with `npm ci --ignore-scripts`; their
   `npm rebuild better-sqlite3` step is a no-op since 13.
-- `npmRebuild: true` in `electron-builder.yml` means `electron-builder` itself
-  rebuilds native modules during `npm run build`. No current dependency needs it;
-  it stays for the next one. Don't add a manual rebuild step to the build script.
+- `npmRebuild: false` in `electron-builder.yml`: no dependency is built against
+  Electron's ABI, and `@electron/rebuild` stops the build on any Electron its
+  `node-abi` does not know yet — the Electron 44 build failed that way ("Could
+  not detect abi for version 44.9.0"). A new ABI-specific native dependency
+  means turning it back on and keeping `node-abi` current (an `overrides` entry).
 
 ## Native Modules in the Package (`asarUnpack`)
 
@@ -167,7 +206,9 @@ binaries for platforms it doesn't target.
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | Bundled binary not found in packaged app         | Assumed a resource ships on all platforms                                                | Check the platform-specific `extraResources` block before relying on a path                 |
 | New dependency missing in packaged app           | Not added to `files` allowlist in `electron-builder.yml`                                 | Explicitly list `node_modules/<pkg>/**/*` for new runtime deps with native code             |
-| App won't start, `electron/dist/` empty          | `allowScripts` keyed on the old exact version                                            | Update `allowScripts` in the same edit as the bump, then `npm rebuild electron`             |
+| Native dep's payload missing after a bump        | `allowScripts` keyed on the old exact version                                            | Update `allowScripts` in the same edit as the bump, then `npm rebuild <pkg>`                |
+| macOS notifications never show                   | App carries only the linker signature (Electron 42+ needs a signed app)                  | Build where the `Sqowe Pilot Code Signing` certificate is; `after-pack.js` signs with it    |
+| Users re-grant screen recording after updates    | Signature without a stable identity — ad-hoc changes per release, linker per Electron    | Sign every release with the same certificate; never switch to `identity: "-"`               |
 | Attached images never reach the model            | `photon_rs_bg.wasm` is not next to the main bundle, so pi's image library fails to load  | The main build emits it (`vite.config.ts`); `pre-build-check.js` stops packaging without it |
 | Native module loads in dev, fails in the package | Shipped in the asar instead of unpacked                                                  | Add the glob to `asarUnpack` as well as `files`                                             |
 | Installer much larger than expected              | No pruning rule in `after-pack.js` for the new native dep                                | Add the pruning logic; mirror the koffi/better-sqlite3/ngrok handling                       |
