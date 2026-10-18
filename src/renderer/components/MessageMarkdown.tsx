@@ -4,23 +4,35 @@ import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
 import remarkCjkFriendly from 'remark-cjk-friendly';
 import remarkCjkFriendlyGfmStrikethrough from 'remark-cjk-friendly-gfm-strikethrough';
-import rehypeSanitize from 'rehype-sanitize';
+import rehypeSanitize, { defaultSchema, type Options as SanitizeSchema } from 'rehype-sanitize';
 import rehypeKatex from 'rehype-katex';
 
 // Hoisted to module scope to avoid re-creating arrays on every render
 // remarkCjkFriendly fixes CommonMark emphasis parsing for CJK/Cyrillic scripts
 // where **bold** adjacent to non-Latin characters fails to parse correctly.
+// Text must first go through normalizeLatexDelimiters (utils/latex-delimiters.ts).
 const REMARK_PLUGINS = [
   remarkMath,
   [remarkGfm, { singleTilde: false }],
   remarkCjkFriendly,
   remarkCjkFriendlyGfmStrikethrough,
 ] as const;
-// rehypeKatex must run BEFORE rehypeSanitize so that KaTeX output is generated
-// first, then sanitized — the reverse order strips KaTeX markup before it renders.
-const REHYPE_PLUGINS = [
+
+// Keeps the classes remark-math puts on <code> (`language-*` is allowed by default).
+const SANITIZE_SCHEMA: SanitizeSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    code: [['className', /^language-./, 'math-inline', 'math-display']],
+  },
+};
+// rehypeSanitize runs BEFORE rehypeKatex, as rehype-katex's docs prescribe for
+// untrusted input: the model's text is sanitized, then KaTeX (default
+// `trust: false`) renders the math. Sanitizing after KaTeX strips its classes
+// and MathML, and every formula shows three times, without spaces.
+export const REHYPE_PLUGINS = [
+  [rehypeSanitize, SANITIZE_SCHEMA],
   [rehypeKatex, { throwOnError: false, strict: false }],
-  rehypeSanitize,
 ] as const;
 
 export interface MessageMarkdownProps {

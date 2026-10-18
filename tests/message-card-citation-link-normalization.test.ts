@@ -21,8 +21,9 @@ describe('MessageCard citation link normalization', () => {
     expect(messageCardContent).toContain(
       "return markdown.replace(/~\\[(.+?)\\]\\(([^)\\s]+)\\)~/g, '[$1]($2)');"
     );
-    expect(messageCardContent).toContain(
-      'normalizeLocalFileMarkdownLinks(normalizeLatexDelimiters(text))'
+    // Math preparation runs last: it escapes stray `$` and must see the final markdown.
+    expect(messageCardContent).toMatch(
+      /normalizeLatexDelimiters\(\s*normalizeCitationMarkdownLinks\(normalizeLocalFileMarkdownLinks\(text\)\)\s*\)/
     );
   });
 

@@ -292,8 +292,9 @@ export const ContentBlockView = memo(function ContentBlockView({
     case 'text': {
       const textBlock = block as { type: 'text'; text: string };
       const text = textBlock.text || '';
-      const normalizedText = normalizeCitationMarkdownLinks(
-        normalizeLocalFileMarkdownLinks(normalizeLatexDelimiters(text))
+      // Math last: it escapes stray `$`, and must see the final markdown.
+      const normalizedText = normalizeLatexDelimiters(
+        normalizeCitationMarkdownLinks(normalizeLocalFileMarkdownLinks(text))
       );
 
       if (!text) {
@@ -311,14 +312,14 @@ export const ContentBlockView = memo(function ContentBlockView({
             name="MessageMarkdown"
             fallback={
               <div className="prose-chat max-w-none text-text-primary whitespace-pre-wrap break-words">
-                {normalizedText}
+                {text}
               </div>
             }
           >
             <Suspense
               fallback={
                 <div className="prose-chat max-w-none text-text-primary whitespace-pre-wrap break-words">
-                  {normalizedText}
+                  {text}
                 </div>
               }
             >

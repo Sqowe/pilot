@@ -3,6 +3,7 @@ import { Suspense, lazy, useState, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight, Brain } from 'lucide-react';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
+import { normalizeLatexDelimiters } from '../../utils/latex-delimiters';
 
 const MessageMarkdown = lazy(() =>
   import('../MessageMarkdown').then((module) => ({ default: module.MessageMarkdown }))
@@ -82,7 +83,7 @@ export const ThinkingBlock = memo(function ThinkingBlock({ block }: ThinkingBloc
               fallback={<div className="whitespace-pre-wrap">{text}</div>}
             >
               <Suspense fallback={<div className="whitespace-pre-wrap">{text}</div>}>
-                <MessageMarkdown normalizedText={text} />
+                <MessageMarkdown normalizedText={normalizeLatexDelimiters(text)} />
               </Suspense>
             </PanelErrorBoundary>
           </div>

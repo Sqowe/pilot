@@ -224,20 +224,32 @@ The markdown stack renders LLM output. Configuration is in `MessageMarkdown.tsx`
 hoisted to module scope (`REMARK_PLUGINS` / `REHYPE_PLUGINS`):
 
 ```
+normalizeLatexDelimiters(text)                       (utils/latex-delimiters.ts — see rules)
 react-markdown
   → remarkMath                                       (math block parsing)
   → [remarkGfm, { singleTilde: false }]              (tables, task lists, ~~strikethrough~~)
   → remarkCjkFriendly                                (CommonMark emphasis next to CJK/Cyrillic)
   → remarkCjkFriendlyGfmStrikethrough
-  → [rehypeKatex, { throwOnError: false, strict: false }]  — MUST run before sanitize
-  → rehypeSanitize                                   (XSS protection on LLM output)
+  → [rehypeSanitize, SANITIZE_SCHEMA]                (XSS protection on LLM output)
+  → [rehypeKatex, { throwOnError: false, strict: false }]  — MUST run after sanitize
 ```
 
 **Rules:**
 
 - Plugin arrays are hoisted to module scope (avoid re-creation on render).
 - `rehype-sanitize` is a security boundary — never remove or weaken it.
-- Plugin order matters: katex before sanitize, or math markup gets stripped.
+- Plugin order matters: sanitize before katex, as rehype-katex's own docs prescribe
+  for untrusted input. KaTeX writes each formula twice — hidden MathML for screen
+  readers and the visible HTML — and its classes hide the first. Sanitizing after
+  KaTeX strips those classes and the MathML tags but keeps their text, so every
+  formula shows three times, without spaces. `SANITIZE_SCHEMA` keeps the
+  `math-inline` / `math-display` classes remark-math puts on `<code>`. Only KaTeX's
+  own output (default `trust: false`) skips the sanitizer.
+- Model text goes through `normalizeLatexDelimiters` before `MessageMarkdown`, as
+  the **last** preparation step. It escapes every single `$` that cannot delimit math
+  under Pandoc's `tex_math_dollars` rule — remark-math alone pairs any two dollars,
+  so "$4.99 … $4.99" turned into one garbled formula — and converts `\(…\)` /
+  `\[…\]` to dollars. Any new place that renders model text needs it too.
 - `singleTilde: false` keeps `~text~` from being parsed as strikethrough. Turning
   it on breaks CJK/Cyrillic text that uses tildes.
 - The CJK plugins exist because `**bold**` adjacent to non-Latin characters fails
@@ -332,8 +344,9 @@ react-markdown
 | Missing translations                 | Added EN key but forgot ru/zh/hu                                              | Always add all four locale files simultaneously               |
 | Event silently dropped               | New ClientEvent type not in preload allowlist                                 | Add to `ALLOWED_CLIENT_EVENTS` in `src/preload/index.ts`      |
 | Bold/CJK renders wrong               | CJK remark plugins removed, or `singleTilde` re-enabled                       | Keep the chain in `MessageMarkdown.tsx` exactly as-is         |
-| Math renders as raw markup           | rehype-katex moved after rehype-sanitize                                      | katex strictly before sanitize                                |
-| Markdown XSS                         | Removed or reordered rehype-sanitize                                          | Never remove; always keep it last in rehype chain             |
+| Formula shown three times, no spaces | rehype-katex moved before rehype-sanitize                                     | sanitize strictly before katex                                |
+| Prices turn into one garbled formula | Model text reached `MessageMarkdown` without `normalizeLatexDelimiters`       | Run it last on the text, right before `MessageMarkdown`       |
+| Markdown XSS                         | Removed rehype-sanitize, or added a rehype plugin after it                    | Never remove; only rehype-katex may run after it              |
 | Dark mode broken                     | Used raw Tailwind colors instead of semantic tokens                           | Use `text-text-primary`, `bg-surface`, etc.                   |
 | Node import sneaks into the renderer | Nothing in lint or tsc prevents it                                            | Review-only boundary — grep before adding an import           |
 | Permission dialog doesn't clear      | Store update races with IPC event ordering                                    | See `AI_MAIN_PROCESS.md` §1 — the known async-wait limitation |
