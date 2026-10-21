@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-21
+
 ### Added
 
 - **Tool cards show how long the tool ran**, and each model reply shows how long it took
@@ -694,7 +696,8 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/sqowe/pilot/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/sqowe/pilot/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/sqowe/pilot/compare/v1.1.0...v1.3.0
 [1.1.0]: https://github.com/sqowe/pilot/compare/v1.0.12...v1.1.0
 [1.0.12]: https://github.com/sqowe/pilot/compare/v1.0.11...v1.0.12
 [1.0.11]: https://github.com/sqowe/pilot/compare/v1.0.10...v1.0.11
