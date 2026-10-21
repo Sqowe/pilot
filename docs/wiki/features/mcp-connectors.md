@@ -1,4 +1,4 @@
-<!-- sources: src/renderer/components/settings/SettingsConnectors.tsx, src/renderer/components/settings/McpToolPermissions.tsx, src/renderer/components/ContextPanel.tsx, src/main/mcp/mcp-manager.ts, src/main/mcp/mcp-tool-permissions.ts, src/main/mcp/mcp-description-generator.ts, src/main/mcp/mcp-workspace-profile.ts, README, ARCHITECTURE.md §4.3 -->
+<!-- sources: src/renderer/components/settings/SettingsConnectors.tsx, src/renderer/components/settings/McpToolPermissions.tsx, src/renderer/components/ContextPanel.tsx, src/main/mcp/mcp-manager.ts, src/main/mcp/mcp-tool-permissions.ts, src/main/mcp/mcp-description-generator.ts, src/main/mcp/mcp-workspace-profile.ts, README, ARCHITECTURE.md §4.3, src/main/claude/session-mcp-tools.ts -->
 
 # MCP connectors
 
@@ -30,7 +30,9 @@ use any tool that ships as an MCP server.
 MCP tool schemas are large, so you can shed the ones you're not using:
 
 - **In a session** — open the **Context Panel → MCP Connectors** and toggle a server
-  **Enable/Disable for this session** (ephemeral, cleared when the session ends).
+  **Enable/Disable for this session** (ephemeral, cleared when the session ends). It
+  applies from the agent's next step, also in the middle of a conversation: a server
+  turned off is no longer offered to the agent, and one turned on is brought in.
 - **Save to workspace** — click **Save current setup to workspace** (💾) to write
   `.cowork/mcp-servers.json`, so the same on/off setup loads for everyone who opens the
   project.

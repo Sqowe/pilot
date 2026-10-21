@@ -236,27 +236,58 @@ and `~/.agents/skills` on its own, so skills disabled for a session still loaded
 
 ### 8.2 Backlog
 
-| Item   | Feature                                                                                                          | Origin    | Effort | Risk               | Recommendation                                                    |
-| ------ | ---------------------------------------------------------------------------------------------------------------- | --------- | ------ | ------------------ | ----------------------------------------------------------------- |
-| **P**  | Permission gate on the public `tool_call` event (phase 0, extension-loading lock-down, done 2026-10-20)          | 1.3.0 gap | M      | Security — confirm | **Yes, first** — [design](./permission-gate-tool-call-event.md)   |
-| **S**  | Bash session-variable exposure policy                                                                            | 0.85 plan | S      | Low                | Yes                                                               |
-| **A**  | Session usage totals via `getSessionStats()`                                                                     | 0.85 plan | S      | Low                | Yes                                                               |
-| **B**  | Compaction failure / retry narration (`session_compact_failed`)                                                  | 0.85 plan | S      | Low                | Yes                                                               |
-| **F**  | Edit-diff rendering                                                                                              | 0.85 plan | M      | Low                | Yes                                                               |
-| **G**  | Waiting on a human as a distinct state                                                                           | 0.85 plan | S      | Low                | Diagnose first                                                    |
-| **D**  | Constrained tool sampling for MCP tools                                                                          | 0.85 plan | M      | Medium             | Re-scope: pi now falls back to non-strict for Anthropic by itself |
-| **TS** | `tool_search` with MCP tools declared `deferred` — schemas stay out of the context until the model looks them up | 0.99.0    | M      | Medium             | Investigate, after P                                              |
-| **H**  | Provider-scoped `env` overrides                                                                                  | 0.80 plan | S      | Low                | Opportunistic                                                     |
-| **I**  | RPC extension-UI typed surface                                                                                   | 0.80 plan | S      | Low                | Opportunistic                                                     |
-| **X**  | Image generation / classifiers through `ModelRuntime.generateImages()` / `classify()`                            | 0.99.0    | L      | —                  | Later, if a feature asks                                          |
+| Item   | Feature                                                                                                          | Origin    | Effort | Risk               | Recommendation                                                                             |
+| ------ | ---------------------------------------------------------------------------------------------------------------- | --------- | ------ | ------------------ | ------------------------------------------------------------------------------------------ |
+| **P**  | Permission gate on the public `tool_call` event (phase 0, extension-loading lock-down, done 2026-10-20)          | 1.3.0 gap | M      | Security — confirm | Phase 1 deferred; gate tests first (§8.3) — [design](./permission-gate-tool-call-event.md) |
+| **S**  | Bash session-variable exposure policy                                                                            | 0.85 plan | S      | Low                | Yes                                                                                        |
+| **A**  | Session usage totals via `getSessionStats()`                                                                     | 0.85 plan | S      | Low                | Yes                                                                                        |
+| **B**  | Compaction failure / retry narration (`session_compact_failed`)                                                  | 0.85 plan | S      | Low                | Yes                                                                                        |
+| **F**  | Edit-diff rendering                                                                                              | 0.85 plan | M      | Low                | Yes                                                                                        |
+| **G**  | Waiting on a human as a distinct state                                                                           | 0.85 plan | S      | Low                | Diagnose first                                                                             |
+| **D**  | Constrained tool sampling for MCP tools                                                                          | 0.85 plan | M      | Medium             | Re-scope: pi now falls back to non-strict for Anthropic by itself                          |
+| **TS** | `tool_search` with MCP tools declared `deferred` — schemas stay out of the context until the model looks them up | 0.99.0    | M      | Medium             | **Not now** (decided 2026-10-21, §8.3)                                                     |
+| **H**  | Provider-scoped `env` overrides                                                                                  | 0.80 plan | S      | Low                | Opportunistic                                                                              |
+| **I**  | RPC extension-UI typed surface                                                                                   | 0.80 plan | S      | Low                | Opportunistic                                                                              |
+| **X**  | Image generation / classifiers through `ModelRuntime.generateImages()` / `classify()`                            | 0.99.0    | L      | —                  | Later, if a feature asks                                                                   |
 
 Details of S, A, B, D, F, G, H, I are unchanged from the archived plan; every surface they
 consume still exists in 1.3.0 (`exposeSessionEnvironment`, `getSessionStats`,
 `session_compact_failed`, `summarization_retry_*`, `ui_prompt_start`, `constrainedSampling`).
 
-`tool_search` would declare deferred MCP tools on demand; the calls it enables are ordinary
-top-level calls, so the current gate sees them — but loading it means loading a pi extension,
-which should wait for P.
+### 8.3 Decisions of 2026-10-21 — `tool_search` (TS) and gate phase 1 (P)
+
+**`tool_search`: not now.** What it does (pi 1.3.0): tools given `exposure: 'deferred'` are
+not declared to the model; the model gets one `tool_search` tool instead, which ranks the
+not-yet-active searchable tools by their names and descriptions (BM25) and activates up to 8
+matches for the next model call (`dist/extensions/tool-search/tool.js:12`, `:140-155`). It
+runs no tool itself — the model then calls the found tools as ordinary top-level calls, so the
+current gate sees them and TS does not depend on P. Why not now:
+
+- The per-session and per-workspace MCP switches already keep unused servers out of a chat,
+  and do so before `tool_search` could see them (off servers' tools are never passed to pi).
+  On the author's machine (app log, 2026-10-18 to 10-21): 327 MCP tools configured, chats ran
+  with 7–145 of them; where the log has the estimate, all tool schemas came to 2.2K–36K
+  tokens per request.
+- It costs every chat an extra model step (search, then call) and a chance that the model
+  does not find the tool.
+- The app runs its own MCP (`MCPManager`), not pi's MCP extension, which is what lists
+  deferred servers in the system prompt; the app's own `<mcp_server_directory>` would have to
+  do that, and today it ignores the session and workspace switches.
+
+Revisit when a chat needs a large server whole (EODHD: 100 tools) but uses a few of its
+tools — then as a per-server choice (`deferred` for large servers only), not for all. First
+fix the switches for open chats: a cached pi session keeps the tools it was created with, so
+turning a server off in an open chat did not reach its agent (found and fixed 2026-10-21,
+`session-mcp-tools.ts`).
+
+**Gate phase 1: deferred.** Nothing in the app makes nested calls (`ctx.executeTool()`); phase
+1 is needed for codemode or an own tool that calls other tools, and neither is planned. Done
+instead, next: move the gate body out of the runner into a module, unit-test every branch,
+and add a session-level test on pi-ai's faux provider, keeping today's
+`agent.beforeToolCall` install. That covers the risk that matters now: a pi uplift that
+stops reading `agent.beforeToolCall` per run (`pi-agent-core/dist/agent.js:316`) would
+disable every permission check silently — `before-tool-call-hook.ts` checks only that the
+property exists. With that in place, phase 1 itself becomes a small change.
 
 **Not recommended:** codemode and pi's own MCP (they duplicate `MCPManager`, their nested
 calls bypass today's gate, and their worker and wasm are not next to the bundle); virtual
@@ -283,5 +314,5 @@ attached image — plus:
 
 1. ~~**§6.2 compaction reserve.**~~ Withdrawn — the runner already caps such models (§6.2).
 2. **Item P.** Phase 0 (loader lock-down, §6.4) approved and implemented 2026-10-20; phase 1
-   (gate on `tool_call`) needs approval of its design.
+   deferred 2026-10-21 in favour of gate tests (§8.3).
 3. **Release:** version, commit and the manual pass above.

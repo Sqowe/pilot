@@ -2,7 +2,8 @@
 
 **Created:** 2026-10-20
 **Status:** **Phase 0 implemented 2026-10-20** (committed in `3fcab2f8`); §2.5 implemented
-2026-10-21, not committed yet. Phase 1 — proposed, not started; no code until it is approved.
+2026-10-21 (`ce923dbf`, `660c90d1`). **Phase 1 deferred 2026-10-21** — see §5; the gate's
+tests (phase 1a) come first.
 **Security classification:** **High.** The gate decides whether an LLM-driven agent may run a
 tool on the user's machine; phase 0 changes what pi loads into the main process.
 **Author:** AI-assisted design session
@@ -272,10 +273,21 @@ phase 0 there are none.
 ## 5. Rollout
 
 1. **Phase 0** — loader lock-down + its regression test. **Done 2026-10-20.**
-2. **Phase 1** — gate moves to `tool_call`; the reach-around and `before-tool-call-hook.ts`
-   go. Its own change.
-3. **Then** — and only then — items that make nested calls possible (`tool_search` with
-   deferred MCP tools, codemode) can be considered.
+2. **Phase 1a** (decided 2026-10-21, next) — the gate body moves out of the runner into a
+   module with unit tests for every branch, plus a session-level test on the faux provider
+   (§4), still installed through `agent.beforeToolCall`. Reason: nothing in the app makes
+   nested calls, while a pi uplift that stops reading `agent.beforeToolCall` per run
+   (`pi-agent-core/dist/agent.js:316`) would silently disable every check and no test would
+   notice. Probe of 2026-10-21 (real session, faux provider, the app's loader options):
+   today's gate misses a `ctx.executeTool('bash')` call and it runs; a `tool_call` inline
+   extension sees it (`parentToolCallId` set) and blocks it; a throwing factory leaves no
+   handler and only a loader error, so phase 1 needs its post-creation check.
+3. **Phase 1** — gate moves to `tool_call`; the reach-around and `before-tool-call-hook.ts`
+   go. Deferred until codemode or an own tool that calls other tools is wanted; small after
+   phase 1a. The nested-call marker in the permission dialog (§3.1) is deferred with it.
+4. **Then** — and only then — items that make nested calls possible (codemode) can be
+   considered. `tool_search` does not make nested calls (it only activates tools); it is not
+   planned either — [uplift report](./pi-sdk-130-uplift-and-adoption-plan.md) §8.3.
 
 Manual pass for each phase: permission prompt and each answer, a denied rule, autonomous
 mode, the read-loop block, an MCP tool with a policy, sudo, stop during an open dialog.

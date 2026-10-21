@@ -179,11 +179,21 @@ createAgentSession({ noTools: 'builtin', customTools: [...built-ins, ...mcp, ...
   edit, write) but keep extension/custom tools enabled"). The app supplies its
   **wrapped** built-ins instead, so every tool passes the same wrappers. Do not
   drop `noTools` — unwrapped duplicates would bypass the wrappers.
-- MCP tools are rebuilt every run so added/removed servers take effect
-  immediately: `buildMcpCustomTools()` → `filterMcpCustomTools()` (workspace and
-  session overrides) → `wrapMcpToolsWithTimeout()` (per-server timeout returning
-  a structured error instead of hanging). `filterMcpCustomTools` must run before
-  the timeout wrapper.
+- MCP tools are rebuilt every run: `buildMcpCustomTools()` → `filterMcpCustomTools()`
+  (workspace and session overrides) → `wrapMcpToolsWithTimeout()` (per-server
+  timeout returning a structured error instead of hanging). `filterMcpCustomTools`
+  must run before the timeout wrapper.
+- **A cached session keeps the tools it was created with** — `createAgentSession`
+  takes `customTools` once. So the rebuilt list reaches an open chat only through
+  `planCachedSessionMcpTools` (`src/main/claude/session-mcp-tools.ts`), run before
+  the cold-start decision: a server switched off is dropped with pi's public
+  `setActiveToolsByName()` (pi tells the model with a `toolsRemoved` message; a call
+  to the tool then fails "not found"), and a tool the session never registered —
+  a server switched on that was not there at creation — recreates the session.
+  Until 2026-10-21 the list was only logged on reuse, and the agent of an open chat
+  kept calling a switched-off server. Any new per-chat tool switch must go the same
+  way. The `<mcp_server_directory>` in the system prompt lists only the servers
+  enabled for the chat (it is fixed when the session is created).
 - Extension tools come from `AgentRuntimeExtensionManager` (`src/main/extensions/`)
   and are appended last.
 - `wrapBashToolForSudo` returns 5-param `execute` while `createAgentSession`

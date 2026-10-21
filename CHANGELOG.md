@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A disabled built-in skill was still loaded from the app's own skills folder, and a
   disabled skill from a custom skills folder from that folder. Chats that are already
   open drop the skill with their next message.
+- **Turning an MCP server off for a chat takes effect in that chat.** The agent of an
+  open chat kept calling the server's tools until the app happened to restart its
+  session, and a server turned on did not appear there; the same held for the
+  workspace's saved setup and for servers added or removed in the settings. Now a
+  server turned off is withdrawn from the next step without losing the conversation,
+  and one turned on is brought in. The list of servers the agent is told about now
+  leaves out the ones switched off for the chat.
 - **The Disable button on a skill card works.** It only changed what the card showed: the
   agent kept the skill, and after a restart every skill was on again. It now saves the
   skill as disabled — the same setting as Disable in Conflict Resolution, and both places

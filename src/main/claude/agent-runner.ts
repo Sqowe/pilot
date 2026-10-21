@@ -27,6 +27,7 @@ import { formatTokenCount, normalizeTokenUsage } from './token-usage-utils';
 import { readPiDurationMs } from './pi-durations';
 import { createPiResourceLoader } from './pi-resource-loader';
 import { assembleSkillPaths } from './skill-paths';
+import { buildMcpServerDirectory, planCachedSessionMcpTools } from './session-mcp-tools';
 
 // ---------------------------------------------------------------------------
 // RuntimeKeyTracker — reference-counted runtime API key ownership
@@ -115,7 +116,6 @@ import { PathResolver } from '../sandbox/path-resolver';
 import { MCPManager } from '../mcp/mcp-manager';
 import { mcpConfigStore } from '../mcp/mcp-config-store';
 import { applyWorkspaceOverrides, applySessionOverrides } from '../mcp/mcp-workspace-profile';
-import * as mcpDescriptionGenerator from '../mcp/mcp-description-generator';
 import {
   log,
   logWarn,
@@ -405,42 +405,6 @@ async function enrichProcessPathForBuild(): Promise<void> {
 }
 
 // Shared pi-ai auth storage — created once, reused across sessions.
-
-/**
- * Build an "MCP Server Directory" section for the system prompt.
- * Lists all connected servers with their descriptions so the LLM can route
- * tool calls to the appropriate server based on domain.
- *
- * All server names and descriptions are sanitized at render time to prevent
- * prompt injection from untrusted MCP metadata.
- */
-function buildMcpServerDirectory(mcpManager: MCPManager): string {
-  const { sanitizeDescription, sanitizeServerName } = mcpDescriptionGenerator;
-  const servers = mcpConfigStore.getEnabledServers();
-  const statuses = mcpManager.getServerStatus();
-  const connected = statuses.filter((s: { connected: boolean }) => s.connected);
-
-  if (connected.length === 0) return '';
-
-  const lines: string[] = [];
-  for (const server of connected) {
-    const config = servers.find((s) => s.id === server.id);
-    if (!config) continue;
-    const name = sanitizeServerName(config.name);
-    const description = sanitizeDescription(config.description || `(${server.toolCount} tools)`);
-    lines.push(`- ${name}: ${description}`);
-  }
-
-  if (lines.length === 0) return '';
-
-  return [
-    '<mcp_server_directory>',
-    'Available MCP servers and their capabilities:',
-    ...lines,
-    "Use the appropriate server's tools based on the task domain.",
-    '</mcp_server_directory>',
-  ].join('\n');
-}
 
 /**
  * Bridge MCP tools from MCPManager into pi-coding-agent ToolDefinition[] format.
@@ -748,6 +712,33 @@ export class ClaudeAgentRunner {
   /** Get session-level disabled MCP server IDs via the injected callback. */
   private getSessionDisabledMcpServers(sessionId: string): string[] | null {
     return this._getSessionDisabledMcpServers?.(sessionId) ?? null;
+  }
+
+  /** The MCP servers enabled for this chat: the settings, then the workspace and session switches. */
+  private resolveEffectiveMcpConfigs(session: Session) {
+    let configs: ReturnType<typeof mcpConfigStore.getEnabledServers> = [];
+    try {
+      configs = mcpConfigStore.getEnabledServers();
+      log(
+        '[ClaudeAgentRunner] Enabled MCP configs:',
+        configs.map((c) => c.name)
+      );
+    } catch (error) {
+      logWarn(
+        '[ClaudeAgentRunner] Failed to read enabled MCP configs; MCP tools will be unavailable this query',
+        error
+      );
+      configs = [];
+    }
+
+    // Apply workspace-level and session-level MCP overrides
+    configs = applyWorkspaceOverrides(configs, session.cwd);
+    configs = applySessionOverrides(configs, this.getSessionDisabledMcpServers(session.id));
+    log(
+      '[ClaudeAgentRunner] Effective MCP configs after overrides:',
+      configs.map((c) => c.name)
+    );
+    return configs;
   }
 
   /** Get session-level pinned skill IDs via the injected callback. */
@@ -2855,6 +2846,49 @@ RULES:
         cachedSession = undefined;
       }
 
+      // MCP servers and tools for this chat, after the workspace and session switches. Built
+      // here, before the cold-start decision below, because a cached session may have to be
+      // recreated for them; rebuilt every query so switches and added or removed servers apply.
+      const effectiveMcpConfigs = this.mcpManager ? this.resolveEffectiveMcpConfigs(session) : [];
+      const effectiveServerNames = new Set(effectiveMcpConfigs.map((c) => c.name));
+      const allMcpCustomTools = this.mcpManager ? buildMcpCustomTools(this.mcpManager) : [];
+      const mcpCustomTools = filterMcpCustomTools(allMcpCustomTools, effectiveServerNames);
+
+      // A cached session keeps the tools it was created with; bring its MCP tools in step
+      // (session-mcp-tools.ts). Turning a server off just stops offering its tools; a tool the
+      // session never registered needs a new session.
+      if (cachedSession) {
+        const mcpPlan = planCachedSessionMcpTools({
+          registered: cachedSession.session.getAllTools().map((tool) => tool.name),
+          active: cachedSession.session.getActiveToolNames(),
+          wantedMcp: mcpCustomTools.map((tool) => tool.name),
+        });
+        if (mcpPlan.kind === 'recreate') {
+          logCtx(
+            '[ClaudeAgentRunner] MCP tools added since the session was created, recreating cached pi session:',
+            session.id,
+            mcpPlan.missing.length
+          );
+          try {
+            cachedSession.session.dispose();
+          } catch (disposeError) {
+            logWarn(
+              '[ClaudeAgentRunner] dispose error while recreating pi session for MCP tools:',
+              disposeError
+            );
+          }
+          this.piSessions.delete(session.id);
+          cachedSession = undefined;
+        } else if (mcpPlan.kind === 'set-active') {
+          cachedSession.session.setActiveToolsByName(mcpPlan.activeToolNames);
+          logCtx(
+            '[ClaudeAgentRunner] MCP tools changed, cached pi session now offers:',
+            session.id,
+            mcpPlan.activeToolNames.length
+          );
+        }
+      }
+
       const extensionResult = this.extensionManager
         ? await this.extensionManager.beforeSessionRun({
             session,
@@ -2946,39 +2980,13 @@ RULES:
       // Build MCP servers configuration for SDK
       // IMPORTANT: SDK uses tool names in format: mcp__<ServerKey>__<toolName>
       const mcpServers: Record<string, unknown> = {};
-      let effectiveServerNames: Set<string> = new Set();
       if (this.mcpManager) {
         const serverStatuses = this.mcpManager.getServerStatus();
         const connectedServers = serverStatuses.filter((s) => s.connected);
         log('[ClaudeAgentRunner] MCP server statuses:', safeStringify(serverStatuses));
         log('[ClaudeAgentRunner] Connected MCP servers:', connectedServers.length);
 
-        let allConfigs: ReturnType<typeof mcpConfigStore.getEnabledServers> = [];
-        try {
-          allConfigs = mcpConfigStore.getEnabledServers();
-          log(
-            '[ClaudeAgentRunner] Enabled MCP configs:',
-            allConfigs.map((c) => c.name)
-          );
-        } catch (error) {
-          logWarn(
-            '[ClaudeAgentRunner] Failed to read enabled MCP configs; MCP tools will be unavailable this query',
-            error
-          );
-          allConfigs = [];
-        }
-
-        // Apply workspace-level and session-level MCP overrides
-        allConfigs = applyWorkspaceOverrides(allConfigs, session.cwd);
-        allConfigs = applySessionOverrides(
-          allConfigs,
-          this.getSessionDisabledMcpServers(session.id)
-        );
-        log(
-          '[ClaudeAgentRunner] Effective MCP configs after overrides:',
-          allConfigs.map((c) => c.name)
-        );
-        effectiveServerNames = new Set(allConfigs.map((c) => c.name));
+        const allConfigs = effectiveMcpConfigs;
 
         // Cache key: serialized config list + imageCapable flag.  The bundled node
         // paths are stable for the lifetime of the process so they don't need to be
@@ -3122,7 +3130,9 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
         assembleUserPrompt({ cwd: effectiveCwd, model: piModel.id }),
         workspaceInfoPrompt,
         this.getBundledPathHints(),
-        this.mcpManager ? buildMcpServerDirectory(this.mcpManager) : '',
+        this.mcpManager
+          ? buildMcpServerDirectory(effectiveMcpConfigs, this.mcpManager.getServerStatus())
+          : '',
         this.buildPinnedSkillsDirective(session.id),
         this.buildPinnedPluginsDirective(session.id),
       ]
@@ -3132,11 +3142,9 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
       logTiming('before pi-coding-agent session creation', runStartTime);
 
       // Create or reuse pi-coding-agent session
-      // Bridge MCP tools as customTools for pi-coding-agent.
-      // Re-read every query so newly added/removed MCP servers take effect immediately.
-      // Filter to only include tools from servers that survived workspace/session overrides.
-      const allMcpCustomTools = this.mcpManager ? buildMcpCustomTools(this.mcpManager) : [];
-      const mcpCustomTools = filterMcpCustomTools(allMcpCustomTools, effectiveServerNames);
+      // Bridge MCP tools as customTools for pi-coding-agent — mcpCustomTools, built above from
+      // the servers that survived workspace/session overrides. A new session takes them below;
+      // a cached one was brought in step before the cold-start decision.
 
       // Wrap MCP tools with per-server timeout. When a tool exceeds its timeout,
       // the wrapper returns a structured error to the LLM instead of hanging forever.
