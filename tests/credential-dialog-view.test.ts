@@ -168,8 +168,8 @@ describe('filling the endpoint form from a ready-made setup', () => {
 
     expect(filled.name).toBe('my gateway');
     expect(filled.apiKey).toBe('sk-typed');
-    expect(filled.protocol).toBe('anthropic');
-    expect(filled.baseUrl).toBe('https://api.kimi.com/coding');
+    expect(filled.protocol).toBe('openai');
+    expect(filled.baseUrl).toBe('https://api.kimi.com/coding/v1');
   });
 
   it('keeps a model the user typed', () => {
@@ -183,7 +183,7 @@ describe('filling the endpoint form from a ready-made setup', () => {
     const second = applySetupToEndpointForm(first, 'kimi-coding');
 
     expect(second.defaultModel).toBe('kimi-k2-thinking');
-    expect(second.baseUrl).toBe('https://api.kimi.com/coding');
+    expect(second.baseUrl).toBe('https://api.kimi.com/coding/v1');
   });
 
   it('takes only the protocol from the generic setup, whose address is an example', () => {

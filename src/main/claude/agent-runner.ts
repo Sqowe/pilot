@@ -24,6 +24,9 @@ import type { ImageContent as PiImageContent, ModelThinkingLevel } from '@earend
 import { Type } from 'typebox';
 import { getSharedModelRuntime, type ModelRuntime } from './shared-auth';
 import { formatTokenCount, normalizeTokenUsage } from './token-usage-utils';
+import { readPiDurationMs } from './pi-durations';
+import { createPiResourceLoader } from './pi-resource-loader';
+import { assembleSkillPaths } from './skill-paths';
 
 // ---------------------------------------------------------------------------
 // RuntimeKeyTracker — reference-counted runtime API key ownership
@@ -170,6 +173,7 @@ import {
 import { buildPiSessionRuntimeSignature } from './pi-session-runtime';
 import { ThinkTagStreamParser } from './think-tag-parser';
 import {
+  isMcpToolErrorResult,
   normalizeMcpToolResultForModel,
   normalizeToolExecutionResultForUi,
 } from './tool-result-utils';
@@ -183,7 +187,6 @@ import {
 } from './pre-request-guard';
 import { fetchOllamaModelInfo } from '../config/ollama-api';
 import { fetchOpenRouterModelInfo } from '../config/openrouter-api';
-import { estimatePayloadSize, trimPayloadMessages } from './mid-loop-overflow-guard';
 
 // Virtual workspace path shown to the model (hides real sandbox path)
 const VIRTUAL_WORKSPACE_PATH = '/workspace';
@@ -477,6 +480,9 @@ function buildMcpCustomTools(mcpManager: MCPManager): McpToolDefinition[] {
               normalizedResult.images.length > 0
                 ? { openCoworkImages: normalizedResult.images }
                 : undefined,
+            // The server reported a failure of its own: hand it to pi as an error
+            // result rather than a success, so the model and the trace both see it.
+            ...(isMcpToolErrorResult(result) ? { isError: true } : {}),
           };
         } catch (err: unknown) {
           logError(`[ClaudeAgentRunner] MCP tool ${mcpTool.name} failed:`, err);
@@ -596,7 +602,6 @@ interface CachedPiSession {
   thinkingLevel: string;
   runtimeSignature: string;
   skillsSignature?: string;
-  ollamaNumCtx?: { value: number };
   /** Mutable cwd reference — updated on each prompt call so the
    *  permission hook always resolves paths against the current cwd. */
   cwdRef?: { value: string };
@@ -901,9 +906,7 @@ RULES:
     const basePaths = this._skillsAdapter
       ? this._skillsAdapter.getSkillPaths()
       : this.legacySkillPaths();
-    const mergedPaths = new Set(
-      basePaths.filter((item): item is string => Boolean(item && fs.existsSync(item)))
-    );
+    const pluginPaths: string[] = [];
     const appliedPlugins: Array<{ name: string; path: string }> = [];
 
     if (this._pluginRuntimeService) {
@@ -917,7 +920,7 @@ RULES:
           if (!fs.existsSync(runtimeSkillsPath)) {
             continue;
           }
-          mergedPaths.add(runtimeSkillsPath);
+          pluginPaths.push(runtimeSkillsPath);
           appliedPlugins.push({ name: plugin.name, path: runtimeSkillsPath });
         }
       } catch (error) {
@@ -932,54 +935,14 @@ RULES:
       });
     }
 
-    // If session has disabled skills, filter them out from the available paths.
-    // Disabled skill IDs may be bare directory names (from workspace profiles)
-    // or prefixed IDs like "builtin-pdf" (from UI). Build a set of bare names
-    // for filesystem-level filtering using known prefix stripping.
-    const sessionDisabled = sessionId ? this.getSessionDisabledSkills(sessionId) : [];
-    if (sessionDisabled.length > 0) {
-      const KNOWN_PREFIXES = ['builtin-', 'global-', 'configured-', 'project-'];
-      const disabledNames = new Set<string>();
-      for (const id of sessionDisabled) {
-        disabledNames.add(id);
-        // Strip known source prefixes to get the bare directory name
-        for (const prefix of KNOWN_PREFIXES) {
-          if (id.startsWith(prefix)) {
-            disabledNames.add(id.substring(prefix.length));
-            break;
-          }
-        }
-      }
-
-      const expandedPaths: string[] = [];
-      for (const skillPath of mergedPaths) {
-        // Check if this path is an individual skill directory (has SKILL.md directly)
-        const isIndividualSkill = fs.existsSync(path.join(skillPath, 'SKILL.md'));
-        if (isIndividualSkill) {
-          // Individual skill — filter by its directory name
-          const skillName = path.basename(skillPath);
-          if (!disabledNames.has(skillName)) {
-            expandedPaths.push(skillPath);
-          }
-        } else {
-          // Parent directory — expand into child skill directories, filtering disabled
-          try {
-            const entries = fs.readdirSync(skillPath, { withFileTypes: true });
-            for (const entry of entries) {
-              if (!entry.isDirectory()) continue;
-              if (disabledNames.has(entry.name)) continue; // Skip disabled skill
-              expandedPaths.push(path.join(skillPath, entry.name));
-            }
-          } catch {
-            // If we can't read the dir, keep the parent path as-is
-            expandedPaths.push(skillPath);
-          }
-        }
-      }
-      return expandedPaths;
-    }
-
-    return Array.from(mergedPaths);
+    // The runtime dir goes first and session-disabled skills are filtered out here: pi's
+    // own discovery is off, so this list is all a session gets (skill-paths.ts).
+    return assembleSkillPaths({
+      runtimeDir: this.getRuntimeSkillsDir(),
+      basePaths,
+      pluginPaths,
+      sessionDisabled: sessionId ? this.getSessionDisabledSkills(sessionId) : [],
+    });
   }
 
   private getAppClaudeDir(): string {
@@ -3246,14 +3209,6 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
           );
           await piSession.setModel(piModel);
           cachedSession.modelId = piModel.id;
-          // Update Ollama num_ctx ref if present
-          if (cachedSession.ollamaNumCtx) {
-            cachedSession.ollamaNumCtx.value = piModel.contextWindow || 128000;
-            log(
-              '[ClaudeAgentRunner] Updated Ollama num_ctx on hot-swap:',
-              cachedSession.ollamaNumCtx.value
-            );
-          }
         }
         if (cachedSession.thinkingLevel !== thinkingLevel) {
           logCtx(
@@ -3279,7 +3234,6 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
       } else {
         // First query in this session — create new pi-coding-agent session
         // ResourceLoader only needed for session creation — skip on reuse
-        const { DefaultResourceLoader } = await import('@earendil-works/pi-coding-agent');
 
         // Workspace-level instructions (loaded earlier in this call for signature
         // fingerprinting): if present, append to the end of the system prompt so
@@ -3308,25 +3262,18 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
           }
         }
 
-        const resourceLoader = new DefaultResourceLoader({
+        // Nothing pi would discover in the workspace is loaded — no `.pi/` extensions,
+        // settings, packages, SYSTEM.md or skills, no `.agents/skills`; the app's own skill
+        // paths still are. See pi-resource-loader.ts for why.
+        const resourceLoader = await createPiResourceLoader({
           cwd: effectiveCwd,
           agentDir: userClaudeDir,
           additionalSkillPaths: skillPaths,
           appendSystemPrompt: appendSystemPrompt ? [appendSystemPrompt] : undefined,
-          // App owns instruction-file discovery (D1): disable pi's native
-          // AGENTS.md/CLAUDE.md auto-loading to prevent double-injection.
-          // Confirmed from resource-loader.js (dist): noContextFiles=true only
-          // gates the agentsFiles path (loadProjectContextFiles call) — it sets
-          // agentsFiles:[] and leaves extensions, skills, prompts, themes, and
-          // system-prompt discovery completely unaffected. Verified against the
-          // installed package; see tests/workspace-system-prompt.test.ts for
-          // the regression test that detects double-injection.
-          noContextFiles: true,
         });
         log(
           '[ClaudeAgentRunner] noContextFiles=true: pi native context-file discovery disabled; app priority-list resolver is sole injection source.'
         );
-        await resourceLoader.reload();
 
         // Ollama-specific compaction tuning based on actual context window
         const contextWindow = piModel.contextWindow || 128000;
@@ -3460,197 +3407,14 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
         // Set session CWD for workspace MCP permission policy lookup
         setSessionCwd(session.id, effectiveCwd);
 
-        // ─── Mid-loop overflow guard via _onPayload ─────────────────────────
-        // The pre-request guard only runs before the initial piSession.prompt().
-        // During the SDK's internal tool loop (tool call → tool result → next
-        // model call), the conversation can grow past the context window without
-        // any guard. This _onPayload hook intercepts EVERY API request the SDK
-        // makes and trims the messages array if it would overflow.
-        //
-        // Strategy: estimate the payload size from the messages array. If it
-        // exceeds the context window budget, drop the oldest non-system messages
-        // from the payload (keeping the system prompt and the most recent
-        // messages). This is a "just-in-time" trim that doesn't require async
-        // compaction — it simply removes older messages from the outgoing request.
-        // The session state is NOT modified (compaction still runs post-response
-        // via the SDK's normal path), but the immediate request won't 400.
-        {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const agent = piSession.agent as any;
-          const sendToRendererRef = this.sendToRenderer.bind(this); // Capture for use inside _onPayload
-          if (!('_onPayload' in agent)) {
-            logWarn(
-              '[ClaudeAgentRunner] SDK agent does not expose _onPayload — skipping mid-loop overflow guard'
-            );
-          } else {
-            const originalOnPayload = agent._onPayload as
-              | ((
-                  payload: Record<string, unknown>,
-                  modelArg: unknown
-                ) => Promise<Record<string, unknown>>)
-              | undefined;
-
-            // Use a conservative fallback for context window when metadata is
-            // missing. For the mid-loop guard, we use the KNOWN piModel values
-            // which are already resolved (via registry, OpenRouter API, or
-            // KNOWN_MODEL_SPECS). The fallback only applies if ALL resolution
-            // paths failed — in that case, use 8K as the absolute minimum safe
-            // default. This ensures the guard trims aggressively for truly
-            // unknown models rather than letting oversized payloads through.
-            // Note: piModel.contextWindow is always set by this point (either
-            // from registry, OpenRouter API, KNOWN_MODEL_SPECS, or the 128K
-            // synthetic fallback). The 8K here is a last-resort defensive guard.
-            const payloadContextWindow = piModel.contextWindow || 8192;
-            const payloadMaxOutput = piModel.maxTokens || 4096;
-            const payloadSafetyMargin = 4000;
-            if (!piModel.contextWindow) {
-              logWarn(
-                '[ClaudeAgentRunner] Mid-loop overflow guard: contextWindow unknown, using conservative 8K fallback.',
-                'Model:',
-                piModel.id
-              );
-            }
-            // For Ollama, also inject num_ctx
-            const isOllama = provider === 'ollama';
-            const ollamaNumCtx = isOllama ? { value: payloadContextWindow } : undefined;
-            if (isOllama && ollamaNumCtx) {
-              this.piSessions.get(session.id)!.ollamaNumCtx = ollamaNumCtx;
-            }
-
-            // Throttle live context updates to avoid IPC flooding.
-            // _onPayload fires on every API request (including stream retries).
-            // We only emit to the renderer at most every 200ms, or when the
-            // token count changes by a meaningful delta (>1000 tokens).
-            let lastContextEmitTime = 0;
-            let lastEmittedInputTokens = 0;
-            const CONTEXT_EMIT_INTERVAL_MS = 200;
-            const CONTEXT_EMIT_MIN_DELTA = 1000; // tokens
-
-            agent._onPayload = async (payload: Record<string, unknown>, modelArg: unknown) => {
-              // Chain to original _onPayload if it exists
-              let result = originalOnPayload
-                ? await originalOnPayload.call(agent, payload, modelArg)
-                : payload;
-              if (result === undefined) result = payload;
-
-              // Inject num_ctx for Ollama
-              if (isOllama && ollamaNumCtx) {
-                result = { ...result, num_ctx: ollamaNumCtx.value };
-              }
-
-              // ─── Mid-loop overflow estimation ───────────────────────────
-              // Estimate the total request size from the payload's messages.
-              // The payload has `messages` (array of LLM-format messages) and
-              // `tools` (array of tool definitions). We estimate tokens using
-              // the chars/4 heuristic on the serialized messages.
-              const messages = result.messages as unknown[] | undefined;
-              if (!messages || !Array.isArray(messages) || messages.length === 0) {
-                return result;
-              }
-
-              const tools = result.tools as unknown[] | undefined;
-              const estimate = estimatePayloadSize({
-                messages,
-                tools: tools && Array.isArray(tools) ? tools : undefined,
-                contextWindow: payloadContextWindow,
-                maxOutput: payloadMaxOutput,
-                safetyMargin: payloadSafetyMargin,
-              });
-
-              // ─── Emit live context usage to renderer (throttled) ─────────
-              // Updates the context usage bar during the tool loop. Throttled
-              // to avoid IPC flooding: emits at most every 200ms or when the
-              // token count changes by >1000 tokens (whichever comes first).
-              const now = Date.now();
-              const tokenDelta = Math.abs(
-                estimate.breakdown.messageTokens - lastEmittedInputTokens
-              );
-              if (
-                now - lastContextEmitTime >= CONTEXT_EMIT_INTERVAL_MS ||
-                tokenDelta >= CONTEXT_EMIT_MIN_DELTA
-              ) {
-                lastContextEmitTime = now;
-                lastEmittedInputTokens = estimate.breakdown.messageTokens;
-                sendToRendererRef({
-                  type: 'session.contextInfo',
-                  payload: {
-                    sessionId: session.id,
-                    contextWindow: payloadContextWindow,
-                    toolSchemaTokens: estimate.breakdown.toolTokens,
-                    maxOutputTokens: payloadMaxOutput,
-                    currentInputTokens: estimate.breakdown.messageTokens,
-                  },
-                });
-              }
-
-              if (!estimate.wouldOverflow) {
-                return result; // Within budget — proceed normally
-              }
-
-              // ─── Overflow detected — trim by conversational turns ──────
-              log(
-                '[ClaudeAgentRunner] Mid-loop overflow guard: estimated',
-                estimate.estimatedTotal,
-                'tokens exceeds',
-                payloadContextWindow,
-                'by',
-                estimate.overflow,
-                '— trimming oldest turns from payload.'
-              );
-
-              const trimResult = trimPayloadMessages(messages, estimate.overflow);
-
-              if (!trimResult) {
-                // Can't drop anything — let the request go through and let the
-                // SDK's own error handling deal with it
-                logWarn(
-                  '[ClaudeAgentRunner] Mid-loop overflow guard: cannot trim turns (too few). Proceeding anyway.'
-                );
-                return result;
-              }
-
-              // Re-estimate with full context (tools + output + safety)
-              const trimmedTotal =
-                trimResult.estimatedTotalAfterTrim +
-                estimate.breakdown.toolTokens +
-                payloadMaxOutput +
-                payloadSafetyMargin;
-
-              if (trimmedTotal > payloadContextWindow) {
-                logWarn(
-                  '[ClaudeAgentRunner] Mid-loop overflow guard: still over budget after trimming',
-                  trimResult.turnsDropped,
-                  'turns (estimated:',
-                  trimmedTotal,
-                  '> window:',
-                  payloadContextWindow,
-                  '). Sending anyway — SDK overflow recovery may handle it.'
-                );
-              }
-
-              log(
-                '[ClaudeAgentRunner] Mid-loop overflow guard: dropped',
-                trimResult.turnsDropped,
-                'turns (',
-                trimResult.messagesDropped,
-                'messages), freed ~',
-                Math.ceil(trimResult.charsFreed / 4),
-                'tokens. Messages:',
-                messages.length,
-                '→',
-                trimResult.trimmedMessages.length
-              );
-
-              return { ...result, messages: trimResult.trimmedMessages };
-            };
-
-            log(
-              '[ClaudeAgentRunner] Mid-loop overflow guard installed via _onPayload',
-              isOllama ? '(with Ollama num_ctx)' : ''
-            );
-          }
-        }
-        // ─── End mid-loop overflow guard ─────────────────────────────────────
+        // No mid-loop payload guard here. The one that lived here hooked
+        // `agent._onPayload`, a field pi-agent-core does not have under that name (it
+        // is `onPayload` — checked in 0.87.1 and 1.3.0), so it never ran — see
+        // docs/design/pi-sdk-130-uplift-and-adoption-plan.md.
+        // pi compacts before each further model call in the tool loop when the
+        // threshold is crossed (`_compactBeforeNextAssistantResponse` in
+        // pi-coding-agent/dist/core/agent-session.js), against the tool-aware
+        // reserve from compaction-budget.ts.
 
         logTiming('pi-coding-agent session created', runStartTime);
       }
@@ -4022,6 +3786,10 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
                       )
                     );
                   }
+                  // How long this model response took, as pi measured it.
+                  const executionTimeMs = readPiDurationMs(
+                    (msg as { durationMs?: unknown }).durationMs
+                  );
                   const assistantMsg: Message = {
                     id: uuidv4(),
                     sessionId: session.id,
@@ -4029,6 +3797,7 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
                     content: contentBlocks,
                     timestamp: Date.now(),
                     tokenUsage,
+                    ...(executionTimeMs !== undefined ? { executionTimeMs } : {}),
                   };
                   this.sendMessage(session.id, assistantMsg);
                 }
@@ -4054,10 +3823,13 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
               // Show the user what the model was trying to do so they have context.
               outputText = enrichToolErrorWithThinking(outputText, isError, lastAssistantThinking);
 
+              // How long execute() took, as pi measured it (absent when the tool never ran).
+              const duration = readPiDurationMs(event.durationMs);
               this.sendTraceUpdate(session.id, toolCallId, {
                 status: isError ? 'error' : 'completed',
                 toolName: event.toolName,
                 toolOutput: sanitizeOutputPaths(outputText).slice(0, 800),
+                ...(duration !== undefined ? { duration } : {}),
               });
 
               // Send tool result message
@@ -4230,8 +4002,9 @@ Relative file paths or folder names mentioned by the user (e.g. "src/utils/helpe
         const guardToolSchemaTokens = estimateToolSchemaTokens(wrappedTools, mcpCustomTools);
 
         // Update renderer with tool schema token count (now that tools are computed)
-        // Reset currentInputTokens to 0 at run start — the _onPayload hook will
-        // update it with live values as the tool loop progresses.
+        // Reset currentInputTokens to 0 at run start, so the panel falls back to the
+        // last assistant message's tokenUsage.input, which every model reply in the
+        // tool loop refreshes (renderer/utils/context-usage.ts).
         this.sendToRenderer({
           type: 'session.contextInfo',
           payload: {

@@ -356,8 +356,10 @@ describe('an address that belongs to a catalog provider', () => {
 
   it('gives the ordinary hints for such an address while the catalog has no entry for it', () => {
     // Nothing to send the user to: the address is a custom endpoint like any other.
+    // Kimi's current address and protocol (pi 1.3.0); the Anthropic-era `/coding` one
+    // would get a protocol warning instead, since the setup now recommends OpenAI.
     const { html, form, props } = renderEndpointDialog({
-      endpoint: endpoint({ protocol: 'anthropic', baseUrl: 'https://api.kimi.com/coding' }),
+      endpoint: endpoint({ protocol: 'openai', baseUrl: 'https://api.kimi.com/coding/v1' }),
       providerCatalog: [...BUILTIN_ENTRIES],
     });
 

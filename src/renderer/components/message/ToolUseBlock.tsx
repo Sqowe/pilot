@@ -11,6 +11,7 @@ import type { ToolUseContent, ToolResultContent, ContentBlock, Message } from '.
 import { AskUserQuestionBlock } from './AskUserQuestionBlock';
 import { TodoWriteBlock } from './TodoWriteBlock';
 import { getToolIcon, getToolLabel } from './toolHelpers';
+import { formatDuration } from '../../utils/format-duration';
 
 // Only allow safe image MIME types for data: URI rendering
 const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
@@ -109,11 +110,11 @@ export const ToolUseBlock = memo(function ToolUseBlock({
       )
     : false;
 
-  // Duration from trace steps
+  // How long the tool ran, as pi measured it — main records it on the tool's
+  // trace step, whose id is the tool call id.
   let duration: number | undefined;
   if (message?.sessionId) {
-    const resultStep = traceSteps.find((s) => s.id === block.id && s.type === 'tool_result');
-    duration = resultStep?.duration;
+    duration = traceSteps.find((s) => s.id === block.id)?.duration;
   }
 
   return (
@@ -174,7 +175,7 @@ export const ToolUseBlock = memo(function ToolUseBlock({
         )}
         {duration !== undefined && (
           <span className="text-[10px] text-text-muted flex-shrink-0 tabular-nums">
-            {duration < 1000 ? `${duration}ms` : `${(duration / 1000).toFixed(1)}s`}
+            {formatDuration(duration)}
           </span>
         )}
 

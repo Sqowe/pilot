@@ -443,7 +443,7 @@
         },
         "kimi": {
           "name": "Kimi Coding",
-          "note": "Используйте coding endpoint с Anthropic-совместимым режимом. Проверьте точный ID модели в документации Moonshot."
+          "note": "Используйте coding endpoint в OpenAI-совместимом режиме (/coding/v1). Проверьте точный ID модели в документации Moonshot."
         },
         "glm": {
           "name": "GLM / BigModel (маршрут Anthropic)",
@@ -1126,6 +1126,8 @@
     "question": "Вопрос",
     "thinking": "Мышление",
     "executionTime": "Время выполнения: {{time}}",
+    "responseTime": "Время ответа: {{time}}",
+    "responseTimeHint": "Сколько времени модель формировала этот ответ",
     "process": "Процесс",
     "processThinking": "{{count}} мышление",
     "processTools": "{{count}} инструментов",

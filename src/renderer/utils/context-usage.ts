@@ -76,8 +76,8 @@ export function computeContextUsage(input: ContextUsageInput): ContextUsageResul
 
   if (!contextWindow) return null;
 
-  // Prefer live currentInputTokens (updated by _onPayload during tool loop)
-  // Fall back to last message's tokenUsage.input for initial display
+  // Prefer currentInputTokens when main sent one (e.g. the estimate after a
+  // compaction); otherwise the last message's tokenUsage.input
   let conversationTokens = currentInputTokens;
   if (conversationTokens === 0) {
     conversationTokens = lastMessageInputTokens;

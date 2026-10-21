@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Tool cards show how long the tool ran**, and each model reply shows how long it took
+  ("Response time: 4.1s"). Both times are measured by pi itself and kept with the chat, so
+  they are still there after a restart. Chat exports with timestamps now include the
+  reply time as well.
+
+### Changed
+
+- **Updated the pi SDK from 0.87.1 to 1.3.0** (`@earendil-works/pi-ai` and
+  `@earendil-works/pi-coding-agent`), twelve releases. New models become selectable —
+  Claude Haiku 5.5 and Sonnet 5.5, GPT-6.1 Sol, Gemini 4 Argon — and more temporary
+  provider errors are retried by themselves, including during context compaction. When the
+  model is switched mid-conversation, the new model no longer sees the previous model's
+  reasoning as plain text. The app's own `openai` (now 7.19.0) and `@anthropic-ai/sdk`
+  (now 0.129.0) are pinned to the versions pi uses, because the built app hands pi the
+  app's copies; until now the Anthropic one was 0.92.0 against pi's 0.124.0.
+- **Kimi (Moonshot) follows pi to OpenAI-compatible Chat Completions** at
+  `https://api.kimi.com/coding/v1`. "Diagnose connection" for Kimi uses that protocol
+  too, and the ready-made Kimi setup suggests the new address; the old `/coding` address
+  is still recognised.
+- **An error reported by an MCP server is shown as an error.** When a server answers with
+  an error result, the tool card turns red and the model is told the call failed, instead
+  of reading the error text as a successful result. Tool timeouts, which already said
+  "failed", are now marked as errors too.
+
+### Removed
+
+- Azure OpenAI and TypeSafe no longer turn up on the Providers tab after the update:
+  Azure (renamed by pi) needs a resource address the tab cannot take, and TypeSafe has no
+  chat models.
+- The app's own guard that trimmed old messages from a request mid-way through a tool loop
+  is gone. It hooked a field pi does not have, so it never ran; pi compacts the context
+  before each further model call instead.
+
+### Fixed
+
+- **Turning a skill off for a session, or in a workspace profile, now takes effect.** The
+  agent engine also read the app's skill folder by itself and loaded every skill in it, so
+  the skill stayed available to the agent. Now only the skills the app hands over load.
+- Skills in your home folder's `~/.agents/skills` are no longer added to every chat on their
+  own, past the app's skill settings. To use one, link it into `~/.claude/skills`, where the
+  app manages it — Settings → Skills, Conflict Resolution and disabling then apply to it.
+
+### Security
+
+- **A workspace can no longer run code inside the app.** When a chat started, the agent
+  engine (pi) treated the open folder as trusted, so an extension in its `.pi/extensions`
+  folder could be loaded into the app itself — before any permission prompt — and packages
+  listed in a `.pi/settings.json` there could be installed with npm. That folder's
+  `.pi/SYSTEM.md` could replace the system prompt, and its `.pi/skills` and `.agents/skills`
+  were added as skills. None of this is read any more. The workspace's own `.skills` and
+  `skills` folders, which the app manages, still work.
+
 ## [1.1.0] - 2026-10-18
 
 ### Changed

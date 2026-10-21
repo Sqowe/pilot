@@ -87,7 +87,7 @@ Two conclusions:
 - The app asks on every `write` and `edit` by default
   ([permission-rules-store.ts:39-48](../../src/main/config/permission-rules-store.ts#L39-L48)).
 - Neither host checks a file tool's path against the workspace
-  ([pi-sdk-085-feature-adoption-plan.md §7.1.1](pi-sdk-085-feature-adoption-plan.md)).
+  ([pi-sdk-085-feature-adoption-plan.md §7.1.1](archive/pi-sdk-085-feature-adoption-plan.md)).
 
 So a bash-only write check would leave `write` as an open door next to it in `pi`.
 

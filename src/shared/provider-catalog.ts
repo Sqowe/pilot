@@ -270,9 +270,10 @@ export const NATIVE_PROVIDER_META: Record<string, NativeProviderMeta> = {
     category: 'coding-plan',
     keyEnvVar: 'KIMI_API_KEY',
     docsUrl: 'https://platform.moonshot.cn/docs',
-    // Registry models use anthropic-messages — override so cold-start routing
-    // (before the catalog builds) matches the derived protocol.
-    routeProtocol: 'anthropic',
+    // No routeProtocol override: since pi 1.3.0 the registry serves Kimi over
+    // openai-completions at /coding/v1, which is also the cold-start default.
+    // The old 'anthropic' override outranked the catalog (deriveRouteProtocol)
+    // and sent Diagnose Connection to the wrong protocol.
   },
   moonshotai: {
     name: 'Moonshot',
@@ -399,11 +400,14 @@ export const NATIVE_PROVIDER_META: Record<string, NativeProviderMeta> = {
 export const EXCLUDED_NATIVE = new Set([
   'amazon-bedrock',
   'google-vertex',
-  'azure-openai-responses',
+  // Named `azure-openai-responses` before pi 1.0.3; needs the Azure resource address.
+  'azure',
   'cloudflare-workers-ai',
   'cloudflare-ai-gateway',
   'github-copilot',
   'openai-codex',
+  // Classifier models only (pi 1.1.0) — nothing to chat with.
+  'typesafe',
   // Already covered as builtin entries — exclude from native to avoid duplicates
   'anthropic',
   'openai',

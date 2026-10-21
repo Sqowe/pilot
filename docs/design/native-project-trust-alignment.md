@@ -39,7 +39,7 @@ on the user's machine.
 > **Before any phase-1 work, decide:** is the goal still consolidation, or has it become
 > "reuse pi's resolver, keep our storage"? Those are different projects with different
 > justifications. Note also that §7.1.1 of
-> [`pi-sdk-085-feature-adoption-plan.md`](./pi-sdk-085-feature-adoption-plan.md) found the
+> [`pi-sdk-085-feature-adoption-plan.md`](./archive/pi-sdk-085-feature-adoption-plan.md) found the
 > file-tool path surface has _no_ containment check today — so the five surfaces this plan
 > enumerates may not all be as built-out as it assumes. Re-audit them before costing the work.
 

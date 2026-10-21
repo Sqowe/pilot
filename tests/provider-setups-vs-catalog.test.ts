@@ -27,7 +27,7 @@
  * own (same service, same protocol), set or clear `catalogProvider` in
  * `src/shared/api-provider-guidance.ts`, and bring both tables up to date.
  *
- * Last checked against pi-ai 0.87.1 (2026-10-06).
+ * Last checked against pi-ai 1.3.0 (2026-10-20).
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -55,7 +55,7 @@ const FOUND_IN_THE_CATALOG: Record<string, string[]> = {
     'openrouter | openai-completions | https://openrouter.ai/api/v1',
   ],
   deepseek: ['deepseek | openai-completions | https://api.deepseek.com'],
-  'kimi-coding': ['kimi-coding | anthropic-messages | https://api.kimi.com/coding'],
+  'kimi-coding': ['kimi-coding | openai-completions | https://api.kimi.com/coding/v1'],
   'glm-anthropic': [
     'zai-coding-cn | openai-completions | https://open.bigmodel.cn/api/coding/paas/v4',
   ],
@@ -72,6 +72,8 @@ const FOUND_IN_THE_CATALOG: Record<string, string[]> = {
  */
 const SENT_TO_THE_CATALOG: Record<string, string | null> = {
   // The setup's address is the provider's own, in the provider's own protocol.
+  // Kimi moved with pi 1.3.0 from Anthropic Messages at /coding to OpenAI Chat
+  // Completions at /coding/v1; the setup moved with it — decided 2026-10-20.
   openrouter: 'openrouter',
   ollama: 'ollama',
   'gemini-custom': 'gemini',

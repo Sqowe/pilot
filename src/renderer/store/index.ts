@@ -46,7 +46,7 @@ export interface SessionState {
   contextWindow: number;
   toolSchemaTokens: number;
   maxOutputTokens: number;
-  /** Live conversation token count — updated during tool loop via _onPayload */
+  /** Conversation token count sent by main (run start resets it to 0; set after a compaction) */
   currentInputTokens: number;
 }
 

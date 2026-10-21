@@ -6,11 +6,11 @@
 > items that were still open were carried into the live plan and re-scoped against what
 > shipped in pi 0.83–0.85:
 >
-> | Left open here                         | Now tracked as                                                    |
-> | -------------------------------------- | ----------------------------------------------------------------- |
-> | §4.1 item 3 — edit-diff rendering      | [`pi-sdk-085`](../pi-sdk-085-feature-adoption-plan.md) **Item F** |
-> | §5.3 — provider-scoped `env` overrides | [`pi-sdk-085`](../pi-sdk-085-feature-adoption-plan.md) **Item H** |
-> | §5.2 — RPC extension-UI typed surface  | [`pi-sdk-085`](../pi-sdk-085-feature-adoption-plan.md) **Item I** |
+> | Left open here                         | Now tracked as                                                   |
+> | -------------------------------------- | ---------------------------------------------------------------- |
+> | §4.1 item 3 — edit-diff rendering      | [`pi-sdk-085`](./pi-sdk-085-feature-adoption-plan.md) **Item F** |
+> | §5.3 — provider-scoped `env` overrides | [`pi-sdk-085`](./pi-sdk-085-feature-adoption-plan.md) **Item H** |
+> | §5.2 — RPC extension-UI typed surface  | [`pi-sdk-085`](./pi-sdk-085-feature-adoption-plan.md) **Item I** |
 >
 > §5.3's remaining Mistral prompt-cache check was **dropped**: the "CH" cache-hit display
 > it was meant to verify against was itself removed (§3.2). The two designs extracted from

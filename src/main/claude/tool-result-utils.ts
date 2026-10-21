@@ -152,6 +152,16 @@ function finalizeText(textParts: string[], imageCount: number): string {
   return '(no output)';
 }
 
+/**
+ * Whether an MCP `CallToolResult` reports a failure of its own (`isError: true`).
+ * Since pi 0.99.0 a tool may return such a result instead of throwing
+ * (`AgentToolResult.isError`): the model then sees an error result, the UI shows
+ * one, and `details` (for example screenshots) are kept.
+ */
+export function isMcpToolErrorResult(result: unknown): boolean {
+  return isRecord(result) && result.isError === true;
+}
+
 export function normalizeMcpToolResultForModel(result: unknown): NormalizedToolTextResult {
   const resultObj = isRecord(result) ? result : null;
   if (resultObj?.content) {

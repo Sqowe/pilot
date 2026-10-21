@@ -441,7 +441,7 @@
         },
         "kimi": {
           "name": "Kimi Coding",
-          "note": "推荐对 coding endpoint 使用 Anthropic 兼容协议，并按 Moonshot 文档确认精确的 coding 模型 ID。"
+          "note": "推荐对 coding endpoint 使用 OpenAI 兼容协议（/coding/v1），并按 Moonshot 文档确认精确的 coding 模型 ID。"
         },
         "glm": {
           "name": "GLM / BigModel（Anthropic 路由）",
@@ -1064,6 +1064,8 @@
     "question": "问题",
     "thinking": "思考",
     "executionTime": "执行时间: {{time}}",
+    "responseTime": "响应时间: {{time}}",
+    "responseTimeHint": "模型生成此回复所用的时间",
     "process": "过程",
     "processThinking": "{{count}} 次思考",
     "processTools": "{{count}} 个工具",

@@ -226,6 +226,8 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 
 **Risk:** Low — the silent-failure scenario is already mitigated by fail-closed behavior; what remains is simplification, not a safety fix.
 
+**Update (2026-10-20, pi 1.3.0):** Superseded by [`docs/design/permission-gate-tool-call-event.md`](docs/design/permission-gate-tool-call-event.md), which removes this module instead of trimming it. The risk is no longer only cleanup: since pi 0.99.0, calls a tool makes through `ctx.executeTool()` run pi's session hook directly and never reach `agent.beforeToolCall`, so they would bypass this gate. No tool in the app makes such calls today.
+
 **Note:** `AI_MAIN_PROCESS.md`'s "Private Field Access" section still describes the pre-fix reach-around as "fragile" — that section is stale and should reference `before-tool-call-hook.ts` instead.
 
 ---

@@ -443,7 +443,7 @@
         },
         "kimi": {
           "name": "Kimi Coding",
-          "note": "Use the coding endpoint with Anthropic-compatible mode. Double-check the exact coding model ID from Moonshot docs."
+          "note": "Use the coding endpoint in OpenAI-compatible mode (/coding/v1). Double-check the exact coding model ID from Moonshot docs."
         },
         "glm": {
           "name": "GLM / BigModel (Anthropic route)",
@@ -1126,6 +1126,8 @@
     "question": "Question",
     "thinking": "Thinking",
     "executionTime": "Execution time: {{time}}",
+    "responseTime": "Response time: {{time}}",
+    "responseTimeHint": "How long the model took to produce this response",
     "process": "Process",
     "processThinking": "{{count}} thinking",
     "processTools": "{{count}} tools",

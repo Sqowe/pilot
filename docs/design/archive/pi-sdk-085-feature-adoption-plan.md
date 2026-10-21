@@ -1,5 +1,22 @@
 # Pi SDK 0.83–0.85 Feature Adoption — Design & Implementation Plan
 
+> ## 🗄️ Archived — 2026-10-20
+>
+> **Superseded by [`pi-sdk-130-uplift-and-adoption-plan.md`](../pi-sdk-130-uplift-and-adoption-plan.md)**
+> after the 0.87.1 → 1.3.0 uplift. Of the items below only Item E was ever closed (verified
+> 2026-09-09, no change needed). Every open item was carried forward under the same letter;
+> each surface it consumes was re-checked in the 1.3.0 package and still exists:
+>
+> | Item here                            | Now tracked as                                                  | What changed in 1.3.0                                                                                                                         |
+> | ------------------------------------ | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+> | **S** — bash session-variable policy | [`pi-sdk-130`](../pi-sdk-130-uplift-and-adoption-plan.md) **S** | Nothing: `exposeSessionEnvironment` is still on the bash and powershell tool options.                                                         |
+> | **A** — session usage totals         | [`pi-sdk-130`](../pi-sdk-130-uplift-and-adoption-plan.md) **A** | Nothing: `AgentSession.getSessionStats()` is unchanged.                                                                                       |
+> | **B** — compaction failure narration | [`pi-sdk-130`](../pi-sdk-130-uplift-and-adoption-plan.md) **B** | Nothing: `session_compact_failed` and the `summarization_retry_*` events are still emitted.                                                   |
+> | **D** — constrained tool sampling    | [`pi-sdk-130`](../pi-sdk-130-uplift-and-adoption-plan.md) **D** | Narrowed: pi now sends Anthropic tools non-strict when a schema uses keywords strict mode rejects, and retries non-strict when it is refused. |
+> | **F**, **G**, **H**, **I**           | [`pi-sdk-130`](../pi-sdk-130-uplift-and-adoption-plan.md) same  | Nothing.                                                                                                                                      |
+>
+> Kept as as-built history. Baseline below is **0.85.1**; the codebase is now on 1.3.0.
+
 **Created:** 2026-09-08
 **Status:** **Uplift landed (0.85.1).** Adoption backlog consolidated and re-scoped —
 not started.

@@ -114,6 +114,7 @@ vi.mock('../../main/claude/pi-session-runtime', () => ({
 }));
 vi.mock('../../main/claude/think-tag-parser', () => ({ ThinkTagStreamParser: class {} }));
 vi.mock('../../main/claude/tool-result-utils', () => ({
+  isMcpToolErrorResult: vi.fn(() => false),
   normalizeMcpToolResultForModel: vi.fn(),
   normalizeToolExecutionResultForUi: vi.fn(),
 }));
@@ -130,10 +131,6 @@ vi.mock('../../main/claude/pre-request-guard', () => ({
 }));
 vi.mock('../../main/config/ollama-api', () => ({ fetchOllamaModelInfo: vi.fn() }));
 vi.mock('../../main/config/openrouter-api', () => ({ fetchOpenRouterModelInfo: vi.fn() }));
-vi.mock('../../main/claude/mid-loop-overflow-guard', () => ({
-  estimatePayloadSize: vi.fn(() => 0),
-  trimPayloadMessages: vi.fn((m: unknown) => m),
-}));
 vi.mock('../../main/claude/read-loop-guard', () => ({
   ReadLoopGuard: class {},
   extractReadFilePath: vi.fn(),

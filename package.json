@@ -75,9 +75,9 @@
     "deploy:local": "bash scripts/deploy-local.sh"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.92.0",
-    "@earendil-works/pi-ai": "0.87.1",
-    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@anthropic-ai/sdk": "0.129.0",
+    "@earendil-works/pi-ai": "1.3.0",
+    "@earendil-works/pi-coding-agent": "1.3.0",
     "@google/genai": "^1.52.0",
     "@huggingface/transformers": "4.3.1",
     "@larksuiteoapi/node-sdk": "^1.66.0",
@@ -99,7 +99,7 @@
     "lucide-react": "^0.468.0",
     "marked": "15.0.12",
     "ngrok": "^5.0.0-beta.2",
-    "openai": "^6.32.0",
+    "openai": "7.19.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-i18next": "^16.6.0",

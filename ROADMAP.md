@@ -93,29 +93,26 @@
 
 - **Credential delivery via secure channel** (#3) — replace prompt injection with a
   secure MCP tool / IPC channel for secrets the agent needs.
-- **Simplify `beforeToolCall` hook** (#13) — drop the legacy `setBeforeToolCall` path
-  once `pi-coding-agent ≥ 0.74` is the floor; eliminate the silent permission-bypass risk.
+- **Simplify `beforeToolCall` hook** (#13) — superseded by Item P below: the gate moves to
+  pi's public `tool_call` event and the `beforeToolCall` shape detection goes away.
 
-**Pi SDK 0.83–0.85 feature adoption** — [`docs/design/pi-sdk-085-feature-adoption-plan.md`](docs/design/pi-sdk-085-feature-adoption-plan.md)
+**Pi SDK 1.3.0 uplift & adoption** — [`docs/design/pi-sdk-130-uplift-and-adoption-plan.md`](docs/design/pi-sdk-130-uplift-and-adoption-plan.md)
 
-The 0.85.1 uplift landed on 2026-09-08 (typecheck clean, 3141 tests green). The adoption
-backlog from the 0.80 and 0.82 plans is consolidated there; both predecessors are archived.
+The 0.87.1 → 1.3.0 uplift is in the working tree (2026-10-20; typecheck clean, 3976 tests
+green). Tool durations, per-reply response time and MCP error results shipped with it. The
+0.85 plan is archived; its open items carry forward under the same letters.
 
-- **Items A & B:** session usage totals via `getSessionStats()` (now a read, not an
-  accumulator) and compaction failure/retry narration in the trace.
-- ~~**Item E:** verify path containment against 0.85.0's `ctx.cwd` fix~~ — **done 2026-09-09**,
-  no change needed: `effectiveCwd` is part of the session runtime signature, so tools are
-  rebuilt whenever it changes. The check did surface that there is no path-containment check
-  on the built-in file tools at all (`PathGuard` is never called; `ToolExecutor` is dead code
-  — TECHNICAL_DEBTS #1), which confirms the premise of file-tool path permissions below.
-- **Item S:** settle the bash session-variable exposure policy. Four `PI_*` variables reach
-  agent bash commands; `PI_SESSION_FILE` is not among them, because the app's pi session is
-  in-memory — the SDK-only boundary applied to sessions, since persisting through pi would
-  write into `~/.pi/agent/sessions/` and mix this app's conversations with the `pi` CLI's.
-  Worth naming in ARCHITECTURE.md §4.1 and pinning with a test, as the other two cases are.
-- **Item F:** edit-diff rendering — the transcript still shows raw JSON for `edit` calls.
-- **Item G:** reproduce the stuck loading indicator during a permission wait before
-  deciding how to fix it; the wait itself is already tracked in the main process.
+- **Item P — first:** ~~lock down what pi's resource loader loads from the workspace~~
+  (phase 0, done 2026-10-20 — `.pi/extensions` from the workspace no longer run; 2026-10-21 —
+  pi no longer adds skills on its own, so disabling a skill for a session works); next, move
+  the permission gate to pi's public `tool_call` event so calls made by other tools are
+  gated too —
+  [`docs/design/permission-gate-tool-call-event.md`](docs/design/permission-gate-tool-call-event.md).
+- **Items A, B, S, F, G** as before: session usage totals, compaction failure narration,
+  the bash session-variable policy, edit-diff rendering, the stuck indicator during a
+  permission wait (diagnose first).
+- **Investigate after P:** `tool_search` with deferred MCP tools, to keep large MCP schemas
+  out of the context.
 - **Opportunistic:** RPC extension-UI types, provider-scoped `env` overrides.
 
 **Tool completeness (API-key users)**

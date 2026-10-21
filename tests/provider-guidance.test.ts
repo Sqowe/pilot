@@ -9,10 +9,14 @@ import {
 } from '../src/shared/api-provider-guidance';
 
 describe('provider guidance helpers', () => {
-  it('detects Kimi Coding and recommends Anthropic-compatible setup', () => {
-    const setup = detectCommonProviderSetup('https://api.kimi.com/coding');
+  it('detects Kimi Coding and recommends the OpenAI-compatible setup pi uses', () => {
+    const setup = detectCommonProviderSetup('https://api.kimi.com/coding/v1');
     expect(setup?.id).toBe('kimi-coding');
-    expect(setup?.recommendedProtocol).toBe('anthropic');
+    expect(setup?.recommendedProtocol).toBe('openai');
+  });
+
+  it('still recognises the Anthropic-era Kimi Coding address', () => {
+    expect(detectCommonProviderSetup('https://api.kimi.com/coding')?.id).toBe('kimi-coding');
   });
 
   it('detects DeepSeek and recommends OpenAI-compatible setup', () => {

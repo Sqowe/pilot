@@ -21,6 +21,7 @@ import type { Message, ContentBlock } from '../types';
 import { Send, Square, Plus, Loader2, X, Clock, Layers, Download } from 'lucide-react';
 import { configSetLabel } from '../utils/config-set-label';
 import { formatSessionDateRange } from '../utils/i18n-format';
+import { formatDuration } from '../utils/format-duration';
 
 type AttachedFile = {
   name: string;
@@ -214,15 +215,6 @@ export function ChatView() {
 
     return [...messages.slice(0, insertIndex), streamingMessage, ...messages.slice(insertIndex)];
   }, [activeSessionId, activeTurn?.userMessageId, messages, partialMessage, partialThinking]);
-
-  // Format execution time for display
-  const formatExecutionTime = useCallback((ms: number): string => {
-    if (ms < 1000) return `${ms}ms`;
-    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-    const minutes = Math.floor(ms / 60000);
-    const seconds = ((ms % 60000) / 1000).toFixed(0);
-    return `${minutes}m ${seconds}s`;
-  }, []);
 
   // --- Real-time execution timer ---
   const [clockNow, setClockNow] = useState(() => Date.now());
@@ -1134,8 +1126,8 @@ export function ChatView() {
               <Clock className="w-3 h-3" />
               <span>
                 {timerActive
-                  ? formatExecutionTime(liveElapsed)
-                  : t('messageCard.executionTime', { time: formatExecutionTime(liveElapsed) })}
+                  ? formatDuration(liveElapsed)
+                  : t('messageCard.executionTime', { time: formatDuration(liveElapsed) })}
               </span>
             </div>
           )}

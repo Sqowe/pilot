@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isMcpToolErrorResult,
   normalizeMcpToolResultForModel,
   normalizeToolExecutionResultForUi,
 } from '../src/main/claude/tool-result-utils';
@@ -88,5 +89,20 @@ describe('tool result utils', () => {
 
     expect(normalized.content).toContain('[image data URL omitted');
     expect(normalized.content).not.toContain(dataUrl);
+  });
+
+  it('recognises an MCP result that reports its own failure', () => {
+    expect(isMcpToolErrorResult({ content: [{ type: 'text', text: 'boom' }], isError: true })).toBe(
+      true
+    );
+  });
+
+  it('treats any other MCP result as a success', () => {
+    expect(isMcpToolErrorResult({ content: [{ type: 'text', text: 'ok' }] })).toBe(false);
+    expect(isMcpToolErrorResult({ content: [], isError: false })).toBe(false);
+    // Only the boolean counts — a server that sends a string is not trusted to mean it.
+    expect(isMcpToolErrorResult({ content: [], isError: 'true' })).toBe(false);
+    expect(isMcpToolErrorResult('plain text')).toBe(false);
+    expect(isMcpToolErrorResult(null)).toBe(false);
   });
 });

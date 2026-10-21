@@ -16,11 +16,13 @@ packaging in [AI_ELECTRON.md](AI_ELECTRON.md).
 
 - **Always version-lock both packages.** They ship from one repo and must be
   uplifted together; a mismatch produces type errors and runtime failures.
-  Currently pinned to **0.87.1** in `package.json` (`dependencies`).
+  Currently pinned to **1.3.0** in `package.json` (`dependencies`).
 - The old `@mariozechner/pi-*` scope was deprecated at 0.73.1; this app migrated
   to `@earendil-works/pi-*` at 0.74.0. Do not reintroduce the old scope.
-- Both are pre-1.0 — breaking changes land between minors. Budget adaptation time
-  on every uplift.
+- pi is 1.x since 2026-10-01, but the 1.x line still ships breaking changes in
+  minor and patch releases (1.0.3 renamed a provider, 1.2.0 changed
+  `before_agent_start`, 1.3.0 moved Kimi to another protocol). Budget adaptation
+  time on every uplift.
 - Verify against the installed package, not memory: docs ship at
   `<pkg>/docs/` (`models.md`, `sdk.md`, `settings.md`), type definitions at
   `<pkg>/dist/**/*.d.ts`, and `index.d.ts` re-exports the real surface from
@@ -36,12 +38,17 @@ packaging in [AI_ELECTRON.md](AI_ELECTRON.md).
   and `resolveMessageEndPayload` (`src/main/claude/agent-runner-message-end.ts`)
   showed it as an empty model result until it learned to skip non-assistant roles;
   a cast on the event's message hid the new role from `typecheck`, and no test
-  covered a non-assistant role.
+  covered a non-assistant role. 0.87.1 → 1.3.0 changed no SDK call either, but
+  needed: the app's own `openai` / `@anthropic-ai/sdk` pinned to pi-ai's versions
+  (see "pi is bundled"), Kimi's hand-set route protocol removed when pi moved it
+  to Chat Completions, and `azure` (renamed from `azure-openai-responses`) and the
+  classifier-only `typesafe` added to `EXCLUDED_NATIVE`. Report and reasons:
+  [docs/design/pi-sdk-130-uplift-and-adoption-plan.md](docs/design/pi-sdk-130-uplift-and-adoption-plan.md).
 
 ### The SDK-only boundary — in-memory session & settings managers
 
 `createAgentSession` is called with `PiSessionManager.inMemory()` and
-`PiSettingsManager.inMemory({...})` (`src/main/claude/agent-runner.ts:3404-3407`).
+`PiSettingsManager.inMemory({...})` (`src/main/claude/agent-runner.ts:3416-3420`).
 The rationale — why a persisting manager would couple us to the `pi` CLI's
 workflow — is in [ARCHITECTURE.md](ARCHITECTURE.md) §4.1. Read it before touching
 either call.
@@ -53,8 +60,27 @@ either call.
   than failing loudly.
 - We own history instead: `sessions` / `messages` / `trace_steps` in
   `<userData>/data/cowork.db` (see §4).
-- Regression coverage lives in `tests/sdk-only-session-isolation.test.ts`. Keep it
-  green; it is the only guard on this boundary.
+- Regression coverage lives in `src/tests/claude/sdk-only-session-isolation.test.ts`.
+  Keep it green; it is the only guard on this boundary.
+- **The resource loader is held to the same rule.** `src/main/claude/pi-resource-loader.ts`
+  builds the `DefaultResourceLoader` with `PiSettingsManager.inMemory({}, { projectTrusted:
+false })`, `noExtensions: true` and `noSkills: true`. Left to its defaults, pi makes a
+  file-backed settings manager that trusts the workspace (`projectTrusted ?? true`), loads
+  `<workspace>/.pi/extensions/*` into the process, takes `<workspace>/.pi/SYSTEM.md` as the
+  system prompt and adds skills from the workspace's `.pi/skills` and `.agents/skills`
+  (shown with a probe using the runner's options before 2026-10-20), npm-installs the
+  `packages` in `<workspace>/.pi/settings.json` (read in pi's code, not run), and adds
+  skills from `<agentDir>/skills` — our runtime skills dir, unfiltered — and from the
+  user's `~/.agents/skills`.
+- **So the app's skill list is the only one.** `assembleSkillPaths`
+  (`src/main/claude/skill-paths.ts`) builds it: the runtime skills dir first — pi keeps the
+  first skill of a name, and that dir holds what Conflict Resolution chose — then the other
+  folders, minus skills disabled for the session (following symlinks; the runtime dir is
+  mostly links). Every uplift re-asserts the three loader options;
+  `src/tests/claude/pi-resource-loader-boundary.test.ts` and
+  `src/tests/claude/skill-paths.test.ts` fail when pi loads anything the app did not pass,
+  or when the order or the filtering breaks. Design:
+  [docs/design/permission-gate-tool-call-event.md](docs/design/permission-gate-tool-call-event.md) §2.
 
 ### Public surface vs. private reach-arounds
 
@@ -62,7 +88,7 @@ either call.
   `setModel()`, `setThinkingLevel()`, `prompt(text, options)`,
   `dispose()`, and the `tool_call` extension event.
 - **One reach-around remains**: `installPermissionHook` reads
-  `(piSession as any).agent` (`agent-runner.ts:1586`) to reach the agent's
+  `(piSession as any).agent` (`agent-runner.ts:1596`) to reach the agent's
   existing `beforeToolCall` hook. It is guarded by
   `before-tool-call-hook.ts`, which **throws** rather than logging when no known
   hook shape is found — a future SDK break must fail loudly, not silently drop the
@@ -94,15 +120,27 @@ exist unless the build puts it there.
   when some are missing. Keep it — it is the only signal when this breaks again.
 - pi's resize worker (`image-resize-worker.js`) is not in the bundle either, so pi
   falls back to resizing on the calling thread, which here is the main process.
+- pi's codemode (1.x) runs scripts in a worker (`pi-codemode/dist/runtime/host.js`
+  resolves `./worker.js` from its own module) on QuickJS wasm (`wasm.js`); neither
+  would be next to the bundle. The app does not load codemode, so neither is
+  needed — but adopting it means emitting both first.
 - Every uplift: re-check what else pi loads this way — workers, wasm, assets.
+- **The opposite case — pi's dependencies we keep external.** `openai` and
+  `@anthropic-ai/sdk` are in the `external` list, so the bundled pi-ai loads the
+  app's top-level copy, not the one pi pinned. Tests resolve the Node way and reach
+  pi's own copy, so a mismatch never shows in `npm test`. Pin both in our
+  `package.json` to exactly the version pi-ai declares;
+  `src/tests/bundled-externals-versions.test.ts` fails when they drift apart
+  (on 0.87.1 they had: pi-ai pinned `@anthropic-ai/sdk` 0.124.0 while the bundle
+  ran 0.92.0).
 
 ### Session lifecycle
 
 - One `createAgentSession()` per chat session, cached in `this.piSessions`, keyed
   by session id, LRU-evicted at `MAX_CACHED_SESSIONS = 50`
-  (`agent-runner.ts:631`). Eviction calls `session.dispose()`.
+  (`agent-runner.ts:641`). Eviction calls `session.dispose()`.
 - Reused sessions hot-swap model and thinking level through public setters
-  (`agent-runner.ts:3222-3247`); a swap also refreshes the Ollama `num_ctx` ref.
+  (`agent-runner.ts:3243-3262`).
 - `buildPiSessionRuntimeSignature()` (`src/main/claude/pi-session-runtime.ts`)
   fingerprints config provider, custom protocol, model provider/api/baseUrl,
   effective cwd, a **SHA-256 of the API key** (never the key itself), and the
@@ -117,7 +155,7 @@ exist unless the build puts it there.
 
 ### Tool wiring — how tools actually reach the SDK
 
-Verified shape (`agent-runner.ts:3194-3400`):
+Verified shape (`agent-runner.ts:3155-3423`):
 
 ```
 createCodingTools(effectiveCwd)                       ← SDK built-ins (read/write/edit/bash/glob/grep)
@@ -156,11 +194,20 @@ createAgentSession({ noTools: 'builtin', customTools: [...built-ins, ...mcp, ...
 ### Permission gate installation
 
 - `installPermissionHook(piSession, sessionId, cwdRef)` runs **once per newly
-  created session** (`agent-runner.ts:3417`) — the hook persists across reuses, so
+  created session** (`agent-runner.ts:3429`) — the hook persists across reuses, so
   re-installing is not just wasteful, it recaptures an already-wrapped hook.
-- The gate is installed through the SDK's `tool_call` extension event and
-  delegates to the captured SDK hook on the allow path, preserving extension
-  tool_call events and the SDK's internal queue.
+- The gate replaces `agent.beforeToolCall` (it is not a `tool_call` extension
+  handler) and delegates to the hook it captured on the allow path. That captured
+  hook is pi's own, which emits the `tool_call` extension event, so extension
+  handlers still run after the gate allows a call.
+- **Calls made by other tools bypass this gate.** Since pi 0.99.0 a tool can call
+  tools through `ctx.executeTool()` (codemode does), and those nested calls run
+  pi's session hook directly, not `agent.beforeToolCall`
+  (`pi-coding-agent/dist/core/agent-session.js:388-416`). Nothing in this app makes
+  such calls today. Do not add a tool that uses `ctx.executeTool()`, or load pi's
+  codemode / tool_search, until the gate moves to the `tool_call` extension event,
+  which nested calls do reach — design:
+  [docs/design/permission-gate-tool-call-event.md](docs/design/permission-gate-tool-call-event.md).
 - The `beforeToolCall` hook is where async user interaction (permission dialogs)
   belongs. Never do it in `subscribe()` — blocking the SDK event queue is a
   known cause of renderer state desync (see §9).
@@ -204,7 +251,7 @@ createAgentSession({ noTools: 'builtin', customTools: [...built-ins, ...mcp, ...
   there. A failure after an uplift means "decide again", not "broken": look at
   what changed, set or clear `catalogProvider`, and bring the test's two tables
   up to date. The reasons for the current decisions are written beside them
-  (last checked against pi 0.87.1).
+  (last checked against pi 1.3.0).
 - The test only sees a provider that serves from a setup's **host**. A service
   that pi starts to list under a different address is not caught by it; when a
   new provider turns up in the catalog, look through the list for its name too.
@@ -446,9 +493,12 @@ tool traces, turn/agent boundaries, compaction events.
 - The handler calls `sendMessage()`, which persists to the DB and forwards to the
   renderer. A successful DB write does **not** guarantee the renderer received the
   event — IPC is fire-and-forget and unbuffered.
-- The guard modules (`mid-loop-overflow-guard.ts`, `pre-request-guard.ts`,
-  `read-loop-guard.ts`, `tool-error-enrichment.ts`) exist because real models
-  misbehave: they loop on reads, overflow mid-loop, and emit opaque tool errors.
+- The guard modules (`pre-request-guard.ts`, `read-loop-guard.ts`,
+  `tool-error-enrichment.ts`) exist because real models misbehave: they loop on
+  reads, overflow the context, and emit opaque tool errors. Overflow inside the
+  tool loop is pi's job: it compacts before each further model call once the
+  threshold is crossed. The app's own mid-loop guard hooked a field that does not
+  exist (`agent._onPayload`), never ran, and was removed with the 1.3.0 uplift.
   When you touch the tool path, keep these in the chain and keep them failing
   closed.
 
@@ -534,7 +584,8 @@ Before upgrading any Tier 1 dependency (see `docs/dependency-tiers.md`):
 5. Manually test: new session, tool use, session reuse, compaction trigger,
    permission prompt, stop/cancel, an attached image.
 6. Update `docs/dependency-tiers.json` with the new installed version.
-7. Re-assert the `inMemory()` session/settings boundary (§1).
+7. Re-assert the `inMemory()` session/settings boundary and the locked-down resource
+   loader (§1).
 8. Re-verify `clampToSupportedLevel` against the new pi-ai source (§1).
 9. Re-check the ready-made provider setups against the catalog the new pi brings
    (§1, "Ready-made setups and the catalog"). A failing
@@ -543,7 +594,13 @@ Before upgrading any Tier 1 dependency (see `docs/dependency-tiers.md`):
 10. Re-check the files pi loads relative to its own module (§1, "pi is bundled").
     A failing `src/tests/photon-wasm.test.ts` is the prompt to do it; the manual
     image check in step 5 has to run against a built app, not only `npm test`.
-11. Document adaptations in the commit message body.
+11. Pin `openai` and `@anthropic-ai/sdk` to the versions the new pi-ai declares
+    (§1, "pi is bundled"); `src/tests/bundled-externals-versions.test.ts` fails
+    until they match.
+12. Read the new version out of the project's own `node_modules`, installed from
+    npm — never out of a locally installed `pi` CLI, whose copy and version are
+    the user's, not the app's.
+13. Document adaptations in the commit message body.
 
 **`allowScripts` is a hard gate in this repo.** `package.json` allowlists
 install scripts by **exact version** (`"sharp@0.35.5": true`, …). Bump
@@ -567,20 +624,21 @@ doesn't re-run a script for an already-unpacked package, so follow up with
 
 ## 14. Common Pitfalls (from real bugs)
 
-| Bug / trap                                               | Root cause                                                              | Rule                                                                          |
-| -------------------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Sessions leak into the `pi` CLI's session list           | An uplift reverted to the SDK's persisting `SessionManager`             | Re-assert `PiSessionManager.inMemory()` + `PiSettingsManager.inMemory()` (§1) |
-| Settings shows level X, agent runs at Y                  | `clampToSupportedLevel` drifted from pi's `clampThinkingLevel`          | Keep the mirror exact; re-verify on uplift (§1)                               |
-| A custom endpoint duplicates a catalog provider          | A ready-made setup's service became a catalog provider in pi            | Re-check `COMMON_PROVIDER_SETUPS` on every pi uplift; the test fails (§1)     |
-| Images not visible to the LLM                            | `prompt(text)` only — image blocks never passed                         | Pass `options.images`                                                         |
-| Attached image dropped, model says it was cut out        | pi could not resize it — `photon_rs_bg.wasm` missing next to the bundle | The main build emits it; the runner warns in the chat when pi drops one (§1)  |
-| DeepSeek 400 on cold start                               | History rebuild filtered out `thinking` blocks                          | Serialize every content-block type (§10)                                      |
-| Permission dialog breaks renderer state                  | Async wait inside the SDK's `beforeToolCall` / subscribe queue          | Async interaction in the execute wrapper only (§1, §9)                        |
-| Context overflow 400                                     | Compaction threshold ignored tool-schema tokens                         | Use `compaction-budget.ts`, never pi's default reserve (§1)                   |
-| Session runs a stale system prompt                       | Cached pi session kept the old `appendSystemPrompt`                     | Put the new state in the runtime signature (§1)                               |
-| Request past the context limit, MCP schemas huge         | Tool schemas not counted in compaction                                  | See compaction budget above                                                   |
-| A tool wrapper silently no-ops                           | `originalExecute` not called on the happy path                          | Always delegate; fail closed on deny (§1)                                     |
-| Native dependency missing after a bump                   | `allowScripts` version drift — postinstall blocked                      | Update `allowScripts` in the same edit, then `npm rebuild <pkg>` (§13)        |
-| MCP tools fail inside the sandbox                        | Spawn routed through the Lima/WSL bridge                                | MCP always runs on host (§3)                                                  |
-| Retrieval silently returns nothing after a model change  | Vectors from two models compared as one                                 | Per-row `embedding_model` filter (§5)                                         |
-| Remote-embedding user gets a "rebuild embeddings" prompt | Format-staleness check not gated on local provider                      | Gate on provider id (§5)                                                      |
+| Bug / trap                                               | Root cause                                                               | Rule                                                                          |
+| -------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| Sessions leak into the `pi` CLI's session list           | An uplift reverted to the SDK's persisting `SessionManager`              | Re-assert `PiSessionManager.inMemory()` + `PiSettingsManager.inMemory()` (§1) |
+| Settings shows level X, agent runs at Y                  | `clampToSupportedLevel` drifted from pi's `clampThinkingLevel`           | Keep the mirror exact; re-verify on uplift (§1)                               |
+| A custom endpoint duplicates a catalog provider          | A ready-made setup's service became a catalog provider in pi             | Re-check `COMMON_PROVIDER_SETUPS` on every pi uplift; the test fails (§1)     |
+| Images not visible to the LLM                            | `prompt(text)` only — image blocks never passed                          | Pass `options.images`                                                         |
+| Attached image dropped, model says it was cut out        | pi could not resize it — `photon_rs_bg.wasm` missing next to the bundle  | The main build emits it; the runner warns in the chat when pi drops one (§1)  |
+| DeepSeek 400 on cold start                               | History rebuild filtered out `thinking` blocks                           | Serialize every content-block type (§10)                                      |
+| Permission dialog breaks renderer state                  | Async wait inside the SDK's `beforeToolCall` / subscribe queue           | Async interaction in the execute wrapper only (§1, §9)                        |
+| Context overflow 400                                     | Compaction threshold ignored tool-schema tokens                          | Use `compaction-budget.ts`, never pi's default reserve (§1)                   |
+| Session runs a stale system prompt                       | Cached pi session kept the old `appendSystemPrompt`                      | Put the new state in the runtime signature (§1)                               |
+| Request past the context limit, MCP schemas huge         | Tool schemas not counted in compaction                                   | See compaction budget above                                                   |
+| A tool wrapper silently no-ops                           | `originalExecute` not called on the happy path                           | Always delegate; fail closed on deny (§1)                                     |
+| Native dependency missing after a bump                   | `allowScripts` version drift — postinstall blocked                       | Update `allowScripts` in the same edit, then `npm rebuild <pkg>` (§13)        |
+| A provider fails only in the built app                   | pi-ai loads our external `openai` / `@anthropic-ai/sdk`, not its own pin | Pin both to pi-ai's versions; `bundled-externals-versions.test.ts` (§1)       |
+| MCP tools fail inside the sandbox                        | Spawn routed through the Lima/WSL bridge                                 | MCP always runs on host (§3)                                                  |
+| Retrieval silently returns nothing after a model change  | Vectors from two models compared as one                                  | Per-row `embedding_model` filter (§5)                                         |
+| Remote-embedding user gets a "rebuild embeddings" prompt | Format-staleness check not gated on local provider                       | Gate on provider id (§5)                                                      |

@@ -8,6 +8,7 @@ import { ContentBlockView } from './message/ContentBlockView';
 import { MemorySourcesBadge } from './message/MemorySourcesBadge';
 import { extractMemorySources } from '../utils/memory-source-extractor';
 import { formatChatTime, formatChatTooltip } from '../utils/i18n-format';
+import { formatDuration } from '../utils/format-duration';
 
 interface MessageCardProps {
   message: Message;
@@ -37,6 +38,9 @@ export const MessageCard = memo(function MessageCard({
     ? (rawContent as ContentBlock[])
     : [{ type: 'text', text: String(rawContent ?? '') } as ContentBlock];
   const [copied, setCopied] = useState(false);
+  // How long the model took to produce this response (pi measures it; main stores it).
+  const responseTimeMs =
+    !isUser && !isStreaming && message.executionTimeMs ? message.executionTimeMs : undefined;
 
   // Build a set of tool_result IDs that have a matching tool_use (for merging)
   const mergedResultIds = useMemo(() => {
@@ -195,6 +199,15 @@ export const MessageCard = memo(function MessageCard({
               />
             );
           })}
+          {responseTimeMs !== undefined && (
+            <div
+              className="flex items-center gap-1 text-[11px] text-text-muted/70"
+              title={t('messageCard.responseTimeHint')}
+            >
+              <Clock className="w-3 h-3" />
+              <span>{t('messageCard.responseTime', { time: formatDuration(responseTimeMs) })}</span>
+            </div>
+          )}
         </div>
       )}
     </div>

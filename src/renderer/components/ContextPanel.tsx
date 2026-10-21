@@ -246,8 +246,8 @@ export function ContextPanel() {
   const lastAssistantTokenUsage = useMemo(() => findLastTokenUsage(messages), [messages]);
 
   // Context usage: effective budget including tool schemas + output reservation
-  // Uses live currentInputTokens from _onPayload when available (updates during
-  // tool loop), falls back to last message's tokenUsage.input for initial state.
+  // Uses currentInputTokens when main sent one (e.g. after a compaction), else the
+  // last message's tokenUsage.input, which each model reply in the tool loop refreshes.
   const contextUsage = useMemo(() => {
     const sessionState = activeSessionId ? sessionStates[activeSessionId] : undefined;
     const contextWindow = sessionState?.contextWindow;

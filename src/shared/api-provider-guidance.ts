@@ -98,10 +98,12 @@ export const COMMON_PROVIDER_SETUPS: CommonProviderSetup[] = [
     nameKey: 'api.guidance.setups.kimi.name',
     noteKey: 'api.guidance.setups.kimi.note',
     applyProvider: 'custom',
-    recommendedProtocol: 'anthropic',
-    recommendedBaseUrl: 'https://api.kimi.com/coding',
+    recommendedProtocol: 'openai',
+    recommendedBaseUrl: 'https://api.kimi.com/coding/v1',
     exampleModel: 'kimi-k2-thinking',
-    // The catalog's `kimi-coding` is this address and this protocol.
+    // The catalog's `kimi-coding` is this address and this protocol — OpenAI Chat
+    // Completions since pi 1.3.0, Anthropic Messages at `/coding` before it. The
+    // older address is still recognised and sent to the same provider.
     catalogProvider: 'kimi-coding',
     matcher: {
       hosts: ['api.kimi.com'],

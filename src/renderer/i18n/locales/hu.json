@@ -443,7 +443,7 @@
         },
         "kimi": {
           "name": "Kimi Coding",
-          "note": "Használja a coding végpontot Anthropic-kompatibilis móddal. Ellenőrizze a pontos coding modell ID-t a Moonshot dokumentációban."
+          "note": "Használja a coding végpontot OpenAI-kompatibilis móddal (/coding/v1). Ellenőrizze a pontos coding modell ID-t a Moonshot dokumentációban."
         },
         "glm": {
           "name": "GLM / BigModel (Anthropic útvonal)",
@@ -1126,6 +1126,8 @@
     "question": "Kérdés",
     "thinking": "Gondolkodás",
     "executionTime": "Végrehajtási idő: {{time}}",
+    "responseTime": "Válaszidő: {{time}}",
+    "responseTimeHint": "Ennyi ideig tartott, amíg a modell elkészítette ezt a választ",
     "process": "Folyamat",
     "processThinking": "{{count}} gondolkodás",
     "processTools": "{{count}} eszköz",

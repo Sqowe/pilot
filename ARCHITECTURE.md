@@ -10,7 +10,7 @@ structure, boundaries, and where to find authoritative coding rules. This docume
 does NOT define coding rules — it points to them (see Section 8).
 
 Target audience: AI coding assistants and new human contributors.
-Last updated: 2026-10-18.
+Last updated: 2026-10-20.
 
 > **Rebrand complete:** the product was renamed **Open Cowork → "Sqowe Pilot"**. All
 > surfaces now carry the new name — renderer UI, i18n, default system prompts, icons,
@@ -163,7 +163,9 @@ Key files: `agent-runner.ts`, `pi-model-resolution.ts`, `before-tool-call-hook.t
 `claude-sdk-one-shot.ts` (title generation).
 
 Critical constraint: `pi-ai` and `pi-coding-agent` MUST be version-locked together
-(same monorepo, pre-1.0, frequent breaking changes).
+(same monorepo; 1.x since 2026-10, but breaking changes still land in minor releases). The
+app's own `openai` and `@anthropic-ai/sdk` must match pi-ai's versions too: the main build
+keeps them external, so the bundled pi-ai loads the app's copies.
 
 **SDK-only boundary — never inherit the `pi` CLI's workflow.** Sqowe Pilot consumes the
 pi _SDK_. It is not a front-end for the `pi` command-line agent and must never adopt that
@@ -198,6 +200,17 @@ v3) with older files rewritten to the current version on load (`docs/session-for
 shared directory would therefore have whichever side is newer silently migrating the other's
 files, with no path back for the older one. Version skew between the app and a CLI we do not
 control is the normal case, so the isolation has to hold without it.
+
+**What pi loads from disk is held to the same rule (since 2026-10-20).** The
+`DefaultResourceLoader` is built in `claude/pi-resource-loader.ts` with an in-memory settings
+manager that does not trust the workspace, `noExtensions` and `noSkills` — pi loads only the
+skill folders the app passes (`claude/skill-paths.ts`), so the app's skill settings decide
+what a session gets. Before that, pi made a
+file-backed settings manager of its own that treated the session's workspace as trusted: a
+probe with the runner's options showed `<workspace>/.pi/extensions` loaded and run, and pi's
+code shows it would also npm-install the `packages` listed in `<workspace>/.pi/settings.json`. Design and the trade-offs (workspace `.pi/skills` /
+`.agents/skills` no longer picked up):
+[`docs/design/permission-gate-tool-call-event.md`](docs/design/permission-gate-tool-call-event.md) §2.
 
 This is the third instance of the SDK-only rule, and like the two in the table above, an
 uplift must re-assert it — the SDK default is to persist.

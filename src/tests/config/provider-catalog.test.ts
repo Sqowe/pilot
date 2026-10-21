@@ -44,7 +44,7 @@ function makeStubDeps(overrides?: {
     minimax: [{ id: 'MiniMax-M2.7', name: 'MiniMax M2.7', api: 'anthropic-messages' }],
     deepseek: [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', api: 'openai-completions' }],
     groq: [{ id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B', api: 'openai-completions' }],
-    'kimi-coding': [{ id: 'k2p7', name: 'Kimi K2.7 Code', api: 'anthropic-messages' }],
+    'kimi-coding': [{ id: 'k2p7', name: 'Kimi K2.7 Code', api: 'openai-completions' }],
     xai: [{ id: 'grok-4', name: 'Grok 4', api: 'openai-completions' }],
     fireworks: [{ id: 'llama-v3p3-70b', name: 'Llama 3.3 70B', api: 'anthropic-messages' }],
     mistral: [{ id: 'mistral-large', name: 'Mistral Large', api: 'mistral-conversations' }],
@@ -243,9 +243,13 @@ describe('EXCLUDED_NATIVE', () => {
     expect(EXCLUDED_NATIVE.has('amazon-bedrock')).toBe(true);
     expect(EXCLUDED_NATIVE.has('google-vertex')).toBe(true);
     expect(EXCLUDED_NATIVE.has('github-copilot')).toBe(true);
-    expect(EXCLUDED_NATIVE.has('azure-openai-responses')).toBe(true);
+    expect(EXCLUDED_NATIVE.has('azure')).toBe(true);
     expect(EXCLUDED_NATIVE.has('cloudflare-ai-gateway')).toBe(true);
     expect(EXCLUDED_NATIVE.has('openai-codex')).toBe(true);
+  });
+
+  it('excludes providers that offer no chat models', () => {
+    expect(EXCLUDED_NATIVE.has('typesafe')).toBe(true);
   });
 
   it('excludes providers already covered as builtin entries', () => {
@@ -457,7 +461,7 @@ describe('buildNativeEntries', () => {
     expect(mistral.routeProtocol).toBe('openai'); // mistral-conversations → openai
 
     const kimi = entries.find((e) => e.id === 'kimi-coding')!;
-    expect(kimi.routeProtocol).toBe('anthropic'); // anthropic-messages
+    expect(kimi.routeProtocol).toBe('openai'); // openai-completions since pi 1.3.0
   });
 
   it('populates modelOptions from getModels()', async () => {
