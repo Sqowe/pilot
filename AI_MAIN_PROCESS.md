@@ -95,12 +95,16 @@ false })`, `noExtensions: true` and `noSkills: true`. Left to its defaults, pi m
 - Prefer the public extension points: `piSession.subscribe()`,
   `setModel()`, `setThinkingLevel()`, `prompt(text, options)`,
   `dispose()`, and the `tool_call` extension event.
-- **One reach-around remains**: `installPermissionHook` reads
-  `(piSession as any).agent` (`agent-runner.ts:1596`) to reach the agent's
-  existing `beforeToolCall` hook. It is guarded by
-  `before-tool-call-hook.ts`, which **throws** rather than logging when no known
-  hook shape is found — a future SDK break must fail loudly, not silently drop the
-  permission gate. Keep that fail-closed behaviour.
+- **One reach-around remains**: `installPermissionGate`
+  (`src/main/claude/permission-gate.ts`) reads `piSession.agent` to reach the
+  agent's existing `beforeToolCall` hook. It is guarded twice. `before-tool-call-hook.ts`
+  **throws** rather than logging when no known hook shape is found — a future SDK
+  break must fail loudly, not silently drop the permission gate; keep that
+  fail-closed behaviour. And `src/tests/claude/permission-gate-session.test.ts` runs a
+  real pi session (pi-ai faux provider, offline) through the gate: it fails when pi
+  keeps the field but stops reading it on each run (`pi-agent-core/dist/agent.js`,
+  `beforeToolCall: this.beforeToolCall` in the run config), which the shape check
+  cannot see.
 - Never add a second reach-around without documenting the risk and the exact SDK
   version tested against.
 
@@ -211,9 +215,16 @@ createAgentSession({ noTools: 'builtin', customTools: [...built-ins, ...mcp, ...
 
 ### Permission gate installation
 
-- `installPermissionHook(piSession, sessionId, cwdRef)` runs **once per newly
-  created session** (`agent-runner.ts:3429`) — the hook persists across reuses, so
-  re-installing is not just wasteful, it recaptures an already-wrapped hook.
+- The gate itself is `createPermissionGate` in `src/main/claude/permission-gate.ts`
+  (read-loop guard, rules, autonomous mode, the dialog, fail-closed answers); the
+  runner passes in only its per-session state (open-dialog count, activity-timer
+  pause/restart, run id). Every branch has a unit test
+  (`src/tests/claude/permission-gate.test.ts`) — change the gate there, not in the
+  runner.
+- `installPermissionHook(piSession, sessionId, cwdRef)` in the runner calls
+  `installPermissionGate` **once per newly created session** — the hook persists
+  across reuses, so re-installing is not just wasteful, it recaptures an
+  already-wrapped hook.
 - The gate replaces `agent.beforeToolCall` (it is not a `tool_call` extension
   handler) and delegates to the hook it captured on the allow path. That captured
   hook is pi's own, which emits the `tool_call` extension event, so extension

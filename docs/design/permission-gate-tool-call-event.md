@@ -33,7 +33,8 @@ gate that, in order:
 
 `before-tool-call-hook.ts` detects which hook shape the agent has and **throws** when it
 finds none, so a pi change cannot silently remove the gate (13 tests,
-`tests/before-tool-call-hook.test.ts`). The gate function itself has no unit test.
+`tests/before-tool-call-hook.test.ts`). The gate function itself had no unit test until
+phase 1a (§5).
 
 ### 1.2 What is wrong with it
 
@@ -273,7 +274,7 @@ phase 0 there are none.
 ## 5. Rollout
 
 1. **Phase 0** — loader lock-down + its regression test. **Done 2026-10-20.**
-2. **Phase 1a** (decided 2026-10-21, next) — the gate body moves out of the runner into a
+2. **Phase 1a** (decided and implemented 2026-10-21) — the gate body moves out of the runner into a
    module with unit tests for every branch, plus a session-level test on the faux provider
    (§4), still installed through `agent.beforeToolCall`. Reason: nothing in the app makes
    nested calls, while a pi uplift that stops reading `agent.beforeToolCall` per run
@@ -282,6 +283,18 @@ phase 0 there are none.
    today's gate misses a `ctx.executeTool('bash')` call and it runs; a `tool_call` inline
    extension sees it (`parentToolCallId` set) and blocks it; a throwing factory leaves no
    handler and only a loader error, so phase 1 needs its post-creation check.
+   **As built:** `src/main/claude/permission-gate.ts` — `createPermissionGate` (the body,
+   unchanged in behaviour; the runner passes its open-dialog map, run id and activity-timer
+   pause/restart) and `installPermissionGate` (the `agent` access, capture and install the
+   runner used to do). Tests: `src/tests/claude/permission-gate.test.ts` (23, every branch)
+   and `permission-gate-session.test.ts` (a real session on the faux provider: a denied
+   `bash` does not run, an allowed one does). `tests/permission-timeout-pause.test.ts`'s
+   source-text checks now read the new module. Checked one breakage at a time against the
+   whole suite, 16 in all: making pi-agent-core stop reading `agent.beforeToolCall` fails
+   the session test; each fail-closed branch, the read-loop guard, the rule deny, autonomous
+   mode, allow-always, the stale-run guard, the timer restart and handing on to pi's hook
+   each fail a test. The one survivor — the runner not passing `requestPermission`, which
+   turns the gate into allow-all — is now a type error: the key is required.
 3. **Phase 1** — gate moves to `tool_call`; the reach-around and `before-tool-call-hook.ts`
    go. Deferred until codemode or an own tool that calls other tools is wanted; small after
    phase 1a. The nested-call marker in the permission dialog (§3.1) is deferred with it.

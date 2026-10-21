@@ -159,7 +159,8 @@ SDK via `createAgentSession()`. One session per chat — full conversation conte
 each reasoning step (ReAct loop). Context compaction is SDK-driven when usage exceeds
 `contextWindow − reserveTokens`.
 
-Key files: `agent-runner.ts`, `pi-model-resolution.ts`, `before-tool-call-hook.ts`,
+Key files: `agent-runner.ts`, `pi-model-resolution.ts`, `permission-gate.ts` (the permission
+gate) with `before-tool-call-hook.ts` (how it is installed),
 `claude-sdk-one-shot.ts` (title generation).
 
 Critical constraint: `pi-ai` and `pi-coding-agent` MUST be version-locked together

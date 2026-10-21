@@ -20,6 +20,10 @@ import path from 'node:path';
 
 const agentRunnerPath = path.resolve(process.cwd(), 'src/main/claude/agent-runner.ts');
 const agentRunnerContent = readFileSync(agentRunnerPath, 'utf8');
+// The gate body moved out of the runner on 2026-10-21; the runner passes it its state.
+// Behaviour is tested in src/tests/claude/permission-gate.test.ts.
+const permissionGatePath = path.resolve(process.cwd(), 'src/main/claude/permission-gate.ts');
+const permissionGateContent = readFileSync(permissionGatePath, 'utf8');
 
 describe('Permission dialog pauses activity timeout', () => {
   describe('source-level invariants', () => {
@@ -44,24 +48,29 @@ describe('Permission dialog pauses activity timeout', () => {
     });
 
     it('cancels the existing timer immediately when entering permission wait', () => {
+      // The runner's pause callback, which the gate calls as a dialog opens.
       expect(agentRunnerContent).toContain(
-        'const existingHandle = this.activityTimeoutHandles.get(sessionId)'
+        'const handle = this.activityTimeoutHandles.get(sessionId)'
       );
-      expect(agentRunnerContent).toContain('clearTimeout(existingHandle)');
+      expect(agentRunnerContent).toContain('clearTimeout(handle)');
+      expect(permissionGateContent).toContain('deps.pauseActivityTimeout();');
     });
 
     it('captures runId before try block for use in finally', () => {
-      const captureIdx = agentRunnerContent.indexOf(
-        "const capturedRunId = this.currentRunId.get(sessionId) ?? ''"
+      const captureIdx = permissionGateContent.indexOf(
+        'const capturedRunId = deps.currentRunId();'
       );
-      const tryIdx = agentRunnerContent.indexOf('// Pause the activity timeout while waiting');
+      const tryIdx = permissionGateContent.indexOf('// Pause the activity timeout while waiting');
       expect(captureIdx).toBeGreaterThan(-1);
       expect(tryIdx).toBeGreaterThan(-1);
       expect(captureIdx).toBeLessThan(tryIdx);
+      expect(agentRunnerContent).toContain(
+        "currentRunId: () => this.currentRunId.get(sessionId) ?? ''"
+      );
     });
 
     it('compares runId in finally to detect stale completions', () => {
-      expect(agentRunnerContent).toContain('if (state && state.runId === capturedRunId)');
+      expect(permissionGateContent).toContain('if (state && state.runId === capturedRunId)');
     });
 
     it('sets currentRunId at the start of each run', () => {

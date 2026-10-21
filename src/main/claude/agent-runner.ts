@@ -95,22 +95,13 @@ async function _releaseRuntimeKeys(modelRuntime: ModelRuntime, keys: string[]): 
 import type { Session, Message, TraceStep, ServerEvent, ContentBlock } from '../../renderer/types';
 import { v4 as uuidv4 } from 'uuid';
 import {
-  decidePermissionDetailed,
-  rememberAlwaysAllow,
-  isSessionAutonomous,
-  getAutonomousBlockCallback,
   setMcpServerConfigLookup,
   setMcpToolAnnotationsLookup,
   setSessionCwd,
 } from '../config/permission-rules-store';
 import type { PermissionAskReason } from '../../shared/permission-reason';
 import { canonicalizeMcpServerName } from '../../shared/mcp-tool-classification';
-import {
-  type AgentLike,
-  type BeforeToolCallHook,
-  captureExistingHook,
-  installBeforeToolCallHook,
-} from './before-tool-call-hook';
+import { installPermissionGate } from './permission-gate';
 import { wrapMcpToolsWithTimeout } from './mcp-tool-timeout';
 import { PathResolver } from '../sandbox/path-resolver';
 import { MCPManager } from '../mcp/mcp-manager';
@@ -125,7 +116,6 @@ import {
   logCtxError,
   logTiming,
 } from '../utils/logger';
-import { ReadLoopGuard, extractReadFilePath } from './read-loop-guard';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
@@ -1523,281 +1513,39 @@ RULES:
   }
 
   /**
-   * Install a permission-gating hook on the pi-coding-agent session by
-   * assigning to `agent.beforeToolCall` (or the legacy `setBeforeToolCall`
-   * setter, whichever the installed SDK supports). This is the only
-   * interception point that fires for built-in tools (read, bash, edit,
-   * write) — the SDK ignores wrapped `execute` functions on built-in
+   * Install the permission gate (permission-gate.ts) on the pi-coding-agent session by
+   * assigning to `agent.beforeToolCall` (or the legacy `setBeforeToolCall` setter, whichever
+   * the installed SDK supports). This is the only interception point that fires for built-in
+   * tools (read, bash, edit, write) — the SDK ignores wrapped `execute` functions on built-in
    * tools passed via `options.tools`.
    *
-   * The hook consults `decidePermission` from the main-process rules cache:
-   *  - 'allow' → delegate to SDK's original hook if any, else return undefined
-   *  - 'deny'  → return { block: true, reason } (SDK treats as tool error)
-   *  - 'ask'   → await requestPermission() IPC round-trip to PermissionDialog
-   *
-   * History: pi-coding-agent 0.71 removed the `setBeforeToolCall()` setter
-   * in favour of a public `beforeToolCall` property. A `typeof …setter…`
-   * guard silently skipped installation, disabling every permission check
-   * until the log was inspected. Shape detection now lives in
-   * `before-tool-call-hook.ts` and throws rather than logWarning when no
-   * known shape is available, so a future SDK break fails loudly instead
-   * of silently.
-   *
-   * Known limitation: the async requestPermission wait (user dialog) causes
-   * the renderer to miss UI update events. The tool executes correctly on
-   * the backend, but the renderer's loading spinner may not clear. This is
-   * a renderer-side issue tracked as a follow-up.
+   * History: pi-coding-agent 0.71 removed the `setBeforeToolCall()` setter in favour of a
+   * public `beforeToolCall` property. A `typeof …setter…` guard silently skipped installation,
+   * disabling every permission check until the log was inspected. Shape detection now lives in
+   * `before-tool-call-hook.ts` and throws rather than logWarning when no known shape is
+   * available, so a future SDK break fails loudly instead of silently. A break that keeps the
+   * property but stops reading it is caught by `src/tests/claude/permission-gate-session.test.ts`.
    */
   private installPermissionHook(
     piSession: PiAgentSession,
     sessionId: string,
     cwdRef: { value: string }
   ): void {
-    // Access the Agent instance (public readonly property on AgentSession).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const agent = (piSession as any).agent;
-    if (!agent) {
-      // Fail closed: without an agent we cannot gate tool calls. Throwing
-      // prevents the caller from starting a session that would silently
-      // bypass every permission rule.
-      throw new Error(
-        '[ClaudeAgentRunner] piSession.agent is missing — cannot install permission hook; refusing to start session'
-      );
-    }
-
-    // Capture the SDK's existing hook before we overwrite it so the new
-    // gate can delegate to it on the allow path — preserving extension
-    // tool_call events and the SDK's internal event queue.
-    const sdkBeforeToolCall = captureExistingHook(agent as AgentLike);
-
-    const requestPermission = this.requestPermission;
-
-    // Per-session guard against models reading the same file repeatedly,
-    // exhausting the context window without making progress.
-    // NOTE: This guard runs regardless of whether requestPermission is
-    // configured — read-loop protection is a safety control that must
-    // always be active, especially in auto-approve/non-interactive modes.
-    //
-    // CONCURRENCY NOTE: cwdRef.value is updated at the start of each run()
-    // call, before piSession.prompt() is invoked. The pi-coding-agent SDK
-    // enforces sequential prompt execution within a session (a new prompt
-    // cannot start until the previous one completes or is aborted). This
-    // guarantees cwdRef.value is stable for the duration of any single
-    // prompt's tool calls. If this invariant ever changes (e.g., parallel
-    // prompts), cwdRef must be replaced with a per-prompt-scoped value.
-    const readLoopGuard = new ReadLoopGuard();
-
-    const gate: BeforeToolCallHook = async (ctx, signal) => {
-      const toolName: string = ctx.toolCall?.name ?? '';
-      const input: Record<string, unknown> = ctx.args ?? {};
-
-      // --- Read loop detection (always active) ---
-      if (toolName === 'read') {
-        const filePath = extractReadFilePath(input);
-        if (filePath) {
-          // Use cwdRef.value at call-time (not captured at install-time)
-          // so path resolution stays correct across session reuse.
-          const guardResult = readLoopGuard.check(filePath, cwdRef.value);
-          if (guardResult.blocked) {
-            logWarn(
-              `[ClaudeAgentRunner] Read loop guard blocked read #${guardResult.count} of "${filePath}" in session ${sessionId}`
-            );
-            return { block: true, reason: guardResult.reason };
-          }
+    const shape = installPermissionGate(piSession, {
+      sessionId,
+      cwdRef,
+      requestPermission: this.requestPermission,
+      waitState: this.permissionWaitState,
+      currentRunId: () => this.currentRunId.get(sessionId) ?? '',
+      pauseActivityTimeout: () => {
+        const handle = this.activityTimeoutHandles.get(sessionId);
+        if (handle) {
+          clearTimeout(handle);
+          this.activityTimeoutHandles.delete(sessionId);
         }
-      }
-
-      // --- Permission gating (only when requestPermission is configured) ---
-      if (!requestPermission) {
-        // No permission callback — delegate to SDK's original hook
-        return sdkBeforeToolCall ? sdkBeforeToolCall(ctx, signal) : undefined;
-      }
-
-      const { action: decision, reason: askReason } = decidePermissionDetailed(
-        sessionId,
-        toolName,
-        input
-      );
-
-      if (decision === 'deny') {
-        log(`[ClaudeAgentRunner] Tool '${toolName}' denied by rule`);
-        return { block: true, reason: `Tool '${toolName}' is denied by your permission rules.` };
-      }
-
-      if (decision === 'ask') {
-        // v2: Autonomous mode — block instead of prompting
-        if (isSessionAutonomous(sessionId)) {
-          const rawCmd =
-            input != null && typeof (input as Record<string, unknown>).command === 'string'
-              ? ((input as Record<string, unknown>).command as string)
-              : null;
-          const cmdStr = rawCmd ?? safeStringify(input).slice(0, 200);
-          log(
-            `[ClaudeAgentRunner] Tool '${toolName}' blocked in autonomous mode (session ${sessionId})`
-          );
-          const blockCallback = getAutonomousBlockCallback();
-          if (blockCallback) {
-            try {
-              blockCallback(sessionId, toolName, cmdStr);
-            } catch (callbackErr) {
-              logError('[ClaudeAgentRunner] Autonomous block callback failed:', callbackErr);
-            }
-          }
-          return {
-            block: true,
-            reason: `Command blocked by permission policy (autonomous mode). Command: ${cmdStr}`,
-          };
-        }
-
-        const toolUseId = `${ctx.toolCall?.id ?? 'unknown'}-perm-${uuidv4().slice(0, 8)}`;
-        let result: {
-          result: 'allow' | 'deny' | 'allow_always' | 'deny_with_suggestion';
-          suggestion?: string;
-        };
-        // Capture the current runId BEFORE the try block so it's accessible in finally.
-        // This is the generation token used to detect stale completions from cancelled runs.
-        const capturedRunId = this.currentRunId.get(sessionId) ?? '';
-        try {
-          // Pause the activity timeout while waiting for user's permission decision.
-          // Without this, the 5-minute inactivity timer would abort the agent even
-          // when the user has configured "No timeout (wait forever)" for permissions.
-          //
-          // We use a reference count (not boolean) because the SDK may issue
-          // multiple parallel tool calls that each require permission.
-          //
-          // We also use capturedRunId (declared above) to detect stale completions:
-          // if the session is cancelled and restarted while this await is pending,
-          // the finally block will see a different runId and become a no-op.
-          const existing = this.permissionWaitState.get(sessionId);
-          if (existing && existing.runId === capturedRunId) {
-            existing.count += 1;
-          } else {
-            // New run or first permission request — initialize state
-            this.permissionWaitState.set(sessionId, { runId: capturedRunId, count: 1 });
-          }
-
-          // CRITICAL: Cancel any already-scheduled activity timeout immediately.
-          // Without this, a timer started by the last SDK event could still fire
-          // during the permission dialog wait and abort the session.
-          const existingHandle = this.activityTimeoutHandles.get(sessionId);
-          if (existingHandle) {
-            clearTimeout(existingHandle);
-            this.activityTimeoutHandles.delete(sessionId);
-          }
-
-          const rawResult = await requestPermission(
-            sessionId,
-            toolUseId,
-            toolName,
-            input,
-            askReason
-          );
-          // Normalize: accept both legacy string responses and new object shape.
-          // Fail-closed on malformed/unknown values.
-          if (typeof rawResult === 'string') {
-            // Legacy string response — wrap into object
-            const validStrings = ['allow', 'deny', 'allow_always', 'deny_with_suggestion'] as const;
-            if (validStrings.includes(rawResult as (typeof validStrings)[number])) {
-              result = { result: rawResult as (typeof validStrings)[number] };
-            } else {
-              logWarn(
-                `[ClaudeAgentRunner] Unknown legacy permission string '${rawResult}' for '${toolName}' — failing closed`
-              );
-              return {
-                block: true,
-                reason: `Permission response invalid for '${toolName}'; tool not executed.`,
-              };
-            }
-          } else if (rawResult && typeof rawResult === 'object' && 'result' in rawResult) {
-            const validResults = ['allow', 'deny', 'allow_always', 'deny_with_suggestion'] as const;
-            if (
-              validResults.includes(
-                (rawResult as { result: string }).result as (typeof validResults)[number]
-              )
-            ) {
-              result = rawResult as typeof result;
-            } else {
-              logWarn(
-                `[ClaudeAgentRunner] Unknown permission result '${(rawResult as { result: string }).result}' for '${toolName}' — failing closed`
-              );
-              return {
-                block: true,
-                reason: `Permission response invalid for '${toolName}'; tool not executed.`,
-              };
-            }
-          } else {
-            logWarn(
-              `[ClaudeAgentRunner] Malformed permission response for '${toolName}' — failing closed`
-            );
-            return {
-              block: true,
-              reason: `Permission response malformed for '${toolName}'; tool not executed.`,
-            };
-          }
-        } catch (permErr) {
-          logError(
-            `[ClaudeAgentRunner] Permission request failed for '${toolName}' — failing closed`,
-            permErr
-          );
-          return {
-            block: true,
-            reason: `Permission request failed for '${toolName}'; tool not executed.`,
-          };
-        } finally {
-          // Decrement the permission-wait reference count. The activity timeout
-          // resumes only when all concurrent permission dialogs have resolved
-          // (count reaches 0).
-          //
-          // STALE COMPLETION GUARD: If the session was cancelled and restarted
-          // while this await was pending, the runId will have changed. In that
-          // case, this finally block is stale and must be a no-op to avoid
-          // corrupting the new run's permission state.
-          const state = this.permissionWaitState.get(sessionId);
-          if (state && state.runId === capturedRunId) {
-            if (state.count <= 1) {
-              this.permissionWaitState.delete(sessionId);
-              // Immediately restart the activity timeout now that all permission
-              // dialogs have resolved. Without this, if no further SDK event
-              // arrives (e.g., tool was blocked), the session could hang
-              // indefinitely with no inactivity timeout.
-              const restart = this.restartActivityTimeout.get(sessionId);
-              if (restart) restart();
-            } else {
-              state.count -= 1;
-            }
-          }
-          // If runId doesn't match, this is a stale completion — ignore it.
-        }
-
-        if (result.result === 'deny') {
-          log(`[ClaudeAgentRunner] Tool '${toolName}' denied by user`);
-          return {
-            block: true,
-            reason: `User denied THIS SPECIFIC invocation of '${toolName}'. The tool '${toolName}' is NOT globally blocked — only this particular call was rejected. You may still use '${toolName}' for other purposes.`,
-          };
-        }
-
-        if (result.result === 'deny_with_suggestion') {
-          log(`[ClaudeAgentRunner] Tool '${toolName}' denied by user with suggestion`);
-          const suggestion = result.suggestion || '';
-          return {
-            block: true,
-            reason: `User denied THIS SPECIFIC invocation of '${toolName}'. The tool '${toolName}' is NOT globally blocked — only this particular call was rejected. You may still use '${toolName}' for other purposes. User's suggestion: ${suggestion}`,
-          };
-        }
-
-        if (result.result === 'allow_always') {
-          rememberAlwaysAllow(sessionId, toolName);
-        }
-      }
-
-      // Allowed — delegate to SDK's original hook for event pipeline
-      return sdkBeforeToolCall ? sdkBeforeToolCall(ctx, signal) : undefined;
-    };
-
-    // Install via the first supported shape — modern property preferred,
-    // legacy setter as fallback. Throws on neither supported.
-    const shape = installBeforeToolCallHook(agent as AgentLike, gate);
+      },
+      restartActivityTimeout: () => this.restartActivityTimeout.get(sessionId)?.(),
+    });
     log(
       `[ClaudeAgentRunner] Permission hook installed on session ${sessionId} via ${
         shape === 'property'

@@ -8,7 +8,7 @@
  * to use `bash` with grep/sed instead.
  *
  * Design decisions:
- *   - Tracking is per-session (Map created per installPermissionHook call).
+ *   - Tracking is per-session (one guard per createPermissionGate call, permission-gate.ts).
  *   - Absolute paths are stored as-is (after collapsing `../` segments).
  *   - Relative paths are only tracked if a cwd is provided at check-time;
  *     otherwise they are skipped (no tracking = no false positives).

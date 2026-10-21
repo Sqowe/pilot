@@ -282,8 +282,9 @@ turning a server off in an open chat did not reach its agent (found and fixed 20
 
 **Gate phase 1: deferred.** Nothing in the app makes nested calls (`ctx.executeTool()`); phase
 1 is needed for codemode or an own tool that calls other tools, and neither is planned. Done
-instead, next: move the gate body out of the runner into a module, unit-test every branch,
-and add a session-level test on pi-ai's faux provider, keeping today's
+instead (phase 1a, implemented 2026-10-21): the gate body moved out of the runner into
+`src/main/claude/permission-gate.ts`, every branch is unit-tested, and a session-level test
+on pi-ai's faux provider runs the gate the runner installs, keeping today's
 `agent.beforeToolCall` install. That covers the risk that matters now: a pi uplift that
 stops reading `agent.beforeToolCall` per run (`pi-agent-core/dist/agent.js:316`) would
 disable every permission check silently — `before-tool-call-hook.ts` checks only that the
