@@ -892,7 +892,14 @@ RULES:
 </bundled_executables>`;
   }
 
-  /** Fallback skill path resolution when SkillsAdapter is not provided. */
+  /**
+   * Fallback skill path resolution when SkillsAdapter is not provided (always, in the app).
+   * The raw built-in and configured folders are passed after the runtime dir, which already
+   * holds the resolved set, because they cover what the runtime dir can miss: a built-in
+   * whose link and copy both failed, a skill put into the configured folder since the last
+   * sync, and symlinked entries there, which the sync skips. pi keeps the runtime dir's copy
+   * on a name clash; disabled skills are filtered out of every folder (skill-paths.ts).
+   */
   private legacySkillPaths(): string[] {
     const paths: string[] = [];
     const builtin = getBuiltinSkillsPath();
@@ -935,13 +942,16 @@ RULES:
       });
     }
 
-    // The runtime dir goes first and session-disabled skills are filtered out here: pi's
-    // own discovery is off, so this list is all a session gets (skill-paths.ts).
+    // The runtime dir goes first and disabled skills — for the session and in the settings —
+    // are filtered out here: pi's own discovery is off, so this list is all a session gets
+    // (skill-paths.ts).
     return assembleSkillPaths({
       runtimeDir: this.getRuntimeSkillsDir(),
       basePaths,
       pluginPaths,
       sessionDisabled: sessionId ? this.getSessionDisabledSkills(sessionId) : [],
+      globallyDisabled: normalizeSkillConflictConfig(configStore.get('skillConflictConfig'))
+        .disabledSkills,
     });
   }
 

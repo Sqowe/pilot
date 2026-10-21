@@ -47,6 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Turning a skill off for a session, or in a workspace profile, now takes effect.** The
   agent engine also read the app's skill folder by itself and loaded every skill in it, so
   the skill stayed available to the agent. Now only the skills the app hands over load.
+- **A skill disabled in Settings → Skills (Conflict Resolution) no longer reaches the agent.**
+  A disabled built-in skill was still loaded from the app's own skills folder, and a
+  disabled skill from a custom skills folder from that folder. Chats that are already
+  open drop the skill with their next message.
 - Skills in your home folder's `~/.agents/skills` are no longer added to every chat on their
   own, past the app's skill settings. To use one, link it into `~/.claude/skills`, where the
   app manages it — Settings → Skills, Conflict Resolution and disabling then apply to it.

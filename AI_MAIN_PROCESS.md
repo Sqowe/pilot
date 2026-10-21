@@ -74,9 +74,15 @@ false })`, `noExtensions: true` and `noSkills: true`. Left to its defaults, pi m
   user's `~/.agents/skills`.
 - **So the app's skill list is the only one.** `assembleSkillPaths`
   (`src/main/claude/skill-paths.ts`) builds it: the runtime skills dir first — pi keeps the
-  first skill of a name, and that dir holds what Conflict Resolution chose — then the other
-  folders, minus skills disabled for the session (following symlinks; the runtime dir is
-  mostly links). Every uplift re-asserts the three loader options;
+  first skill of a name, and that dir holds what Conflict Resolution chose — then the raw
+  built-in and configured folders and the plugin folders. Every folder is expanded into its
+  skills (following symlinks; the runtime dir is mostly links), minus the skills disabled
+  for the session **and** in the settings (`skillConflictConfig.disabledSkills`). Filter
+  there, never only in the runtime dir: the raw folders still hold disabled skills, and the
+  runtime dir is not reliably clean (`SkillsManager.importUserSkills` re-links
+  `~/.claude/skills` entries into it on every listing, with no disable check). The expanded
+  list is also the cached session's `skillsSignature`, so an open chat drops a newly
+  disabled skill on its next message. Every uplift re-asserts the three loader options;
   `src/tests/claude/pi-resource-loader-boundary.test.ts` and
   `src/tests/claude/skill-paths.test.ts` fail when pi loads anything the app did not pass,
   or when the order or the filtering breaks. Design:

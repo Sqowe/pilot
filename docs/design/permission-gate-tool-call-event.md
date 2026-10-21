@@ -1,8 +1,8 @@
 # Permission Gate on pi's `tool_call` Event — Design
 
 **Created:** 2026-10-20
-**Status:** **Phase 0 implemented 2026-10-20** (approved; not committed yet). Phase 1 —
-proposed, not started; no code until it is approved.
+**Status:** **Phase 0 implemented 2026-10-20** (committed in `3fcab2f8`); §2.5 implemented
+2026-10-21, not committed yet. Phase 1 — proposed, not started; no code until it is approved.
 **Security classification:** **High.** The gate decides whether an LLM-driven agent may run a
 tool on the user's machine; phase 0 changes what pi loads into the main process.
 **Author:** AI-assisted design session
@@ -157,6 +157,41 @@ prefixed IDs) and three more cases in the boundary test (a stand-in HOME's
 name clash). Removing `noSkills`, or putting the runtime dir after the raw folders, fails a
 test (checked).
 
+### 2.5 Skills disabled in the settings — filtered at assembly (2026-10-21)
+
+Open question 4 (§6) — a globally disabled built-in still loading — turned out to have more
+routes than the raw built-in folder, all probe-verified on 1.3.0:
+
+- the raw built-in folder, and the configured folder when a custom skills path is set, are
+  passed whole after the runtime dir (`legacySkillPaths`): runtime dir with `docx`, built-in
+  folder with `docx` and `pdf` → pi loads both;
+- `SkillsManager.importUserSkills` (`skills-manager.ts`, run by every `listSkills()`, e.g.
+  opening Settings → Skills) links every `~/.claude/skills` entry into the runtime dir again
+  with no disable or conflict check; removing a link and listing once more brings it back.
+  The storage watcher does not notice: its signature counts real directories only;
+- `removeRuntimeSkillEntry` refuses to delete a real directory of a non-built-in skill — a
+  user skill copied because linking failed stays and loads;
+- `skillsSignature` was the folder list, unchanged when a link left a folder, so a cached
+  session kept a disabled skill until the app restarted.
+
+Passing only the runtime dir (the first proposal) closes none of the last three, and loses
+what the raw folders cover: a built-in whose link and copy failed (the copy error is not
+caught, and `_skillsSetupDone` is already set), skills put into the configured folder since
+the last sync, and symlinked entries there, which the runner's sync skips
+(`Dirent.isDirectory()` is false for a link). Chosen instead (variant B, approved
+2026-10-21): `assembleSkillPaths` takes `globallyDisabled` (`skillConflictConfig.disabledSkills`)
+and drops those names from every folder, like session disables, and always expands folders
+into their entries (sorted; dot entries and `node_modules` skipped and top-level `.md` files
+kept, as pi's own walk does), so the list — the signature — changes with the set.
+
+Tests: the global-disable case in `skill-paths.test.ts` and in the boundary test (a raw
+folder unfiltered does load the disabled skill; filtered it does not), the dot-entry case,
+and a signature case. Checked one breakage at a time against the whole suite: dropping the
+global filter, returning the bare folders when nothing is disabled, not skipping dot
+entries, and not following symlinks each fail tests (3, 5, 1 and 6). The runner passing
+`[]` instead of the settings' list survives — no test builds a `ClaudeAgentRunner`; the
+manual pass checks it in the `Skill paths for pi ResourceLoader` log line.
+
 ## 3. Phase 1 — the gate as an inline extension
 
 ### 3.1 Shape
@@ -253,11 +288,8 @@ mode, the read-loop block, an MCP tool with a policy, sudo, stop during an open 
    If so, add them to the app's own project skill sources rather than re-enabling trust.
 3. ~~**Phase 0 alone** changes which skills load — confirm that is acceptable.~~ Accepted
    2026-10-20 together with the go-ahead for phase 0.
-4. **A globally disabled built-in still loads (found 2026-10-21, not fixed).** Global
-   disables remove the skill from the runtime dir, but the raw built-in folder — and, when a
-   custom global skills path is set, that folder too — is still passed whole after it
-   (`legacySkillPaths`, `agent-runner.ts:895-902`), so pi loads the disabled skill from there
-   (probe: runtime dir with `docx` only, built-in folder with `docx` and `pdf` → pi loads
-   both). Proposed: pass the runtime dir only, since it already holds the resolved set;
-   open points are freshness (the runtime dir is synced on the first query of a runner) and
-   a fallback if linking a built-in fails.
+4. ~~**A globally disabled built-in still loads.**~~ Fixed 2026-10-21 by filtering at
+   assembly (§2.5). Not fixed by it: the Power button on each skill card and the automatic
+   disabling of `cowork-memory` change only an in-memory flag of `SkillsManager`, which the
+   runner never reads (`skillsAdapter` is `undefined`, `session-manager.ts:212`) — being
+   decided separately.

@@ -27,6 +27,8 @@ let agentDir: string;
 let appSkills: string;
 let appRuntime: string;
 let rawBuiltins: string;
+let disableRuntime: string;
+let disableBuiltins: string;
 let markers: { project: string; user: string };
 let previousOffline: string | undefined;
 let previousHome: string | undefined;
@@ -89,6 +91,19 @@ beforeAll(() => {
   writeSkill(rawBuiltins, 'shared', 'the raw built-in copy');
   mkdirSync(appRuntime, { recursive: true });
   symlinkSync(join(root, 'chosen', 'shared'), join(appRuntime, 'shared'), 'junction');
+
+  // A built-in disabled in the settings: the sync removed its link from the runtime dir,
+  // but the raw built-in folder passed after it still holds it.
+  disableRuntime = join(root, 'disable-runtime');
+  disableBuiltins = join(root, 'disable-builtins');
+  writeSkill(disableBuiltins, 'kept-builtin');
+  writeSkill(disableBuiltins, 'disabled-builtin');
+  mkdirSync(disableRuntime, { recursive: true });
+  symlinkSync(
+    join(disableBuiltins, 'kept-builtin'),
+    join(disableRuntime, 'kept-builtin'),
+    'junction'
+  );
 });
 
 afterAll(() => {
@@ -172,6 +187,7 @@ describe('the pi resource loader takes nothing from the workspace', () => {
         basePaths: [rawBuiltins],
         pluginPaths: [],
         sessionDisabled: [],
+        globallyDisabled: [],
       }),
       appendSystemPrompt: undefined,
     });
@@ -179,5 +195,25 @@ describe('the pi resource loader takes nothing from the workspace', () => {
     const shared = loader.getSkills().skills.filter((skill) => skill.name === 'shared');
     expect(shared).toHaveLength(1);
     expect(shared[0].description).toBe('the copy the app chose');
+  });
+
+  it('does not load a skill disabled in the settings, though a raw folder still holds it', async () => {
+    const load = (globallyDisabled: string[]) =>
+      createPiResourceLoader({
+        cwd: workspace,
+        agentDir,
+        additionalSkillPaths: assembleSkillPaths({
+          runtimeDir: disableRuntime,
+          basePaths: [disableBuiltins],
+          pluginPaths: [],
+          sessionDisabled: [],
+          globallyDisabled,
+        }),
+        appendSystemPrompt: undefined,
+      });
+
+    // The raw folder is a real route: unfiltered, pi loads the disabled skill from it.
+    expect(skillNames(await load([])).sort()).toEqual(['disabled-builtin', 'kept-builtin']);
+    expect(skillNames(await load(['disabled-builtin']))).toEqual(['kept-builtin']);
   });
 });

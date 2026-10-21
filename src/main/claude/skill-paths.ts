@@ -8,8 +8,15 @@
  * Order matters: pi keeps the first skill of a given name and drops later ones. The
  * runtime skills dir (`<userData>/claude/skills`) goes first — it holds the set the app
  * already resolved: built-ins, `~/.claude/skills` and the configured path, merged by the
- * Conflict Resolution policy, with globally disabled skills removed. Raw source folders and
- * plugin folders come after it.
+ * Conflict Resolution policy. Raw source folders and plugin folders come after it.
+ *
+ * Disabled skills — for the session and in the app's settings — are filtered out here, not
+ * only removed from the runtime dir: the raw folders still hold them, and the runtime dir
+ * itself is not reliably clean (SkillsManager re-links `~/.claude/skills` entries into it on
+ * every listing, and a copied user skill is never deleted from it).
+ *
+ * Every folder is expanded into its skill entries, so the list — and the cached session's
+ * `skillsSignature` built from it — changes whenever a skill is added, removed or disabled.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -26,13 +33,15 @@ export interface SkillPathsInput {
   pluginPaths: ReadonlyArray<string>;
   /** Skills disabled for this session — bare names or prefixed IDs. */
   sessionDisabled: ReadonlyArray<string>;
+  /** Skills disabled in the app's settings (`skillConflictConfig.disabledSkills`). */
+  globallyDisabled: ReadonlyArray<string>;
 }
 
-function isDirectory(target: string): boolean {
+function statOf(target: string): fs.Stats | null {
   try {
-    return fs.statSync(target).isDirectory();
+    return fs.statSync(target);
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -49,9 +58,13 @@ function disabledNamesOf(ids: ReadonlyArray<string>): Set<string> {
 
 /**
  * The skill paths for pi: runtime dir first, then the base and plugin folders, each listed
- * once and only if it exists. With session-disabled skills, every folder is expanded into
- * its skill directories minus the disabled ones — following symlinks, which is what the
- * runtime dir is mostly made of.
+ * once and only if it exists, every one expanded into its entries minus the disabled ones.
+ *
+ * The expansion takes what pi's own walk takes from a folder's top level
+ * (`loadSkillsFromDirInternal` in pi-coding-agent/dist/core/skills.js): directories and
+ * links to directories, plus `.md` files; entries starting with `.` and `node_modules` are
+ * skipped. An ignore file at a folder's own root no longer applies to its entries — none of
+ * the app's folders has one.
  */
 export function assembleSkillPaths(input: SkillPathsInput): string[] {
   const merged = new Set<string>();
@@ -59,11 +72,7 @@ export function assembleSkillPaths(input: SkillPathsInput): string[] {
     if (candidate && fs.existsSync(candidate)) merged.add(candidate);
   }
 
-  if (input.sessionDisabled.length === 0) {
-    return Array.from(merged);
-  }
-
-  const disabledNames = disabledNamesOf(input.sessionDisabled);
+  const disabledNames = disabledNamesOf([...input.sessionDisabled, ...input.globallyDisabled]);
   const expanded: string[] = [];
   for (const skillPath of merged) {
     // A single skill directory (has SKILL.md itself) — keep or drop it by its name.
@@ -71,7 +80,7 @@ export function assembleSkillPaths(input: SkillPathsInput): string[] {
       if (!disabledNames.has(path.basename(skillPath))) expanded.push(skillPath);
       continue;
     }
-    // A folder of skills — list its skill directories, minus the disabled ones.
+    // A folder of skills — list its entries, minus the disabled ones.
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(skillPath, { withFileTypes: true });
@@ -80,12 +89,17 @@ export function assembleSkillPaths(input: SkillPathsInput): string[] {
       expanded.push(skillPath);
       continue;
     }
+    // Sorted: readdir order is up to the file system, and the list is a cache signature.
+    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const entry of entries) {
-      if (disabledNames.has(entry.name)) continue;
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
       const childPath = path.join(skillPath, entry.name);
       // Dirent reports a symlink as a link, not a directory — follow it.
-      const isSkillDir = entry.isDirectory() || (entry.isSymbolicLink() && isDirectory(childPath));
-      if (isSkillDir) expanded.push(childPath);
+      const stats = entry.isSymbolicLink() ? statOf(childPath) : null;
+      const isDirectory = entry.isDirectory() || stats?.isDirectory() === true;
+      const isMarkdown = (entry.isFile() || stats?.isFile() === true) && entry.name.endsWith('.md');
+      const name = isMarkdown ? entry.name.slice(0, -'.md'.length) : entry.name;
+      if ((isDirectory || isMarkdown) && !disabledNames.has(name)) expanded.push(childPath);
     }
   }
   return expanded;
