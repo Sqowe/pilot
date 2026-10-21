@@ -105,6 +105,7 @@ import {
   getDismissals,
 } from './workspace/workspace-orphan-detector';
 import type { OrphanCleanupPayload } from '../shared/workspace-orphan-types';
+import { isValidSkillId } from '../shared/skill-pinning-constants';
 import { startNavServer, stopNavServer } from './nav-server';
 import {
   ScheduledTaskManager,
@@ -217,51 +218,6 @@ let scheduledTaskManager: ScheduledTaskManager | null = null;
 
 /** Maps sessionId → taskId for autonomous scheduled task sessions. */
 const scheduledSessionToTaskId = new Map<string, string>();
-
-/**
- * Skill ID for the cowork-memory skill (Python scripts for manual memory).
- * When the in-app memory system is active, this skill is redundant and should be disabled.
- */
-const COWORK_MEMORY_SKILL_ID = 'builtin-cowork-memory';
-
-/** Monotonic token to prevent stale async sync completions from overwriting newer state. */
-let syncCoworkMemoryGeneration = 0;
-
-/**
- * Sync the cowork-memory skill enabled state with the in-app memory toggle.
- * The skill should be disabled when in-app memory is ON (automated system handles it),
- * and enabled when in-app memory is OFF (fall back to manual skill scripts).
- *
- * Only mutates skill state if it's currently out of sync.
- * Uses a generation token to discard stale completions from concurrent calls.
- * Returns silently if skillsManager is unavailable or the skill is not installed.
- *
- * Note: skillsManager.setSkillEnabled() is synchronous (mutates in-memory Map + stops
- * MCP server if applicable). No disk persistence to await.
- */
-async function syncCoworkMemorySkillState(memoryEnabled: boolean): Promise<void> {
-  if (!skillsManager) return;
-
-  const generation = ++syncCoworkMemoryGeneration;
-
-  // Ensure skills are loaded from disk before checking state.
-  const allSkills = await skillsManager.listSkills();
-
-  // If a newer sync was requested while we awaited, discard this one.
-  if (generation !== syncCoworkMemoryGeneration) return;
-
-  const skill = allSkills.find((s) => s.id === COWORK_MEMORY_SKILL_ID);
-  if (!skill) return;
-
-  // Re-check effective memory state to avoid applying stale input.
-  const effectiveMemoryEnabled = memoryService?.isEnabled() ?? memoryEnabled;
-  const skillShouldBeEnabled = !effectiveMemoryEnabled;
-
-  if (skill.enabled !== skillShouldBeEnabled) {
-    skillsManager.setSkillEnabled(COWORK_MEMORY_SKILL_ID, skillShouldBeEnabled);
-    sessionManager?.invalidateSkillsSetup();
-  }
-}
 
 function sanitizeDiagnosticBaseUrl(value: string | undefined): string | null {
   if (!value) {
@@ -1095,6 +1051,13 @@ app
       setConfiguredGlobalSkillsPath: (nextPath: string) => {
         configStore.update({ globalSkillsPath: nextPath });
       },
+      // The Power button on a skill card saves into the list the runner filters by.
+      isSkillDisabled: (skillName: string) =>
+        configStore.get('skillConflictConfig').disabledSkills.includes(skillName),
+      setSkillDisabled: (skillName: string, disabled: boolean) => {
+        const result = setSkillDisabledInConfig(skillName, disabled);
+        if (!result.success) throw new Error(result.error);
+      },
       watchStorage: true,
     });
     skillsManager.onStorageChanged((event) => {
@@ -1102,17 +1065,13 @@ app
         type: 'skills.storageChanged',
         payload: event,
       });
-      // Re-sync cowork-memory skill state when skills are reloaded/installed/changed.
-      syncCoworkMemorySkillState(memoryService!.isEnabled()).catch((err) => {
-        logWarn('[Memory] Failed to sync cowork-memory skill state after storage change:', err);
-      });
     });
 
-    // Sync cowork-memory skill state with in-app memory toggle on startup.
-    // When in-app memory is enabled, the skill is redundant (the MemoryExtension
-    // handles ingestion/retrieval automatically). Disable it to avoid confusion.
-    syncCoworkMemorySkillState(memoryService.isEnabled()).catch((err) => {
-      logWarn('[Memory] Failed to sync cowork-memory skill state on startup:', err);
+    // Load the skill list once at startup. Listing links `~/.claude/skills` entries into the
+    // runtime skills dir, and for entries that are symlinks it is the only thing that does —
+    // the runner's own sync skips them.
+    skillsManager.listSkills().catch((err) => {
+      logWarn('[Skills] Failed to load skills on startup:', err);
     });
 
     // Initialize workspace orphan detection dismissals from persisted config
@@ -3000,31 +2959,46 @@ ipcMain.handle('skills.setSourceOverride', async (_event, skillName: string, sou
   }
 });
 
+/**
+ * Save a skill as disabled (or enabled again) in `skillConflictConfig.disabledSkills` — the
+ * one list the runner filters skills by. Used by Conflict Resolution's Disable button and by
+ * the Power button on each skill card (through SkillsManager).
+ */
+function setSkillDisabledInConfig(
+  skillName: string,
+  disabled: boolean
+): { success: true } | { success: false; error: string } {
+  if (!isValidSkillId(skillName)) {
+    return { success: false, error: 'Invalid skill name' };
+  }
+  if (typeof disabled !== 'boolean') {
+    return { success: false, error: 'Invalid disabled flag: must be a boolean' };
+  }
+  const current = configStore.get('skillConflictConfig');
+  const disabledSkills = new Set(current.disabledSkills);
+  // Cap disabled list size
+  const MAX_DISABLED = 200;
+  if (disabled && disabledSkills.size >= MAX_DISABLED && !disabledSkills.has(skillName)) {
+    return { success: false, error: `Too many disabled skills (max ${MAX_DISABLED})` };
+  }
+  if (disabled) {
+    disabledSkills.add(skillName);
+  } else {
+    disabledSkills.delete(skillName);
+  }
+  configStore.set('skillConflictConfig', {
+    ...current,
+    disabledSkills: [...disabledSkills],
+  });
+  return { success: true };
+}
+
 ipcMain.handle('skills.toggleDisabled', async (_event, skillName: string, disabled: boolean) => {
   try {
-    const { isValidSkillId } = await import('../shared/skill-pinning-constants');
-    if (!isValidSkillId(skillName)) {
-      return { success: false, error: 'Invalid skill name' };
+    const result = setSkillDisabledInConfig(skillName, disabled);
+    if (!result.success) {
+      return result;
     }
-    if (typeof disabled !== 'boolean') {
-      return { success: false, error: 'Invalid disabled flag: must be a boolean' };
-    }
-    const current = configStore.get('skillConflictConfig');
-    const disabledSkills = new Set(current.disabledSkills);
-    // Cap disabled list size
-    const MAX_DISABLED = 200;
-    if (disabled && disabledSkills.size >= MAX_DISABLED && !disabledSkills.has(skillName)) {
-      return { success: false, error: `Too many disabled skills (max ${MAX_DISABLED})` };
-    }
-    if (disabled) {
-      disabledSkills.add(skillName);
-    } else {
-      disabledSkills.delete(skillName);
-    }
-    configStore.set('skillConflictConfig', {
-      ...current,
-      disabledSkills: [...disabledSkills],
-    });
     sessionManager?.invalidateSkillsSetup();
     return { success: true };
   } catch (error) {
@@ -4470,16 +4444,8 @@ ipcMain.handle('memory.getPanelState', (_event, cwd?: string, sessionId?: string
     ? memoryService.getCoreEntriesForWorkspace(cwd)
     : memoryService.getCoreEntries();
 
-  // Determine cowork-memory skill state
-  let skillFallbackEnabled = false;
-  if (skillsManager) {
-    const skill = skillsManager.getAllSkills().find((s) => s.id === COWORK_MEMORY_SKILL_ID);
-    skillFallbackEnabled = skill?.enabled ?? false;
-  }
-
   return {
     enabled: overview.enabled,
-    skillFallbackEnabled,
     coreEntries: coreEntries.map((e) => ({
       category: e.category || 'other',
       key: e.key,
@@ -4883,12 +4849,6 @@ ipcMain.handle('memory.setEnabled', (_event, enabled: boolean) => {
   }
   const result = memoryService.setEnabled(enabled);
   sessionManager?.clearAllCachedAgentSessions();
-
-  // Toggle cowork-memory skill based on the effective memory state (not the input),
-  // so we stay in sync even if setEnabled applies a different final state.
-  syncCoworkMemorySkillState(result.enabled).catch((err) => {
-    logWarn('[Memory] Failed to sync cowork-memory skill state:', err);
-  });
 
   sendToRenderer({
     type: 'config.status',

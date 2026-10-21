@@ -139,8 +139,6 @@ dimension, an integrity check, and a per-workspace breakdown. From there you can
 | `memoryRuntime.ingestionConcurrency` | 4               | Parallelism for extraction.                  |
 | `memoryRuntime.storageRoot`          | app data folder | Where `memory.db` and the JSON files live.   |
 
-> ⚠️ TODO (human): note that disabling in-app memory re-enables the legacy `cowork-memory` skill as a fallback.
-
 ---
 
 [← All docs](../index.md)

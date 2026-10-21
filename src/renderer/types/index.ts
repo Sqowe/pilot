@@ -488,7 +488,6 @@ export interface MemoryModelCheckResult {
 
 export interface MemoryPanelState {
   enabled: boolean;
-  skillFallbackEnabled: boolean;
   localModelDownloaded: boolean;
   coreEntries: Array<{ category: string; key: string; value: string; combinedKey: string }>;
   workspaceStats: {

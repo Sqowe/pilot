@@ -1080,7 +1080,6 @@
     "loadError": "Unable to load memory status",
     "disabledHint": "Memory is disabled. Enable in Settings to start learning from your sessions.",
     "inAppMemory": "In-app memory",
-    "skillFallback": "Skill fallback",
     "profile": "Profile",
     "interests": "Interests",
     "preferences": "Preferences",

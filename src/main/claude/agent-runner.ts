@@ -140,6 +140,7 @@ import { extractArtifactsFromText, buildArtifactTraceSteps } from '../utils/arti
 import { getDefaultShell } from '../utils/shell-resolver';
 import { PluginRuntimeService } from '../skills/plugin-runtime-service';
 import { getBuiltinSkillsPath } from '../skills/builtin-skills-path';
+import { removeRetiredBuiltinSkills } from '../skills/retired-builtin-skills';
 import type { SkillsAdapter } from '../skills/skills-adapter';
 import { SAFE_SKILL_ID_REGEX, isValidSkillId } from '../../shared/skill-pinning-constants';
 import { normalizeSkillConflictConfig } from '../../shared/skill-conflict-types';
@@ -2763,6 +2764,12 @@ RULES:
             }
           }
         }
+
+        // Built-ins the app no longer ships: the loop above walks the bundled folder only.
+        removeRetiredBuiltinSkills(appSkillsDir, [
+          this.getUserClaudeSkillsDir(),
+          this.getConfiguredGlobalSkillsDir(),
+        ]);
 
         this.syncUserSkillsToAppDir(appSkillsDir);
         this.syncConfiguredSkillsToRuntimeDir(appSkillsDir);

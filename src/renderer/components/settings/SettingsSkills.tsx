@@ -68,6 +68,7 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
     setPolicy: setConflictPolicy,
     toggleDisabled: toggleSkillDisabled,
     resetToBuiltin,
+    refresh: refreshConflicts,
   } = useSkillConflicts();
 
   function normalizePluginLookupKey(value: string | undefined): string {
@@ -428,12 +429,18 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
     setIsLoading(true);
     try {
       await window.electronAPI.skills.setEnabled(skill.id, !skill.enabled);
-      await loadSkills();
+      // The card and Conflict Resolution's Disable button save into the same list.
+      await Promise.all([loadSkills(), refreshConflicts()]);
     } catch (err) {
       setError({ text: err instanceof Error ? err.message : t('skills.failedToToggle') });
     } finally {
       setIsLoading(false);
     }
+  }
+
+  async function handleConflictToggleDisabled(skillName: string, disabled: boolean) {
+    await toggleSkillDisabled(skillName, disabled);
+    await loadSkills(true);
   }
 
   async function handleInstallPlugin(plugin: PluginCatalogItemV2) {
@@ -662,14 +669,14 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
                   <div className="flex items-center gap-1 shrink-0">
                     {conflictConfig.disabledSkills.includes(conflict.skillName) ? (
                       <button
-                        onClick={() => toggleSkillDisabled(conflict.skillName, false)}
+                        onClick={() => handleConflictToggleDisabled(conflict.skillName, false)}
                         className="text-xs px-2 py-1 rounded bg-surface-muted text-text-muted hover:text-text-primary transition-colors"
                       >
                         {t('common.enable')}
                       </button>
                     ) : (
                       <button
-                        onClick={() => toggleSkillDisabled(conflict.skillName, true)}
+                        onClick={() => handleConflictToggleDisabled(conflict.skillName, true)}
                         className="text-xs px-2 py-1 rounded bg-surface-muted text-text-muted hover:text-text-primary transition-colors"
                       >
                         {t('common.disable')}

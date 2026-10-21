@@ -289,7 +289,11 @@ mode, the read-loop block, an MCP tool with a policy, sudo, stop during an open 
 3. ~~**Phase 0 alone** changes which skills load — confirm that is acceptable.~~ Accepted
    2026-10-20 together with the go-ahead for phase 0.
 4. ~~**A globally disabled built-in still loads.**~~ Fixed 2026-10-21 by filtering at
-   assembly (§2.5). Not fixed by it: the Power button on each skill card and the automatic
-   disabling of `cowork-memory` change only an in-memory flag of `SkillsManager`, which the
-   runner never reads (`skillsAdapter` is `undefined`, `session-manager.ts:212`) — being
-   decided separately.
+   assembly (§2.5). It left two more that changed only an in-memory flag of
+   `SkillsManager`, which the runner never reads (`skillsAdapter` is `undefined`,
+   `session-manager.ts:212`), both settled the same day: the Power button on each skill
+   card now saves into `skillConflictConfig.disabledSkills` through `SkillsManager`
+   (`isSkillDisabled` / `setSkillDisabled` options), and listings read `enabled` back from
+   that list; the `cowork-memory` skill, which that flag was meant to switch off while
+   in-app memory is on, was removed (`retired-builtin-skills.ts` clears what it left in
+   the runtime dir).

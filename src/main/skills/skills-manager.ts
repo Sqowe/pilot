@@ -73,7 +73,24 @@ interface PluginManifest {
 interface SkillsManagerOptions {
   getConfiguredGlobalSkillsPath?: () => string | undefined;
   setConfiguredGlobalSkillsPath?: (nextPath: string) => void;
+  /**
+   * Whether a skill folder name is in the saved list of disabled skills
+   * (`skillConflictConfig.disabledSkills`). When given, it decides `enabled` for every
+   * built-in and custom skill this manager lists.
+   */
+  isSkillDisabled?: (skillName: string) => boolean;
+  /** Save a skill folder name as disabled or enabled again; throws when it cannot. */
+  setSkillDisabled?: (skillName: string, disabled: boolean) => void;
   watchStorage?: boolean;
+}
+
+/** Source prefixes of the IDs this manager gives skills: `builtin-pdf`, `global-firecrawl`. */
+const SKILL_ID_SOURCE_PREFIXES = ['builtin-', 'global-', 'project-'];
+
+/** The folder name of a skill — its ID without the source prefix. */
+export function skillFolderNameOf(skillId: string): string {
+  const prefix = SKILL_ID_SOURCE_PREFIXES.find((p) => skillId.startsWith(p));
+  return prefix ? skillId.substring(prefix.length) : skillId;
 }
 
 export interface SkillsStorageChangeEvent {
@@ -102,6 +119,8 @@ export class SkillsManager {
   private runningServers: Map<string, { process: unknown; skill: Skill }> = new Map();
   private getConfiguredGlobalSkillsPathFn?: () => string | undefined;
   private setConfiguredGlobalSkillsPathFn?: (nextPath: string) => void;
+  private isSkillDisabledFn?: (skillName: string) => boolean;
+  private setSkillDisabledFn?: (skillName: string, disabled: boolean) => void;
   private watchStorageEnabled: boolean;
   private storageWatcher: FSWatcher | null = null;
   private storagePollingTimer: NodeJS.Timeout | null = null;
@@ -114,6 +133,8 @@ export class SkillsManager {
     this.db = db;
     this.getConfiguredGlobalSkillsPathFn = options.getConfiguredGlobalSkillsPath;
     this.setConfiguredGlobalSkillsPathFn = options.setConfiguredGlobalSkillsPath;
+    this.isSkillDisabledFn = options.isSkillDisabled;
+    this.setSkillDisabledFn = options.setSkillDisabled;
     this.watchStorageEnabled = options.watchStorage === true;
     this.loadBuiltinSkills();
     if (this.watchStorageEnabled) {
@@ -699,6 +720,11 @@ export class SkillsManager {
   setSkillEnabled(skillId: string, enabled: boolean): void {
     const skill = this.loadedSkills.get(skillId);
     if (skill) {
+      // A built-in or custom skill is saved by folder name into the list the runner filters
+      // by — otherwise the agent would never see the change, and a restart would undo it.
+      if (skill.type !== 'mcp' && this.setSkillDisabledFn) {
+        this.setSkillDisabledFn(skillFolderNameOf(skillId), !enabled);
+      }
       skill.enabled = enabled;
 
       // Stop server if disabling an MCP skill
@@ -708,11 +734,19 @@ export class SkillsManager {
     }
   }
 
+  /** A built-in or custom skill's `enabled`, read from the saved list when there is one. */
+  private withSavedState(skill: Skill): Skill {
+    if (skill.type === 'mcp' || !this.isSkillDisabledFn) return skill;
+    return { ...skill, enabled: !this.isSkillDisabledFn(skillFolderNameOf(skill.id)) };
+  }
+
   /**
    * Get all loaded skills
    */
   getAllSkills(): Skill[] {
-    return this.deduplicateSkills(Array.from(this.loadedSkills.values()));
+    return this.deduplicateSkills(Array.from(this.loadedSkills.values())).map((skill) =>
+      this.withSavedState(skill)
+    );
   }
 
   /**
@@ -762,7 +796,9 @@ export class SkillsManager {
     // Load global skills first to ensure they're in loadedSkills
     await this.loadGlobalSkills();
 
-    let skills = this.deduplicateSkills(Array.from(this.loadedSkills.values()));
+    let skills = this.deduplicateSkills(Array.from(this.loadedSkills.values())).map((skill) =>
+      this.withSavedState(skill)
+    );
 
     if (filter) {
       if (filter.type !== undefined) {

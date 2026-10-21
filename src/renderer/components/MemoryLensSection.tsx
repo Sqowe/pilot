@@ -127,7 +127,7 @@ export function MemoryLensSection({ cwd, collapsed, sessionId }: MemoryLensSecti
 
   if (collapsed || panelState === null) return null;
 
-  const { enabled, skillFallbackEnabled, coreEntries, workspaceStats, totalStats } = panelState;
+  const { enabled, coreEntries, workspaceStats, totalStats } = panelState;
 
   // Group core entries by category (preserve combinedKey for delete)
   const grouped = coreEntries.reduce<
@@ -190,12 +190,6 @@ export function MemoryLensSection({ cwd, collapsed, sessionId }: MemoryLensSecti
                   <span>{t('memoryLens.inAppMemory')}</span>
                   <span className="text-green-500 font-medium">ON</span>
                 </div>
-                {skillFallbackEnabled && (
-                  <div className="flex items-center justify-between">
-                    <span>{t('memoryLens.skillFallback')}</span>
-                    <span className="text-amber-500 font-medium">ON</span>
-                  </div>
-                )}
               </div>
 
               {/* Profile */}

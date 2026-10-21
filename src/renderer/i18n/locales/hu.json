@@ -1080,7 +1080,6 @@
     "loadError": "Nem sikerült betölteni a memória állapotot",
     "disabledHint": "Memória letiltva. Engedélyezze a Beállításokban a munkamenetekből tanulás megkezdéséhez.",
     "inAppMemory": "Alkalmazás-memória",
-    "skillFallback": "Képesség tartalék",
     "profile": "Profil",
     "interests": "Érdeklődések",
     "preferences": "Preferenciák",

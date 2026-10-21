@@ -528,8 +528,6 @@ By default, memory embeddings run **fully offline and in-process** via ONNX (Emb
 
 Memory is enabled by default. Toggle it in **Settings → Memory** or via the Memory panel in the sidebar. Disabling memory stops future ingestion and auto-recall but keeps existing records intact.
 
-When in-app memory is enabled, the legacy `cowork-memory` skill (manual Python scripts) is automatically disabled to avoid redundancy. If you disable in-app memory, the skill is re-enabled as a fallback.
-
 ### Memory Sources Indicator (UI)
 
 When the model uses `search_workspace_chats` to retrieve context from past conversations, a visual indicator appears at the top of the response:

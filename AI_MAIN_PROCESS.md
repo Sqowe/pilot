@@ -77,7 +77,9 @@ false })`, `noExtensions: true` and `noSkills: true`. Left to its defaults, pi m
   first skill of a name, and that dir holds what Conflict Resolution chose — then the raw
   built-in and configured folders and the plugin folders. Every folder is expanded into its
   skills (following symlinks; the runtime dir is mostly links), minus the skills disabled
-  for the session **and** in the settings (`skillConflictConfig.disabledSkills`). Filter
+  for the session **and** in the settings (`skillConflictConfig.disabledSkills` — written by
+  Conflict Resolution's Disable and by the Power button on each skill card, through
+  `SkillsManager`'s `setSkillDisabled` option; listings read `enabled` back from it). Filter
   there, never only in the runtime dir: the raw folders still hold disabled skills, and the
   runtime dir is not reliably clean (`SkillsManager.importUserSkills` re-links
   `~/.claude/skills` entries into it on every listing, with no disable check). The expanded

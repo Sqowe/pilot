@@ -4,17 +4,18 @@
 
 ## Context
 
-The builtin skills in `resources/skills/` come from two sources:
+Where the builtin skills in `resources/skills/` come from:
 
 - **Upstream** — Anthropic's Claude skills repository (`docx`, `pdf`, `pptx`,
   `xlsx`, `skill-creator`). We maintain local modifications that add **PEP 723
   inline dependency metadata** to Python scripts, enabling `uv run` to resolve
   packages without manual `pip install` or a sandbox environment.
-- **First-party** — `resources/skills/cowork-memory/` is written in this repo
-  (scripts talk to the app's own memory IPC). It is stdlib-only, carries no PEP 723
-  metadata, and **no upstream sync may touch it**. If a sync appears to delete or
-  rewrite `cowork-memory`, stop and recover it — it is not reproducible from
-  upstream.
+- **Retired** — the first-party `cowork-memory` (manual memory through Python scripts
+  writing markdown files) was removed on 2026-10-21; the in-app memory replaced it. A
+  retired built-in is listed in `src/main/skills/retired-builtin-skills.ts`, which clears
+  what earlier versions left of it in the runtime skills dir. Do not ship a folder under a
+  retired name again; `src/tests/skills/retired-builtin-skills.test.ts` fails if one
+  appears.
 
 When upstream skills are updated, the PEP 723 modifications get overwritten. This
 document describes how to restore them.
@@ -77,9 +78,6 @@ with new imports, add them to this map and to `scripts/reapply-skill-deps.py`.
 | skill-creator | `quick_validate.py`                 | `pyyaml`               |
 
 Scripts NOT in this table use only the Python standard library and need no metadata.
-`cowork-memory` is expected to stay in that group — if one of its scripts gains a
-third-party import, add it here and to the script's map rather than leaving it
-undocumented.
 
 ## SKILL.md Updates
 

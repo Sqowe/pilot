@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **The `cowork-memory` built-in skill.** It kept notes as markdown files through Python
+  scripts, from before the app had its own memory. It was meant to step in only while
+  in-app memory was off, but the agent was given it all the time. Notes saved with it stay
+  in the app's `memory` folder; the agent no longer reads them. "Disable Memory" in
+  Settings → Memory still turns the in-app memory off — the agent then has no long-term
+  memory. The "Skill fallback" line in the memory panel is gone with it.
 - Azure OpenAI and TypeSafe no longer turn up on the Providers tab after the update:
   Azure (renamed by pi) needs a resource address the tab cannot take, and TypeSafe has no
   chat models.
@@ -51,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A disabled built-in skill was still loaded from the app's own skills folder, and a
   disabled skill from a custom skills folder from that folder. Chats that are already
   open drop the skill with their next message.
+- **The Disable button on a skill card works.** It only changed what the card showed: the
+  agent kept the skill, and after a restart every skill was on again. It now saves the
+  skill as disabled — the same setting as Disable in Conflict Resolution, and both places
+  show it — so the agent stops using it, including in chats that are already open.
 - Skills in your home folder's `~/.agents/skills` are no longer added to every chat on their
   own, past the app's skill settings. To use one, link it into `~/.claude/skills`, where the
   app manages it — Settings → Skills, Conflict Resolution and disabling then apply to it.

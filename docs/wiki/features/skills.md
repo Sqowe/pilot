@@ -1,4 +1,4 @@
-<!-- sources: src/renderer/components/settings/SettingsSkills.tsx, src/main/skills/skills-manager.ts, resources/skills/, README, docs/design/archive/skill-features-implementation-plan.md -->
+<!-- sources: src/renderer/components/settings/SettingsSkills.tsx, src/main/skills/skills-manager.ts, src/main/claude/skill-paths.ts, resources/skills/, README, docs/design/archive/skill-features-implementation-plan.md -->
 
 # Skills
 
@@ -23,7 +23,10 @@ skill, or you want to keep a modified skill from being overwritten on update.
 | `xlsx`          | Build Excel spreadsheets          |
 | `skill-creator` | Help you author your own skills   |
 
-Built-in skills can be toggled on/off from **Settings → Skills → Built-in Skills**.
+Any skill — built-in or custom — can be turned off with the **Disable** button (power icon)
+on its card in **Settings → Skills**. The choice is kept after a restart, chats that are
+already open drop the skill with their next message, and it is the same setting as
+**Disable** under [Conflict Resolution](skill-conflicts.md).
 
 ## How to use it
 
@@ -54,13 +57,13 @@ Built-in skills can be toggled on/off from **Settings → Skills → Built-in Sk
 
 ## Commands & settings
 
-| Action                  | How to run                                                |
-| ----------------------- | --------------------------------------------------------- |
-| Toggle a built-in skill | Settings → Skills → Built-in Skills                       |
-| Install custom skill    | Settings → Skills → **Install Skill from Folder**         |
-| Protect / unprotect     | Skill menu → **Protect from updates** / **Allow updates** |
-| Force refresh           | Skill menu → **Force refresh**                            |
-| Refresh all             | Settings → Skills → **Refresh Skills**                    |
+| Action                 | How to run                                                |
+| ---------------------- | --------------------------------------------------------- |
+| Turn a skill off or on | Settings → Skills → **Disable** / **Enable** on its card  |
+| Install custom skill   | Settings → Skills → **Install Skill from Folder**         |
+| Protect / unprotect    | Skill menu → **Protect from updates** / **Allow updates** |
+| Force refresh          | Skill menu → **Force refresh**                            |
+| Refresh all            | Settings → Skills → **Refresh Skills**                    |
 
 | Setting            | Default         | What it does                              |
 | ------------------ | --------------- | ----------------------------------------- |
