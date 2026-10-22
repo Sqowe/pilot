@@ -1222,20 +1222,12 @@ export function ChatView() {
             )}
 
             <div
-              className={`flex items-end gap-2 p-3.5 rounded-[1.75rem] bg-background/88 border border-border-muted shadow-soft transition-colors ${
+              className={`flex flex-col gap-2 p-3.5 rounded-[1.75rem] bg-background/88 border border-border-muted shadow-soft transition-colors ${
                 isDragging ? 'ring-2 ring-accent bg-accent/5' : ''
               }`}
             >
-              <button
-                type="button"
-                onClick={handleFileSelect}
-                className="w-9 h-9 rounded-2xl flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
-                title={t('welcome.attachFiles')}
-              >
-                <Plus className="w-5 h-5" />
-              </button>
-
-              <div className="relative flex-1">
+              {/* Text gets the full width; the controls sit on their own row below */}
+              <div className="relative">
                 <textarea
                   ref={textareaRef}
                   value={prompt}
@@ -1264,11 +1256,11 @@ export function ChatView() {
                   placeholder={canStop ? '' : t('chat.typeMessage')}
                   disabled={isSubmitting}
                   rows={1}
-                  className="block w-full resize-none bg-transparent border-none outline-none text-text-primary placeholder:text-text-muted text-[15px] py-2 min-h-[40px] max-h-[200px] overflow-y-auto leading-6"
+                  className="block w-full resize-none bg-transparent border-none outline-none text-text-primary placeholder:text-text-muted text-[15px] px-2 py-2 min-h-[40px] max-h-[200px] overflow-y-auto leading-6"
                 />
                 {showAgentWorking && (
                   <div
-                    className="absolute inset-0 flex items-center gap-2 py-2 pointer-events-none"
+                    className="absolute inset-0 flex items-center gap-2 px-2 py-2 pointer-events-none"
                     role="status"
                     aria-live="polite"
                   >
@@ -1286,56 +1278,68 @@ export function ChatView() {
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
-                {/* Config Set Selector */}
-                {configSets.length > 1 ? (
-                  <div className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-border-subtle bg-background/60 text-xs text-text-muted">
-                    <Layers className="w-3 h-3 shrink-0" />
-                    <select
-                      value={activeConfigSetId}
-                      onChange={(e) => {
-                        void handleConfigSetSwitch(e.target.value);
-                      }}
-                      disabled={isSwitchingSet}
-                      className="bg-transparent border-none outline-none text-xs text-text-muted hover:text-text-primary cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed max-w-[220px] truncate"
-                    >
-                      {configSets.map((set) => (
-                        <option key={set.id} value={set.id}>
-                          {configSetLabel(set)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : (
-                  <span className="hidden sm:inline-flex px-2.5 py-1 rounded-full border border-border-subtle bg-background/60 text-xs text-text-muted">
-                    {appConfig?.model || t('chat.noModel')}
-                  </span>
-                )}
-
-                {canStop && (
-                  <button
-                    type="button"
-                    onClick={handleStop}
-                    className="w-9 h-9 rounded-2xl flex items-center justify-center bg-error/10 text-error hover:bg-error/20 transition-colors"
-                    title={t('chat.stop')}
-                  >
-                    <Square className="w-4 h-4" />
-                  </button>
-                )}
+              <div className="flex items-center justify-between gap-2">
                 <button
-                  type="submit"
-                  disabled={
-                    (!prompt.trim() &&
-                      !textareaRef.current?.value.trim() &&
-                      pastedImages.length === 0 &&
-                      attachedFiles.length === 0) ||
-                    isSubmitting
-                  }
-                  className="w-9 h-9 rounded-2xl flex items-center justify-center bg-accent text-background disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent-hover transition-colors"
-                  title={t('chat.sendMessage')}
+                  type="button"
+                  onClick={handleFileSelect}
+                  className="w-9 h-9 shrink-0 rounded-2xl flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+                  title={t('welcome.attachFiles')}
                 >
-                  <Send className="w-4 h-4" />
+                  <Plus className="w-5 h-5" />
                 </button>
+
+                <div className="flex items-center gap-2 min-w-0">
+                  {/* Config Set Selector */}
+                  {configSets.length > 1 ? (
+                    <div className="hidden sm:inline-flex items-center gap-1 min-w-0 px-2.5 py-1 rounded-full border border-border-subtle bg-background/60 text-xs text-text-muted">
+                      <Layers className="w-3 h-3 shrink-0" />
+                      <select
+                        value={activeConfigSetId}
+                        onChange={(e) => {
+                          void handleConfigSetSwitch(e.target.value);
+                        }}
+                        disabled={isSwitchingSet}
+                        className="min-w-0 max-w-[260px] bg-transparent border-none outline-none text-xs text-text-muted hover:text-text-primary cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed truncate"
+                        title={t('welcome.configSet')}
+                      >
+                        {configSets.map((set) => (
+                          <option key={set.id} value={set.id}>
+                            {configSetLabel(set)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <span className="hidden sm:inline-flex px-2.5 py-1 rounded-full border border-border-subtle bg-background/60 text-xs text-text-muted">
+                      {appConfig?.model || t('chat.noModel')}
+                    </span>
+                  )}
+
+                  {canStop && (
+                    <button
+                      type="button"
+                      onClick={handleStop}
+                      className="w-9 h-9 shrink-0 rounded-2xl flex items-center justify-center bg-error/10 text-error hover:bg-error/20 transition-colors"
+                      title={t('chat.stop')}
+                    >
+                      <Square className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={
+                      (!prompt.trim() &&
+                        !textareaRef.current?.value.trim() &&
+                        pastedImages.length === 0 &&
+                        attachedFiles.length === 0) ||
+                      isSubmitting
+                    }
+                    className="w-9 h-9 shrink-0 rounded-2xl flex items-center justify-center bg-accent text-background disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent-hover transition-colors"
+                    title={t('chat.sendMessage')}
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
 

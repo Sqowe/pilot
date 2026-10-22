@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The message box in an open chat gives the text its full width.** The text shared one
+  row with the attach button, the config set list and the Stop and Send buttons, so on a
+  narrow window a message wrapped in less than half of the box, with empty space beside
+  it. Now the text runs across the whole box and the controls sit on a row below it, as
+  on the start screen. Pointing at the config set list shows its name, as it does there.
+
 ## [1.3.1] - 2026-10-22
 
 ### Added

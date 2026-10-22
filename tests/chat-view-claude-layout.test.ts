@@ -26,4 +26,18 @@ describe('ChatView Claude-style layout', () => {
     expect(source).toContain('rounded-[1.75rem]');
     expect(source).toContain('shadow-soft');
   });
+
+  it('gives the composer text the full width, with the controls on a row below it', () => {
+    const source = readChatView();
+    const shell = source.indexOf('flex flex-col gap-2 p-3.5 rounded-[1.75rem]');
+    const textarea = source.indexOf('<textarea', shell);
+    const attach = source.indexOf('onClick={handleFileSelect}', shell);
+    const configSet = source.indexOf("title={t('welcome.configSet')}", shell);
+    const send = source.indexOf('<Send className', shell);
+    expect(shell).toBeGreaterThan(-1);
+    expect(textarea).toBeGreaterThan(shell);
+    expect(attach).toBeGreaterThan(textarea);
+    expect(configSet).toBeGreaterThan(attach);
+    expect(send).toBeGreaterThan(configSet);
+  });
 });
