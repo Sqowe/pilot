@@ -1088,7 +1088,7 @@ export function ChatView() {
       >
         <div
           ref={messagesContainerRef}
-          className="w-full max-w-[920px] mx-auto py-8 px-5 lg:px-8 space-y-5"
+          className="w-full max-w-[920px] mx-auto pt-8 pb-[3.25rem] px-5 lg:px-8 space-y-5"
         >
           {displayedMessages.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-28 text-text-muted space-y-3 text-center">
@@ -1166,9 +1166,14 @@ export function ChatView() {
         />
       )}
 
-      {/* Input */}
-      <div className="border-t border-border-muted bg-background/92 backdrop-blur-md">
-        <div className="max-w-[920px] mx-auto px-5 lg:px-8 py-5">
+      {/* Input: its top strip lies over the end of the message list, which fades out there.
+          The strip lets the mouse through, so wheel and text selection still reach the list. */}
+      <div className="relative z-10 -mt-5 pt-5 pointer-events-none">
+        <div
+          aria-hidden="true"
+          className="absolute inset-x-0 top-0 h-5 bg-gradient-to-b from-transparent to-background"
+        />
+        <div className="max-w-[920px] mx-auto px-5 lg:px-8 pb-5 pointer-events-auto">
           <form
             onSubmit={handleSubmit}
             onDragOver={handleDragOver}

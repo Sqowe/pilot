@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Messages fade out above the message box instead of ending at a line.** The list of
+  messages was cut off at a thin line above the box, often through the middle of a line
+  of text. Now the line is gone, and text scrolling past that point fades away before it
+  reaches the box. Scrolling and selecting text work there as before.
+
 ## [1.3.2] - 2026-10-22
 
 ### Changed

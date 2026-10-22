@@ -40,4 +40,17 @@ describe('ChatView Claude-style layout', () => {
     expect(configSet).toBeGreaterThan(attach);
     expect(send).toBeGreaterThan(configSet);
   });
+
+  it('fades the message list out above the composer instead of drawing a line', () => {
+    const source = readChatView();
+    // The input area moves up over the end of the list; its top strip fades to the background
+    // and lets the mouse through, and the list's bottom padding grows by the same 20px.
+    expect(source).toContain('relative z-10 -mt-5 pt-5 pointer-events-none');
+    expect(source).toContain(
+      'absolute inset-x-0 top-0 h-5 bg-gradient-to-b from-transparent to-background'
+    );
+    expect(source).toContain('pb-5 pointer-events-auto');
+    expect(source).toContain('pt-8 pb-[3.25rem]');
+    expect(source).not.toContain('border-t border-border-muted bg-background/92');
+  });
 });
