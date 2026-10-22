@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-10-22
+
 ### Changed
 
 - **The message box in an open chat gives the text its full width.** The text shared one
@@ -737,7 +739,8 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/sqowe/pilot/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/sqowe/pilot/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/sqowe/pilot/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/sqowe/pilot/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/sqowe/pilot/compare/v1.1.0...v1.3.0
 [1.1.0]: https://github.com/sqowe/pilot/compare/v1.0.12...v1.1.0
