@@ -22,6 +22,28 @@ import { PluginCatalogService } from './plugin-catalog-service';
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Extraction of a 500 MB archive (the size cap) takes well under a minute on a
+ * laptop disk; five minutes leaves room for a slow or busy machine while still
+ * ending a stall.
+ */
+const DEFAULT_EXTRACT_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Opens a zip for reading entry by entry, the way `extractZipSafe` uses it. */
+export type ZipOpener = (archivePath: string) => Promise<import('yauzl').ZipFile>;
+
+const openWithYauzl: ZipOpener = (archivePath) => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const yauzl = require('yauzl') as typeof import('yauzl');
+  return new Promise((resolve, reject) => {
+    yauzl.open(archivePath, { lazyEntries: true, decodeStrings: true }, (err, zf) => {
+      if (err) return reject(err);
+      if (!zf) return reject(new Error('Failed to open zip file'));
+      resolve(zf);
+    });
+  });
+};
+
 interface PluginManifest {
   name?: string;
   description?: string;
@@ -89,13 +111,20 @@ function cloneComponentState(state: PluginComponentEnabledState): PluginComponen
 export class PluginRuntimeService {
   private readonly catalogService: PluginCatalogService;
   private readonly commandRunner: CommandRunner;
+  /** Longest an archive may take to extract before the install fails (all install paths). */
+  private readonly extractTimeoutMs: number;
+  /** Opens an archive for reading; yauzl unless a test hands in a stand-in. */
+  private readonly openZip: ZipOpener;
 
   constructor(
     catalogService: PluginCatalogService = new PluginCatalogService(),
-    commandRunner: CommandRunner = PluginRuntimeService.defaultCommandRunner
+    commandRunner: CommandRunner = PluginRuntimeService.defaultCommandRunner,
+    options: { extractTimeoutMs?: number; openZip?: ZipOpener } = {}
   ) {
     this.catalogService = catalogService;
     this.commandRunner = commandRunner;
+    this.extractTimeoutMs = options.extractTimeoutMs ?? DEFAULT_EXTRACT_TIMEOUT_MS;
+    this.openZip = options.openZip ?? openWithYauzl;
   }
 
   async listCatalog(options?: { installableOnly?: boolean }): Promise<PluginCatalogItemV2[]> {
@@ -278,19 +307,11 @@ export class PluginRuntimeService {
     const absoluteArchive = path.resolve(archivePath);
     const absoluteTarget = path.resolve(targetDir);
 
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const yauzl = require('yauzl') as typeof import('yauzl');
-
     const MAX_ENTRIES = 10000;
     const MAX_TOTAL_SIZE = 500 * 1024 * 1024; // 500 MB
+    const timeoutMs = this.extractTimeoutMs;
 
-    const zipFile = await new Promise<import('yauzl').ZipFile>((resolve, reject) => {
-      yauzl.open(absoluteArchive, { lazyEntries: true, decodeStrings: true }, (err, zf) => {
-        if (err) return reject(err);
-        if (!zf) return reject(new Error('Failed to open zip file'));
-        resolve(zf);
-      });
-    });
+    const zipFile = await this.openZip(absoluteArchive);
 
     let entryCount = 0;
     let totalBytesWritten = 0;
@@ -298,10 +319,14 @@ export class PluginRuntimeService {
     try {
       await new Promise<void>((resolve, reject) => {
         let settled = false;
+        // The stream currently being written, so a timeout can stop it.
+        let activeRead: { destroy: () => void } | null = null;
+        let activeWrite: fs.WriteStream | null = null;
 
         const safeReject = (err: Error) => {
           if (settled) return;
           settled = true;
+          clearTimeout(deadline);
           try {
             zipFile.close();
           } catch {
@@ -313,8 +338,24 @@ export class PluginRuntimeService {
         const safeResolve = () => {
           if (settled) return;
           settled = true;
+          clearTimeout(deadline);
           resolve();
         };
+
+        // A stalled stream must end in an error, never in an endless wait: yauzl
+        // 2.10 stalled on any entry larger than ~64 KB compressed (fixed by 3.x),
+        // and the spinner in Settings had nothing to stop it.
+        const deadline = setTimeout(() => {
+          try {
+            activeRead?.destroy();
+            activeWrite?.destroy();
+          } catch {
+            /* best effort */
+          }
+          safeReject(
+            new Error(`Archive extraction did not finish within ${timeoutMs / 1000} s. Aborting.`)
+          );
+        }, timeoutMs);
 
         zipFile.on('error', safeReject);
 
@@ -399,6 +440,8 @@ export class PluginRuntimeService {
               if (!readStream) return safeReject(new Error(`Failed to read entry: ${fileName}`));
 
               const writeStream = fs.createWriteStream(destPath);
+              activeRead = readStream;
+              activeWrite = writeStream;
 
               readStream.on('data', (chunk: Buffer) => {
                 if (settled) return;

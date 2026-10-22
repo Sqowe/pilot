@@ -149,14 +149,17 @@ function crc32(buf: Buffer): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-async function createRuntimeService() {
+async function createRuntimeService(options?: {
+  extractTimeoutMs?: number;
+  openZip?: import('../src/main/skills/plugin-runtime-service').ZipOpener;
+}) {
   const { PluginRuntimeService } = await import('../src/main/skills/plugin-runtime-service');
   const fakeCatalogService = {
     listAnthropicPlugins: vi.fn(),
     downloadPlugin: vi.fn(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
-  return new PluginRuntimeService(fakeCatalogService);
+  return new PluginRuntimeService(fakeCatalogService, undefined, options);
 }
 
 describe('PluginRuntimeService.installFromArchive', () => {
@@ -345,5 +348,87 @@ describe('PluginRuntimeService.installFromArchive', () => {
 
     const service = await createRuntimeService();
     await expect(service.installFromArchive(archivePath)).rejects.toThrow(/absolute/i);
+  });
+  // yauzl 2.10 stalled for ever on any entry whose compressed data passed ~64 KB:
+  // anthropics/claude-code (a 1 MB CHANGELOG.md) never finished installing.
+  it('extracts an entry whose compressed data is larger than 64 KB', async () => {
+    const crypto = await import('node:crypto');
+    const big = crypto.randomBytes(300 * 1024); // incompressible, so ~300 KB compressed
+    const archivePath = path.join(testRoot, 'large-entry.zip');
+    await new Promise<void>((resolve, reject) => {
+      const output = fs.createWriteStream(archivePath);
+      const archive = archiver('zip', { zlib: { level: 9 } });
+      output.on('close', () => resolve());
+      archive.on('error', reject);
+      archive.pipe(output);
+      archive.append(Buffer.from(JSON.stringify({ name: 'large', version: '1.0.0' })), {
+        name: 'plugin/.claude-plugin/plugin.json',
+      });
+      archive.append(Buffer.from('---\nname: alpha\ndescription: Alpha\n---\n'), {
+        name: 'plugin/skills/alpha/SKILL.md',
+      });
+      archive.append(big, { name: 'plugin/skills/alpha/data.bin' });
+      archive.finalize();
+    });
+    expect(fs.statSync(archivePath).size).toBeGreaterThan(256 * 1024);
+
+    const service = await createRuntimeService({ extractTimeoutMs: 10_000 });
+    const result = await service.installFromArchive(archivePath);
+
+    const copied = fs.readFileSync(
+      path.join(result.plugin.sourcePath, 'skills', 'alpha', 'data.bin')
+    );
+    expect(copied.equals(big)).toBe(true);
+  });
+});
+
+describe('PluginRuntimeService.installFromArchive — extraction timeout', () => {
+  beforeEach(() => {
+    testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'open-cowork-archive-timeout-'));
+    fs.mkdirSync(path.join(testRoot, 'userData'), { recursive: true });
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    fs.rmSync(testRoot, { recursive: true, force: true });
+  });
+
+  it('fails instead of waiting for ever when an entry stream never ends', async () => {
+    const { EventEmitter } = await import('node:events');
+    const { PassThrough } = await import('node:stream');
+    const stalled = new PassThrough(); // never written to, never ended
+    const destroy = vi.spyOn(stalled, 'destroy');
+
+    // Stands in for the yauzl 2.10 stall: the entry opens, its data never arrives.
+    const openZip = async () => {
+      const zipFile = Object.assign(new EventEmitter(), {
+        comment: '',
+        close: vi.fn(),
+        readEntry: vi.fn(() => {
+          if (zipFile.readEntry.mock.calls.length === 1) {
+            setImmediate(() =>
+              zipFile.emit('entry', {
+                fileName: 'plugin/skills/alpha/SKILL.md',
+                externalFileAttributes: 0,
+                uncompressedSize: 10,
+              })
+            );
+          }
+        }),
+        openReadStream: (_entry: unknown, cb: (e: null, s: unknown) => void) => cb(null, stalled),
+      });
+      return zipFile as unknown as import('yauzl').ZipFile;
+    };
+
+    const archivePath = path.join(testRoot, 'stalls.zip');
+    fs.writeFileSync(archivePath, 'stand-in; the opener is replaced');
+
+    const service = await createRuntimeService({ extractTimeoutMs: 200, openZip });
+    const started = Date.now();
+    await expect(service.installFromArchive(archivePath)).rejects.toThrow(
+      /did not finish within 0.2 s/
+    );
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(destroy).toHaveBeenCalled();
   });
 });

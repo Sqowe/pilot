@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Importing a large plugin archive no longer hangs.** The archive reader stopped for good
+  on any file inside that was more than about 64 KB compressed, so the install spinner in
+  Settings → Skills never ended. Small plugins never hit it; a repository such as
+  `anthropics/claude-code` (a 1 MB changelog) always did. The reader is updated, and an
+  archive that still does not finish unpacking within five minutes now fails with an
+  error instead of waiting for ever.
+
 ## [1.3.0] - 2026-10-21
 
 ### Added
