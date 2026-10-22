@@ -38,6 +38,7 @@ import { SessionManager } from './session/session-manager';
 import { SkillsManager } from './skills/skills-manager';
 import { PluginCatalogService } from './skills/plugin-catalog-service';
 import { PluginRuntimeService } from './skills/plugin-runtime-service';
+import { toPluginGitHubError } from './skills/plugin-github-source';
 import { getBuiltinSkillsPath } from './skills/builtin-skills-path';
 import { MemoryService } from './memory/memory-service';
 import { MemoryLLMClient } from './memory/memory-llm-client';
@@ -93,6 +94,9 @@ import type {
   ServerEvent,
   DiagnosticInput,
   ProviderModelInfo,
+  PluginGitHubResponse,
+  PluginGitHubUpdateResult,
+  PluginInstallResultV2,
 } from '../renderer/types';
 import { remoteManager, type AgentExecutor } from './remote/remote-manager';
 import { remoteConfigStore } from './remote/remote-config-store';
@@ -3708,6 +3712,50 @@ ipcMain.handle('plugins.installFromFile', async () => {
     throw error;
   }
 });
+
+// Install from a GitHub link. The renderer sends only the text the user typed;
+// main parses it and builds every URL itself (docs/design/plugin-github-install.md).
+ipcMain.handle(
+  'plugins.installFromGitHub',
+  async (_event, url: unknown): Promise<PluginGitHubResponse<PluginInstallResultV2>> => {
+    try {
+      if (!pluginRuntimeService) {
+        throw new Error('PluginRuntimeService not initialized');
+      }
+      if (typeof url !== 'string') {
+        return { ok: false, error: { code: 'invalidUrl' } };
+      }
+      const result = await pluginRuntimeService.installFromGitHub(url);
+      sessionManager?.invalidateSkillsSetup();
+      return { ok: true, result };
+    } catch (error) {
+      logError('[Plugins] Error installing plugin from GitHub:', error);
+      return { ok: false, error: toPluginGitHubError(error) };
+    }
+  }
+);
+
+ipcMain.handle(
+  'plugins.updateFromGitHub',
+  async (_event, pluginId: unknown): Promise<PluginGitHubResponse<PluginGitHubUpdateResult>> => {
+    try {
+      if (!pluginRuntimeService) {
+        throw new Error('PluginRuntimeService not initialized');
+      }
+      if (typeof pluginId !== 'string' || !pluginId) {
+        return { ok: false, error: { code: 'pluginNotFound' } };
+      }
+      const result = await pluginRuntimeService.updateFromGitHub(pluginId);
+      if (result.status === 'updated') {
+        sessionManager?.invalidateSkillsSetup();
+      }
+      return { ok: true, result };
+    } catch (error) {
+      logError('[Plugins] Error updating plugin from GitHub:', error);
+      return { ok: false, error: toPluginGitHubError(error) };
+    }
+  }
+);
 
 ipcMain.handle('plugins.getSessionPinnedPlugins', async (_event, sessionId: string) => {
   try {

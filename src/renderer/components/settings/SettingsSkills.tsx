@@ -19,18 +19,26 @@ import {
   ShieldOff,
   Link,
   AlertTriangle,
+  Github,
 } from 'lucide-react';
 import type {
   Skill,
   PluginCatalogItemV2,
   InstalledPlugin,
   PluginComponentKind,
+  PluginInstallResultV2,
   BuiltinSkillStatus,
 } from '../../types';
 import { useAppStore } from '../../store';
 import { SettingsContentSection } from './shared';
 import type { LocalizedBanner } from './shared';
 import { useSkillConflicts } from '../../hooks/useSkillConflicts';
+import { PluginGitHubInstallDialog } from './PluginGitHubInstallDialog';
+import {
+  describePluginGitHubSource,
+  pluginGitHubErrorMessage,
+  shortCommitSha,
+} from './plugin-github-messages';
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
 
@@ -51,6 +59,7 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isPluginLoading, setIsPluginLoading] = useState(false);
   const [isPluginModalOpen, setIsPluginModalOpen] = useState(false);
+  const [isGitHubDialogOpen, setIsGitHubDialogOpen] = useState(false);
   const [pluginActionKey, setPluginActionKey] = useState<string | null>(null);
   const [pluginToastMessage, setPluginToastMessage] = useState('');
   const [error, setError] = useState<LocalizedBanner | null>(null);
@@ -282,11 +291,7 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
         // User cancelled the file dialog
         return;
       }
-      setPluginToastMessage(
-        tRef.current('skills.pluginInstallSuccess', { name: result.plugin.name })
-      );
-      if (pluginToastTimerRef.current) clearTimeout(pluginToastTimerRef.current);
-      pluginToastTimerRef.current = setTimeout(() => setPluginToastMessage(''), 4000);
+      showPluginInstallToast(pluginInstalledMessage(result));
       await loadInstalledPluginsOnly();
       await loadSkills();
     } catch (error) {
@@ -294,6 +299,62 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
       setError({ text: `${tRef.current('skills.pluginImportFailed')}: ${message}` });
     } finally {
       setIsPluginLoading(false);
+    }
+  }
+
+  /** The success message of an install, with the symbolic links that were left out. */
+  function pluginInstalledMessage(result: PluginInstallResultV2): string {
+    const base = tRef.current('skills.pluginInstallSuccess', { name: result.plugin.name });
+    const skipped = result.skippedSymlinks ?? [];
+    if (skipped.length === 0) {
+      return base;
+    }
+    return `${base}. ${tRef.current('skills.pluginSkippedSymlinks', {
+      count: skipped.length,
+      files: skipped.join(', '),
+    })}`;
+  }
+
+  async function handleGitHubInstalled(result: PluginInstallResultV2) {
+    setError(null);
+    showPluginInstallToast(pluginInstalledMessage(result));
+    await loadInstalledPluginsOnly();
+    await loadSkills();
+  }
+
+  async function handleUpdatePlugin(plugin: InstalledPlugin) {
+    setPluginActionKey(`update:${plugin.pluginId}`);
+    setError(null);
+    try {
+      const response = await window.electronAPI.plugins.updateFromGitHub(plugin.pluginId);
+      if (!response.ok) {
+        setError({ text: pluginGitHubErrorMessage(response.error, t) });
+        return;
+      }
+      if (response.result.status === 'upToDate') {
+        showPluginInstallToast(t('skills.pluginUpToDate', { name: plugin.name }));
+        return;
+      }
+      const updated = response.result;
+      let message = t('skills.pluginUpdated', {
+        name: updated.plugin.name,
+        commit: shortCommitSha(updated.plugin.source?.commitSha) ?? '?',
+      });
+      const skipped = updated.skippedSymlinks ?? [];
+      if (skipped.length > 0) {
+        message += `. ${t('skills.pluginSkippedSymlinks', {
+          count: skipped.length,
+          files: skipped.join(', '),
+        })}`;
+      }
+      showPluginInstallToast(message);
+      await loadInstalledPluginsOnly();
+      await loadSkills();
+    } catch (err) {
+      console.error('Plugin update failed:', err);
+      setError({ key: 'skills.githubErrors.unknown' });
+    } finally {
+      setPluginActionKey(null);
     }
   }
 
@@ -798,7 +859,7 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
         title={t('skills.pluginsTitle')}
         description={t('skills.pluginsDesc')}
       >
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           <button
             onClick={handleBrowsePlugins}
             disabled={isLoading || isPluginLoading}
@@ -822,6 +883,14 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
               <FolderOpen className="w-5 h-5" />
             )}
             {t('skills.importPlugin')}
+          </button>
+          <button
+            onClick={() => setIsGitHubDialogOpen(true)}
+            disabled={isLoading || isPluginLoading}
+            className="w-full py-3 px-4 rounded-lg border border-border-subtle hover:border-accent hover:bg-accent/5 transition-all flex items-center justify-center gap-2 text-text-secondary hover:text-accent disabled:opacity-50"
+          >
+            <Github className="w-5 h-5" aria-hidden="true" />
+            {t('skills.installFromGitHub')}
           </button>
           <button
             onClick={handleInstall}
@@ -850,6 +919,8 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
                 const componentEntries = componentOrder.filter(
                   (c) => plugin.componentCounts[c] > 0
                 );
+                const githubSource = describePluginGitHubSource(plugin);
+                const isUpdating = pluginActionKey === `update:${plugin.pluginId}`;
                 return (
                   <div key={plugin.pluginId} className="rounded-lg border border-border p-4">
                     <div className="flex items-center gap-3">
@@ -878,8 +949,30 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
                             {plugin.description}
                           </p>
                         )}
+                        {githubSource && (
+                          <p className="flex items-center gap-1 text-[11px] text-text-muted mt-0.5 truncate">
+                            <Github className="w-3 h-3 shrink-0" aria-hidden="true" />
+                            <span className="truncate">{githubSource}</span>
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
+                        {githubSource && (
+                          <button
+                            onClick={() => handleUpdatePlugin(plugin)}
+                            disabled={pluginActionKey !== null}
+                            className="p-1.5 rounded-md text-text-muted hover:text-accent hover:bg-accent/10 transition-colors disabled:opacity-50"
+                            title={t('skills.pluginUpdate')}
+                            aria-label={t('skills.pluginUpdateAria', { name: plugin.name })}
+                            aria-busy={isUpdating}
+                          >
+                            {isUpdating ? (
+                              <Loader2 className="w-[18px] h-[18px] animate-spin" />
+                            ) : (
+                              <RefreshCw className="w-[18px] h-[18px]" />
+                            )}
+                          </button>
+                        )}
                         <button
                           onClick={() => handleSetPluginEnabled(plugin, !plugin.enabled)}
                           disabled={pluginActionKey !== null}
@@ -1154,8 +1247,18 @@ export function SettingsSkills({ isActive }: { isActive: boolean }) {
         </div>
       )}
 
+      {isGitHubDialogOpen && (
+        <PluginGitHubInstallDialog
+          onClose={() => setIsGitHubDialogOpen(false)}
+          onInstalled={(result) => void handleGitHubInstalled(result)}
+        />
+      )}
+
       {pluginToastMessage && (
-        <div className="fixed right-6 bottom-6 z-[80] max-w-md rounded-lg border border-success/30 bg-surface px-4 py-3 shadow-elevated">
+        <div
+          role="status"
+          className="fixed right-6 bottom-6 z-[80] max-w-md rounded-lg border border-success/30 bg-surface px-4 py-3 shadow-elevated"
+        >
           <div className="flex items-start gap-2 text-success text-sm">
             <CheckCircle className="w-4 h-4 mt-0.5 shrink-0" />
             <span>{pluginToastMessage}</span>

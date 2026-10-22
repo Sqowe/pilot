@@ -90,7 +90,11 @@
         "src/main/skills/plugin-registry-store.ts",
         "src/main/skills/plugin-catalog-service.ts",
         "src/renderer/components/ContextPanel.tsx",
-        "docs/design/archive/plugin-archive-install-and-pin.md"
+        "docs/design/archive/plugin-archive-install-and-pin.md",
+        "src/renderer/components/settings/PluginGitHubInstallDialog.tsx",
+        "src/main/skills/plugin-github-source.ts",
+        "src/shared/plugin-github-url.ts",
+        "docs/design/plugin-github-install.md"
       ],
       "status": "shipped"
     },

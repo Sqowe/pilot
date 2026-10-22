@@ -32,6 +32,7 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 | 24  | Plugin skills not in SkillsManager           | P3       | Low        | 8h     | Only needed if individual plugin skill pinning is required       |
 | 25  | Sandbox toggle disabled in Settings UI       | P4       | Low        | 1h     | Re-enable once sandbox debugging is complete                     |
 | 26  | God files: index.ts, gui-operate-server.ts   | P3       | Low        | Varies | index.ts nearly doubled since last noted; consider splitting     |
+| 27  | GitHub plugin install: unsupported layouts   | P3       | Low        | Varies | Each gap fails with a clear error; extend per user demand        |
 
 ### My analysis
 
@@ -48,7 +49,7 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 
 **Do when convenient (P3 — cleanup):**
 
-- Items #1, #5, #8, #9, #11, #16, #23, #24, #26 — these work fine today or fail safe. Clean up during regular maintenance.
+- Items #1, #5, #8, #9, #11, #16, #23, #24, #26, #27 — these work fine today or fail safe. Clean up during regular maintenance.
 
 **Backlog (P4 — deferred/optional):**
 
@@ -445,5 +446,53 @@ Tracked cleanup tasks, deferred work, and refactoring opportunities found in the
 **Action:** Consider splitting `index.ts`'s IPC handlers into per-domain modules — several domains (skills, mcp, remote, schedule) already have their own directories, so handlers could move closer to their domain logic. Same idea for `gui-operate-server.ts`.
 
 **Risk:** Low — no functional bugs, but increases the cost of every future change that touches these files.
+
+---
+
+## 27. Plugin Install from GitHub: Unsupported Repository Layouts
+
+**Files:**
+
+- `src/main/skills/plugin-runtime-service.ts` (`locateGitHubPlugin`, `resolveMarketplacePlugin`, `extractZipSafe`, `countSkills`)
+- `src/main/skills/plugin-github-source.ts`
+- `src/shared/plugin-github-url.ts`
+
+**Design:** [`docs/design/plugin-github-install.md`](docs/design/plugin-github-install.md)
+
+**Issue:** "Install from GitHub" (2026-10-22) covers a repository that is one plugin, a
+marketplace with one plugin stored in the same repository, and a link to one plugin's folder.
+These cases fail with an error message instead of installing:
+
+1. **Marketplace with several plugins** — `multiplePlugins`, listing the names. The user has to
+   link one plugin's folder (`/tree/<ref>/<folder>`). A picker in the dialog would remove that step.
+2. **Plugin stored somewhere else** — a marketplace entry whose `source` is an object (`github`,
+   `url`, `git-subdir`, `npm`, `archive`, `command`) gives `unsupportedSource`. Only relative
+   paths inside the downloaded repository are followed.
+3. **Branch names with a `/`** in a `/tree/<branch>/<folder>` link — the first segment is taken as
+   the ref, so `/tree/feature/x/plugins/y` is read as ref `feature` and folder `x/plugins/y`.
+   GitHub's own UI resolves this by asking the API for the list of refs.
+4. **Private repositories** — no token is sent; a private repository looks like `repoNotFound`.
+5. **HTTP proxy setting not used** — the main process's global `fetch` does not read
+   `HTTP_PROXY`/`HTTPS_PROXY` (checked 2026-10-22 under Electron 44 / Node 24: a dead proxy in
+   the environment did not stop a request). Same as the marketplace catalog in
+   `plugin-catalog-service.ts`. pi sets its own dispatcher only in its CLI
+   (`pi-coding-agent/dist/core/http-dispatcher.js`, `configureHttpDispatcher`), which the app
+   never calls.
+
+Two gaps apply to every plugin install, not only GitHub:
+
+6. **Symbolic links are skipped, not preserved.** Claude Code keeps a link that resolves inside
+   the plugin and skips the rest (code.claude.com/docs/en/plugins/host-marketplace, "Share files
+   within a marketplace with symlinks"). We skip all of them, so a plugin that shares a file
+   through an internal link loses that file. The skipped names are shown to the user after install.
+7. **`skills` in `plugin.json` is ignored.** `countSkills`/`listSkillNames` and the agent's skill
+   path (`agent-runner.ts` → `runtime/<id>/skills`) only look at `skills/`. A plugin that declares
+   `"skills": "./other"` installs with 0 skills.
+
+**Action:** Fix per user demand. #1 and #7 are the most likely to come up; #5 needs a decision on
+proxying all main-process `fetch` calls (undici `EnvHttpProxyAgent` as the global dispatcher),
+not a plugin-only fix.
+
+**Risk:** Low — every case fails visibly with a translated message; nothing is installed partially.
 
 ---

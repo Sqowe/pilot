@@ -2,6 +2,7 @@ import type { SkillSource } from '../../shared/skill-conflict-types';
 import type { TokenUsage } from '../../shared/token-usage';
 import type { SharedModelThinkingLevel } from '../../shared/thinking-levels';
 import type { PermissionAskReason } from '../../shared/permission-reason';
+import type { PluginGitHubError } from '../../shared/plugin-github-url';
 export type { TokenUsage } from '../../shared/token-usage';
 
 // Session types
@@ -332,13 +333,38 @@ export interface InstalledPlugin {
   installedAt: number;
   updatedAt: number;
   orchestratorSkill?: string | null;
+  /** Where the plugin came from, when that can be fetched again. Absent for marketplace and archive installs. */
+  source?: PluginGitHubSource;
+}
+
+/** A plugin installed from a GitHub repository (docs/design/plugin-github-install.md). */
+export interface PluginGitHubSource {
+  type: 'github';
+  owner: string;
+  repo: string;
+  /** Branch, tag or commit as the user gave it; undefined = the default branch. */
+  ref?: string;
+  /** Plugin root inside the repository, as located at install. */
+  path?: string;
+  /** The commit the installed files come from. */
+  commitSha?: string;
 }
 
 export interface PluginInstallResultV2 {
   plugin: InstalledPlugin;
   installedSkills: string[];
   warnings: string[];
+  /** Symbolic links in the archive that were not extracted, relative to its top folder. */
+  skippedSymlinks?: string[];
 }
+
+export type PluginGitHubUpdateResult =
+  | { status: 'upToDate'; plugin: InstalledPlugin }
+  | ({ status: 'updated'; previousCommitSha?: string } & PluginInstallResultV2);
+
+export type PluginGitHubResponse<T> =
+  | { ok: true; result: T }
+  | { ok: false; error: PluginGitHubError };
 
 export interface PluginToggleResult {
   success: boolean;

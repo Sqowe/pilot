@@ -10,15 +10,31 @@ import type {
   PluginComponentCounts,
   PluginComponentEnabledState,
   PluginComponentKind,
+  PluginGitHubSource,
+  PluginGitHubUpdateResult,
   PluginInstallResultV2,
   PluginToggleResult,
 } from '../../renderer/types';
+import {
+  isValidGitHubOwner,
+  isValidGitHubRepoName,
+  isValidGitRef,
+  normalizeRepoSubpath,
+  parseGitHubPluginUrl,
+  type GitHubPluginLocation,
+} from '../../shared/plugin-github-url';
 import { log, logError } from '../utils/logger';
 import { isPathWithinRoot } from '../tools/path-containment';
 import { getDefaultShell } from '../utils/shell-resolver';
 import { withRetry } from '../utils/retry';
 import { pluginRegistryStore } from './plugin-registry-store';
 import { PluginCatalogService } from './plugin-catalog-service';
+import {
+  PluginGitHubFailure,
+  downloadGitHubArchive,
+  isCommitSha,
+  resolveCommitSha,
+} from './plugin-github-source';
 
 const execFileAsync = promisify(execFile);
 
@@ -72,6 +88,36 @@ interface ClaudePluginListOutput {
   installed?: ClaudeInstalledPluginRecord[];
 }
 
+/** What `extractZipSafe` reports besides the extracted files. */
+interface ZipExtractionResult {
+  /** The archive comment; a GitHub archive holds its commit id there. */
+  comment: string;
+  /** Symbolic-link entries that were not extracted, as named in the archive. */
+  skippedSymlinks: string[];
+}
+
+interface InstallFromDirectoryOptions {
+  /** Name to use when the plugin has no `plugin.json` name (instead of the folder name). */
+  fallbackName?: string;
+  /** Recorded so the plugin can be updated from where it came from. */
+  source?: PluginGitHubSource;
+  /** The installed entry being updated: its install date and switches are kept. */
+  preserve?: InstalledPlugin;
+}
+
+interface LocatedGitHubPlugin {
+  /** Absolute plugin root inside the extracted repository. */
+  root: string;
+  /** The same, relative to the repository root with forward slashes; undefined = the root. */
+  relativePath?: string;
+  fallbackName: string;
+}
+
+interface MarketplaceManifest {
+  plugins?: Array<{ name?: unknown; source?: unknown }>;
+  metadata?: { pluginRoot?: unknown };
+}
+
 const EMPTY_COUNTS: PluginComponentCounts = {
   skills: 0,
   commands: 0,
@@ -111,6 +157,7 @@ function cloneComponentState(state: PluginComponentEnabledState): PluginComponen
 export class PluginRuntimeService {
   private readonly catalogService: PluginCatalogService;
   private readonly commandRunner: CommandRunner;
+  private readonly fetchFn: typeof fetch;
   /** Longest an archive may take to extract before the install fails (all install paths). */
   private readonly extractTimeoutMs: number;
   /** Opens an archive for reading; yauzl unless a test hands in a stand-in. */
@@ -119,10 +166,13 @@ export class PluginRuntimeService {
   constructor(
     catalogService: PluginCatalogService = new PluginCatalogService(),
     commandRunner: CommandRunner = PluginRuntimeService.defaultCommandRunner,
+    // Read at call time, so whatever global fetch is in place then is used.
+    fetchFn: typeof fetch = (input, init) => fetch(input, init),
     options: { extractTimeoutMs?: number; openZip?: ZipOpener } = {}
   ) {
     this.catalogService = catalogService;
     this.commandRunner = commandRunner;
+    this.fetchFn = fetchFn;
     this.extractTimeoutMs = options.extractTimeoutMs ?? DEFAULT_EXTRACT_TIMEOUT_MS;
     this.openZip = options.openZip ?? openWithYauzl;
   }
@@ -174,15 +224,25 @@ export class PluginRuntimeService {
     return result;
   }
 
-  async installFromDirectory(pluginRootPath: string): Promise<PluginInstallResultV2> {
+  async installFromDirectory(
+    pluginRootPath: string,
+    options: InstallFromDirectoryOptions = {}
+  ): Promise<PluginInstallResultV2> {
     if (!fs.existsSync(pluginRootPath) || !fs.statSync(pluginRootPath).isDirectory()) {
       throw new Error('Plugin directory does not exist');
     }
     log(`[PluginRuntime] Importing plugin directory: ${pluginRootPath}`);
 
     const sourceManifest = this.readManifest(pluginRootPath);
-    const displayName = sourceManifest?.name?.trim() || path.basename(pluginRootPath);
-    const pluginId = this.sanitizePluginId(displayName);
+    const { displayName, pluginId } = this.resolvePluginIdentity(
+      sourceManifest,
+      options.fallbackName || path.basename(pluginRootPath)
+    );
+    const previous = options.preserve ? this.normalizeInstalledPlugin(options.preserve) : null;
+    if (previous && previous.pluginId !== pluginId) {
+      // Checked before anything is removed: the old files stay as they are.
+      throw new PluginGitHubFailure('pluginRenamed', displayName);
+    }
     const sourcePath = this.getSourcePath(pluginId);
     const runtimePath = this.getRuntimePath(pluginId);
     const componentCounts = this.detectComponentCounts(pluginRootPath, sourceManifest);
@@ -193,6 +253,9 @@ export class PluginRuntimeService {
 
     const now = Date.now();
     const defaultComponentState = this.getDefaultComponentState(componentCounts);
+    const componentsEnabled = previous
+      ? this.mergeComponentState(previous, componentCounts, defaultComponentState)
+      : defaultComponentState;
     const hasAnyComponent = this.hasAnyEnabledComponent(defaultComponentState, componentCounts);
     const orchestratorSkill = this.detectOrchestrator(sourcePath);
     const installedPlugin: InstalledPlugin = {
@@ -201,17 +264,18 @@ export class PluginRuntimeService {
       description: sourceManifest?.description,
       version: sourceManifest?.version,
       authorName: this.resolveAuthorName(sourceManifest?.author),
-      enabled: hasAnyComponent,
+      enabled: previous ? previous.enabled : hasAnyComponent,
       sourcePath,
       runtimePath,
       componentCounts,
-      componentsEnabled: defaultComponentState,
-      installedAt: now,
+      componentsEnabled,
+      installedAt: previous?.installedAt ?? now,
       updatedAt: now,
       // undefined = scan failed (will be retried on next backfill)
       // null = scan succeeded, no orchestrator found
       // string = orchestrator skill name
       orchestratorSkill: orchestratorSkill,
+      ...(options.source ? { source: { ...options.source } } : {}),
     };
 
     pluginRegistryStore.save(installedPlugin);
@@ -261,21 +325,13 @@ export class PluginRuntimeService {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cowork-plugin-'));
 
     try {
-      await this.extractZipSafe(archivePath, tempDir);
+      const extraction = await this.extractZipSafe(archivePath, tempDir);
 
       // Handle archives that contain a single top-level directory (common pattern).
       // Ignore known metadata entries like __MACOSX, .DS_Store, etc.
-      const topEntries = fs.readdirSync(tempDir, { withFileTypes: true });
-      const meaningfulEntries = topEntries.filter((e) => {
-        const name = e.name;
-        return (
-          e.isDirectory() && name !== '__MACOSX' && name !== '.DS_Store' && !name.startsWith('._')
-        );
-      });
-
+      const singleDir = this.findSingleTopDirectory(tempDir);
       let pluginRoot = tempDir;
-      if (meaningfulEntries.length === 1) {
-        const singleDir = path.join(tempDir, meaningfulEntries[0].name);
+      if (singleDir) {
         // Check if the plugin structure is inside the single directory
         const hasPluginMarker =
           fs.existsSync(path.join(singleDir, '.claude-plugin', 'plugin.json')) ||
@@ -287,7 +343,13 @@ export class PluginRuntimeService {
 
       const result = await this.installFromDirectory(pluginRoot);
       log(`[PluginRuntime] Archive install completed: ${result.plugin.name} from ${archivePath}`);
-      return result;
+      return this.withSkippedSymlinks(
+        result,
+        this.stripTopFolder(
+          extraction.skippedSymlinks,
+          singleDir ? path.basename(singleDir) : undefined
+        )
+      );
     } finally {
       // Clean up temp directory; don't mask original errors on cleanup failure
       try {
@@ -299,11 +361,145 @@ export class PluginRuntimeService {
   }
 
   /**
+   * Install a plugin from a GitHub repository link (docs/design/plugin-github-install.md).
+   * Downloads the commit as a zip, extracts it with the same checks as an archive
+   * import, finds the plugin in it and records where it came from, for Update.
+   * Failures are {@link PluginGitHubFailure}s with a code the renderer translates.
+   */
+  async installFromGitHub(input: string): Promise<PluginInstallResultV2> {
+    const location = parseGitHubPluginUrl(input);
+    if (!location) {
+      throw new PluginGitHubFailure('invalidUrl');
+    }
+    log(
+      `[PluginRuntime] GitHub install requested: ${location.owner}/${location.repo} ref=${location.ref ?? '(default)'} path=${location.path ?? '(root)'}`
+    );
+
+    const apiSha = await resolveCommitSha(location, { fetchFn: this.fetchFn });
+    return this.withGitHubCheckout(location, apiSha, async (checkout) => {
+      const located = this.locateGitHubPlugin(checkout.repoRoot, location);
+      const result = await this.installFromDirectory(located.root, {
+        fallbackName: located.fallbackName,
+        source: this.buildGitHubSource(location, located, apiSha ?? checkout.archiveSha),
+      });
+      log(
+        `[PluginRuntime] GitHub install completed: ${result.plugin.name} (${result.plugin.pluginId}) from ${location.owner}/${location.repo}@${result.plugin.source?.commitSha ?? '?'}`
+      );
+      return this.withSkippedSymlinks(result, checkout.skippedSymlinks);
+    });
+  }
+
+  /**
+   * Bring a plugin installed from GitHub to the newest commit of its ref.
+   * Asks GitHub for the commit first and downloads nothing when it is the
+   * installed one. The install date and the user's switches are kept; a
+   * component that is new gets the install default (hooks and MCP off).
+   */
+  async updateFromGitHub(pluginId: string): Promise<PluginGitHubUpdateResult> {
+    const stored = pluginRegistryStore.get(pluginId);
+    if (!stored) {
+      throw new PluginGitHubFailure('pluginNotFound', pluginId);
+    }
+    const plugin = this.normalizeInstalledPlugin(stored);
+    const location = this.locationFromSource(plugin.source);
+    if (!location) {
+      throw new PluginGitHubFailure('notFromGitHub', plugin.name);
+    }
+    const previousSha = plugin.source?.commitSha;
+    log(
+      `[PluginRuntime] GitHub update requested: ${plugin.name} (${pluginId}) from ${location.owner}/${location.repo}@${previousSha ?? '?'}`
+    );
+
+    const apiSha = await resolveCommitSha(location, { fetchFn: this.fetchFn });
+    if (apiSha && apiSha === previousSha) {
+      log(`[PluginRuntime] GitHub update: ${plugin.name} is up to date (${apiSha})`);
+      return { status: 'upToDate', plugin };
+    }
+
+    return this.withGitHubCheckout(location, apiSha, async (checkout) => {
+      const commitSha = apiSha ?? checkout.archiveSha;
+      if (commitSha && commitSha === previousSha) {
+        log(`[PluginRuntime] GitHub update: ${plugin.name} is up to date (${commitSha})`);
+        return { status: 'upToDate', plugin };
+      }
+      const located = this.locateGitHubPlugin(checkout.repoRoot, location);
+      const result = await this.installFromDirectory(located.root, {
+        fallbackName: located.fallbackName,
+        source: this.buildGitHubSource(location, located, commitSha),
+        preserve: plugin,
+      });
+      log(
+        `[PluginRuntime] GitHub update completed: ${result.plugin.name} ${previousSha ?? '?'} -> ${commitSha ?? '?'}`
+      );
+      return {
+        status: 'updated',
+        previousCommitSha: previousSha,
+        ...this.withSkippedSymlinks(result, checkout.skippedSymlinks),
+      };
+    });
+  }
+
+  /**
+   * Download the repository at `apiSha` (or at its ref when GitHub gave no
+   * commit), extract it into a fresh temp folder and hand the repository root
+   * to `work`. The temp folder is removed whatever happens.
+   */
+  private async withGitHubCheckout<T>(
+    location: GitHubPluginLocation,
+    apiSha: string | null,
+    work: (checkout: {
+      repoRoot: string;
+      archiveSha?: string;
+      skippedSymlinks: string[];
+    }) => Promise<T>
+  ): Promise<T> {
+    // Not `cowork-plugin-`: the archive import's cleanup test counts that prefix.
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqowe-plugin-github-'));
+    try {
+      const archiveFile = path.join(tempDir, 'repository.zip');
+      const extractDir = path.join(tempDir, 'repository');
+      fs.mkdirSync(extractDir);
+      await downloadGitHubArchive(location, apiSha ?? location.ref ?? 'HEAD', archiveFile, {
+        fetchFn: this.fetchFn,
+      });
+
+      let extraction: ZipExtractionResult;
+      try {
+        extraction = await this.extractZipSafe(archiveFile, extractDir);
+      } catch (error) {
+        throw new PluginGitHubFailure('archiveInvalid', undefined, error);
+      }
+
+      // A GitHub archive wraps the tree in one `<repo>-<ref>/` folder.
+      const topDir = this.findSingleTopDirectory(extractDir);
+      const repoRoot = topDir ?? extractDir;
+      return await work({
+        repoRoot,
+        archiveSha: isCommitSha(extraction.comment) ? extraction.comment : undefined,
+        skippedSymlinks: this.stripTopFolder(
+          extraction.skippedSymlinks,
+          topDir ? path.basename(topDir) : undefined
+        ),
+      });
+    } finally {
+      try {
+        await this.removePathWithRetries(tempDir);
+      } catch (cleanupErr) {
+        logError(`[PluginRuntime] Failed to clean up temp directory: ${tempDir}`, cleanupErr);
+      }
+    }
+  }
+
+  /**
    * Safely extract a zip/plugin archive to a target directory.
    * Uses yauzl directly for full control: validates each entry before writing,
-   * rejects symlinks, enforces path traversal protection, and counts actual bytes.
+   * skips symbolic links (never created, never followed — and reported),
+   * enforces path traversal protection, and counts actual bytes.
    */
-  private async extractZipSafe(archivePath: string, targetDir: string): Promise<void> {
+  private async extractZipSafe(
+    archivePath: string,
+    targetDir: string
+  ): Promise<ZipExtractionResult> {
     const absoluteArchive = path.resolve(archivePath);
     const absoluteTarget = path.resolve(targetDir);
 
@@ -315,6 +511,7 @@ export class PluginRuntimeService {
 
     let entryCount = 0;
     let totalBytesWritten = 0;
+    const skippedSymlinks: string[] = [];
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -387,14 +584,15 @@ export class PluginRuntimeService {
               );
             }
 
-            // Reject symlinks: external file attributes encode Unix mode in upper 16 bits
+            // Skip symlinks: external file attributes encode Unix mode in upper 16 bits.
+            // Nothing is written for the entry, so nothing can be reached through it.
             const externalAttrs = entry.externalFileAttributes;
             const unixMode = (externalAttrs >>> 16) & 0xffff;
             const S_IFLNK = 0o120000;
             if (unixMode !== 0 && (unixMode & 0o170000) === S_IFLNK) {
-              return safeReject(
-                new Error(`Unsafe archive entry (symlink): ${fileName}. Aborting.`)
-              );
+              skippedSymlinks.push(fileName);
+              zipFile.readEntry();
+              return;
             }
 
             const destPath = path.join(absoluteTarget, fileName);
@@ -481,6 +679,16 @@ export class PluginRuntimeService {
         // Already closed
       }
     }
+
+    if (skippedSymlinks.length > 0) {
+      log(
+        `[PluginRuntime] Skipped ${skippedSymlinks.length} symbolic link(s) in ${absoluteArchive}: ${skippedSymlinks.join(', ')}`
+      );
+    }
+    return {
+      comment: typeof zipFile.comment === 'string' ? zipFile.comment.trim() : '',
+      skippedSymlinks,
+    };
   }
 
   async setEnabled(pluginId: string, enabled: boolean): Promise<PluginToggleResult> {
@@ -1328,6 +1536,227 @@ export class PluginRuntimeService {
     } catch (error) {
       logError('[PluginRuntime] Error during orchestrator backfill', error);
     }
+  }
+
+  /**
+   * The one folder an archive was packed in, ignoring macOS metadata entries
+   * (`__MACOSX`, `._*`). Null when there is not exactly one.
+   */
+  private findSingleTopDirectory(dir: string): string | null {
+    const meaningful = fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => {
+      const name = entry.name;
+      return (
+        entry.isDirectory() && name !== '__MACOSX' && name !== '.DS_Store' && !name.startsWith('._')
+      );
+    });
+    return meaningful.length === 1 ? path.join(dir, meaningful[0].name) : null;
+  }
+
+  /** Archive entry names without the archive's top folder. */
+  private stripTopFolder(entries: string[], topFolder: string | undefined): string[] {
+    if (!topFolder) return entries;
+    const prefix = `${topFolder}/`;
+    return entries.map((entry) => (entry.startsWith(prefix) ? entry.slice(prefix.length) : entry));
+  }
+
+  private withSkippedSymlinks(
+    result: PluginInstallResultV2,
+    skippedSymlinks: string[]
+  ): PluginInstallResultV2 {
+    return skippedSymlinks.length > 0 ? { ...result, skippedSymlinks } : result;
+  }
+
+  /**
+   * Find the plugin inside an extracted repository, at the folder the link
+   * named: a `plugin.json`, else the single plugin of a `marketplace.json`,
+   * else a `skills/` folder. Every path stays inside the repository.
+   */
+  private locateGitHubPlugin(
+    repoRoot: string,
+    location: GitHubPluginLocation
+  ): LocatedGitHubPlugin {
+    const realRepoRoot = fs.realpathSync(repoRoot);
+    const start = location.path
+      ? this.resolveInsideRepo(realRepoRoot, location.path, 'pathNotFound')
+      : realRepoRoot;
+
+    let root = start;
+    let entryName: string | undefined;
+    if (!fs.existsSync(path.join(start, '.claude-plugin', 'plugin.json'))) {
+      const marketplacePath = path.join(start, '.claude-plugin', 'marketplace.json');
+      if (fs.existsSync(marketplacePath)) {
+        const fromMarketplace = this.resolveMarketplacePlugin(realRepoRoot, start, marketplacePath);
+        root = fromMarketplace.root;
+        entryName = fromMarketplace.name;
+      } else if (this.countSkills(start) === 0) {
+        throw new PluginGitHubFailure('noPlugin');
+      }
+    }
+
+    const relative = path.relative(realRepoRoot, root).split(path.sep).join('/');
+    const lastSegment = relative ? relative.split('/').pop() : undefined;
+    return {
+      root,
+      relativePath: relative || undefined,
+      fallbackName: entryName || lastSegment || location.repo,
+    };
+  }
+
+  /** The single plugin a `marketplace.json` lists, when its files are in this repository. */
+  private resolveMarketplacePlugin(
+    realRepoRoot: string,
+    marketplaceRoot: string,
+    marketplacePath: string
+  ): { root: string; name?: string } {
+    let manifest: MarketplaceManifest;
+    try {
+      manifest = JSON.parse(fs.readFileSync(marketplacePath, 'utf8')) as MarketplaceManifest;
+    } catch (error) {
+      logError(`[PluginRuntime] Failed to parse marketplace manifest: ${marketplacePath}`, error);
+      throw new PluginGitHubFailure('noPlugin', 'marketplace.json');
+    }
+
+    const entries = Array.isArray(manifest?.plugins) ? manifest.plugins : [];
+    if (entries.length === 0) {
+      throw new PluginGitHubFailure('noPlugin', 'marketplace.json');
+    }
+    if (entries.length > 1) {
+      const names = entries
+        .map((entry) => (typeof entry?.name === 'string' ? entry.name : '?'))
+        .join(', ');
+      throw new PluginGitHubFailure('multiplePlugins', names);
+    }
+
+    const entry = entries[0];
+    const name =
+      typeof entry?.name === 'string' && entry.name.trim() ? entry.name.trim() : undefined;
+    const source = entry?.source;
+    if (typeof source !== 'string') {
+      const kind =
+        source &&
+        typeof source === 'object' &&
+        typeof (source as { source?: unknown }).source === 'string'
+          ? String((source as { source: string }).source)
+          : 'unknown';
+      throw new PluginGitHubFailure('unsupportedSource', kind);
+    }
+
+    // Claude Code's rules: `.` or `./…` from the marketplace root, or a bare
+    // name under `metadata.pluginRoot`; never `..`, a backslash or an absolute path.
+    let relative: string;
+    if (source === '.' || source.startsWith('./')) {
+      relative = source;
+    } else if (
+      !source.includes('/') &&
+      typeof manifest.metadata?.pluginRoot === 'string' &&
+      manifest.metadata.pluginRoot.trim()
+    ) {
+      relative = `${manifest.metadata.pluginRoot.trim()}/${source}`;
+    } else {
+      throw new PluginGitHubFailure('unsupportedSource', source);
+    }
+    const segments = relative.split('/').filter((segment) => segment !== '' && segment !== '.');
+    if (segments.length === 0) {
+      return { root: marketplaceRoot, name };
+    }
+    const subpath = normalizeRepoSubpath(segments);
+    if (!subpath) {
+      throw new PluginGitHubFailure('unsupportedSource', source);
+    }
+    const root = this.resolveInsideRepo(
+      realRepoRoot,
+      path.posix.join(
+        path.relative(realRepoRoot, marketplaceRoot).split(path.sep).join('/'),
+        subpath
+      ),
+      'noPlugin'
+    );
+    return { root, name };
+  }
+
+  /** An existing folder inside the repository, by its real path; `failure` otherwise. */
+  private resolveInsideRepo(
+    realRepoRoot: string,
+    relativePath: string,
+    failure: 'pathNotFound' | 'noPlugin'
+  ): string {
+    const subpath = normalizeRepoSubpath(relativePath.split('/'));
+    if (!subpath) {
+      throw new PluginGitHubFailure(failure, relativePath);
+    }
+    const candidate = path.resolve(realRepoRoot, ...subpath.split('/'));
+    let real: string;
+    try {
+      real = fs.realpathSync(candidate);
+    } catch {
+      throw new PluginGitHubFailure(failure, subpath);
+    }
+    if (!isPathWithinRoot(real, realRepoRoot) || !fs.statSync(real).isDirectory()) {
+      throw new PluginGitHubFailure(failure, subpath);
+    }
+    return real;
+  }
+
+  private buildGitHubSource(
+    location: GitHubPluginLocation,
+    located: LocatedGitHubPlugin,
+    commitSha: string | undefined | null
+  ): PluginGitHubSource {
+    return {
+      type: 'github',
+      owner: location.owner,
+      repo: location.repo,
+      ...(location.ref ? { ref: location.ref } : {}),
+      ...(located.relativePath ? { path: located.relativePath } : {}),
+      ...(isCommitSha(commitSha) ? { commitSha } : {}),
+    };
+  }
+
+  /** The stored source as a location to fetch, or null when it is not a valid GitHub one. */
+  private locationFromSource(source: InstalledPlugin['source']): GitHubPluginLocation | null {
+    if (!source || source.type !== 'github') return null;
+    if (!isValidGitHubOwner(source.owner) || !isValidGitHubRepoName(source.repo)) return null;
+    if (source.ref !== undefined && !isValidGitRef(source.ref)) return null;
+    if (
+      source.path !== undefined &&
+      (typeof source.path !== 'string' ||
+        normalizeRepoSubpath(source.path.split('/')) !== source.path)
+    ) {
+      return null;
+    }
+    return {
+      owner: source.owner,
+      repo: source.repo,
+      ...(source.ref ? { ref: source.ref } : {}),
+      ...(source.path ? { path: source.path } : {}),
+    };
+  }
+
+  private resolvePluginIdentity(
+    manifest: PluginManifest | null,
+    fallbackName: string
+  ): { displayName: string; pluginId: string } {
+    const manifestName = typeof manifest?.name === 'string' ? manifest.name.trim() : '';
+    const displayName = manifestName || fallbackName;
+    return { displayName, pluginId: this.sanitizePluginId(displayName) };
+  }
+
+  /**
+   * Switches for an updated plugin: each component it already had keeps the
+   * user's choice; a component that is new gets the install default.
+   */
+  private mergeComponentState(
+    previous: InstalledPlugin,
+    counts: PluginComponentCounts,
+    defaults: PluginComponentEnabledState
+  ): PluginComponentEnabledState {
+    const merged = cloneComponentState(defaults);
+    for (const component of Object.keys(merged) as PluginComponentKind[]) {
+      if (previous.componentCounts[component] > 0) {
+        merged[component] = previous.componentsEnabled[component] && counts[component] > 0;
+      }
+    }
+    return merged;
   }
 
   private sanitizePluginId(name: string): string {

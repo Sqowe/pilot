@@ -159,7 +159,7 @@ async function createRuntimeService(options?: {
     downloadPlugin: vi.fn(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
-  return new PluginRuntimeService(fakeCatalogService, undefined, options);
+  return new PluginRuntimeService(fakeCatalogService, undefined, undefined, options);
 }
 
 describe('PluginRuntimeService.installFromArchive', () => {
@@ -310,7 +310,7 @@ describe('PluginRuntimeService.installFromArchive', () => {
     expect(newDirs).toHaveLength(0);
   });
 
-  it('rejects archives containing symlink entries', async () => {
+  it('skips symlink entries without creating them and reports them', async () => {
     // archiver supports symlinks via the 'symlink' mode in entry data
     const archivePath = path.join(testRoot, 'symlink-archive.zip');
     await new Promise<void>((resolve, reject) => {
@@ -319,15 +319,31 @@ describe('PluginRuntimeService.installFromArchive', () => {
       output.on('close', () => resolve());
       archive.on('error', reject);
       archive.pipe(output);
-      // Add a normal file
-      archive.append(Buffer.from('content'), { name: 'plugin/file.txt' });
-      // Add a symlink entry (archiver supports this via mode)
+      archive.append(Buffer.from(JSON.stringify({ name: 'linked', version: '1.0.0' })), {
+        name: 'plugin/.claude-plugin/plugin.json',
+      });
+      archive.append(Buffer.from('---\nname: alpha\ndescription: Alpha\n---\n'), {
+        name: 'plugin/skills/alpha/SKILL.md',
+      });
+      // A link out of the archive and one inside it: neither may be created.
       archive.symlink('plugin/evil-link', '/etc/passwd');
+      archive.symlink('plugin/CLAUDE.md', 'AGENTS.md');
       archive.finalize();
     });
 
     const service = await createRuntimeService();
-    await expect(service.installFromArchive(archivePath)).rejects.toThrow(/symlink/i);
+    const result = await service.installFromArchive(archivePath);
+
+    expect(result.plugin.name).toBe('linked');
+    expect(result.installedSkills).toEqual(['alpha']);
+    expect(result.skippedSymlinks?.sort()).toEqual(['CLAUDE.md', 'evil-link']);
+    for (const root of [result.plugin.sourcePath, result.plugin.runtimePath]) {
+      for (const name of ['evil-link', 'CLAUDE.md']) {
+        const target = path.join(root, name);
+        expect(fs.existsSync(target)).toBe(false);
+        expect(() => fs.lstatSync(target)).toThrow();
+      }
+    }
   });
 
   it('rejects archives with path traversal entries', async () => {

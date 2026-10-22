@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Install a plugin straight from GitHub.** Settings → Skills → **Install from GitHub**
+  takes a repository link — `https://github.com/owner/repo`, a link to one plugin's folder
+  (`…/tree/main/plugins/name`), a branch or tag, or just `owner/repo`. It works for a
+  repository that is a plugin, and for a plugin marketplace that keeps one plugin in the
+  same repository, such as `coreyhaines31/marketingskills`. A marketplace with several
+  plugins names them, so you can link the folder of the one you want. Public repositories
+  only.
+- **Update from GitHub.** A plugin installed this way shows its repository, branch and
+  commit, and an **Update from GitHub** button. Update downloads nothing when there is no
+  newer commit; otherwise it installs the new one and keeps the plugin's switches as you
+  set them. Components that appear for the first time start with the install defaults, so
+  new hooks and MCP stay off.
+
+### Changed
+
+- **Symbolic links in a plugin archive are skipped instead of failing the install.** An
+  archive with a link — the GitHub download of `marketingskills` has one, `CLAUDE.md` —
+  was refused as a whole. Now the link is left out (never created, never followed) and the
+  success message names it.
+
 ### Fixed
 
 - **Importing a large plugin archive no longer hangs.** The archive reader stopped for good

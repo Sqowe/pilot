@@ -14,6 +14,8 @@ import type {
   PluginCatalogItemV2,
   InstalledPlugin,
   PluginInstallResultV2,
+  PluginGitHubResponse,
+  PluginGitHubUpdateResult,
   PluginToggleResult,
   PluginComponentKind,
   ScheduleTask,
@@ -478,6 +480,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('plugins.install', pluginName),
     installFromFile: (): Promise<PluginInstallResultV2 | null> =>
       ipcRenderer.invoke('plugins.installFromFile'),
+    installFromGitHub: (url: string): Promise<PluginGitHubResponse<PluginInstallResultV2>> =>
+      ipcRenderer.invoke('plugins.installFromGitHub', url),
+    updateFromGitHub: (pluginId: string): Promise<PluginGitHubResponse<PluginGitHubUpdateResult>> =>
+      ipcRenderer.invoke('plugins.updateFromGitHub', pluginId),
     getSessionPinnedPlugins: (sessionId: string): Promise<string[]> =>
       ipcRenderer.invoke('plugins.getSessionPinnedPlugins', sessionId),
     toggleSessionPluginPin: (sessionId: string, pluginId: string): Promise<string[]> =>
@@ -982,6 +988,10 @@ declare global {
         listInstalled: () => Promise<InstalledPlugin[]>;
         install: (pluginName: string) => Promise<PluginInstallResultV2>;
         installFromFile: () => Promise<PluginInstallResultV2 | null>;
+        installFromGitHub: (url: string) => Promise<PluginGitHubResponse<PluginInstallResultV2>>;
+        updateFromGitHub: (
+          pluginId: string
+        ) => Promise<PluginGitHubResponse<PluginGitHubUpdateResult>>;
         getSessionPinnedPlugins: (sessionId: string) => Promise<string[]>;
         toggleSessionPluginPin: (sessionId: string, pluginId: string) => Promise<string[]>;
         setEnabled: (pluginId: string, enabled: boolean) => Promise<PluginToggleResult>;

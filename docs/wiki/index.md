@@ -22,7 +22,7 @@ data, can be driven remotely from **Feishu** or **Slack**, and can operate deskt
 - **[Generate documents with Skills](features/skills.md)** — built-in workflows for PowerPoint, Word, PDF, and Excel, plus your own custom skills.
 - **[Pin skills & manage profiles](features/skill-pinning-and-profiles.md)** — tell the agent which skills to prioritize, and trim unused ones to save context.
 - **[Resolve skill conflicts](features/skill-conflicts.md)** — decide what happens when a custom skill and a built-in share a name.
-- **[Install plugins](features/plugins.md)** — add bundles of skills, commands, and agents from the marketplace or a local archive.
+- **[Install plugins](features/plugins.md)** — add bundles of skills, commands, and agents from the marketplace, a local archive, or a GitHub repository.
 - **[Connect external tools (MCP)](features/mcp-connectors.md)** — plug in browsers, Notion, databases, and your own services.
 - **[Remember across sessions](features/memory.md)** — the agent learns your preferences and recalls past conversations, with local embeddings by default.
 - **[Schedule tasks](features/scheduling.md)** — run prompts automatically on a daily/weekly schedule with budgets and catch-up.
