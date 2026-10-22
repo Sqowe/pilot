@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of text. Now the line is gone, and text scrolling past that point fades away before it
   reaches the box. Scrolling and selecting text work there as before.
 
+### Fixed
+
+- **The backup check of the skills folder sees linked skills.** When the app cannot watch
+  the skills folder, it checks the folder every three seconds instead. That check counted
+  only real folders, but the skills folder is mostly links (to `~/.claude/skills` and to
+  the app's built-in skills), so it never noticed a skill being added, removed or edited.
+  It now follows the links and skips a broken or looping one.
+
 ## [1.3.2] - 2026-10-22
 
 ### Changed

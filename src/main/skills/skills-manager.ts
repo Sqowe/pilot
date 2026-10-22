@@ -278,16 +278,17 @@ export class SkillsManager {
       if (!fs.existsSync(storagePath) || !fs.statSync(storagePath).isDirectory()) {
         return '';
       }
-      const entries = fs.readdirSync(storagePath, { withFileTypes: true });
-      const parts = entries
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => {
-          const skillMdPath = path.join(storagePath, entry.name, 'SKILL.md');
-          if (!fs.existsSync(skillMdPath)) {
-            return null;
+      // statSync follows links: the runtime skills dir is mostly links, and
+      // Dirent.isDirectory() is false for a link even when it points at a folder.
+      const parts = fs
+        .readdirSync(storagePath)
+        .map((name) => {
+          const skillMdPath = path.join(storagePath, name, 'SKILL.md');
+          try {
+            return `${name}:${fs.statSync(skillMdPath).mtimeMs}`;
+          } catch {
+            return null; // not a skill folder, a dangling or looping link, or unreadable
           }
-          const stat = fs.statSync(skillMdPath);
-          return `${entry.name}:${stat.mtimeMs}`;
         })
         .filter((value): value is string => Boolean(value))
         .sort();
