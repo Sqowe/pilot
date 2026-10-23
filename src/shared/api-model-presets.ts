@@ -86,7 +86,6 @@ export const API_PROVIDER_PRESETS: SharedProviderPresets = {
       { id: 'claude-sonnet-4-6', name: 'claude-sonnet-4-6' },
       { id: 'claude-haiku-4-5', name: 'claude-haiku-4-5' },
       { id: 'claude-sonnet-4-5', name: 'claude-sonnet-4-5' },
-      { id: 'claude-3-7-sonnet-latest', name: 'claude-3-7-sonnet-latest' },
     ],
     keyPlaceholder: 'sk-ant-...',
     keyHint: 'api.providerHints.anthropic.keyHint',
@@ -192,7 +191,6 @@ export const PI_AI_CURATED_PRESETS: Record<string, { piProvider: string; pick: s
       'claude-sonnet-4-6',
       'claude-haiku-4-5',
       'claude-sonnet-4-5',
-      'claude-3-7-sonnet-latest',
     ],
   },
   openai: {

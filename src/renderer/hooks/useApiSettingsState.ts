@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../store';
 import type { AppConfig, CustomProtocolType, ProviderPresets, ProviderType } from '../types';
 import { isElectron, translateApiConfigErrorMessage } from './api-config-shared';
+import type { ProviderCatalogEntry } from '../../shared/provider-catalog';
 import { runtimeOf, type PersistedCredentials } from './api-settings-view';
 import type { ModelSetDraft } from './model-sets-state';
 import { useApiConfigMessages } from './useApiConfigMessages';
@@ -51,11 +52,18 @@ export function useApiSettingsState(options: UseApiSettingsStateOptions = {}) {
   // it) and reports through a ref, because the handler that applies a loaded
   // config is defined after both.
   const applyLoadedRef = useRef<
-    (config: AppConfig | null | undefined, presets: ProviderPresets) => void
+    (
+      config: AppConfig | null | undefined,
+      presets: ProviderPresets,
+      catalogue: ProviderCatalogEntry[]
+    ) => void
   >(() => {});
   const handleLoaded = useCallback(
-    (config: AppConfig | null | undefined, loadedPresets: ProviderPresets) =>
-      applyLoadedRef.current(config, loadedPresets),
+    (
+      config: AppConfig | null | undefined,
+      loadedPresets: ProviderPresets,
+      catalogue: ProviderCatalogEntry[]
+    ) => applyLoadedRef.current(config, loadedPresets, catalogue),
     []
   );
   const { presets, providerCatalog, isCatalogLoading, isLoadingConfig } = useApiConfigSource({
@@ -78,7 +86,7 @@ export function useApiSettingsState(options: UseApiSettingsStateOptions = {}) {
     (draft: ModelSetDraft) => runtimeOf(draft.provider, draft.endpointId, credentials, presets),
     [credentials, presets]
   );
-  const sets = useModelSets({ initialConfig, messages, runtimeFor });
+  const sets = useModelSets({ initialConfig, messages, runtimeFor, catalogue: providerCatalog });
   const applySetsConfig = sets.applyPersistedConfig;
 
   const publishConfig = useCallback(
@@ -92,8 +100,8 @@ export function useApiSettingsState(options: UseApiSettingsStateOptions = {}) {
   // Assigned during render, not in an effect: the loader's own effect runs
   // before any effect declared here, and when nothing in a load has to be
   // awaited it reports within that same pass.
-  applyLoadedRef.current = (config, loadedPresets) => {
-    applySetsConfig(config, loadedPresets, 'reset');
+  applyLoadedRef.current = (config, loadedPresets, catalogue) => {
+    applySetsConfig(config, loadedPresets, 'reset', catalogue);
     setCredentials(credentialsOf(config));
   };
 

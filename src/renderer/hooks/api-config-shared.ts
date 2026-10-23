@@ -407,23 +407,34 @@ export function defaultModelFields(
 
 /**
  * Split a stored model id into the form's picked / typed pair: picked when the
- * provider's preset list has it, typed otherwise.
+ * provider's list has it, typed otherwise.
+ *
+ * "The provider's list" is the list the form actually shows: the catalogue the
+ * picker offers, and — until the catalogue has arrived — the provider's preset
+ * list. A model in neither stays typed.
+ *
+ * The catalogue is passed in rather than looked up, so this stays pure and the
+ * caller decides which list is current. Without it, a model the picker offers
+ * but the curated presets do not name (most of them) would open as typed: a
+ * bare text field, and for a builtin cloud provider no toggle back to the list.
  */
 export function splitModelSelection(
   storedModel: string,
   provider: ProviderType,
   customProtocol: CustomProtocolType,
-  presets: ProviderPresets
+  presets: ProviderPresets,
+  catalogueModels?: readonly ProviderModelInfo[]
 ): Pick<ModelFields, 'model' | 'customModel' | 'useCustomModel'> {
   const defaults = defaultModelFields(provider, customProtocol, presets);
   const modelValue = normalizeLegacyModelId(provider, storedModel) || defaults.model;
-  const hasPresetModel = modelPresetFor(provider, customProtocol, presets).models.some(
-    (item) => item.id === modelValue
-  );
+  const presetModels = modelPresetFor(provider, customProtocol, presets).models;
+  const isPicked =
+    presetModels.some((item) => item.id === modelValue) ||
+    (catalogueModels ?? []).some((item) => item.id === modelValue);
   return {
-    model: hasPresetModel ? modelValue : defaults.model,
-    customModel: hasPresetModel ? '' : modelValue,
-    useCustomModel: !hasPresetModel,
+    model: isPicked ? modelValue : defaults.model,
+    customModel: isPicked ? '' : modelValue,
+    useCustomModel: !isPicked,
   };
 }
 

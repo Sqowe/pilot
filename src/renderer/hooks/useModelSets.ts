@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
   AppConfig,
@@ -9,6 +9,7 @@ import type {
   ThinkingCapabilities,
 } from '../types';
 import { clampToSupportedLevel } from '../../shared/thinking-levels';
+import type { ProviderCatalogEntry } from '../../shared/provider-catalog';
 import {
   CONFIG_SET_LIMIT,
   FALLBACK_PROVIDER_PRESETS,
@@ -44,6 +45,11 @@ interface UseModelSetsOptions {
    */
   runtimeFor: (draft: ModelSetDraft) => { customProtocol: CustomProtocolType; baseUrl: string };
   /**
+   * The provider catalogue — the list of models the picker offers. A stored
+   * model that is in it is shown as picked, not as text the user has to type.
+   */
+  catalogue?: ProviderCatalogEntry[];
+  /**
    * Main returned a new config. Called for every successful call made here, so
    * whoever shares the screen can refresh what it holds.
    */
@@ -60,7 +66,7 @@ interface UseModelSetsOptions {
  */
 export function useModelSets(options: UseModelSetsOptions) {
   const { t } = useTranslation();
-  const { initialConfig, messages, runtimeFor, onConfigPersisted } = options;
+  const { initialConfig, messages, runtimeFor, catalogue, onConfigPersisted } = options;
   const { clearError, clearSuccessMessage, showErrorKey, showErrorText, showSuccessKey } = messages;
 
   const [state, dispatch] = useReducer(modelSetsReducer, undefined, () =>
@@ -68,6 +74,12 @@ export function useModelSets(options: UseModelSetsOptions) {
   );
   const { configSets, activeConfigSetId, draft, pendingConfigSetAction, thinkingCapabilities } =
     state;
+
+  // The catalogue the draft was hydrated against. Kept in a ref, assigned during
+  // render: a load applies the config in the same pass that delivers the
+  // catalogue, so the state value is still the previous one at that moment.
+  const catalogueRef = useRef<ProviderCatalogEntry[]>(catalogue ?? []);
+  catalogueRef.current = catalogue ?? catalogueRef.current;
 
   const currentConfigSet = useMemo(
     () => configSets.find((set) => set.id === activeConfigSetId) || null,
@@ -92,9 +104,11 @@ export function useModelSets(options: UseModelSetsOptions) {
     (
       config: AppConfig | null | undefined,
       presets: ProviderPresets,
-      mode: 'reset' | 'rebase' = 'reset'
+      mode: 'reset' | 'rebase' = 'reset',
+      loadedCatalogue?: ProviderCatalogEntry[]
     ) => {
-      const bootstrap = buildModelSetsBootstrap(config, presets);
+      if (loadedCatalogue) catalogueRef.current = loadedCatalogue;
+      const bootstrap = buildModelSetsBootstrap(config, presets, catalogueRef.current);
       if (mode === 'rebase') {
         dispatch({
           type: 'REBASE_PERSISTED',

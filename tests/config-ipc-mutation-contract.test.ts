@@ -242,10 +242,16 @@ describe('hook wiring that no test can run', () => {
     const layer = read('src/renderer/hooks/useApiSettingsState.ts');
     const source = read('src/renderer/hooks/useApiConfigSource.ts');
 
-    expect(layer).toContain('\n  applyLoadedRef.current = (config, loadedPresets) => {\n');
+    expect(layer).toContain(
+      '\n  applyLoadedRef.current = (config, loadedPresets, catalogue) => {\n'
+    );
     expect(layer).not.toMatch(/useEffect\(\(\) => \{\s*applyLoadedRef\.current =/);
     expect(source).toContain('\n  onLoadedRef.current = onLoaded;\n');
     expect(source).not.toMatch(/useEffect\(\(\) => \{\s*onLoadedRef\.current =/);
+    // The catalogue comes with the loaded config: the model's picked/typed
+    // split depends on the list the picker will show, and the catalogue in the
+    // caller's own state is still the previous one at that moment.
+    expect(layer).toContain("applySetsConfig(config, loadedPresets, 'reset', catalogue);");
   });
 
   it('asks what a model can do for the draft being rendered, not the previous one', () => {
@@ -255,7 +261,9 @@ describe('hook wiring that no test can run', () => {
     const layer = read('src/renderer/hooks/useApiSettingsState.ts');
 
     expect(sets).toContain('= runtimeFor(draft);');
-    expect(layer).toContain('useModelSets({ initialConfig, messages, runtimeFor })');
+    expect(layer).toContain(
+      'useModelSets({ initialConfig, messages, runtimeFor, catalogue: providerCatalog })'
+    );
     expect(layer).not.toContain('setRuntime(');
   });
 

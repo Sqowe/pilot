@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A model outside the short list opens in the picker again.** The model pickers show
+  the provider's whole list, but the app decided from a short hand-written list whether a
+  saved model was "selected" or "typed in". Every model outside that short list opened as
+  a plain text field, and for the cloud providers there was no button to go back to the
+  list. The saved model is now recognised from the list the picker shows; the model id and
+  the model itself are unchanged.
 - **Compaction summaries are no longer capped by the reserved tokens.** A long reasoning
   trace could make a summary fail with "generation hit the token cap"; summaries now use
   the model's own output limit.

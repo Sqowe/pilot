@@ -17,8 +17,17 @@ interface UseApiConfigSourceOptions {
    * Called once per load with what main returned, in the same update that ends
    * the loading state — so the screen never renders a frame of defaults between
    * "loaded" and "applied".
+   *
+   * The catalogue comes with it: it is loaded in the same pass, and the caller
+   * needs it while applying the config — the model's picked/typed split depends
+   * on the list the picker will show, and by then the catalogue in the caller's
+   * own state is still the previous one.
    */
-  onLoaded: (config: AppConfig | null | undefined, presets: ProviderPresets) => void;
+  onLoaded: (
+    config: AppConfig | null | undefined,
+    presets: ProviderPresets,
+    catalogue: ProviderCatalogEntry[]
+  ) => void;
 }
 
 /**
@@ -86,13 +95,13 @@ export function useApiConfigSource(options: UseApiConfigSourceOptions) {
         setProviderCatalog(loadedCatalog);
         setIsCatalogLoading(false);
         setPresets(loadedPresets);
-        onLoadedRef.current(config, loadedPresets);
+        onLoadedRef.current(config, loadedPresets, loadedCatalog);
       } catch (loadError) {
         if (!cancelled) {
           console.error('Failed to load API config:', loadError);
           setIsCatalogLoading(false);
           setPresets(FALLBACK_PROVIDER_PRESETS);
-          onLoadedRef.current(initialConfig, FALLBACK_PROVIDER_PRESETS);
+          onLoadedRef.current(initialConfig, FALLBACK_PROVIDER_PRESETS, BUILTIN_ENTRIES);
         }
       } finally {
         if (!cancelled) {

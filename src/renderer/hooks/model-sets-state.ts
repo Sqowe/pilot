@@ -22,6 +22,7 @@ import type {
   ProviderType,
   ThinkingCapabilities,
 } from '../types';
+import { getCatalogEntry, type ProviderCatalogEntry } from '../../shared/provider-catalog';
 import {
   DEFAULT_CONFIG_SET_ID,
   DEFAULT_CONFIG_SET_NAME,
@@ -247,13 +248,15 @@ export function resolveActiveConfigSetId(
  *
  * A set names a provider, optionally an endpoint, and one model id; the form
  * needs that model split into its picked / typed pair, which depends on the
- * provider's preset list — and for a custom set on the protocol its endpoint
+ * provider's list — the catalogue the picker offers, or the preset list until
+ * the catalogue has arrived — and for a custom set on the protocol its endpoint
  * speaks.
  */
 export function hydrateModelSetDraft(
   set: ApiConfigSet,
   presets: ProviderPresets,
-  customEndpoints: CustomEndpoint[]
+  customEndpoints: CustomEndpoint[],
+  catalogue: readonly ProviderCatalogEntry[] = []
 ): ModelSetDraft {
   const endpoint =
     set.provider === 'custom' && set.endpointId
@@ -284,7 +287,13 @@ export function hydrateModelSetDraft(
           ...defaultModelFields(provider, customProtocol, presets),
           customModel: normalizeLegacyModelId(provider, set.model ?? ''),
         }
-      : splitModelSelection(set.model ?? '', provider, customProtocol, presets);
+      : splitModelSelection(
+          set.model ?? '',
+          provider,
+          customProtocol,
+          presets,
+          getCatalogEntry(catalogue, provider)?.modelOptions
+        );
 
   return {
     provider,
@@ -311,7 +320,8 @@ export function emptyModelSetDraft(presets: ProviderPresets): ModelSetDraft {
 /** Everything the reducer needs to start from a config. */
 export function buildModelSetsBootstrap(
   config: AppConfig | null | undefined,
-  presets: ProviderPresets
+  presets: ProviderPresets,
+  catalogue: readonly ProviderCatalogEntry[] = []
 ): { configSets: ApiConfigSet[]; activeConfigSetId: string; draft: ModelSetDraft } {
   const configSets = buildConfigSets(config);
   const activeConfigSetId = resolveActiveConfigSetId(config, configSets);
@@ -320,7 +330,7 @@ export function buildModelSetsBootstrap(
     configSets,
     activeConfigSetId,
     draft: activeSet
-      ? hydrateModelSetDraft(activeSet, presets, config?.customEndpoints ?? [])
+      ? hydrateModelSetDraft(activeSet, presets, config?.customEndpoints ?? [], catalogue)
       : emptyModelSetDraft(presets),
   };
 }

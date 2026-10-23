@@ -228,6 +228,11 @@ test cross-checks. The two-line fix (drop the entry from both lists) plus a test
 every curated pick exists in the installed pi's catalogue would close the class, not just
 this entry.
 
+**Fixed in the follow-up:** the entry is gone from both lists, and
+`tests/api-model-presets-vs-pi-catalog.test.ts` now holds every curated pick against the
+installed pi's catalogue — see
+[`model-picker-picked-vs-typed.md`](./model-picker-picked-vs-typed.md).
+
 ### 7.2 The snapshot will fall behind again
 
 The live OpenRouter list is 468 models against pi-ai 1.4.0's 401. The next model the user
@@ -279,6 +284,10 @@ list _was_ the catalogue.
 Not fixed here: it is a behaviour change in the form, not a consequence of the uplift, and
 it deserves its own decision (widen the curated lists, or make the picked/typed split
 consult the catalogue the picker actually shows).
+
+**Fixed in the follow-up:** the split consults the catalogue the picker shows, so a
+stored model outside the curated picks opens as picked. See
+[`model-picker-picked-vs-typed.md`](./model-picker-picked-vs-typed.md).
 
 ## 8. Testing & rollout
 

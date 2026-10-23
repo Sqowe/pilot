@@ -11,6 +11,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { ApiConfigSet, AppConfig, CustomEndpoint } from '../src/renderer/types';
+import type { ProviderCatalogEntry } from '../src/shared/provider-catalog';
 import {
   FALLBACK_PROVIDER_PRESETS,
   defaultModelFields,
@@ -32,6 +33,32 @@ import {
 } from '../src/renderer/hooks/model-sets-state';
 
 const presets = FALLBACK_PROVIDER_PRESETS;
+
+/**
+ * A provider catalogue that offers the given models for OpenRouter — what the
+ * picker shows, and what decides whether a stored model is picked or typed.
+ */
+function catalogue(models: Array<{ id: string; name: string }>): ProviderCatalogEntry[] {
+  return [
+    {
+      id: 'openrouter',
+      name: 'OpenRouter',
+      kind: 'builtin',
+      category: 'featured',
+      piProvider: 'openrouter',
+      routeProtocol: 'openai',
+      formShape: {
+        apiKey: true,
+        baseUrl: false,
+        protocol: false,
+        contextWindow: false,
+        modelDropdown: true,
+        manualModelToggle: false,
+      },
+      modelOptions: models,
+    },
+  ];
+}
 
 function set(overrides: Partial<ApiConfigSet>): ApiConfigSet {
   return {
@@ -272,6 +299,66 @@ describe('loading a config set into the form', () => {
     expect(draft.useCustomModel).toBe(true);
     expect(draft.customModel).toBe(presetId);
     expect(finalModelOf(draft)).toBe(presetId);
+  });
+
+  it('shows a model the catalogue offers as picked, even when the curated list does not name it', () => {
+    // The picker lists the provider's whole catalogue; the curated list is only
+    // a short pick out of it. A model the picker offers must open as picked —
+    // as typed it would be a bare text field, and a builtin cloud provider has
+    // no toggle back to the list.
+    const draft = hydrateModelSetDraft(
+      set({ provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash-1017' }),
+      presets,
+      [],
+      catalogue([
+        { id: 'deepseek/deepseek-v4.1-flash-1017', name: 'DeepSeek: DeepSeek V4.1 Flash 1017' },
+      ])
+    );
+
+    expect(draft.useCustomModel).toBe(false);
+    expect(draft.model).toBe('deepseek/deepseek-v4.1-flash-1017');
+    expect(draft.customModel).toBe('');
+    expect(finalModelOf(draft)).toBe('deepseek/deepseek-v4.1-flash-1017');
+  });
+
+  it('still types a model that neither the curated list nor the catalogue has', () => {
+    const draft = hydrateModelSetDraft(
+      set({ provider: 'openrouter', model: 'my-fine-tune' }),
+      presets,
+      [],
+      catalogue([
+        { id: 'deepseek/deepseek-v4.1-flash-1017', name: 'DeepSeek: DeepSeek V4.1 Flash' },
+      ])
+    );
+
+    expect(draft.useCustomModel).toBe(true);
+    expect(draft.customModel).toBe('my-fine-tune');
+    expect(finalModelOf(draft)).toBe('my-fine-tune');
+  });
+
+  it('types a model outside the curated list while the catalogue has not arrived', () => {
+    // Before the catalogue is loaded the curated list is all the app knows, so
+    // a model outside it stays typed — the form has no list to pick from yet.
+    const draft = hydrateModelSetDraft(
+      set({ provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash-1017' }),
+      presets,
+      []
+    );
+
+    expect(draft.useCustomModel).toBe(true);
+    expect(draft.customModel).toBe('deepseek/deepseek-v4.1-flash-1017');
+  });
+
+  it('keeps a custom endpoint typed even when the catalogue lists its model', () => {
+    const draft = hydrateModelSetDraft(
+      set({ provider: 'custom', endpointId: 'custom-endpoint-1', model: 'gpt-5.4' }),
+      presets,
+      [endpoint({})],
+      catalogue([{ id: 'gpt-5.4', name: 'gpt-5.4' }])
+    );
+
+    expect(draft.useCustomModel).toBe(true);
+    expect(draft.customModel).toBe('gpt-5.4');
   });
 
   it('drops a pointer to an endpoint that no longer exists', () => {

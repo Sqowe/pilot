@@ -459,7 +459,7 @@ export function categoryOrder(category: ProviderCategory): number {
  * Returns `undefined` for unknown ids (caller decides the fallback).
  */
 export function getCatalogEntry(
-  catalog: ProviderCatalogEntry[],
+  catalog: readonly ProviderCatalogEntry[],
   id: string
 ): ProviderCatalogEntry | undefined {
   return catalog.find((e) => e.id === id);
