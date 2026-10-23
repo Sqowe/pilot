@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-23
+
 ### Changed
 
 - **The "Response time" line shows once, under the final answer.** Every message of the
@@ -794,7 +796,8 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/sqowe/pilot/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/sqowe/pilot/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/sqowe/pilot/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/sqowe/pilot/compare/v1.3.3...v1.4.0
 [1.3.3]: https://github.com/sqowe/pilot/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/sqowe/pilot/compare/v1.3.1...v1.3.2
