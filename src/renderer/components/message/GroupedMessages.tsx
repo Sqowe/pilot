@@ -9,6 +9,7 @@ import { MessageCard } from '../MessageCard';
 import { ProcessAccordion } from './ProcessAccordion';
 import { DateSeparator } from './DateSeparator';
 import {
+  findResponseTimeMessageId,
   groupMessagesIntoTurns,
   shouldCollapseTurn,
   splitTurnMessages,
@@ -91,6 +92,11 @@ export const GroupedMessages = memo(function GroupedMessages({
                 ? splitTurnMessages(assistantMsgs)
                 : { processMessages: [] as Message[], answerMessages: assistantMsgs };
 
+              const responseTimeMessageId = findResponseTimeMessageId(
+                answerMessages,
+                turnIsStreaming
+              );
+
               const turnKey =
                 turn.userMessage?.id ??
                 turn.assistantMessages[0]?.id ??
@@ -142,6 +148,7 @@ export const GroupedMessages = memo(function GroupedMessages({
                           message={msg}
                           isStreaming={isStreaming}
                           memoryContributed={showMemoryBadge}
+                          showResponseTime={msg.id === responseTimeMessageId}
                           selectable={selectable && isMessageExportable(msg)}
                           selected={selectedIds?.has(msg.id)}
                           onToggleSelect={onToggleSelect}

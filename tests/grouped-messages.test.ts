@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { Message, ContentBlock } from '../src/renderer/types/index';
 import {
   shouldCollapseTurn,
+  findResponseTimeMessageId,
   findFinalAnswerIndex,
   findIntraMessageAnswerBoundary,
   splitTurnMessages,
@@ -440,6 +441,40 @@ describe('grouping-logic', () => {
       expect(turns[0].userMessage).toBeUndefined();
       expect(turns[0].assistantMessages).toHaveLength(1);
       expect(turns[1].userMessage?.id).toBe('u1');
+    });
+  });
+
+  describe('findResponseTimeMessageId', () => {
+    const text = (id: string) => makeMsg(id, [{ type: 'text', text: id }]);
+
+    it('picks the last assistant message of a finished turn', () => {
+      expect(findResponseTimeMessageId([text('a1'), text('a2'), text('a3')], false)).toBe('a3');
+    });
+
+    it('picks nothing while the turn is still running', () => {
+      expect(findResponseTimeMessageId([text('a1'), text('a2')], true)).toBeUndefined();
+    });
+
+    it('skips a trailing message that is not from the assistant', () => {
+      const system = makeMsg('s1', [{ type: 'text', text: 'note' }], 'assistant');
+      system.role = 'system';
+      expect(findResponseTimeMessageId([text('a1'), system], false)).toBe('a1');
+    });
+
+    it('picks nothing when there are no messages', () => {
+      expect(findResponseTimeMessageId([], false)).toBeUndefined();
+    });
+
+    it('picks the answer half of a message that was split into process and answer', () => {
+      const { processMessages, answerMessages } = splitTurnMessages([
+        makeMsg('a1', [
+          { type: 'tool_use', id: 't1', name: 'bash', input: {} },
+          { type: 'tool_result', toolUseId: 't1', content: 'ok' },
+          { type: 'text', text: 'Done.' },
+        ]),
+      ]);
+      expect(processMessages.map((m) => m.id)).toEqual(['a1-process']);
+      expect(findResponseTimeMessageId(answerMessages, false)).toBe('a1-answer');
     });
   });
 });

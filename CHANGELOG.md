@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The "Response time" line shows once, under the final answer.** Every message of the
+  agent — each thinking step and each tool call — had its own line, so a task with several
+  steps showed a column of times between the steps. Now only the final answer of a task
+  has the line, and it appears when the task is finished. It is still how long the model
+  took for that last message; the time of the whole request is still shown by the counter
+  at the bottom of the chat.
+
 ## [1.4.0] - 2026-10-23
 
 ### Changed

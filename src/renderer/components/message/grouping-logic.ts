@@ -212,6 +212,22 @@ export function splitTurnMessages(assistantMessages: Message[]): TurnSplitResult
   return { processMessages, answerMessages };
 }
 
+/**
+ * The one message of a turn that shows its "Response time" line: the last assistant message
+ * among the messages shown outside the process accordion, and only once the turn is over.
+ * The steps before it (thinking, tool calls) show no time.
+ */
+export function findResponseTimeMessageId(
+  answerMessages: Message[],
+  turnIsActive: boolean
+): string | undefined {
+  if (turnIsActive) return undefined;
+  for (let i = answerMessages.length - 1; i >= 0; i--) {
+    if (answerMessages[i].role === 'assistant') return answerMessages[i].id;
+  }
+  return undefined;
+}
+
 /** An item in a day group: a turn with its original index in the turns array. */
 export interface DayGroupItem {
   turn: Turn;

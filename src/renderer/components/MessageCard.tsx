@@ -15,6 +15,8 @@ interface MessageCardProps {
   isStreaming?: boolean;
   memoryContributed?: boolean;
   showTimestamp?: boolean;
+  /** Show how long the model took, under the message. Off unless the caller asks for it. */
+  showResponseTime?: boolean;
   selectable?: boolean;
   selected?: boolean;
   onToggleSelect?: (messageId: string) => void;
@@ -25,6 +27,7 @@ export const MessageCard = memo(function MessageCard({
   isStreaming,
   memoryContributed,
   showTimestamp,
+  showResponseTime,
   selectable,
   selected,
   onToggleSelect,
@@ -40,7 +43,9 @@ export const MessageCard = memo(function MessageCard({
   const [copied, setCopied] = useState(false);
   // How long the model took to produce this response (pi measures it; main stores it).
   const responseTimeMs =
-    !isUser && !isStreaming && message.executionTimeMs ? message.executionTimeMs : undefined;
+    showResponseTime && !isUser && !isStreaming && message.executionTimeMs
+      ? message.executionTimeMs
+      : undefined;
 
   // Build a set of tool_result IDs that have a matching tool_use (for merging)
   const mergedResultIds = useMemo(() => {
