@@ -27,7 +27,7 @@
  * own (same service, same protocol), set or clear `catalogProvider` in
  * `src/shared/api-provider-guidance.ts`, and bring both tables up to date.
  *
- * Last checked against pi-ai 1.3.0 (2026-10-20).
+ * Last checked against pi-ai 1.4.0 (2026-10-23).
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 import {

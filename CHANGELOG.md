@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-23
+
+### Changed
+
+- **The model lists in Settings are up to date.** The model pickers (Settings → Model
+  Sets and Settings → Providers) are filled from the model catalogue that ships with the
+  agent SDK, and that catalogue is a snapshot taken when the SDK is released. The SDK was
+  updated to version 1.4.0, so the pickers now show the models published since the last
+  update — including OpenRouter models such as `deepseek/deepseek-v4.1-flash-1017`, which
+  could not be picked before. A model that is in the catalogue also brings its own
+  reasoning ("thinking") levels, so the level selector now offers what the model
+  supports instead of reporting none.
+- **The agent SDK was updated from 1.3.0 to 1.4.0.** No behaviour of the app changed
+  because of it; what it brings is a whitespace-only tool result no longer failing a
+  request, and the built-in search no longer turning a regular expression into a plain
+  text search when the environment points it at a search configuration.
+
+### Fixed
+
+- **Compaction summaries are no longer capped by the reserved tokens.** A long reasoning
+  trace could make a summary fail with "generation hit the token cap"; summaries now use
+  the model's own output limit.
+
 ## [1.3.3] - 2026-10-22
 
 ### Changed
@@ -756,7 +779,8 @@ First stable release of the 3.3.x series. Graduated from 9 beta releases with 30
 
 - Initial release of Open Cowork — open-source AI agent desktop app with one-click install for Windows and macOS
 
-[Unreleased]: https://github.com/sqowe/pilot/compare/v1.3.3...HEAD
+[Unreleased]: https://github.com/sqowe/pilot/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/sqowe/pilot/compare/v1.3.3...v1.4.0
 [1.3.3]: https://github.com/sqowe/pilot/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/sqowe/pilot/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/sqowe/pilot/compare/v1.3.0...v1.3.1

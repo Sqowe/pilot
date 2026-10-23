@@ -16,7 +16,7 @@ packaging in [AI_ELECTRON.md](AI_ELECTRON.md).
 
 - **Always version-lock both packages.** They ship from one repo and must be
   uplifted together; a mismatch produces type errors and runtime failures.
-  Currently pinned to **1.3.0** in `package.json` (`dependencies`).
+  Currently pinned to **1.4.0** in `package.json` (`dependencies`).
 - The old `@mariozechner/pi-*` scope was deprecated at 0.73.1; this app migrated
   to `@earendil-works/pi-*` at 0.74.0. Do not reintroduce the old scope.
 - pi is 1.x since 2026-10-01, but the 1.x line still ships breaking changes in
@@ -44,6 +44,12 @@ packaging in [AI_ELECTRON.md](AI_ELECTRON.md).
   to Chat Completions, and `azure` (renamed from `azure-openai-responses`) and the
   classifier-only `typesafe` added to `EXCLUDED_NATIVE`. Report and reasons:
   [docs/design/pi-sdk-130-uplift-and-adoption-plan.md](docs/design/pi-sdk-130-uplift-and-adoption-plan.md).
+  1.3.0 → 1.4.0 changed no SDK call either and needed no source change — the
+  provider list, the SDK-only boundary, the clamp algorithm and pi-ai's own
+  `openai` / `@anthropic-ai/sdk` pins are unchanged. What it brought is catalog
+  content: OpenRouter models published after the 1.3.0 snapshot. Report and
+  reasons:
+  [docs/design/pi-sdk-140-uplift-and-adoption-plan.md](docs/design/pi-sdk-140-uplift-and-adoption-plan.md).
 
 ### The SDK-only boundary — in-memory session & settings managers
 
@@ -280,7 +286,7 @@ createAgentSession({ noTools: 'builtin', customTools: [...built-ins, ...mcp, ...
   there. A failure after an uplift means "decide again", not "broken": look at
   what changed, set or clear `catalogProvider`, and bring the test's two tables
   up to date. The reasons for the current decisions are written beside them
-  (last checked against pi 1.3.0).
+  (last checked against pi 1.4.0).
 - The test only sees a provider that serves from a setup's **host**. A service
   that pi starts to list under a different address is not caught by it; when a
   new provider turns up in the catalog, look through the list for its name too.

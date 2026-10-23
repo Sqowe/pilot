@@ -15,6 +15,13 @@
  * These helpers compute a `reserveTokens` that covers output + tool schemas +
  * a safety margin, and a `keepRecentTokens` that never exceeds what actually
  * fits in the window.
+ *
+ * Since pi 1.4.0 `generateSummary()` ignores its own `reserveTokens` argument
+ * and summarises with the model's output limit instead; `reserveTokens` now
+ * only decides **when** compaction starts. That does not weaken the reserve
+ * here: the same output budget still has to fit next to the tool schemas in
+ * the window, so covering it is what keeps the request after a compaction
+ * from overflowing.
  */
 
 /**

@@ -23,8 +23,8 @@ These six libraries are **the AI pipeline**. A new Claude / GPT / Gemini model, 
 
 | Package                           | Installed | Role                                                                                                                                                           |
 | --------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@earendil-works/pi-coding-agent` | 1.3.0     | Agent execution engine. Drives `src/main/claude/agent-runner.ts` (~1500 lines) — session lifecycle, tool dispatch, streaming. Heart of the app.                |
-| `@earendil-works/pi-ai`           | 1.3.0     | Unified LLM abstraction — provider routing, model registry, auth. Resolves which concrete SDK/endpoint to call. Must be version-locked with `pi-coding-agent`. |
+| `@earendil-works/pi-coding-agent` | 1.4.0     | Agent execution engine. Drives `src/main/claude/agent-runner.ts` (~1500 lines) — session lifecycle, tool dispatch, streaming. Heart of the app.                |
+| `@earendil-works/pi-ai`           | 1.4.0     | Unified LLM abstraction — provider routing, model registry, auth. Resolves which concrete SDK/endpoint to call. Must be version-locked with `pi-coding-agent`. |
 | `@modelcontextprotocol/sdk`       | 1.32.1    | MCP client + server (stdio, SSE, Streamable HTTP). Powers the entire MCP connector ecosystem in `src/main/mcp/mcp-manager.ts`.                                 |
 | `@anthropic-ai/sdk`               | 0.129.0   | Official Anthropic SDK. Used for Claude diagnostics and probes. Pinned to pi-ai's version: the bundled pi-ai loads this copy.                                  |
 | `openai`                          | 7.19.0    | Official OpenAI SDK, for all OpenAI-compatible endpoints. Pinned to pi-ai's version: the bundled pi-ai loads this copy.                                        |
