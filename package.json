@@ -1,7 +1,7 @@
 {
   "name": "sqowe-pilot",
   "productName": "Sqowe Pilot",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Sqowe Pilot — a desktop AI agent app for Windows & macOS with MCP tools, Skills, cross-session memory, sandbox isolation, and multi-model support",
   "keywords": [
     "ai-agent",
