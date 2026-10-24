@@ -37,6 +37,45 @@ the default permission rule.
 
 ---
 
+## The shipped defaults
+
+A fresh install starts with these lists in place — they are written into the
+config file on the first launch:
+
+| Field            | Value                                                                                                                                                                                                                       |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Trusted commands | `*`                                                                                                                                                                                                                         |
+| Denylist         | 52 patterns: privilege escalation, destructive file operations, ownership changes, process and system control, remote access, network downloads and inline shells, installing software, destructive git, Windows destroyers |
+| Trusted dirs     | `./`, `/tmp`, `~/tmp`                                                                                                                                                                                                       |
+
+An install that already has its own lists keeps them: the values in the
+config file win over the shipped defaults, so nothing is overwritten.
+
+**What that means in practice.** The trust list is `*`, so it does not
+narrow anything down — the denylist and the trusted directories are the
+barriers:
+
+- a command on the denylist always prompts (`sudo rm -rf /`, `git push`,
+  `npm install`, `chmod 777 /`);
+- a command that visibly writes outside `./`, `/tmp` and `~/tmp` prompts
+  (`echo x > /etc/hosts`, `cat f | tee /etc/passwd`);
+- shell syntax the scanner cannot read safely prompts as well (command
+  substitution, subshells, a lone `&`);
+- everything else runs without a prompt.
+
+Two limits worth knowing. The denylist cannot see inside a program:
+`python3 script.py` that deletes files is not a denied pattern, and the
+trusted-directories check only sees the writes that are visible in the
+command text. And a denylist pattern is matched against the whole
+sub-command, quotes included — `echo "install docs"` matches `install` and
+asks.
+
+To start over, empty both lists in Settings → Bash Commands: with both
+empty the engine has no opinion and the default "ask for bash" rule applies
+again.
+
+---
+
 ## The decision, step by step
 
 For each bash command the agent requests, the engine runs these checks

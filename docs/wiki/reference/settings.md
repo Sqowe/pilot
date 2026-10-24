@@ -1,4 +1,4 @@
-<!-- sources: src/main/config/config-store.ts (AppConfig interface, defaults), src/renderer/components/SettingsPanel.tsx (tabs), src/renderer/components/settings/* -->
+<!-- sources: src/main/config/config-store.ts (AppConfig interface, defaults), src/shared/bash-restrictions/settings.ts (shipped defaults), src/renderer/components/SettingsPanel.tsx (tabs), src/renderer/components/settings/* -->
 
 # Settings
 
@@ -100,11 +100,14 @@ Workspace overrides live in `{workspace}/.cowork/prompts/`.
 
 ## Bash Commands
 
-| Setting                    | Default             | What it does                                                 |
-| -------------------------- | ------------------- | ------------------------------------------------------------ |
-| `bashTrustedCommands`      | small safe set      | Prefix patterns (with `*`) auto-approved.                    |
-| `bashDenylist`             | small dangerous set | Substrings that always force a prompt.                       |
-| `permissionTimeoutSeconds` | `300`               | Seconds before an approval auto-denies (`0` = wait forever). |
+| Setting                    | Default                         | What it does                                                 |
+| -------------------------- | ------------------------------- | ------------------------------------------------------------ |
+| `bashTrustedCommands`      | `*`                             | Prefix patterns (with `*`) auto-approved.                    |
+| `bashDenylist`             | 52 destructive-command patterns | Patterns that always force a prompt.                         |
+| `trustedDirectories`       | `./`, `/tmp`, `~/tmp`           | Directories the agent may write to without being asked.      |
+| `permissionTimeoutSeconds` | `300`                           | Seconds before an approval auto-denies (`0` = wait forever). |
+
+A fresh install starts with those values; an existing install keeps the lists it already has.
 
 ## Logs
 

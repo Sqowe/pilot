@@ -140,18 +140,31 @@ describe('startup hydration from configStore', () => {
     expect(decideBashPermission('rm -rf /tmp')).toBe('ask');
   });
 
-  it('leaves policy empty when no persisted lists exist (fresh install)', () => {
-    // No prior writes → ConfigStore returns the defaults (empty arrays),
-    // and hydration stays a no-op.
+  it('starts a fresh install with the shipped defaults', () => {
+    // A fresh install has no persisted lists of its own, so the store's
+    // defaults apply: the trust list is `*` and the denylist holds the
+    // shipped destructive-command patterns.
     const startupStore = new ConfigStore();
     setBashCommandLists(startupStore.get('bashTrustedCommands'), startupStore.get('bashDenylist'));
 
     const lists = getBashCommandLists();
-    expect(lists.trusted).toEqual([]);
-    expect(lists.denied).toEqual([]);
+    expect(lists.trusted).toEqual(['*']);
+    expect(lists.denied).toContain('sudo');
 
-    // No opt-in → decideBashPermission returns null, delegating to the
-    // generic rule engine exactly as before the feature existed.
+    // Ordinary commands run; destructive ones ask.
+    expect(decideBashPermission('ls -la')).toBe('allow');
+    expect(decideBashPermission('rm -rf /')).toBe('ask');
+  });
+
+  it('returns no opinion when the user cleared both lists', () => {
+    // The user emptied both lists → no opt-in → decideBashPermission
+    // returns null and the generic rule engine decides.
+    const store = new ConfigStore();
+    store.update({ bashTrustedCommands: [], bashDenylist: [] });
+    setBashCommandLists(store.get('bashTrustedCommands'), store.get('bashDenylist'));
+
+    expect(getBashCommandLists().trusted).toEqual([]);
+    expect(getBashCommandLists().denied).toEqual([]);
     expect(decideBashPermission('anything')).toBeNull();
   });
 });

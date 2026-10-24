@@ -10,6 +10,8 @@
  *   Settings  : DEFAULT_BASH_RESTRICTIONS_SETTINGS, sanitizeBashCommandList,
  *               sanitizeTrustedDirectories, normalizePermissionTimeout,
  *               sanitizeBashRestrictionsSettings
+ *   Defaults  : DEFAULT_BASH_TRUSTED_COMMANDS, DEFAULT_BASH_DENYLIST,
+ *               DEFAULT_BASH_TRUSTED_DIRECTORIES
  *   Types     : BashDecision, BashCommandLists, BashAskReason, BashDecisionDetail,
  *               BashRestrictionsSettings
  *
@@ -31,6 +33,9 @@ export {
 export type { BashRestrictionsSettings } from './settings';
 export {
   DEFAULT_BASH_RESTRICTIONS_SETTINGS,
+  DEFAULT_BASH_TRUSTED_COMMANDS,
+  DEFAULT_BASH_DENYLIST,
+  DEFAULT_BASH_TRUSTED_DIRECTORIES,
   sanitizeBashCommandList,
   sanitizeTrustedDirectories,
   normalizePermissionTimeout,

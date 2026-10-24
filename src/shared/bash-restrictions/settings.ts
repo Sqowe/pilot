@@ -56,6 +56,120 @@ export const DEFAULT_BASH_RESTRICTIONS_SETTINGS: Readonly<BashRestrictionsSettin
 };
 
 // ---------------------------------------------------------------------------
+// Shipped defaults
+// ---------------------------------------------------------------------------
+// These are NOT the "no policy configured" state — that one stays
+// `DEFAULT_BASH_RESTRICTIONS_SETTINGS` above, which the sanitizers and the
+// standalone pi CLI extension use to mean "no gate at all". The constants
+// below are what a FRESH INSTALL of the desktop app starts with: they are
+// written into the config file on first launch (see the `defaults` option of
+// the encrypted store) and are then owned by the user like any other value.
+//
+// An install that already has its own lists keeps them — the file wins over
+// the store defaults, so these never overwrite a user's choice.
+
+/**
+ * Trusted-command patterns a fresh install starts with.
+ *
+ * `'*'` matches every command (the trusted list is a prefix match with `*` as
+ * a wildcard), so the trust list does not narrow anything down: the denylist
+ * and the write zone are what decide whether a command asks.
+ */
+export const DEFAULT_BASH_TRUSTED_COMMANDS: readonly string[] = Object.freeze(['*']);
+
+/**
+ * Denylist a fresh install starts with: patterns that always force an
+ * approval prompt, even when a trusted pattern also matches.
+ *
+ * Matching is word-boundary based and case-insensitive; `*` is a literal
+ * asterisk, not a wildcard. Multi-word entries are literal substrings —
+ * `format c:` matches `format c: /q` but not `npm run format`.
+ *
+ * Caveat: a pattern is looked for anywhere in the sub-command, including
+ * inside quotes, so `echo "install docs"` matches `install` and asks. */
+export const DEFAULT_BASH_DENYLIST: readonly string[] = Object.freeze([
+  // Privilege escalation.
+  'sudo',
+  'su',
+  'doas',
+  'pkexec',
+  'runas',
+  // Destructive file operations.
+  'rm',
+  'rmdir',
+  'shred',
+  'mkfs',
+  'dd',
+  'diskutil',
+  'fdisk',
+  'truncate',
+  // Ownership and permissions.
+  'chown',
+  'chmod',
+  'chgrp',
+  // Process and system control.
+  'kill',
+  'killall',
+  'pkill',
+  'shutdown',
+  'reboot',
+  'systemctl',
+  'launchctl',
+  // Remote access.
+  'ssh',
+  'scp',
+  'sftp',
+  // Network downloads and shell execution of what was downloaded.
+  // The `-c` patterns are literal two-word strings: they catch an inline
+  // shell script (`sh -c "..."`, `bash -c "..."`) and leave `du -sh` and
+  // `bash script.sh` alone.
+  'sh -c',
+  'bash -c',
+  'zsh -c',
+  'curl',
+  'wget',
+  // Installing software.
+  'install',
+  'uninstall',
+  'apt',
+  'yum',
+  'dnf',
+  'apk',
+  // Destructive git.
+  'git push',
+  'git reset --hard',
+  'git clean',
+  'git filter-branch',
+  '--force',
+  '--hard',
+  // Windows.
+  'del',
+  'format c:',
+  'takeown',
+  'icacls',
+  'cipher',
+  'Remove-Item',
+  'Stop-Process',
+  'taskkill',
+  'reg',
+]);
+
+/**
+ * Trusted directories a fresh install starts with — the places the agent may
+ * write without being asked. `./` is the session's workspace; the other two
+ * are the usual scratch directories.
+ *
+ * Entries are resolved per session (see `buildWriteZone`): `./` against the
+ * session's working directory, `~` against the home directory. The file-system
+ * root and the home directory itself are refused by the builder.
+ */
+export const DEFAULT_BASH_TRUSTED_DIRECTORIES: readonly string[] = Object.freeze([
+  './',
+  '/tmp',
+  '~/tmp',
+]);
+
+// ---------------------------------------------------------------------------
 // Normalizers
 // ---------------------------------------------------------------------------
 

@@ -119,7 +119,7 @@ export function SettingsBashCommands() {
           spellCheck={false}
           rows={6}
           className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm font-mono text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-          placeholder={'npm *\ngit status\nls *\n./build *'}
+          placeholder={'*\nls *\ngit status *\nnpm run *'}
           aria-label={t('bashCommands.trustedTitle', 'Trusted commands')}
         />
       </div>
@@ -145,7 +145,7 @@ export function SettingsBashCommands() {
           spellCheck={false}
           rows={6}
           className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm font-mono text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-          placeholder={'rm -rf\nsudo\n--force\ncurl | sh'}
+          placeholder={'sudo\nrm\n--force\ngit push\ninstall'}
           aria-label={t('bashCommands.denylistTitle', 'Denylist (force approval)')}
         />
       </div>
@@ -171,7 +171,7 @@ export function SettingsBashCommands() {
           spellCheck={false}
           rows={3}
           className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm font-mono text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-          placeholder={'./\n/tmp'}
+          placeholder={'./\n/tmp\n~/tmp'}
           aria-label={t('bashCommands.trustedDirectoriesTitle', 'Trusted directories')}
         />
         <p className="text-xs leading-5 text-text-muted">

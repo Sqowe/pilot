@@ -1,4 +1,4 @@
-<!-- sources: src/renderer/components/settings/SettingsBashCommands.tsx, src/shared/bash-restrictions/, src/shared/path-permissions/, BASH_COMMAND_RESTRICTIONS.md, src/main/config/config-store.ts (AppConfig) -->
+<!-- sources: src/renderer/components/settings/SettingsBashCommands.tsx, src/shared/bash-restrictions/ (settings.ts defaults, engine.ts), src/shared/path-permissions/, BASH_COMMAND_RESTRICTIONS.md, src/main/config/config-store.ts (AppConfig) -->
 
 # Bash command restrictions
 
@@ -20,14 +20,17 @@ inside the project but ask before it writes anywhere else.
 ## How to use it
 
 1. Open **Settings → Bash Commands**.
-2. **Trusted commands** — add prefix patterns. A trailing `*` is a wildcard, e.g.
+2. **Trusted commands** — prefix patterns. A trailing `*` is a wildcard, e.g.
    `ls *`, `git status*`, `npm run *`. Matching commands run without prompting.
-3. **Denied commands** — add substrings that always force a prompt, e.g. `rm`, `sudo`,
-   `git push`, `--force`. A deny hit wins even over a trust match.
-4. **Trusted directories** — add the directories the agent may write to without being
-   asked, one per line, e.g. `./` (the session's workspace) and `/tmp`. A write inside them
-   runs; a write anywhere else asks. This covers the `write` and `edit` tools and the places a
-   shell command visibly writes (`>`, `>>`, `tee`). Leave it empty to turn the check off.
+   The shipped value is `*`, which matches every command.
+3. **Denied commands** — patterns that always force a prompt, e.g. `rm`, `sudo`,
+   `git push`, `--force`. A deny hit wins even over a trust match. A fresh
+   install already ships a list of the usual destructive ones.
+4. **Trusted directories** — the directories the agent may write to without being
+   asked, one per line. A write inside them runs; a write anywhere else asks.
+   This covers the `write` and `edit` tools and the places a shell command
+   visibly writes (`>`, `>>`, `tee`). A fresh install ships `./` (the session's
+   workspace), `/tmp` and `~/tmp`. Empty the field to turn the check off.
 5. **Permission timeout** — set how long an approval dialog waits before auto-denying
    (default **300s**; set to **0** for no timeout / wait forever).
 
@@ -69,12 +72,17 @@ flowchart TD
 | Add trusted directory | Settings → Bash Commands → **Trusted directories** |
 | Set approval timeout  | Settings → Bash Commands → **Permission timeout**  |
 
-| Setting                    | Default                 | What it does                                                 |
-| -------------------------- | ----------------------- | ------------------------------------------------------------ |
-| `bashTrustedCommands`      | _(small safe set)_      | Prefix patterns (with `*` wildcard) auto-approved.           |
-| `bashDenylist`             | _(small dangerous set)_ | Substrings that always force a prompt.                       |
-| `trustedDirectories`       | _(empty — check off)_   | Directories the agent may write to without being asked.      |
-| `permissionTimeoutSeconds` | `300`                   | Seconds before an approval auto-denies (`0` = wait forever). |
+| Setting                    | Default                         | What it does                                                 |
+| -------------------------- | ------------------------------- | ------------------------------------------------------------ |
+| `bashTrustedCommands`      | `*`                             | Prefix patterns (with `*` wildcard) auto-approved.           |
+| `bashDenylist`             | 52 destructive-command patterns | Patterns that always force a prompt.                         |
+| `trustedDirectories`       | `./`, `/tmp`, `~/tmp`           | Directories the agent may write to without being asked.      |
+| `permissionTimeoutSeconds` | `300`                           | Seconds before an approval auto-denies (`0` = wait forever). |
+
+A fresh install starts with those values; an existing install keeps the lists it already
+has. The shipped trust list is `*`, so the denylist and the trusted directories are what
+decide whether a command asks — the denylist covers destructive commands, the directories
+cover where the agent may write.
 
 The same engine powers the standalone `pi` CLI restriction add-on, so behavior is consistent.
 Full pattern syntax and edge cases are in `BASH_COMMAND_RESTRICTIONS.md`.

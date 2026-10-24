@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A new install starts with sensible bash permissions instead of none.** The trust
+  list, the denylist and the trusted directories in Settings → Bash Commands were
+  empty on a fresh install, which meant the agent asked about every single shell
+  command and nothing was protected by default. A new install now starts with the
+  trust list set to `*`, a denylist of 52 patterns for the usual destructive
+  commands (`sudo`, `rm`, `git push`, `--force`, `chmod`, `npm install`, `curl`,
+  `wget`, inline shells, and the Windows equivalents), and the workspace plus
+  `/tmp` and `~/tmp` as trusted directories. In practice the agent now runs
+  ordinary commands without a question, while anything destructive, anything
+  that writes outside those directories, and anything it cannot check safely
+  still asks first.
+  Existing installations keep the lists they already have — the shipped
+  defaults only fill in a fresh install, so nothing changes without being
+  asked.
+
 ## [1.4.1] - 2026-10-23
 
 ### Changed

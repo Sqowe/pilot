@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_BASH_RESTRICTIONS_SETTINGS } from '../src/shared/bash-restrictions';
+import {
+  DEFAULT_BASH_RESTRICTIONS_SETTINGS,
+  DEFAULT_BASH_TRUSTED_COMMANDS,
+  DEFAULT_BASH_DENYLIST,
+  DEFAULT_BASH_TRUSTED_DIRECTORIES,
+} from '../src/shared/bash-restrictions';
 
 /**
  * ConfigStore persistence tests for the bash trust list and denylist.
@@ -79,10 +84,23 @@ beforeEach(() => {
 });
 
 describe('ConfigStore bash trust list and denylist', () => {
-  it('defaults both lists to empty arrays', () => {
+  it('starts a fresh install with the shipped default lists', () => {
     const store = new ConfigStore();
-    expect(store.get('bashTrustedCommands')).toEqual([]);
-    expect(store.get('bashDenylist')).toEqual([]);
+    expect(store.get('bashTrustedCommands')).toEqual([...DEFAULT_BASH_TRUSTED_COMMANDS]);
+    expect(store.get('bashDenylist')).toEqual([...DEFAULT_BASH_DENYLIST]);
+    expect(store.get('trustedDirectories')).toEqual([...DEFAULT_BASH_TRUSTED_DIRECTORIES]);
+  });
+
+  it('keeps the shipped defaults separate from the "no policy" settings object', () => {
+    // DEFAULT_BASH_RESTRICTIONS_SETTINGS means "nothing configured" — the
+    // sanitizers and the pi CLI extension rely on that. The shipped defaults
+    // are a different thing and must not leak into it.
+    expect(DEFAULT_BASH_RESTRICTIONS_SETTINGS.trusted).toEqual([]);
+    expect(DEFAULT_BASH_RESTRICTIONS_SETTINGS.denied).toEqual([]);
+    expect(DEFAULT_BASH_RESTRICTIONS_SETTINGS.trustedDirectories).toEqual([]);
+    expect(DEFAULT_BASH_TRUSTED_COMMANDS.length).toBeGreaterThan(0);
+    expect(DEFAULT_BASH_DENYLIST.length).toBeGreaterThan(0);
+    expect(DEFAULT_BASH_TRUSTED_DIRECTORIES).toEqual(['./', '/tmp', '~/tmp']);
   });
 
   it('persists a trust list and denylist through update()', () => {
@@ -243,8 +261,10 @@ describe('permissionTimeoutSeconds normalization via ConfigStore', () => {
 });
 
 describe('ConfigStore trusted directories', () => {
-  it('defaults to an empty list (write checks off)', () => {
-    expect(new ConfigStore().get('trustedDirectories')).toEqual([]);
+  it('starts a fresh install with the shipped default directories', () => {
+    expect(new ConfigStore().get('trustedDirectories')).toEqual([
+      ...DEFAULT_BASH_TRUSTED_DIRECTORIES,
+    ]);
   });
 
   it('persists entries as written and survives a restart', () => {

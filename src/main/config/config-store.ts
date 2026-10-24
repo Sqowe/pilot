@@ -53,9 +53,18 @@ import {
 // Import normalizePermissionTimeout and DEFAULT_BASH_RESTRICTIONS_SETTINGS from the shared module.
 // defaultConfig.permissionTimeoutSeconds is set to DEFAULT_BASH_RESTRICTIONS_SETTINGS.permissionTimeoutSeconds
 // below so the two values are guaranteed to stay in sync — there is no separate copy to drift.
+//
+// The bash lists come from the same shared module, so the desktop app and the
+// standalone pi CLI extension ship the same defaults. The store writes these
+// into the config file on first launch (the `defaults` option of the
+// encrypted store); an install that already has its own lists keeps them —
+// the file wins over the store defaults.
 import {
   normalizePermissionTimeout,
   DEFAULT_BASH_RESTRICTIONS_SETTINGS,
+  DEFAULT_BASH_TRUSTED_COMMANDS,
+  DEFAULT_BASH_DENYLIST,
+  DEFAULT_BASH_TRUSTED_DIRECTORIES,
 } from '../../shared/bash-restrictions';
 import { isValidCatchUpPolicy, isValidConflictPolicy } from '../../shared/schedule/types';
 import {
@@ -621,10 +630,10 @@ const defaultConfig: AppConfig = {
   systemPromptFile: '',
   systemPromptFileEnabled: true,
   systemPromptFilePriority: [...DEFAULT_SYSTEM_PROMPT_PRIORITY],
-  bashTrustedCommands: [],
+  bashTrustedCommands: [...DEFAULT_BASH_TRUSTED_COMMANDS],
 
-  bashDenylist: [],
-  trustedDirectories: [],
+  bashDenylist: [...DEFAULT_BASH_DENYLIST],
+  trustedDirectories: [...DEFAULT_BASH_TRUSTED_DIRECTORIES],
   enableDevLogs: false,
   theme: 'light',
   sandboxEnabled: false,

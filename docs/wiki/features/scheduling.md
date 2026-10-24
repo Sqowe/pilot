@@ -25,7 +25,7 @@ run without you typing it.
    - Optionally wrap the time in a **Time window** (Morning / Afternoon / Evening / Night /
      Exact).
 4. Choose **Execution mode**: **Ask before running** or **Run automatically** (auto mode runs
-   silently; commands not on your trust list are blocked).
+   silently; any command that would need your approval is blocked instead).
 5. Optionally set **Budget limits** — max duration (minutes) and/or max tokens.
 6. **Create task**.
 
@@ -76,7 +76,8 @@ stateDiagram-v2
 | `schedulerRunHistoryDepth` | `10`    | Past runs kept per task.                                                              |
 
 **Related guides:** tasks use a [config set](models-and-api.md) and respect your
-[bash restrictions](bash-restrictions.md) (untrusted commands are blocked in auto mode).
+[bash restrictions](bash-restrictions.md) (a command that would need approval is blocked in
+auto mode).
 
 ---
 
